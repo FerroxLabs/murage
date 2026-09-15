@@ -286,3 +286,32 @@ test("status wait preserves query failure versus readable missing status and ret
     assert.equal(records[0].step,"text-query-failed-installed");
   }
 });
+
+test("unchecked enabled consent implies current installed controller and host registration",()=>{
+  const source=readFileSync(new URL("../src/components/BackupSettings.tsx",import.meta.url),"utf8");
+  const registered=/const closedRegistered=(.*);/.exec(source)?.[1];
+  const disabled=/disabled=\{(!draft.closedApp[^}]+)\}/.exec(source)?.[1];assert.ok(registered);assert.ok(disabled);
+  const inspect=runInNewContext(`(closed,closedStale,closedAppSupported,checked=false)=>{const closedBridge={},draft={closedApp:checked},status={closedAppSupported};const closedRegistered=${registered};return !(${disabled});}`);
+  for(const state of ["unconfigured","staged","installed","disabled","disabled-removal-pending","unavailable"])
+    for(const supported of [true,false])for(const stale of [true,false])for(const host of [true,false,undefined])
+      assert.equal(inspect({state,supported},stale,host),state==="installed"&&supported&&!stale&&host===true,JSON.stringify({state,supported,stale,host}));
+  assert.equal(inspect({state:"unavailable",supported:false},true,false,true),true,"checked controls must not establish registration");
+});
+
+test("registration UI gate accepts only exact unique unchecked enabled AX consent",async()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)?.[1];
+  const fn=/async function waitInstalled\(s,pid\)\{[\s\S]*?\n\}/.exec(source)?.[0];assert.ok(jxa);assert.ok(fn);
+  const label="Allow scheduled backups while Murage is closed, while I am signed in.",roles=["AXCheckBox"];
+  for(const sample of [{value:0,enabled:true,pass:true},{value:"0",enabled:true,pass:true},{value:false,enabled:true,pass:true},{value:1,enabled:true},{value:0,enabled:false},{value:null,enabled:true},{value:"",enabled:true},{value:0,enabled:null},{value:0,enabled:true,count:2},{value:0,enabled:true,count:0},{value:0,enabled:true,wrongLabel:true}]){
+    const element={role:()=>"AXCheckBox",name:()=>sample.wrongLabel?"Other consent":label,title:()=>"",description:()=>"",value:()=>sample.value,enabled:()=>sample.enabled};
+    const window={role:()=>"AXWindow",name:()=>"Murage",title:()=>"",description:()=>"",entireContents:()=>Array.from({length:sample.count??1},()=>element)};
+    const se={processes:{whose:query=>{assert.equal(query.unixId,123);return[{windows:()=>[window]}];}}};
+    const run=runInNewContext(jxa+";run",{Application:()=>se}),records=[],failure=new Error("registration required");
+    const wait=runInNewContext(`(${fn})`,{selector:key=>{assert.equal(key,"closedConsent");return{roles,label};},step:(_label,callback)=>callback(),ax:(_s,cmd)=>JSON.parse(run([JSON.stringify(cmd)])),until:async(callback,ms)=>{assert.equal(ms,60000);if(!callback())throw failure;},record:value=>records.push(value)});
+    if(sample.pass){const result=await wait({},123);assert.equal(result.result.enabled,true);assert.equal(records.length,0);}
+    else{await assert.rejects(wait({},123),error=>error===failure);assert.equal(records.length,1);}
+  }
+  assert.match(source,/await waitInstalled\(s,app.pid\);\s*const job=await step\("label-loaded"/);
+  assert.match(source,/check\(value&&exists\(s.plist\),"exact-label-and-plist"\)/);
+});

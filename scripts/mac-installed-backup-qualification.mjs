@@ -20,7 +20,7 @@ const ASSERTIONS={
   admit:"zip sha in SHA256SUMS; ditto extract, no quarantine, no AppTranslocation; codesign strict, spctl exec accepted, stapler valid, TeamIdentifier and Murage/age sha equal final-package-gates; app.asar package.json name; fuse RunAsNode enabled; codesign/spctl evidence read from real stderr; task keychain (original default+search list persisted before first mutation, each step persisted) default+sole search list; '<name> Safe Storage' absent; launchctl managername Aqua",
   prepare:"synthetic installation + authority files, independent pinned-keygen key outside installation, GUI seed (complete fixture bot/task, enabled idle routine, terminal history) with no source-cited startup/render findings before the freeze, digest map, expected label/plist/control dir, manifest frozen (wx) before launch",
   probe:"owned app PID; AXManualAccessibility diagnostic; actual bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence, never a baseline)",
-  "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence)",
+  "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→unique unchecked closed-app consent enabled (requires installed/current controller + host registration)→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence)",
   "await-scheduled":"exact-label launchd runs delta >=1 (durable trigger invocation); coordinator lastClosedResult verified written by packaged main; lastVerified sha/bytes = single archive; immutable pre-operation originals under unchanged sidecar rule; initial setup drift separately gated and retained; closed spawns sampled at 1 s and reported, not required",
   "no-replay":"≥2 further launchd runs; no due spawn; archive count and lastVerified unchanged",
   busy:"app configured then CLOSED; separate owned process holds the real installation lease across the due window: launchd runs delta >=1, no new archive/lastVerified change, holder uninterrupted; after release the retained due occurrence captures exactly once (second verified receipt, sidecar rule)",
@@ -44,7 +44,6 @@ const UI={
   staged:{pattern:"Job prepared, not registered",src:"src/components/backup-schedule-ui.ts:63"},
   registerJob:{roles:["AXButton"],label:"Register prepared job",src:"src/components/BackupSettings.tsx:111"},
   installJob:{roles:["AXButton"],label:"Install backup job",src:"electron/main.mjs:3127"},
-  installed:{pattern:"Job registration confirmed",src:"src/components/backup-schedule-ui.ts:63"},
   dailyTime:{roles:["AXTextField","AXDateTimeArea","AXGroup"],label:"Daily time",src:"src/components/BackupSettings.tsx:122",probe:"PROBE-REQUIRED: type=time AX role and 12h segment keystrokes"},
   timezone:{roles:["AXTextField"],label:"Timezone",src:"src/components/BackupSettings.tsx:123"},
   catchup:{roles:["AXTextField","AXIncrementor"],label:"Catch-up window (hours)",src:"src/components/BackupSettings.tsx:126",probe:"PROBE-REQUIRED: number input AX role"},
@@ -188,7 +187,7 @@ function all(){var out=[],ws=p.windows();for(var i=0;i<ws.length;i++){var roots=
 function matches(){return all().filter(function(e){return cmd.roles.indexOf(role(e))>=0&&names(e).indexOf(cmd.label)>=0;});}
 if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out});}
 if(cmd.op==='count')return JSON.stringify({ok:true,count:matches().length,windows:p.windows().length});
-if(cmd.op==='value'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length});var x=null;try{x=v[0].value();}catch(_){}return JSON.stringify({ok:true,value:x});}
+if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length});var x=null;try{x=v[0].value();}catch(_){}if(cmd.op==='state'){var enabled=null;try{enabled=v[0].enabled();}catch(_){}return JSON.stringify({ok:true,value:x,enabled:enabled});}return JSON.stringify({ok:true,value:x});}
 if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length});
  if(cmd.op==='press'){m[0].actions.byName('AXPress').perform();return JSON.stringify({ok:true});}
  p.frontmost=true;m[0].focused=true;delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true});}
@@ -216,6 +215,18 @@ async function waitText(s,pid,key,ms=60000){
       const result=lastResult?{...lastResult,...(lastResult.diagnostics?{diagnostics:lastResult.diagnostics.map(redactSecretsInLine)}:{})}:null;
       record({step:`text-query-failed-${key}`,pid,pattern:UI[key].pattern,queries,result});throw error;
     }
+  });
+}
+// For an unchecked closed-app consent control, enabled means both the current
+// controller and host registration are confirmed (BackupSettings.tsx:72,135).
+// A checked control remains editable when registration is lost; never admit it.
+async function waitInstalled(s,pid){
+  const {roles,label}=selector("closedConsent",s);let lastResult=null;
+  return step("registration-ui-ready",async()=>{
+    try{
+      await until(()=>{lastResult=ax(s,{op:"state",pid,roles,label});return lastResult.ok&&[0,"0",false].includes(lastResult.value)&&lastResult.enabled===true;},60000,"registration-ui-ready");
+      return{roles,label,result:lastResult};
+    }catch(error){record({step:"registration-ui-query-failed",pid,roles,label,result:lastResult});throw error;}
   });
 }
 const choosePath=async(s,pid,file,name)=>{await step(`panel-${name}`,async()=>{check(ax(s,{op:"goto",pid,path:file}).ok,`goto-${name}`);});await press(s,pid,"panelOpen");};
@@ -326,7 +337,7 @@ async function launchConfigure(){
   const s=loadState();check(s.manifest&&s.settingsEntry?.label&&!s.installed,"probed-not-installed");await beforeSetup(s,"configure");const app=await launch(s,"configure");
   await openBackupSettings(s,app.pid);await press(s,app.pid,"chooseRefs");
   await choosePath(s,app.pid,s.destination,"destination");await choosePath(s,app.pid,s.keyFile,"key");await press(s,app.pid,"saveRefs");await waitText(s,app.pid,"refsNotice");
-  await press(s,app.pid,"prepareJob");await waitText(s,app.pid,"staged");await press(s,app.pid,"registerJob");await press(s,app.pid,"installJob");await waitText(s,app.pid,"installed");
+  await press(s,app.pid,"prepareJob");await waitText(s,app.pid,"staged");await press(s,app.pid,"registerJob");await press(s,app.pid,"installJob");await waitInstalled(s,app.pid);
   const job=await step("label-loaded",()=>{const value=launchdJob(s);check(value&&exists(s.plist),"exact-label-and-plist");return value;});
   s.dueAt=await configureDue(s,app.pid,5);
   await step("safe-storage-custody",()=>{check(exists(path.join(s.userData,"credentials.bin"))&&keychainItem(s)===0,"credentials-bin-and-keychain-item");return{credentialsBin:true,keychainItem:"present (value not read)"};});
