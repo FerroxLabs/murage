@@ -9,7 +9,7 @@ import {createHash,randomBytes} from "node:crypto";
 import {closeSync,lstatSync,mkdirSync,openSync,readFileSync,readSync,readdirSync,realpathSync,renameSync,rmSync,writeFileSync} from "node:fs";
 import {userInfo} from "node:os";
 import path from "node:path";
-import {admitSettingsEntry,cleanupKeychain,runCommand,setupKeychain} from "./mac-installed-backup-qualification-lib.mjs";
+import {admitSettingsEntry,cleanupKeychain,guiBackupFixtureBot,guiBackupFixtureRoutines,guiSeedStartupFindings,classifyQualificationSetup,freezeQualificationOperation,runCommand,setupKeychain} from "./mac-installed-backup-qualification-lib.mjs";
 
 const CONFIRM="packaged-backup-ephemeral-runner";
 // remove precedes restore: a published restored selection changes the selected
@@ -17,14 +17,14 @@ const CONFIRM="packaged-backup-ephemeral-runner";
 const PHASES=["plan","admit","prepare","probe","launch-configure","await-scheduled","no-replay","busy","remove","restore","cleanup-verify"];
 const ASSERTIONS={
   admit:"zip sha in SHA256SUMS; ditto extract, no quarantine, no AppTranslocation; codesign strict, spctl exec accepted, stapler valid, TeamIdentifier and Murage/age sha equal final-package-gates; app.asar package.json name; fuse RunAsNode enabled; codesign/spctl evidence read from real stderr; task keychain (original default+search list persisted before first mutation, each step persisted) default+sole search list; '<name> Safe Storage' absent; launchctl managername Aqua",
-  prepare:"synthetic installation + authority files, independent pinned-keygen key outside installation, digest map, expected label/plist/control dir, manifest frozen (wx) before launch",
-  probe:"owned app PID; AXManualAccessibility diagnostic; actual bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit",
-  "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit",
-  "await-scheduled":"exact-label launchd runs delta >=1 (durable trigger invocation); coordinator lastClosedResult verified written by packaged main; lastVerified sha/bytes = single archive; originals under sidecar rule; closed spawns sampled at 1 s and reported, not required",
+  prepare:"synthetic installation + authority files, independent pinned-keygen key outside installation, GUI seed (complete fixture bot/task, enabled idle routine, terminal history) with no source-cited startup/render findings before the freeze, digest map, expected label/plist/control dir, manifest frozen (wx) before launch",
+  probe:"owned app PID; AXManualAccessibility diagnostic; actual bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence, never a baseline)",
+  "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence)",
+  "await-scheduled":"exact-label launchd runs delta >=1 (durable trigger invocation); coordinator lastClosedResult verified written by packaged main; lastVerified sha/bytes = single archive; immutable pre-operation originals under unchanged sidecar rule; initial setup drift separately gated and retained; closed spawns sampled at 1 s and reported, not required",
   "no-replay":"≥2 further launchd runs; no due spawn; archive count and lastVerified unchanged",
   busy:"app configured then CLOSED; separate owned process holds the real installation lease across the due window: launchd runs delta >=1, no new archive/lastVerified change, holder uninterrupted; after release the retained due occurrence captures exactly once (second verified receipt, sidecar rule)",
   remove:"UI 'Disable all scheduled backups and remove job' → Closed-app job removed; exact label absent; plist absent; staged trigger via packaged exe → unavailable; app exits",
-  restore:"Backup mode → Inspect encrypted backup (archive + key panels) → Restore separately → review window; restored paused markers; restore-review barrier; originals under sidecar rule; archive unchanged; exits",
+  restore:"Backup mode UI entry → quit recovery and all owned bundle processes → freeze original installation → relaunch same executable in backup mode → Inspect encrypted backup (archive + key panels) → Restore separately → review window; restored paused markers; restore-review barrier; pre-operation originals under unchanged sidecar rule through review exit; archive unchanged",
   "cleanup-verify":"no bundle processes (SIGTERM only exact task-bundle PIDs); registration/plist recorded (manual removal recorded as cleanup, never as pass); every keychain restoration attempted, then default+search list re-read equal to persisted originals and task keychain absent (cleanup fails otherwise); task dirs removed by exact path",
 };
 // Exact UI names from source. PROBE-REQUIRED entries are not provable from source.
@@ -132,11 +132,41 @@ function sidecarRule(before,after){
   const allowed=added.every(key=>key.endsWith(".db-shm")||(key.endsWith(".db-wal")&&after[key]===sha(Buffer.alloc(0))));
   return{ok:changed.length===0&&allowed,changed,added};
 }
+// Evidence only: what ordinary packaged startup wrote into the frozen original
+// root after the app fully quit. Never a gate and never a replacement baseline
+// (root decides; lane-3 BASELINE-PROPOSAL). s.original and sidecarRule are unchanged.
+function recordSetupDrift(s,label){
+  try{
+    const after=digestTree(s.requestedRoot),rule=sidecarRule(s.original,after),removed=Object.keys(s.original).filter(key=>!(key in after));
+    writeAtomic(path.join(E,`setup-drift-${label}.json`),JSON.stringify({gating:false,originalEntries:Object.keys(s.original).length,entries:Object.keys(after).length,changed:rule.changed,added:rule.added,removed,original:s.original,after},null,1)+"\n");
+    record({step:`setup-drift-${label}`,gating:false,sidecarRuleOk:rule.ok,changed:rule.changed,added:rule.added,removed,file:`setup-drift-${label}.json`});
+  }catch(error){try{record({step:`setup-drift-${label}`,gating:false,error:typeof error?.code==="string"?error.code:"digest-failed"});}catch{/* evidence write failed */}}
+}
 const listing=()=>must(run("/bin/ps",["-axo","pid=,command="]),"ps").split("\n").map(line=>/^\s*(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(([,pid,command])=>({pid:Number(pid),command}));
 const bundleProcesses=s=>s.app?listing().filter(p=>p.command.includes(s.app+"/")&&p.pid!==process.pid):[];
 function launchdJob(s){const r=run("/bin/launchctl",["print",`gui/${s.uid}/${s.label}`]);if(r.code!==0)return null;const field=name=>new RegExp(`^\\s*${name} = (.*)$`,"m").exec(r.stdout)?.[1]??null;return{state:field("state"),runs:Number(field("runs")),lastExit:field("last exit code"),pid:field("pid")};}
 const coordinatorState=s=>{try{return JSON.parse(readFileSync(path.join(s.control,"backup-coordinator.json"),"utf8"));}catch(error){if(error.code==="ENOENT")return null;throw error;}};
 const archives=s=>readdirSync(s.destination).filter(name=>name.endsWith(".age"));
+async function quietSnapshot(s,label){
+  await until(()=>bundleProcesses(s).length===0,60000,`quiet-${label}`,1000);
+  return digestTree(s.requestedRoot);
+}
+async function beforeSetup(s,label){
+  const current=await quietSnapshot(s,label);
+  if(s.lastQuiescent){const rule=sidecarRule(s.lastQuiescent,current);record({step:`before-setup-${label}`,sidecars:rule});check(rule.ok,"late-operation-write-before-setup");}
+}
+async function finishSetup(s,label,baseline,notStarted=true){
+  const current=await quietSnapshot(s,label);
+  const setup=baseline?freezeQualificationOperation(s,baseline,current,{closed:true,notStarted:typeof notStarted==="function"?notStarted():notStarted}):classifyQualificationSetup(s.original,current);
+  record({step:`setup-boundary-${label}`,baseline:baseline??null,frozenAt:new Date().toISOString(),setup,original:s.original,current});
+  check(setup.ok,"UNEXPECTED_SETUP_WRITE");s.lastQuiescent=current;saveState(s);return current;
+}
+async function operationEnd(s,baseline,label){
+  check(Boolean(s[baseline]),"operation-baseline-required");
+  const current=await quietSnapshot(s,label),rule=sidecarRule(s[baseline],current);
+  record({step:`operation-boundary-${label}`,baseline,sidecars:rule,initialDrift:sidecarRule(s.original,current),current});
+  check(rule.ok,"operation-originals-unchanged");s.lastQuiescent=current;saveState(s);return rule;
+}
 const keychainItem=s=>run("/usr/bin/security",["find-generic-password","-s",s.keychainService]).code;// 0 present, 44 absent; value never requested
 
 // System Events / JXA. Commands carry labels and task paths only.
@@ -173,9 +203,9 @@ const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label
 const waitText=(s,pid,key,ms=60000)=>step(`wait-${key}`,()=>until(()=>{const r=ax(s,{op:"texts",pid,pattern:UI[key].pattern});return r.ok&&r.texts.length?r.texts[0]:null;},ms,`text-${key}`));
 const choosePath=async(s,pid,file,name)=>{await step(`panel-${name}`,async()=>{check(ax(s,{op:"goto",pid,path:file}).ok,`goto-${name}`);});await press(s,pid,"panelOpen");};
 
-async function launch(s,label){
+async function launch(s,label,args=[]){
   const log=openSync(path.join(s.private,`${label}-${Date.now()}.log`),"wx",0o600);
-  const child=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:"/usr/bin:/bin",TMPDIR:s.tmp,MURAGE_DATA_DIR:s.requestedRoot,MURAGE_USER_DATA:s.userData},stdio:["ignore",log,log],detached:false});
+  const child=spawn(s.exe,args,{env:{HOME:process.env.HOME,PATH:"/usr/bin:/bin",TMPDIR:s.tmp,MURAGE_DATA_DIR:s.requestedRoot,MURAGE_USER_DATA:s.userData},stdio:["ignore",log,log],detached:false});
   closeSync(log);const exit=new Promise(resolve=>child.once("exit",(code,signal)=>resolve({code,signal})));
   record({step:`launch-${label}`,pid:child.pid});
   await until(()=>ax(s,{op:"count",pid:child.pid,roles:["AXWindow"],label:"__none__"}).windows>0,120000,`window-${label}`);
@@ -232,11 +262,17 @@ async function prepare(){
   const {closedControlDirectory}=await import("../electron/backup-closed-controller.mjs");
   const {closedInstallationIdentity,closedProfileId}=await import("../electron/backup-closed-profile.mjs");
   const keys=testAgeKeys(),f=backupFixture();f.db.close();const parent=realpathSync.native(f.parent),requestedRoot=realpathSync.native(f.data);
+  const botsFile=path.join(requestedRoot,"bots.json"),bots=JSON.parse(readFileSync(botsFile,"utf8"));
+  check(Array.isArray(bots)&&bots.length===1,"single-synthetic-fixture-bot");
+  writeFileSync(botsFile,JSON.stringify([guiBackupFixtureBot(bots[0])])+"\n");
   // Same authority components as scripts/b20-mac-native.node-test.mjs:38-41.
   mkdirSync(path.join(requestedRoot,"channels","slack"),{recursive:true});
   writeFileSync(path.join(requestedRoot,"channels","slack","connection.json"),JSON.stringify({version:1,chosen:{teamId:"TEAM",appId:"APP",ownerUserId:"OWNER",chiefBotId:"bot"},identity:{teamId:"TEAM",userId:"UBOT",botId:"BOT"},enabled:true,paused:false,binding:{connectionId:"fixture-connection",teamId:"TEAM",appId:"APP",botUserId:"UBOT",botId:"BOT",ownerUserId:"OWNER",dmId:"DOWNER",chiefBotId:"bot"},pairing:null}));
   writeFileSync(path.join(requestedRoot,"startup-background.json"),JSON.stringify({keepRunning:false,startAtLogin:false}));
-  writeFileSync(path.join(requestedRoot,"routines.json"),JSON.stringify({version:1,routines:[{id:"routine",name:"Fixture routine",prompt:"Synthetic prompt",botId:"bot",enabled:true,schedule:{type:"daily",time:"09:00",weekdays:[1]},durationMinutes:5,nextRunAt:1,createdAt:1,updatedAt:1}],runs:[{id:"run",routineId:"routine",routineName:"Fixture routine",botId:"bot",scheduledFor:1,status:"running",manual:false,createdAt:1,startedAt:1}]}));
+  writeFileSync(path.join(requestedRoot,"routines.json"),JSON.stringify(guiBackupFixtureRoutines(Date.now())));
+  // Source-cited GUI seed validity (19947871 Store/RoutineManager/restore schema/renderer), checked before the original digest is frozen.
+  const seedFindings=guiSeedStartupFindings({bots:JSON.parse(readFileSync(botsFile,"utf8")),routines:JSON.parse(readFileSync(path.join(requestedRoot,"routines.json"),"utf8")),now:Date.now()});
+  record({step:"gui-seed-validity",findings:seedFindings});check(seedFindings.length===0,"gui-seed-startup-idempotent");
   for(const name of ["userData","archives","keys"])mkdirSync(path.join(parent,name),{mode:0o700});
   const userData=realpathSync.native(path.join(parent,"userData")),destination=realpathSync.native(path.join(parent,"archives")),keyFile=path.join(parent,"keys","independent-recovery-key");
   writeFileSync(keyFile,keys.identity,{flag:"wx",mode:0o600});
@@ -264,20 +300,21 @@ async function probe(){
       run("/usr/sbin/screencapture",["-x",path.join(E,"probe-launch.png")]);
       writeAtomic(path.join(E,"probe-ax-tree.json"),JSON.stringify({pid:app.pid,...tree},null,1));
       record({step:"probe-settings-entry",admission,treeCount:tree?.count,truncated:tree?.truncated,treeFile:"probe-ax-tree.json",screenshot:"probe-launch.png",remainingProbes:Object.entries(UI).filter(([key,value])=>value.probe&&key!=="settingsEntry").map(([key])=>key)});
-    }finally{await quit(s,app,"probe");}
+    }finally{await quit(s,app,"probe");recordSetupDrift(s,"probe");await finishSetup(s,"probe");}
   }
   check(admission?.ok,"settings-entry-admitted");
   s.settingsEntry={label:admission.label,roles:admission.roles,probedAt:new Date().toISOString()};saveState(s);
 }
 async function launchConfigure(){
-  const s=loadState();check(s.manifest&&s.settingsEntry?.label&&!s.installed,"probed-not-installed");const app=await launch(s,"configure");
+  const s=loadState();check(s.manifest&&s.settingsEntry?.label&&!s.installed,"probed-not-installed");await beforeSetup(s,"configure");const app=await launch(s,"configure");
   await openBackupSettings(s,app.pid);await press(s,app.pid,"chooseRefs");
   await choosePath(s,app.pid,s.destination,"destination");await choosePath(s,app.pid,s.keyFile,"key");await press(s,app.pid,"saveRefs");await waitText(s,app.pid,"refsNotice");
   await press(s,app.pid,"prepareJob");await waitText(s,app.pid,"staged");await press(s,app.pid,"registerJob");await press(s,app.pid,"installJob");await waitText(s,app.pid,"installed");
   const job=await step("label-loaded",()=>{const value=launchdJob(s);check(value&&exists(s.plist),"exact-label-and-plist");return value;});
   s.dueAt=await configureDue(s,app.pid,5);
   await step("safe-storage-custody",()=>{check(exists(path.join(s.userData,"credentials.bin"))&&keychainItem(s)===0,"credentials-bin-and-keychain-item");return{credentialsBin:true,keychainItem:"present (value not read)"};});
-  s.plistSha256=sha(readFileSync(s.plist));await quit(s,app,"configure");
+  s.plistSha256=sha(readFileSync(s.plist));await quit(s,app,"configure");recordSetupDrift(s,"configure");
+  await finishSetup(s,"configure","preScheduled",()=>Date.now()<s.dueAt-60000&&!coordinatorState(s)?.lastClosedResult&&archives(s).length===0);
   s.installed=true;saveState(s);record({step:"configured",label:s.label,plistSha256:s.plistSha256,dueAt:new Date(s.dueAt).toISOString(),job});
 }
 async function awaitScheduled(){
@@ -288,7 +325,7 @@ async function awaitScheduled(){
     const done=state?.lastClosedResult?.status==="verified"&&state.lastVerified&&list.length===1&&runs>=runsBefore+1&&[...seen].every(pid=>!alive.has(pid));
     return done?{state,list,runs}:null;
   },s.dueAt-Date.now()+8*60000,"scheduled-verified",1000);
-  const bytes=readFileSync(path.join(s.destination,result.list[0])),rule=sidecarRule(s.original,digestTree(s.requestedRoot)),job=launchdJob(s);
+  const bytes=readFileSync(path.join(s.destination,result.list[0])),rule=await operationEnd(s,"preScheduled","scheduled"),job=launchdJob(s);
   record({step:"scheduled-capture",runsBefore,runsAfter:result.runs,sampledDueSpawns:[...seen],spawnSampling:SPAWN_SAMPLING,job,lastClosedResult:result.state.lastClosedResult,lastVerified:result.state.lastVerified,archiveSha256:sha(bytes),archiveBytes:bytes.length,sidecars:rule});
   check(result.state.lastVerified.sha256===sha(bytes)&&result.state.lastVerified.bytes===bytes.length,"receipt-matches-archive");check(rule.ok,"original-sidecar-rule");
   Object.assign(s,{scheduled:true,archive:path.join(s.destination,result.list[0]),archiveSha256:sha(bytes),lastVerified:result.state.lastVerified,runsAfterCapture:job?.runs});saveState(s);
@@ -298,6 +335,7 @@ async function noReplay(){
   await until(()=>{for(const p of listing())if(p.command.startsWith(s.exe+" --murage-backup-due"))due.add(p.pid);return launchdJob(s).runs>=start+2;},240000,"two-further-runs",1000);
   const state=coordinatorState(s);record({step:"no-replay",spawnSampling:SPAWN_SAMPLING,runsFrom:start,runsTo:launchdJob(s).runs,dueSpawns:[...due],archives:archives(s).length,lastVerified:state.lastVerified});
   check(due.size===0&&archives(s).length===1&&same(state.lastVerified,s.lastVerified),"no-replay");
+  await operationEnd(s,"preScheduled","no-replay");
 }
 async function busy(){
   // Isolated owner case: the app is CLOSED and a separate owned process holds the
@@ -305,9 +343,10 @@ async function busy(){
   // which configure requires) cannot race the scheduled closed spawn. Packaged
   // main refuses at acquireDesktopDataOwner (main.mjs:3172,3430) without capture;
   // the retained due occurrence must then capture exactly once after release.
-  const s=loadState();check(s.scheduled&&!s.busyChecked,"busy-pending");const app=await launch(s,"busy-configure");
+  const s=loadState();check(s.scheduled&&!s.busyChecked,"busy-pending");await beforeSetup(s,"busy-configure");const app=await launch(s,"busy-configure");
   await openBackupSettings(s,app.pid);await press(s,app.pid,"disableSchedule");const due=await configureDue(s,app.pid,4);await quit(s,app,"busy-configure");
   check(Date.now()<due-30000,"busy-owner-before-due");
+  await finishSetup(s,"busy-configure","preBusy",()=>Date.now()<due-30000&&archives(s).length===1&&same(coordinatorState(s)?.lastVerified,s.lastVerified));
   const lease=new URL("../electron/data-dir-lease.mjs",import.meta.url).href;
   const holder=spawn(process.execPath,["--input-type=module","-e",`import {acquireDataDirLease} from ${JSON.stringify(lease)};const owned=acquireDataDirLease(${JSON.stringify(s.requestedRoot)});process.stdout.write("held\\n");process.stdin.resume();process.stdin.on("end",()=>{owned.release();process.exit(0);});`],{stdio:["pipe","pipe","ignore"],env:{PATH:"/usr/bin:/bin",HOME:process.env.HOME}});
   const holderExit=new Promise(resolve=>holder.once("exit",code=>resolve(code)));let text="";holder.stdout.on("data",chunk=>{text+=chunk;});
@@ -323,15 +362,16 @@ async function busy(){
   }finally{holder.stdin.end();}
   check(await Promise.race([holderExit,sleep(30000).then(()=>null)])===0,"busy-owner-released");
   const after=await until(()=>{const state=coordinatorState(s),list=archives(s);return state?.lastClosedResult?.status==="verified"&&list.length===2&&state.lastVerified?.sha256!==s.lastVerified.sha256?{state,list}:null;},5*60000,"busy-retained-due-captured",5000);
-  const added=after.list.find(name=>path.join(s.destination,name)!==s.archive),bytes=readFileSync(path.join(s.destination,added)),rule=sidecarRule(s.original,digestTree(s.requestedRoot));
+  const added=after.list.find(name=>path.join(s.destination,name)!==s.archive),bytes=readFileSync(path.join(s.destination,added)),rule=await operationEnd(s,"preBusy","busy");
   record({step:"busy-released-capture",lastClosedResult:after.state.lastClosedResult,lastVerified:after.state.lastVerified,archiveSha256:sha(bytes),sidecars:rule});
   check(after.state.lastVerified.sha256===sha(bytes)&&after.state.lastVerified.bytes===bytes.length&&rule.ok,"busy-released-receipt");
   Object.assign(s,{busyChecked:true,busyArchive:path.join(s.destination,added),busyLastVerified:after.state.lastVerified});saveState(s);
 }
 async function remove(){
-  const s=loadState();check(s.scheduled&&!s.removed,"remove-pending");const app=await launch(s,"remove");
+  const s=loadState();check(s.scheduled&&!s.removed,"remove-pending");await beforeSetup(s,"remove");const app=await launch(s,"remove");
   await openBackupSettings(s,app.pid);await press(s,app.pid,"disableRemove");await waitText(s,app.pid,"removed");
   await step("registration-absent",()=>{check(launchdJob(s)===null&&!exists(s.plist),"label-and-plist-absent");});await quit(s,app,"remove");
+  await finishSetup(s,"remove");
   const pointer=JSON.parse(readFileSync(path.join(s.control,"closed-job-pointer.json"),"utf8")),text=readFileSync(path.join(s.control,pointer.directory,`${s.label}.plist`),"utf8");
   const argv=[.../<key>ProgramArguments<\/key><array>(.*?)<\/array>/s.exec(text)[1].matchAll(/<string>(.*?)<\/string>/gs)].map(m=>m[1].replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&quot;",'"').replaceAll("&apos;","'").replaceAll("&amp;","&"));
   check(argv[0]===s.exe&&argv.length===4,"staged-program");
@@ -341,9 +381,12 @@ async function remove(){
 }
 async function restore(){
   const s=loadState();check(s.removed&&!s.restored,"restore-pending");const {resolveInstallationSelection}=await import("../electron/installation-selection.mjs");
-  const first=await launch(s,"restore");await openBackupSettings(s,first.pid);await press(s,first.pid,"backupMode");await press(s,first.pid,"backupModeConfirm");
+  await beforeSetup(s,"restore");const first=await launch(s,"restore");await openBackupSettings(s,first.pid);await press(s,first.pid,"backupMode");await press(s,first.pid,"backupModeConfirm");
   await first.exit;// Product relaunches itself (electron/main.mjs:295); track that exact bundle process.
-  const recovery=await step("backup-mode-process",()=>until(()=>{const p=bundleProcesses(s).find(p=>p.command.startsWith(s.exe)&&p.command.includes("--murage-backup-mode"));return p?{pid:p.pid,exit:new Promise(()=>{})}:null;},60000,"backup-mode-relaunch"));
+  const entered=await step("backup-mode-process",()=>until(()=>{const p=bundleProcesses(s).find(p=>p.command.startsWith(s.exe)&&p.command.includes("--murage-backup-mode"));return p?{pid:p.pid}:null;},60000,"backup-mode-relaunch"));
+  check(ax(s,{op:"quit",pid:entered.pid}).ok,"quit-recovery-before-baseline");
+  await finishSetup(s,"restore","preRestore",()=>sha(readFileSync(s.archive))===s.archiveSha256&&!s.restored);
+  const recovery=await launch(s,"restore-operation",["--murage-backup-mode"]);
   await press(s,recovery.pid,"inspectEncrypted",120000);await choosePath(s,recovery.pid,s.archive,"archive");await choosePath(s,recovery.pid,s.keyFile,"recovery-key");await waitText(s,recovery.pid,"inspected",120000);
   await press(s,recovery.pid,"restoreEncrypted");await press(s,recovery.pid,"restoreConfirm");
   const review=await step("review-process",()=>until(()=>{const p=bundleProcesses(s).find(p=>p.command.startsWith(s.exe)&&p.pid!==recovery.pid&&!p.command.includes("--murage-backup-mode"));return p?{pid:p.pid}:null;},300000,"review-relaunch",3000));
@@ -355,9 +398,15 @@ async function restore(){
   const markers={selected:selected.selected===true&&target!==s.requestedRoot,engineDiscovery:config.engineDiscovery==="explicit",instancesDisabled:Object.values(config.instances??{}).every(value=>value.enabled===false),credentialCanaryAbsent:!JSON.stringify(config).includes("FAKE-CREDENTIAL-CANARY"),
     botAuthority:bot.autoApprove===false&&bot.computer==="off"&&bot.browser===false&&bot.composio===false&&bot.autoStartVps===false&&same(bot.resumeCursors,{}),routineDisabled:routines.routines[0].enabled===false&&routines.runs[0].status==="cancelled",
     channelsAbsent:!exists(path.join(target,"channels")),startupAbsent:!exists(path.join(target,"startup-background.json")),connectionsFresh:same(Object.keys(connections).sort(),["id","version"]),companionAbsent:!exists(path.join(target,"companion")),review:reviewFile.status==="review-required",memoryPaused:memory==="paused"};
-  const rule=sidecarRule(s.original,digestTree(s.requestedRoot)),archiveUnchanged=sha(readFileSync(s.archive))===s.archiveSha256;
-  record({step:"restored",target,markers,sidecars:rule,archiveUnchanged});check(Object.values(markers).every(Boolean)&&rule.ok&&archiveUnchanged,"restored-paused-originals-unchanged");
+  check(Boolean(s.preRestore),"restore-baseline-required");
+  const rule=sidecarRule(s.preRestore,digestTree(s.requestedRoot)),archiveUnchanged=sha(readFileSync(s.archive))===s.archiveSha256;
+  // Evidence only (not a marker): task-level authority is the effective turn authority (store.ts:2046-2048) and restore keeps it (installation-restore-preparation.ts:103).
+  const taskAuthority=(Array.isArray(bot.tasks)?bot.tasks:[]).map(task=>({threadId:task?.threadId??null,autoApprove:task?.autoApprove??null,alwaysAllowCount:Array.isArray(task?.alwaysAllow)?task.alwaysAllow.length:null,resumeCursorsCleared:same(task?.resumeCursors,{})}));
+  record({step:"restored",target,markers,sidecars:rule,archiveUnchanged,taskAuthority,limitations:["Idle GUI seed: running-to-cancelled conversion is not exercised here; retain its separate qualification requirement.",
+    "The seeded run is already terminal (cancelled) before capture; routineDisabled's runs[0] status is pass-through (installation-restore-preparation.ts:21,125), never evidence of running/waiting-to-cancelled conversion.",
+    "Task-level autoApprove/alwaysAllow after restore are recorded in taskAuthority, not gated; seeded from store.ts:988 (tasks[0].autoApprove true). Gating is a root decision."]});check(Object.values(markers).every(Boolean)&&rule.ok&&archiveUnchanged,"restored-paused-originals-unchanged");
   check(ax(s,{op:"quit",pid:review.pid}).ok,"quit-review");await until(()=>bundleProcesses(s).length===0,120000,"review-exit",1000);
+  await operationEnd(s,"preRestore","restore-after-exit");
   s.restored=true;saveState(s);
 }
 async function cleanupVerify(){
