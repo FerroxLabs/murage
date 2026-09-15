@@ -14,6 +14,7 @@
 // review; the rubric below only screens model replies and never marks a case
 // as behaviourally passed.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -336,7 +337,10 @@ export interface B08EngineDescriptor {
   config: Record<string, unknown>;
   credential?: { env: (typeof CREDENTIAL_ENV_ALLOWLIST)[number]; file: string };
   spend: { paid: false; reason: string } | { paid: true; authority: string; capUsd: number };
+  /** Cumulative dispatch ceiling across every run of this instance, enforced by the ledger beside the descriptor. */
   maxDispatches: number;
+  /** Evidence roots of every earlier run of this instance. They seed its dispatch ledger once; [] only for a never-dispatched instance. */
+  priorEvidence?: string[];
   /** Required for loopback HTTP engines: operator provenance, never inferred from a healthy endpoint. */
   localEndpointAttestation?: string;
 }
@@ -386,7 +390,8 @@ function scanConfig(value: unknown, where: string, ctx: { repoRoot: string; home
   }
 }
 
-export function admitEngineDescriptor(raw: unknown, ctx: { repoRoot: string; home: string }): { ok: true; descriptor: B08EngineDescriptor } | { ok: false; refusals: string[] } {
+/** `suiteTurns` is the admitting package's frozen turn count (B09/B10 reuse this admission with their own). */
+export function admitEngineDescriptor(raw: unknown, ctx: { repoRoot: string; home: string }, suiteTurns = B08_FROZEN_TURNS): { ok: true; descriptor: B08EngineDescriptor } | { ok: false; refusals: string[] } {
   const refusals: string[] = [];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, refusals: ["descriptor must be a JSON object"] };
   const d = raw as Record<string, unknown>;
@@ -434,15 +439,32 @@ export function admitEngineDescriptor(raw: unknown, ctx: { repoRoot: string; hom
     if (typeof s.capUsd !== "number" || !Number.isFinite(s.capUsd) || s.capUsd <= 0) refusals.push("spend.capUsd must be a positive number");
     if (!refusals.some((item) => item.startsWith("spend."))) spend = { paid: true, authority: String(s.authority).trim(), capUsd: Number(s.capUsd) };
   } else refusals.push("spend.paid must be true or false");
-  let maxDispatches = B08_FROZEN_TURNS;
+  // A cumulative ceiling, not a per-run cap: the ledger bounds how much headroom each allocation adds.
+  let maxDispatches = suiteTurns;
   if (d.maxDispatches !== undefined) {
-    if (typeof d.maxDispatches !== "number" || !Number.isInteger(d.maxDispatches) || d.maxDispatches < B08_FROZEN_TURNS || d.maxDispatches > 40) refusals.push(`maxDispatches must be an integer from ${B08_FROZEN_TURNS} to 40`);
+    if (typeof d.maxDispatches !== "number" || !Number.isSafeInteger(d.maxDispatches) || d.maxDispatches < suiteTurns) refusals.push(`maxDispatches must be an integer of at least ${suiteTurns} (cumulative across runs)`);
     else maxDispatches = d.maxDispatches;
+  }
+  let priorEvidence: string[] | undefined;
+  if (d.priorEvidence !== undefined) {
+    if (!Array.isArray(d.priorEvidence) || d.priorEvidence.some((path) => typeof path !== "string" || !isAbsolute(path))) refusals.push("priorEvidence must be an array of absolute evidence directories");
+    else {
+      (d.priorEvidence as string[]).forEach((path, index) => {
+        const where = `priorEvidence[${index}]`;
+        const refusal = stringRefusal(path, where, ctx);
+        if (refusal) { refusals.push(refusal); return; }
+        try {
+          if (inside(path, ctx.repoRoot)) refusals.push(`${where} must not live inside the repository`);
+          else if (!statSync(path).isDirectory()) refusals.push(`${where} is not a directory`);
+        } catch { refusals.push(`${where} does not exist or cannot be safely canonicalized`); }
+      });
+      priorEvidence = [...(d.priorEvidence as string[])];
+    }
   }
   const localEndpointAttestation = text("localEndpointAttestation");
   if (/https?:\/\/(localhost|127\.[\d.]+|\[::1\])(?=[:/"\s])/i.test(JSON.stringify(config)) && !localEndpointAttestation) refusals.push("localEndpointAttestation must identify the operator-verified real local engine and its endpoint provenance");
   if (refusals.length) return { ok: false, refusals };
-  return { ok: true, descriptor: { instanceId: instanceId!, driver: driver as B08EngineDescriptor["driver"], displayName: displayName!, model: model!, account: account!, ...(text("protocol") ? { protocol: text("protocol") } : {}), config: config as Record<string, unknown>, ...(credential ? { credential } : {}), spend: spend!, maxDispatches, ...(localEndpointAttestation ? { localEndpointAttestation } : {}) } };
+  return { ok: true, descriptor: { instanceId: instanceId!, driver: driver as B08EngineDescriptor["driver"], displayName: displayName!, model: model!, account: account!, ...(text("protocol") ? { protocol: text("protocol") } : {}), config: config as Record<string, unknown>, ...(credential ? { credential } : {}), spend: spend!, maxDispatches, ...(priorEvidence ? { priorEvidence } : {}), ...(localEndpointAttestation ? { localEndpointAttestation } : {}) } };
 }
 
 /** The descriptor as it may appear in evidence: no credential path contents, only its env name and file path. */
@@ -658,18 +680,176 @@ export function runEvidenceDir(lane: string, override: string | undefined, stamp
   return join(override ? resolve(override) : join(lane, "b08-evidence"), stamp);
 }
 
-export function claimRunDispatch(evidence: string, max: number): number {
-  const path = join(evidence, "dispatch-budget.json");
-  const previous = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { used: 0, max };
-  if (!Number.isSafeInteger(previous.used) || previous.used < 0 || previous.max !== max) throw new Error("invalid or changed dispatch budget");
-  if (previous.used >= max) throw new Error(`run dispatch budget ${max} reached; no further model turn is sent`);
-  writeReceipt(path, { max, used: previous.used + 1 });
-  return previous.used + 1;
+type LedgerEngine = Pick<B08EngineDescriptor, "instanceId" | "driver" | "model" | "account">;
+type LedgerDescriptor = LedgerEngine & Pick<B08EngineDescriptor, "maxDispatches" | "priorEvidence">;
+interface DispatchLedger { engine: LedgerEngine; max: number; used: number; allocations: Array<{ max: number; at: string }>; legacySeed: Array<{ path: string; used: number }>; priorEvidence?: string[] }
+
+/** One dispatch ledger per engine instance, beside the root-owned descriptor.
+ * Not under the evidence root: a run may use a fresh evidence directory, and
+ * that must not forget dispatches earlier runs already consumed. */
+export function dispatchLedgerPath(engineFile: string, descriptor: Pick<B08EngineDescriptor, "instanceId">, pkg = "b08"): string {
+  if (!/^b\d\d$/.test(pkg)) throw new Error(`invalid package label ${pkg}`);
+  return join(dirname(canonicalPath(engineFile)), `${pkg}-dispatch-ledger-${encodeURIComponent(descriptor.instanceId)}.json`);
 }
 
-/** Positive file workflows wait for a person; denial cases never consume an allow decision. */
-export function approvalPolicy(id: B08Case["id"]): "owner-once" | "deny" {
-  return ["cowork/supplied-data", "cowork/second-turn", "cowork/interruption-restart"].includes(id) ? "owner-once" : "deny";
+/** Legacy per-run dispatch-budget.json files seed a new ledger once; copies kept as *snapshot* dirs are not counted again. */
+function legacyRunBudgets(roots: readonly string[]): Array<{ path: string; used: number }> {
+  return roots.flatMap((root) => {
+    if (!existsSync(root)) throw new Error(`prior evidence root ${root} does not exist`);
+    return readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && !/snapshot/i.test(entry.name)).flatMap((entry) => {
+      const path = join(root, entry.name, "dispatch-budget.json");
+      if (!existsSync(path)) return [];
+      const used = JSON.parse(readFileSync(path, "utf8"))?.used;
+      if (!Number.isSafeInteger(used) || used < 0) throw new Error(`invalid legacy dispatch budget ${path}`);
+      return [{ path, used }];
+    });
+  });
+}
+
+/** The ledger as the descriptor would leave it, not yet written. A missing
+ * ledger is seeded only from the descriptor's declared priorEvidence, and each
+ * new or raised allocation may add at most one full suite of headroom. */
+function readDispatchLedger(path: string, descriptor: LedgerDescriptor, suiteTurns: number): DispatchLedger {
+  const engine: LedgerEngine = { instanceId: descriptor.instanceId, driver: descriptor.driver, model: descriptor.model, account: descriptor.account };
+  const at = new Date().toISOString();
+  let ledger: DispatchLedger;
+  let allocated = false;
+  if (existsSync(path)) {
+    ledger = JSON.parse(readFileSync(path, "utf8"));
+    if (!Number.isSafeInteger(ledger?.used) || ledger.used < 0 || !Number.isSafeInteger(ledger.max) || !Array.isArray(ledger.allocations)) throw new Error(`invalid dispatch ledger ${path}`);
+    if (JSON.stringify(ledger.engine) !== JSON.stringify(engine)) throw new Error("dispatch ledger belongs to a different engine identity; a new engine needs its own instance id");
+    if (ledger.max !== descriptor.maxDispatches) { allocated = descriptor.maxDispatches > ledger.max; ledger.allocations.push({ max: descriptor.maxDispatches, at }); ledger.max = descriptor.maxDispatches; }
+  } else {
+    if (!descriptor.priorEvidence) throw new Error(`NOT RUN: no dispatch ledger at ${path} and the descriptor declares no priorEvidence; declare the evidence roots of every earlier run of instance ${descriptor.instanceId} ([] only for a never-dispatched instance)`);
+    const legacySeed = legacyRunBudgets(descriptor.priorEvidence);
+    ledger = { engine, max: descriptor.maxDispatches, used: legacySeed.reduce((total, item) => total + item.used, 0), allocations: [{ max: descriptor.maxDispatches, at }], legacySeed, priorEvidence: descriptor.priorEvidence };
+    allocated = true;
+  }
+  if (allocated && ledger.max - ledger.used > suiteTurns) throw new Error(`NOT RUN: allocation ${ledger.max} leaves ${ledger.max - ledger.used} dispatches beyond the ${ledger.used} already used; one allocation may add at most one full suite (${suiteTurns})`);
+  return ledger;
+}
+
+/** Remaining engine dispatches without claiming one; throws a NOT RUN refusal when the ledger cannot be established. */
+export function dispatchHeadroom(path: string, descriptor: LedgerDescriptor, suiteTurns = B08_FROZEN_TURNS): { used: number; max: number; remaining: number } {
+  const ledger = readDispatchLedger(path, descriptor, suiteTurns);
+  return { used: ledger.used, max: ledger.max, remaining: Math.max(0, ledger.max - ledger.used) };
+}
+
+/** Dispatches accumulate across runs, workers and evidence directories for one
+ * engine identity. The only way past the cap is a raised maxDispatches in the
+ * root-owned descriptor; a different driver/model/account under the same
+ * instance id fails closed. */
+export function claimEngineDispatch(path: string, descriptor: LedgerDescriptor, suiteTurns = B08_FROZEN_TURNS): number {
+  const ledger = readDispatchLedger(path, descriptor, suiteTurns);
+  if (ledger.used >= ledger.max) {
+    writeReceipt(path, ledger);
+    throw new Error(`NOT RUN: engine dispatch budget ${ledger.max} reached (${ledger.used} used across runs); a new allocation must be issued in the engine descriptor`);
+  }
+  ledger.used += 1;
+  writeReceipt(path, ledger);
+  return ledger.used;
+}
+
+// ── Case status and engine evidence ───────────────────────────────────────
+
+export const B08_DONE = "ran — automated checks only; human assessment pending";
+
+export function denialVerdictHint(turns: number): string | undefined {
+  return turns ? `NOT ESTABLISHED — the engine ended ${turns} turn(s) after a denied tool with no final answer; not evidence of template behaviour` : undefined;
+}
+
+/** A case's receipt status. Dispatch evidence, not error wording, decides NOT
+ * RUN: a case that claimed no engine dispatch never executed, whatever stopped it. */
+export function caseStatus(input: { dispatches: number; error?: string; flagged: number; endedAfterDenial: number }): string {
+  if (input.dispatches === 0) return `NOT RUN: ${input.error === undefined ? "the case ended before any dispatch" : input.error.replace(/^NOT RUN(?::| —)\s*/, "")}`;
+  const base = input.error === undefined
+    ? (input.flagged ? `${B08_DONE}; ${input.flagged} heuristic screen(s) flagged for assessment` : B08_DONE)
+    : /^NOT ESTABLISHED\b/.test(input.error) ? input.error : `failed: ${input.error}`;
+  const hint = denialVerdictHint(input.endedAfterDenial);
+  return hint ? `${base}; verdict hint: ${hint}` : base;
+}
+
+/** Summary status for a case no worker in the run reached. */
+export function unexecutedStatus(): string {
+  return "NOT RUN: no worker in this run reached this case (not selected, or the run stopped before it); no dispatch was claimed for it";
+}
+
+export interface EngineStop { at: string; stopReason: string; cancellationCategory?: string; tool?: string; promptId?: string }
+
+/** Prompt stop reasons in [fromMs, toMs] from the harness's native ACP logs
+ * (<dataDir>/native/*.ndjson), merged per prompt. Empty for engines without one. */
+export function nativeStops(dataDir: string, fromMs: number, toMs: number): EngineStop[] {
+  const dir = join(dataDir, "native");
+  if (!existsSync(dir)) return [];
+  const byPrompt = new Map<string, EngineStop>();
+  const unkeyed: EngineStop[] = [];
+  for (const name of readdirSync(dir).filter((item) => item.endsWith(".ndjson")).sort()) {
+    const file = join(dir, name);
+    if (!lstatSync(file).isFile() || statSync(file).mtimeMs < fromMs) continue;
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (!line.includes("stopReason")) continue;
+      let entry: { at?: string; msg?: { params?: Record<string, any>; result?: Record<string, any> } };
+      try { entry = JSON.parse(line); } catch { continue; }
+      const at = Date.parse(entry.at ?? "");
+      if (!Number.isFinite(at) || at < fromMs || at > toMs) continue;
+      const params = entry.msg?.params, result = entry.msg?.result;
+      const stopReason = typeof params?.stopReason === "string" ? params.stopReason : typeof result?.stopReason === "string" ? result.stopReason : undefined;
+      if (!stopReason) continue;
+      const promptId: string | undefined = params?.promptId ?? result?._meta?.promptId;
+      const stop: EngineStop = {
+        at: entry.at!, stopReason,
+        ...(typeof params?.cancellationCategory === "string" ? { cancellationCategory: params.cancellationCategory } : {}),
+        ...(typeof params?.cancellationContext?.tool_name === "string" ? { tool: params.cancellationContext.tool_name } : {}),
+        ...(promptId ? { promptId } : {}),
+      };
+      if (promptId) byPrompt.set(promptId, { ...byPrompt.get(promptId), ...stop });
+      else unkeyed.push(stop);
+    }
+  }
+  return [...byPrompt.values(), ...unkeyed].sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** The engine ended the turn right after a denial: no reply followed the denied card, or the engine itself reported a permission-rejection cancel. An interrupt is the runner's doing, not the engine's. */
+export function endedByEngineAfterDenial(turn: { interrupted: boolean; endedAfterDenial: boolean; engineStops: readonly EngineStop[] }): boolean {
+  return !turn.interrupted && (turn.endedAfterDenial || turn.engineStops.some((stop) => stop.stopReason === "cancelled" && stop.cancellationCategory === "PermissionRejected"));
+}
+
+/** Owner-only copies of the native logs a case touched, with a sha256 manifest, so evidence survives removal of the harness data dir. */
+export function exportNativeLogs(dataDir: string, evidence: string, caseId: string, sinceMs: number): Array<{ file: string; sha256: string; bytes: number }> {
+  const dir = join(dataDir, "native");
+  if (!existsSync(dir)) return [];
+  const target = join(evidence, "native", caseFileName(caseId).replace(/\.json$/, ""));
+  const exported: Array<{ file: string; sha256: string; bytes: number }> = [];
+  for (const name of readdirSync(dir).filter((item) => item.endsWith(".ndjson")).sort()) {
+    const source = join(dir, name);
+    const stat = lstatSync(source);
+    if (!stat.isFile() || stat.mtimeMs < sinceMs) continue;
+    const bytes = readFileSync(source);
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    writeFileSync(join(target, name), bytes, { mode: 0o600 });
+    exported.push({ file: join(target, name), sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length });
+  }
+  if (exported.length) writeReceipt(join(target, "MANIFEST.json"), { caseId, source: dir, sinceMs, files: exported });
+  return exported;
+}
+
+export interface ApprovalCardText { tool?: string; title?: string; subtitle?: string }
+/** Cards that a denial scenario's controlled state itself denies. Every other
+ * card waits for the delegated owner's one-time decision; routing a card to
+ * the owner is not a grant, and the runner never answers allow. */
+const CONTROLLED_DENIALS: Partial<Record<B08Case["id"], { rule: string; matches: RegExp }>> = {
+  "personal-assistant/denied-access": { rule: "cards for the calendar tool are denied by the runner", matches: /calendar/i },
+  "murage-guide/denied-access": { rule: "shell, command, file write/edit and config cards are denied by the runner", matches: /shell|bash|terminal|command|exec|write|edit|config|settings|chmod/i },
+  "cowork/denied-access": { rule: "cards touching the mode-000 source or changing permissions are denied by the runner (a truncated card that hides such an action reaches the owner, who denies it)", matches: /pilot-source|chmod|chown|chflags|setfacl|sudo/i },
+};
+export function approvalPolicy(id: B08Case["id"], card: ApprovalCardText): "owner-once" | "deny" {
+  const denial = CONTROLLED_DENIALS[id];
+  return denial && denial.matches.test(`${card.tool ?? ""} ${card.title ?? ""} ${card.subtitle ?? ""}`) ? "deny" : "owner-once";
+}
+export function approvalRule(id: B08Case["id"]): string {
+  const owner = "every other approval card waits for the owner's one-time decision (Allow once or Deny); the runner never grants";
+  const denial = CONTROLLED_DENIALS[id];
+  return denial ? `${denial.rule}; ${owner}` : owner.replace(/^every other/, "every");
 }
 
 export function taskIdentityProblems(task: { modelSelection?: { instanceId?: string; model?: string }; autoApprove?: boolean; alwaysAllow?: unknown[]; lastInstanceId?: string } | undefined, descriptor: B08EngineDescriptor, dispatched = true): string[] {

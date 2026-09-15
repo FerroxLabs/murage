@@ -283,9 +283,33 @@ function flattenSummary(input, prefix = "", depth = 0, out = {}) {
   return out;
 }
 
+const CHANNELS = ["telegram", "slack", "discord"];
+const CHANNEL_FLAGS = ["enabled", "paired", "connecting", "busy", "configured", "appConfigured", "botConfigured", "canResume", "canReplaceToken", "requiresRevoke", "pairingExpired"];
+const CHANNEL_COUNTS = ["pending", "uncertain", "rejected", "needsReview"];
+const CHANNEL_STATES = ["idle", "active", "retry", "blocked", "pair-required", "verifying", "connecting", "connected", "disconnected", "stopped"];
+
+export function summarizeChannelStatus(status) {
+  if (!status || typeof status !== "object" || Array.isArray(status)) return { available: false };
+  const summary = { available: true };
+  for (const key of CHANNEL_FLAGS) if (typeof status[key] === "boolean") summary[key] = status[key];
+  for (const key of CHANNEL_COUNTS) if (Number.isSafeInteger(status[key]) && status[key] >= 0) summary[key] = status[key];
+  for (const key of ["state", "resumeState"]) if (CHANNEL_STATES.includes(status[key])) summary[key] = status[key];
+  summary.hasError = Boolean(status.error);
+  summary.hasDeliveryError = Boolean(status.deliveryError);
+  return summary;
+}
+
+export async function collectChannelDiagnostics(readStatus) {
+  return Object.fromEntries(await Promise.all(CHANNELS.map(async channel => {
+    try { return [channel, summarizeChannelStatus(await readStatus(channel))]; }
+    catch { return [channel, { available: false }]; }
+  })));
+}
+
 export function buildDiagnosticsReport({
   appInfo = {},
   configSummary = {},
+  channelSummary = {},
   desktopLogTail,
   logTail,
   now = new Date().toISOString(),
@@ -310,6 +334,18 @@ export function buildDiagnosticsReport({
     shown += 1;
   }
   if (!shown) lines.push("(no configuration summary available)");
+  lines.push("");
+  lines.push("## Channels — status only, no accounts or message content");
+  for (const channel of CHANNELS) {
+    const input = channelSummary[channel];
+    const summary = input?.available === true ? summarizeChannelStatus(input) : { available: false };
+    // The collector removed raw error text; preserve only its two boolean signals.
+    if (summary.available) {
+      summary.hasError = input.hasError === true;
+      summary.hasDeliveryError = input.hasDeliveryError === true;
+    }
+    for (const [key, value] of Object.entries(summary)) lines.push(`${channel}.${key}=${value}`);
+  }
   lines.push("");
   lines.push("## Desktop crash events — privacy-safe metadata only");
   if (desktopLogTail && desktopLogTail.trim()) {

@@ -105,8 +105,8 @@ export class TelegramApprovals {
       const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + PERMISSION_TTL, consumed: false };
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
       const message = await this.transport.sendMessage({ chatId: owner.chatId,
-        text: `${approval.summary}\n\nAllow once or deny this exact action. Expires in 10 minutes.`,
-        buttons: [{ text: "Allow once", data: `${offer.nonce}:a` }, { text: "Deny", data: `${offer.nonce}:d` }], signal });
+        text: `${approval.summary}\n\nApprove once or deny this exact action. Expires in 10 minutes.`,
+        buttons: [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Deny", data: `${offer.nonce}:d` }], signal });
       if (active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
     }
   }

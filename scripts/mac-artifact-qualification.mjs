@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
+import { verifyGepaBundle } from "../server/gepa-resource.ts";
 
 assert.equal(process.platform, "darwin");
 assert.equal(process.arch, "arm64");
@@ -33,6 +34,7 @@ const helpers = [
   join(resources, "Murage Recorder.app/Contents/MacOS/recorder-helper"),
   join(resources, "cloudflared/cloudflared"),
   join(resources, "fuigo/fuigo"),
+  join(resources, "gepa-worker/gepa-worker"),
   join(resources, "backup-tools/arm64/age"),
   join(resources, "backup-tools/arm64/restic"),
   browser.engine, browser.chrome,
@@ -48,6 +50,8 @@ for (const path of helpers) {
 }
 for (const relative of ["server/index.js", "ui/index.html", "app.asar", "app-update.yml", "browser-engine/manifest.json", "backup-tools/LICENSE", "licenses/cloudflared-LICENSE.txt", "licenses/cloudflared-README.md", "licenses/fuigo-LICENSE.txt", "licenses/fuigo-README.md", "licenses/fuigo-THIRD_PARTY_NOTICES.md"]) file(join(resources, relative));
 assert(lstatSync(join(resources, "cua-sdk")).isDirectory());
+const gepaMetadata = JSON.parse(readFileSync("qualification-evidence/gepa-package-metadata.json", "utf8"));
+verifyGepaBundle(join(resources, "gepa-worker"), "darwin-arm64", gepaMetadata.extraMetadata.murageGepaManifests["darwin-arm64"]);
 const update = readFileSync(join(resources, "app-update.yml"), "utf8");
 assert(/^owner: FerroxLabs$/m.test(update));
 assert(/^repo: murage-releases$/m.test(update));

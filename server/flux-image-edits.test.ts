@@ -1,13 +1,16 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-import { randomUUID } from "node:crypto";
+import { basename, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { ImageGenerationService, type ImageReference } from "./image-generation.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { Store } from "./store.ts";
 import { saveImage } from "./attachments.ts";
-import { closeDatabase } from "./database.ts";
+import { closeDatabase, database } from "./database.ts";
+import { DATA_DIR } from "./config.ts";
+import { describeArtifact } from "./artifacts.ts";
+import { managedImageOutputPath } from "./output-publication.ts";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const reference = { bytes: png, mime: "image/png" as const };
@@ -101,4 +104,62 @@ it("B16 never retries rejected, uncertain, redirected or malformed Flux edits", 
   await expect(f.service.generate(request, f.hooks, [reference])).rejects.toMatchObject({ outcome: typeof mode === "number" && mode < 500 ? "failed" : "uncertain" });
   expect(f.fetcher).toHaveBeenCalledOnce(); expect(f.publish).not.toHaveBeenCalled(); expect(f.finish).toHaveBeenCalledOnce();
  }
+});
+it("B16 accepts exactly 4 x 5 MiB and 2 x 10 MiB references over real local HTTP and refuses one byte over 20 MiB before approval or POST", async () => {
+ const MiB = 1024 * 1024;
+ const sized = (bytes: number, fill: number) => { const buffer = Buffer.alloc(bytes, fill); png.copy(buffer, 0, 0, 8); return { bytes: buffer, mime: "image/png" as const }; };
+ let posts = 0;
+ const forms: FormData[] = [];
+ const server = createServer(async (req, res) => {
+  posts++; const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  forms.push(await new Request("http://fixture.invalid", { method: "POST", headers: { "content-type": req.headers["content-type"]! }, body: Buffer.concat(chunks) }).formData());
+  res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(response()));
+ });
+ await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+ try {
+  const address = server.address(); if (!address || typeof address === "string") throw Error("local fixture did not bind");
+  const local = (f: ReturnType<typeof fixture>) => f.fetcher.mockImplementation(async (url, init) => {
+   expect(String(url)).toBe("https://api.fluxrouter.ai/v1/images/edits");
+   return fetch(`http://127.0.0.1:${address.port}/v1/images/edits`, init);
+  });
+  for (const refs of [[1, 2, 3, 4].map(fill => sized(5 * MiB, fill)), [1, 2].map(fill => sized(10 * MiB, fill))]) {
+   const f = fixture(); local(f); posts = 0; forms.length = 0;
+   expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(20 * MiB);
+   await f.service.generate(request, f.hooks, refs);
+   expect(f.reserve).toHaveBeenCalledOnce(); expect(f.reserve).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", referenceCount: refs.length }));
+   expect(posts).toBe(1); expect(f.fetcher).toHaveBeenCalledOnce(); expect(f.publish).toHaveBeenCalledOnce();
+   const files = forms[0]!.getAll("image[]") as File[]; expect(files).toHaveLength(refs.length);
+   for (const [i, file] of files.entries()) { const sent = Buffer.from(await file.arrayBuffer()); expect(sent.length).toBe(refs[i]!.bytes.length); expect(sent.equals(refs[i]!.bytes)).toBe(true); }
+  }
+  forms.length = 0;
+  const over = fixture(); local(over); posts = 0;
+  const refs = [sized(5 * MiB, 1), sized(5 * MiB, 2), sized(5 * MiB, 3), sized(5 * MiB + 1, 4)];
+  await expect(over.service.generate(request, over.hooks, refs)).rejects.toMatchObject({ code: "invalid-references", outcome: "not-dispatched" });
+  expect(over.reserve).not.toHaveBeenCalled(); expect(over.fetcher).not.toHaveBeenCalled(); expect(over.publish).not.toHaveBeenCalled(); expect(posts).toBe(0);
+ } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+it("B16 publishes the exact byte-distinct Flux edit output as a registered artifact whose sha256 matches the provider bytes", async () => {
+ const provided = Buffer.concat([png, Buffer.from("B16 provider output")]);
+ const f = fixture(), store = new Store(() => ({ instanceId: "b16-fidelity", model: "fixture" })), bot = store.createBot();
+ const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
+ const upload = saveImage(Buffer.concat([png, Buffer.from([9])]), "image/png");
+ store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Edit this", attachments: [{ kind: "image", path: upload.path, mime: upload.mime }] });
+ const refs = imageReferences(store, bot.threadId, [basename(upload.path)]);
+ expect(provided.equals(refs[0]!.bytes)).toBe(false); expect(provided.equals(png)).toBe(false);
+ f.fetcher.mockImplementation(async () => Response.json({ data: [{ b64_json: provided.toString("base64") }], model: "flux-image" }));
+ const operations = new ImageOperations({ store, waiting: () => {} });
+ const job = operations.execute(actor, "fidelity", request, (reserve, publish) => f.service.generate(request, { assertActive: actor.assertActive, reserve, publish }, refs));
+ await vi.waitFor(() => expect(store.messagesFor(bot.threadId).some(message => message.card?.tool === "generate_image")).toBe(true));
+ const card = store.messagesFor(bot.threadId).find(message => message.card?.tool === "generate_image")!;
+ expect(operations.resolve(bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
+ const result = await job;
+ expect(f.fetcher).toHaveBeenCalledOnce();
+ expect(readFileSync(result.artifact.path).equals(provided)).toBe(true);
+ const published = store.messagesFor(bot.threadId).filter(message => message.role === "bot" && message.attachments?.some(item => item.kind === "image"));
+ expect(published).toHaveLength(1); expect(readFileSync(published[0]!.attachments![0]!.path).equals(provided)).toBe(true);
+ expect(result.artifact.artifactId).toEqual(expect.any(String));
+ const access = { owner: true, scopes: [{ botId: bot.id, botName: bot.name, threadId: bot.threadId, workspaceRoot: managedImageOutputPath(DATA_DIR, bot.id, bot.threadId), managedOutput: true }] };
+ expect(describeArtifact(database(), join(DATA_DIR, "artifact-files"), result.artifact.artifactId!, access)).toMatchObject({ kind: "image", producer: "image-operation", threadId: bot.threadId, sha256: createHash("sha256").update(provided).digest("hex") });
+ expect(store.messagesFor(bot.threadId).find(message => message.id === card.id)?.card?.answered).toBe("allow");
+ expect((database().prepare("SELECT state FROM image_operations WHERE generation=?").get(actor.generation) as { state: string } | undefined)?.state).toBe("published");
 });

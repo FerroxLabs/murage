@@ -15,6 +15,7 @@ export type TelegramStatus = {
   pairingExpiresAt?: number | null;
   requiresRevoke?: boolean;
   canResume?: boolean;
+  canReplaceToken?: boolean;
   resumeState?: "idle" | "verifying" | "active" | "retry" | "pair-required" | "blocked";
   resumeMessage?: string | null;
 };
@@ -33,7 +34,7 @@ export function telegramStatusFrom(value: unknown): TelegramStatus {
   if (status.resumeState !== undefined && (typeof status.resumeState !== "string" || !resumeStates.has(status.resumeState as TelegramStatus["resumeState"]))) throw new Error("Telegram status could not be read.");
   for (const key of ["pairingExpiresAt", "deliveryRetryAt", "nextRetryAt"] as const) if (status[key] !== undefined && status[key] !== null && !isTimestamp(status[key])) throw new Error("Telegram status could not be read.");
   for (const key of ["targetBotId", "error", "deliveryError", "resumeMessage"] as const) if (status[key] !== undefined && status[key] !== null && typeof status[key] !== "string") throw new Error("Telegram status could not be read.");
-  for (const key of ["pairingExpired", "requiresRevoke", "canResume"] as const) if (status[key] !== undefined && typeof status[key] !== "boolean") throw new Error("Telegram status could not be read.");
+  for (const key of ["pairingExpired", "requiresRevoke", "canResume", "canReplaceToken"] as const) if (status[key] !== undefined && typeof status[key] !== "boolean") throw new Error("Telegram status could not be read.");
   return status as TelegramStatus;
 }
 
@@ -46,6 +47,7 @@ export function telegramHealthLabel(status: TelegramStatus | null, expired: bool
   if (status.resumeState === "verifying") return "Reconnecting to Telegram…";
   if (status.resumeState === "retry") return "Connection saved · retrying automatically";
   if (status.resumeState === "blocked" && status.canResume) return "Another app is receiving this bot";
+  if (status.resumeState === "blocked" && status.canReplaceToken) return "Token rejected · paste a new token for this bot";
   if (status.resumeState === "blocked") return status.resumeMessage?.includes("Chief") ? "Chief unavailable · revoke and re-pair" : "Connection needs attention";
   if (status.paired) return "Paired";
   if (expired) return "Pairing expired · create a new code";

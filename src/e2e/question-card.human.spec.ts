@@ -56,6 +56,7 @@ const FIXTURE = `
   const card = {
     title: 'Question', subtitle: questions[0].question, options: ['Summary', 'Detailed'],
     requestId: 'r1', questions,
+    ...(params.get('state') === 'skipped' ? { answered: 'skipped' } : {}),
     ...(params.get('state') === 'expired' ? { answered: 'expired', expired: true } : {}),
     ...(params.get('state') === 'answered'
       ? { answered: 'answer', answers: [{ id: 'q1', selected: ['Detailed'] }, { id: 'q2', selected: ['Intro', 'Outro'] }] }
@@ -65,7 +66,7 @@ const FIXTURE = `
   const h = React.createElement;
   createRoot(document.getElementById('stage')).render(
     h(QuestionCardView, {
-      card, botName: 'Sable',
+      card, botName: 'Sable', busy: params.has('busy'),
       // the connected card passes the moment its own answer was confirmed
       settledAt: params.get('state') === 'answered' ? Date.now() : null,
       onSubmit: (answers) => window.sent.push({ kind: 'submit', answers }),
@@ -384,5 +385,54 @@ test("looks like it belongs in the transcript, in every state, width and skin", 
         await testInfo.attach(name, { path: shot, contentType: "image/png" });
       }
     }
+  }
+});
+
+
+test("Other row and radio activate the custom answer before typing", async ({ page }, testInfo) => {
+  for (const width of [390, 820, 1440]) {
+    for (const skin of ["dark", "light"]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await open(page, `?skin=${skin}`);
+      const group = page.getByRole("radiogroup");
+      const own = group.getByRole("textbox");
+      const other = group.getByRole("radio", { name: "Other", exact: true });
+      await group.getByRole("radio", { name: /Summary/ }).click();
+      await group.locator("label > span").click();
+      await expect(own).toBeFocused();
+      await expect(other).toHaveAttribute("aria-checked", "true");
+      await expect(group.getByRole("radio", { name: /Summary/ })).toHaveAttribute("aria-checked", "false");
+      await page.getByRole("checkbox", { name: /Intro/ }).click();
+      await expect(page.getByRole("button", { name: "Send answer" })).toBeDisabled();
+      await group.getByRole("radio", { name: /Detailed/ }).click();
+      await expect(other).toHaveAttribute("aria-checked", "false");
+      await other.click();
+      await expect(own).toBeFocused();
+      await expect(other).toHaveAttribute("aria-checked", "true");
+      await own.pressSequentially("Custom format 2");
+      const multi = page.getByRole("group", { name: "Which sections should it include?", exact: true });
+      await multi.getByRole("checkbox", { name: "Other", exact: true }).click();
+      await expect(multi.getByRole("textbox")).toBeFocused();
+      await multi.getByRole("textbox").pressSequentially("Appendix");
+      await expect(multi.getByRole("checkbox", { name: /Intro/ })).toHaveAttribute("aria-checked", "true");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const path = testInfo.outputPath(`other-${skin}-${width}.png`);
+      await page.screenshot({ path, fullPage: true });
+      await testInfo.attach(`other-${skin}-${width}`, { path, contentType: "image/png" });
+      await multi.getByRole("textbox").press("Enter");
+      expect(await sent(page)).toEqual([{ kind: "submit", answers: [
+        { id: "q1", selected: [], other: "Custom format 2" },
+        { id: "q2", selected: ["Intro"], other: "Appendix" },
+      ] }]);
+    }
+  }
+});
+
+test("Other remains inert on settled or busy cards", async ({ page }) => {
+  for (const query of ["?state=answered", "?state=skipped", "?busy=1"]) {
+    await open(page, query);
+    await expect(page.getByRole("textbox")).toHaveCount(0);
+    await expect(page.getByRole("radio", { name: "Other", exact: true })).toHaveCount(0);
+    expect(await sent(page)).toEqual([]);
   }
 });

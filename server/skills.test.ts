@@ -553,7 +553,7 @@ describe("staged skill writes", () => {
     expect(applyStagedSkillWrite(bot, staged.id, { expectedSha256: staged.sha256 }))
       .toMatchObject({ name: "crash-recovery", description: "Reviewed replacement." });
     expect(readSkillFile(bot, "crash-recovery")).toBe(proposed);
-    expect(existsSync(originalPath)).toBe(false);
+    expect(readFileSync(originalPath, "utf8")).toBe(SKILL("crash-recovery", "Original."));
 
     const firstRevision = realpathSync(join(workspaceDir(bot), ".agents", "skills", "crash-recovery"));
     expect(firstRevision).toContain(`${join("skills", ".revisions")}`);
@@ -569,7 +569,7 @@ describe("staged skill writes", () => {
     expect(applyStagedSkillWrite(bot, second.id)).toMatchObject({ description: "Second reviewed replacement." });
     const secondRevision = realpathSync(join(workspaceDir(bot), ".agents", "skills", "crash-recovery"));
     expect(secondRevision).not.toBe(firstRevision);
-    expect(existsSync(firstRevision)).toBe(false);
+    expect(readFileSync(join(firstRevision, "SKILL.md"), "utf8")).toBe(proposed);
     expect(readSkillFile(bot, "crash-recovery")).toBe(secondProposal);
     const prompt = skillsSystemPrompt(bot);
     expect(prompt).toContain(createHash("sha256").update(second.id).digest("hex"));

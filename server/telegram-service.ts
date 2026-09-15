@@ -10,7 +10,8 @@ import type { TelegramApprovalActions } from "./telegram-approvals.ts";
 /** Owns polling lifetime, not credentials or execution authority. */
 interface TelegramServiceOptions {
   dataDir: string;
-  enqueue: (connectionId: string, targetBotId: string, input: { deliveryId: string; prompt: string }) => { id: string };
+  onVerifiedSender?: (connectionId:string,senderId:string)=>void;
+  enqueue: (connectionId: string, targetBotId: string, input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   revokeRuns: (connectionId: string) => Promise<void>;
   transport?: (token: string) => TelegramTransport;
@@ -20,6 +21,18 @@ interface TelegramServiceOptions {
 const connectionSchema = z.object({ version: z.literal(1), botIdentityId: z.string().regex(/^[1-9]\d{0,15}$/), targetBotId: z.string().min(1).max(180), enabled: z.boolean(), paused: z.boolean().optional() }).strict();
 type Connection = z.infer<typeof connectionSchema>;
 type ResumeState = "idle" | "verifying" | "active" | "retry" | "pair-required" | "blocked";
+/** A replacement token was refused before anything was saved (the config route answers 409). */
+export class TelegramTokenRefusal extends Error {
+  readonly status = 409;
+  constructor(message: string) { super(message); this.name = "TelegramTokenRefusal"; }
+}
+const TOKEN_REJECTED = "Telegram rejected the saved bot token. Paste a new token for this same bot from BotFather to reconnect. Your pairing is saved.";
+const WRONG_BOT = "This token belongs to a different Telegram bot. Your saved token and pairing were not changed. Paste the token for the paired bot, or revoke before pairing a different bot.";
+const REPLACEMENT_REJECTED = "Telegram rejected the new token too. Copy the current token for this bot from BotFather and try again. Your pairing is saved.";
+const REPLACEMENT_UNCHECKED = "Could not check the new token with Telegram. Your saved token and pairing were not changed; try again when Telegram is reachable.";
+const NOT_A_TOKEN = "That is not a Telegram bot token. Your saved token and pairing were not changed.";
+const CHANGED = "The Telegram connection changed while the new token was being checked. Nothing was saved; review the connection and try again.";
+const NOT_REPLACEABLE = "Revoke Telegram before changing its token or target.";
 export class TelegramService {
   private channel?: TelegramChannel;
   private timer?: ReturnType<typeof setTimeout>;
@@ -34,6 +47,7 @@ export class TelegramService {
   private resumeFailures = 0;
   private nextRetryAt: number | null = null;
   private receiverConflict = false;
+  private tokenRejected = false;
   private readonly options: TelegramServiceOptions;
   constructor(options: TelegramServiceOptions) { this.options = options; }
   private connectionFile() { return join(this.options.dataDir, "telegram", "connection.json"); }
@@ -57,6 +71,7 @@ export class TelegramService {
       botIdentityId: connection.botIdentityId, targetBotId: connection.targetBotId, transport,
       isCurrentTarget: () => this.options.isCurrentTarget?.(connection.targetBotId) !== false,
       approvals: this.options.approvals?.(connection.targetBotId),
+      onVerifiedSender:senderId=>this.options.onVerifiedSender?.(connection.botIdentityId,senderId),
       enqueue: input => this.options.enqueue(connection.botIdentityId, connection.targetBotId, input), runResult: this.options.runResult });
   }
   status() {
@@ -65,12 +80,13 @@ export class TelegramService {
     return { ...status, connecting: this.connecting, enabled: active && status.enabled, paired: active && status.paired,
       pending: active ? status.pending : 0, resumeState: this.resumeState, resumeMessage: this.resumeMessage, nextRetryAt: active ? status.nextRetryAt : this.nextRetryAt,
       canResume: !this.connecting && Boolean(this.connection?.enabled && !this.connection.paused) && (this.resumeState === "retry" || (this.resumeState === "blocked" && this.receiverConflict)),
+      canReplaceToken: !this.connecting && Boolean(this.connection?.enabled && !this.connection.paused) && this.resumeState === "blocked" && this.tokenRejected,
       requiresRevoke: Boolean(this.connection?.enabled && this.resumeState !== "pair-required") };
   }
   /** Resume a previously authorized binding, never infer a replacement target. */
   async resume(token: string, targetBotId: string) {
     if (this.connecting || this.resumeState === "active" || this.connection?.paused) return false;
-    this.receiverConflict = false;
+    this.receiverConflict = false; this.tokenRejected = false;
     this.connecting = true; this.resumeState = "verifying"; this.resumeMessage = null;
     const generation = ++this.generation, controller = new AbortController(); this.controller = controller;
     let verifying = false;
@@ -101,8 +117,9 @@ export class TelegramService {
       if (generation !== this.generation) return false;
       const retry = verifying && (!(error instanceof TelegramTransportError) || ["offline", "timeout", "unavailable", "rate-limit"].includes(error.code));
       this.resumeState = retry ? "retry" : "blocked";
+      this.tokenRejected = verifying && error instanceof TelegramTransportError && error.code === "auth";
       this.resumeMessage = retry ? "Could not reconnect to Telegram. Your pairing is saved; retry when your connection is available."
-        : "Telegram could not verify the saved connection. Check the token or restore the connection data before pairing again.";
+        : this.tokenRejected ? TOKEN_REJECTED : "Telegram could not verify the saved connection. Check the token or restore the connection data before pairing again.";
       if (retry) this.scheduleResume(generation, token, targetBotId, error instanceof TelegramTransportError && error.code === "rate-limit" ? error.retryAfterSeconds : undefined);
       return false;
     } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; } }
@@ -130,6 +147,38 @@ export class TelegramService {
       this.resumeFailures = 0; this.nextRetryAt = null; this.resumeState = "active"; this.schedule(generation);
       return { ...pairing, username: bot.username, botIdentityId: bot.id };
     } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; this.verifyingTarget = undefined; } }
+  }
+  /** Replace a token Telegram rejected with a token for the SAME bot, then resume the saved pairing.
+   * `commit` persists the token and runs only after getMe proves the paired bot identity. Nothing is
+   * saved, revoked or re-paired on any refusal; a paused (Chief-changed) connection is never eligible. */
+  async replaceToken(token: string, targetBotId: string, commit: () => void): Promise<boolean> {
+    const connection = this.connection;
+    if (!connection || !this.status().canReplaceToken) throw new TelegramTokenRefusal(NOT_REPLACEABLE);
+    if (connection.targetBotId !== targetBotId || this.options.isCurrentTarget?.(targetBotId) === false) {
+      await this.revalidateTarget();
+      throw new TelegramTokenRefusal("The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief.");
+    }
+    const generation = ++this.generation, controller = new AbortController();
+    this.connecting = true; this.resumeState = "verifying"; this.resumeMessage = null; this.controller = controller;
+    const current = () => generation === this.generation && this.connection === connection;
+    const refuse = (message: string) => {
+      if (!current()) return new TelegramTokenRefusal(CHANGED);
+      this.resumeState = "blocked"; this.resumeMessage = message; return new TelegramTokenRefusal(message);
+    };
+    try {
+      let bot: { id: string };
+      try { bot = await (this.options.transport?.(token) ?? new TelegramTransport({ token })).getMe(controller.signal); }
+      catch (error) {
+        const code = error instanceof TelegramTransportError ? error.code : "offline";
+        throw refuse(code === "auth" ? REPLACEMENT_REJECTED : code === "invalid-config" ? NOT_A_TOKEN : REPLACEMENT_UNCHECKED);
+      }
+      if (!current()) throw new TelegramTokenRefusal(CHANGED);
+      if (bot.id !== connection.botIdentityId) throw refuse(WRONG_BOT);
+      if (this.options.isCurrentTarget?.(targetBotId) === false) { await this.revalidateTarget(); throw new TelegramTokenRefusal(CHANGED); }
+      try { commit(); } catch (error) { refuse(TOKEN_REJECTED); throw error; }
+    } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; } }
+    this.channel?.stop(); // retire the channel instance bound to the rejected token; resume() re-verifies and reopens the same binding
+    return this.resume(token, targetBotId);
   }
   /** A roster change removes authority immediately and never chooses a replacement. */
   async revalidateTarget() {
@@ -170,8 +219,9 @@ export class TelegramService {
       if (generation !== this.generation || !current?.enabled) return;
       if (["auth", "forbidden", "conflict"].includes(current.error ?? "")) {
         this.receiverConflict = current.error === "conflict";
+        this.tokenRejected = current.error === "auth";
         this.resumeState = "blocked";
-        this.resumeMessage = current.error === "conflict" ? "Another app is receiving this Telegram bot's messages, so Murage paused. Stop that app, then use Retry now to reconnect. Your pairing is saved." : "Telegram rejected this connection. Check access or revoke before pairing again.";
+        this.resumeMessage = current.error === "conflict" ? "Another app is receiving this Telegram bot's messages, so Murage paused. Stop that app, then use Retry now to reconnect. Your pairing is saved." : current.error === "auth" ? TOKEN_REJECTED : "Telegram rejected this connection. Check access or revoke before pairing again.";
         return;
       }
       this.schedule(generation);
@@ -179,7 +229,7 @@ export class TelegramService {
     this.timer.unref();
   }
   async revoke() {
-    this.receiverConflict = false;
+    this.receiverConflict = false; this.tokenRejected = false;
     ++this.generation; this.connecting = false; this.controller?.abort(); this.controller = undefined;
     if (this.timer) clearTimeout(this.timer);
     this.resumeState = "idle"; this.resumeMessage = null; this.nextRetryAt = null;
@@ -189,5 +239,5 @@ export class TelegramService {
     if (this.identity) await this.options.revokeRuns(this.identity);
     if (failed) { this.resumeState = "blocked"; this.resumeMessage = "Telegram stopped, but its saved connection could not be fully revoked. Restore access to the saved data and try Revoke again."; throw new Error(this.resumeMessage); }
   }
-  stop() { ++this.generation; this.receiverConflict = false; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
+  stop() { ++this.generation; this.receiverConflict = false; this.tokenRejected = false; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
 }

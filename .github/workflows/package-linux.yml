@@ -31,7 +31,7 @@ jobs:
     if: inputs.source_run_id == '' && inputs.expected_version == ''
     name: DEB + AppImage (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,6 +46,7 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
+          build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
       - run: pnpm install --frozen-lockfile
       - name: Verify the package-owned install hook
         run: pnpm exec vitest run scripts/linux-after-install.test.mjs
@@ -55,8 +56,14 @@ jobs:
         run: pnpm build:cua:linux
       - name: Prove overlay-free X11 input routing
         run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+      - name: Build and verify pinned GEPA runtime
+        run: |
+          export SOURCE_SHA="$(git rev-parse HEAD)"
+          python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
-        run: pnpm package:linux:offline
+        run: |
+          gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
+          pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner
@@ -135,6 +142,17 @@ jobs:
             /tmp/murage-linux-smoke-runtime-*
           if-no-files-found: warn
           include-hidden-files: true
+          retention-days: 7
+      - name: Preserve GEPA build evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: murage-gepa-linux-evidence
+          path: |
+            ${{ runner.temp }}/gepa-linux/state.json
+            ${{ runner.temp }}/gepa-linux/logs/
+            qualification-evidence/gepa-package-metadata.json
+          if-no-files-found: warn
           retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

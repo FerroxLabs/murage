@@ -12,7 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createHarness, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
+import { createHarness, linkChannelOwner, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
 
 type Outcome = "pass" | "fail" | "observed";
 interface Check { id: string; criterion: string; outcome: Outcome; detail?: unknown }
@@ -115,6 +115,8 @@ async function rehearseTelegram(evidenceDir: string): Promise<Check[]> {
     const ownerBinding = JSON.stringify({ senderId: String(TELEGRAM_OWNER), chatId: String(TELEGRAM_OWNER) });
     checks.expect("A5.owner", "the binding is the exact owner sender and private chat", JSON.stringify(channelFile()?.binding) === ownerBinding, channelFile()?.binding);
     await waitFor("pairing acknowledgement", sent, list => list.length >= 1);
+    const link = await linkChannelOwner(harness, "telegram", String(TELEGRAM_OWNER));
+    checks.expect("A5.link", "the paired owner's account is linked to the workspace owner before any work", link.stateBefore === "link-required", link);
 
     // A6 — one accepted owner message: one run, one correct reply.
     arrive(privateMessage(4, TELEGRAM_OWNER, "Rehearsal request one: reply once."));

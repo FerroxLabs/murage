@@ -24,6 +24,19 @@ function rpc(method: string, params?: unknown): Promise<Json> {
 const call = (name: string, args: unknown) => rpc("tools/call", { name, arguments: args });
 const evidence = [{ sourceId: "source", revision: 1, startByte: 0, endByte: 8 }];
 
+it("advertises and forwards typed grounded memory and fictional invitation evidence", async () => {
+  const listed=await rpc("tools/list");
+  const save=listed.result.tools.find((tool:Json)=>tool.name==="memory_save");
+  expect(save.inputSchema.properties.claimType.enum).toContain("character-canon");
+  expect(save.inputSchema.properties.ownerInvitation.required).toContain("sourceId");
+  response=JSON.stringify({candidateId:"canon",state:"active",pendingReview:false});
+  const input={text:"Fictional background",evidence,idempotencyKey:"canon",claimType:"character-canon",ownerInvitation:{sourceId:"invitation",revision:1,startByte:0,endByte:8}};
+  const saved=await call("memory_save",input);
+  expect(saved.result.isError).toBe(false);expect(requests[0].body).toEqual(input);
+  expect(requests[0].path).toBe("/api/internal/memory/save");
+  requests=[];await call("memory_save",{...input,claimType:"grant-permission"});expect(requests).toEqual([]);
+});
+
 beforeAll(async () => {
   stub = createServer((req, res) => {
     let body = "";

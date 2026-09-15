@@ -6,9 +6,10 @@ const status: TelegramStatus = { configured: true, enabled: true, paired: true, 
 describe("telegramStatusFrom", () => {
   it("accepts the status shape exposed to settings", () => {
     expect(telegramStatusFrom({ ...status, rejected: 1, deliveryRetryAt: 42, resumeState: "retry" })).toMatchObject(status);
+    expect(telegramStatusFrom({ ...status, paired: false, resumeState: "blocked", canReplaceToken: true })).toMatchObject({ canReplaceToken: true });
   });
 
-  it.each([null, "offline", { ...status, pending: -1 }, { ...status, resumeState: "unknown" }, { ...status, canResume: "true" }, { ...status, deliveryRetryAt: "later" }])("rejects malformed responses", value => {
+  it.each([null, "offline", { ...status, pending: -1 }, { ...status, resumeState: "unknown" }, { ...status, canResume: "true" }, { ...status, canReplaceToken: "true" }, { ...status, canReplaceToken: 1 }, { ...status, deliveryRetryAt: "later" }])("rejects malformed responses", value => {
     expect(() => telegramStatusFrom(value)).toThrow("Telegram status could not be read.");
   });
 });
@@ -24,5 +25,14 @@ describe("Telegram health polling and labels", () => {
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canResume: true, resumeMessage: "Changed wording" }, false, false)).toBe("Another app is receiving this bot");
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "retry" }, false, false)).toBe("Connection saved · retrying automatically");
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", resumeMessage: "The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief." }, false, false)).toBe("Chief unavailable · revoke and re-pair");
+  });
+
+  it("names a rejected token as replaceable only when the server offers replacement", () => {
+    const rejected = "Telegram rejected the saved bot token. Paste a new token for this same bot from BotFather to reconnect. Your pairing is saved.";
+    expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canReplaceToken: true, resumeMessage: rejected }, false, false)).toBe("Token rejected · paste a new token for this bot");
+    expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canReplaceToken: false, resumeMessage: rejected }, false, false)).toBe("Connection needs attention");
+    expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canResume: true, canReplaceToken: true }, false, false)).toBe("Another app is receiving this bot");
+    expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canReplaceToken: false, resumeMessage: "The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief." }, false, false)).toBe("Chief unavailable · revoke and re-pair");
+    expect(telegramHealthLabel({ ...status, paired: false, resumeState: "retry", canReplaceToken: true }, false, false)).toBe("Connection saved · retrying automatically");
   });
 });

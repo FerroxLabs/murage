@@ -171,8 +171,8 @@ export function SlackSettings() {
       })}>{busy === "revoke" ? "Revoking…" : "Revoke connection"}</button>
     </div>
     {pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
-      <p>Send this command in your app’s Slack direct message:</p><code className="mt-2 block break-all select-all">/pair {pair.code}</code>
-      <button type="button" className={`${buttonClass} mt-2`} disabled={Boolean(busy)} onClick={() => void run("copy", async () => { await navigator.clipboard.writeText(`/pair ${pair.code}`); setNotice("Pairing command copied."); })}>Copy pairing command</button>
+      <p>Send this message in your app’s Slack direct message:</p><code className="mt-2 block break-all select-all">pair {pair.code}</code>
+      <button type="button" className={`${buttonClass} mt-2`} disabled={Boolean(busy)} onClick={() => void run("copy", async () => { await navigator.clipboard.writeText(`pair ${pair.code}`); setNotice("Pairing message copied."); })}>Copy pairing message</button>
       <p className="mt-2 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically.</p>
     </div>}
     {expired && <p role="status" className="mt-3 text-[12px] text-warning">The code expired. Revoke the incomplete connection, then create a new pairing code.</p>}

@@ -177,11 +177,11 @@ function serverLauncher({ proc, poll, track, environment = {} }) {
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
     path, process:{env:environment,resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
-    app:{isPackaged:true,getPath:()=>"/fixture/user-data"}, companionToken:"private-companion",
+    app:{isPackaged:true,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/resources/app.asar"}, companionToken:"private-companion",
     modelProviderCommitToken:"private-model-provider-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
     managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
-    harnessResourceEnvironment:()=>({}),workspaceCredentialEnv:()=>({}),slog:()=>{},
+    harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
     pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,
@@ -194,13 +194,14 @@ function serverLauncher({ proc, poll, track, environment = {} }) {
 test("actual utility launch overrides ambient root/delegation only in the owned child", async () => {
   const proc = new EventEmitter();
   proc.pid=123;proc.kill=()=>{};
-  const ambient={MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged"};
+  const ambient={MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged",MURAGE_GEPA_MANIFEST_SHA256:"ambient-forged-gepa-pin"};
   const launch=serverLauncher({proc,environment:ambient,poll:async()=>({outcome:"ready"}),track:()=>({exited:false,stop:async()=>{}})});
   await launch(8799);
   assert.equal(proc.environment.MURAGE_DATA_DIR,"/canonical/installation");
   assert.equal(proc.environment.MURAGE_INTERNAL_DATA_DIR_LEASE,"private-fixture-capability");
   assert.equal(proc.environment.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN,"private-model-provider-commit");
-  assert.deepEqual(ambient,{MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged"});
+  assert.equal(proc.environment.MURAGE_GEPA_MANIFEST_SHA256,"");
+  assert.deepEqual(ambient,{MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged",MURAGE_GEPA_MANIFEST_SHA256:"ambient-forged-gepa-pin"});
 });
 
 test("failed boot cannot return for port fallback before exact child exit", async () => {

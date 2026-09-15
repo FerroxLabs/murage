@@ -14,6 +14,18 @@ import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { FuigoAgentDriver } from "./drivers/acp/fuigo.ts";
 const route:ProviderTurnRoute={connectionId:'provider-a',preset:'openai',protocol:'openai',baseUrl:'http://127.0.0.1:49999/v1',apiKey:'fixture-provider-key',model:'fixture-model',revision:'r1'};
 describe('bound provider routes',()=>{
+ it('preallows only registered memory tools in an owned routed Fuigo home',()=>{
+  const env:NodeJS.ProcessEnv={FUIGO_HOME:'/nonexistent-preserved-native-home'};
+  const bound=applyProviderRoute('fuigoAgent',env,route,{threadId:'thread',memoryTools:true});
+  try{
+   const config=readFileSync(join(env.FUIGO_HOME!,'config.toml'),'utf8');
+   const rules=config.slice(config.indexOf('[permission]'));
+   for(const name of ['memory_search','memory_get','memory_save','memory_propose_correction'])expect(rules).toContain(`pattern = "murage-memory__${name}"`);
+   expect(rules).not.toContain('*');expect(rules).not.toContain('shell');expect(config).not.toContain(route.apiKey);
+  }finally{bound.cleanup();}
+  const without:NodeJS.ProcessEnv={};const plain=applyProviderRoute('fuigoAgent',without,route,{threadId:'thread'});
+  try{expect(readFileSync(join(without.FUIGO_HOME!,'config.toml'),'utf8')).not.toContain('[permission]');}finally{plain.cleanup();}
+ });
  it('uses one exact selected endpoint/key without exposing credentials in arguments',()=>{
   for(const driver of ['claudeAgent','codex','qwenAgent','hermesAgent','fuigoAgent']){
    const env:NodeJS.ProcessEnv={OPENAI_API_KEY:'wrong',ANTHROPIC_AUTH_TOKEN:'wrong',FUIGO_API_KEY:'wrong'};

@@ -4,11 +4,11 @@
 // of deterministic unrelated inventory notes to BOTH backends. Only that query's
 // extra records are active, keeping the real worker below its global vector cap.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { families, validateCorpus, type MemoryCorpus } from "../server/memory/testing/contracts.ts";
+import { families, validateAnswerCohorts, validateCorpus, type MemoryCorpus } from "../server/memory/testing/contracts.ts";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 type Query = MemoryCorpus["queries"][number];
@@ -43,10 +43,20 @@ const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const args=process.argv.slice(2);
 function option(name:string,fallback:string){const i=args.indexOf(name);if(i<0)return fallback;const value=args[i+1];if(!value||value.startsWith("--"))throw Error(`Missing ${name}`);return value;}
 
+/** Report additional frozen cohorts without generating or claiming any answers. */
+export function additionalNativeAnswerCohorts(corpus:MemoryCorpus,bytes:Buffer,document:unknown) {
+  const cohorts=validateAnswerCohorts(corpus,createHash("sha256").update(bytes).digest("hex"),document);
+  return cohorts.cohorts.map(cohort=>({id:cohort.id,driver:cohort.driver,engineKinds:cohort.engineKinds,required:cohort.cases.length,completed:0,
+    status:"PENDING_BOUNDED_NATIVE_EXECUTION" as const,cases:cohort.cases}));
+}
+
 async function main() {
   if(args.includes("--answers")||args.includes("--allow-paid"))throw Error("Answer generation requires the separate root-reserved native runner; this evaluator never spends implicitly");
   const fixturePath=resolve(option("--fixture","server/memory/testing/corpus.json"));
-  const raw=readFileSync(fixturePath,"utf8"),corpus=validateCorpus(JSON.parse(raw));
+  const fixtureBytes=readFileSync(fixturePath),raw=fixtureBytes.toString("utf8"),corpus=validateCorpus(JSON.parse(raw));
+  const cohortPath=resolve(option("--answer-cohorts",join(dirname(fixturePath),"answer-cohorts.json")));
+  const additionalCohorts=existsSync(cohortPath)||args.includes("--answer-cohorts")
+    ?additionalNativeAnswerCohorts(corpus,fixtureBytes,JSON.parse(readFileSync(cohortPath,"utf8"))):[];
   const out=resolve(option("--out",".planning/memory-evidence/eval.json"));
   const modelDirectory=resolve(option("--model-directory",".planning/memory-evidence/model"));
   const repo=fileURLToPath(new URL("..",import.meta.url));
@@ -171,6 +181,7 @@ async function main() {
     summary,baselineSummary,groups:Object.fromEntries(families.map(family=>{const rows=cases.filter(row=>row.family===family);return [family,rows.length?summarizeEvidence(rows):null];})),
     exactBaselineRegressions:regression,pins,workerPeakRssBytes,cases,baseline,preparationError,
     nativeAnswers:{status:"PENDING_BOUNDED_NATIVE_EXECUTION",required:60,completed:0,cases:corpus.answerCases},
+    additionalNativeCohorts:additionalCohorts,
     faults:{status:"PENDING_SEPARATE_FAULT_RUNNER"},limitations:["Synthetic frozen corpus; no real-world quality generalization","No native answer calls or judge outputs fabricated","Latency/resource/load gates are separate planned workload; these per-query durations are diagnostics"]};
   mkdirSync(dirname(out),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2)+"\n");
   console.log(JSON.stringify({status:result.status,wholeP10Status:result.wholeP10Status,cases:cases.length,summary,baselineSummary,pinsPassed:pins.filter(pin=>pin.passed).length,out,preparationError}));

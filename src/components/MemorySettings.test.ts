@@ -17,9 +17,12 @@ describe("owner memory audience requests", () => {
 });
 
 describe("compact memory state", () => {
-  it.each(["off", "paused"] as const)("never claims recall is running when %s", mode => {
+  it.each(["off"] as const)("never claims recall is running when %s", mode => {
     expect(memoryModeDescription(mode)).toContain("Capture and recall are off.");
     expect(memoryModeDescription(mode)).not.toContain("recall are on");
+  });
+  it("explains that paused processing still captures sources", () => {
+    expect(memoryModeDescription("paused")).toBe("Processing and recall are paused. New sources are still captured.");
   });
   it("distinguishes capture-only from active recall", () => {
     expect(memoryModeDescription("capture")).toBe("Capture is on. Recall is off.");

@@ -3,9 +3,10 @@ import { SlackSocketTransport, type SlackSDKFactory } from "./transport.ts";
 function fixture() {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   const post = vi.fn(async (_input: Record<string, unknown>): Promise<unknown> => ({ ok: true, channel: "DOWNER", ts: "1.2" }));
+  const update = vi.fn(async (_input: Record<string, unknown>): Promise<unknown> => ({ ok: true, channel: "DOWNER", ts: "1.2" }));
   const factory: SlackSDKFactory = vi.fn(async () => ({ socket: { on: (n: string, fn: (...args: unknown[]) => void) => listeners.set(n, fn), start: async () => {}, disconnect: async () => {} },
-    web: { auth: { test: async () => ({ ok: true, team_id: "TEAM", user_id: "UBOT", bot_id: "BOT" }) }, chat: { postMessage: post } } }));
-  return { post, listeners, transport: new SlackSocketTransport({ appToken: "fake-app", botToken: "fake-bot", factory }) };
+    web: { auth: { test: async () => ({ ok: true, team_id: "TEAM", user_id: "UBOT", bot_id: "BOT" }) }, chat: { postMessage: post, update } } }));
+  return { post, update, listeners, transport: new SlackSocketTransport({ appToken: "fake-app", botToken: "fake-bot", factory }) };
 }
 it("uses explicit ACK once, ignores stopped callbacks and exposes no raw health errors", async () => {
   const f = fixture(), receive = vi.fn(), health = vi.fn(), ack = vi.fn(async () => {});
@@ -33,4 +34,28 @@ it("rejects mismatched success, terminal permissions and pre-dispatch cancellati
   await expect(f.transport.sendText({ dmId: "DOWNER", text: "hi", signal: controller.signal })).rejects.toMatchObject({ uncertain: false, code: "forbidden" });
   controller.abort(); await expect(f.transport.sendText({ dmId: "DOWNER", text: "hi", signal: controller.signal })).rejects.toMatchObject({ uncertain: false });
   expect(f.post).toHaveBeenCalledTimes(2);
+});
+
+const approveId = `murage:${"a".repeat(48)}:a`, denyId = approveId.slice(0, -1) + "d";
+it("sends exact plain summary and buttons, refuses truncation and removes original actions", async () => {
+  const f=fixture(),signal=new AbortController().signal,text="Run <!channel> & <@UOWNER>";
+  await f.transport.sendPermission({dmId:"DOWNER",text,approveId,denyId,signal});
+  expect(f.post.mock.calls[0][0]).toMatchObject({text:"Run &lt;!channel&gt; &amp; &lt;@UOWNER&gt;",mrkdwn:false,parse:"none",blocks:[{text:{type:"plain_text",text}},{elements:[{text:{text:"Approve once"},action_id:approveId},{text:{text:"Deny"},action_id:denyId}]}]});
+  await expect(f.transport.sendPermission({dmId:"DOWNER",text:"x".repeat(3001),approveId,denyId,signal})).rejects.toMatchObject({code:"invalid-request",uncertain:false});expect(f.post).toHaveBeenCalledTimes(1);
+  await f.transport.settlePermission({dmId:"DOWNER",messageId:"1.2",text:"Denied",signal});
+  expect(f.update.mock.calls[0][0]).toMatchObject({channel:"DOWNER",ts:"1.2",blocks:[{type:"section",text:{type:"plain_text",text:"Denied"}}]});
+});
+it("acks interactive payloads before identity-bound delivery and fails closed on failed ack", async () => {
+  const f=fixture(),receive=vi.fn(),envelope=vi.fn(),health=vi.fn(),ack=vi.fn(async()=>{});
+  f.transport.onPermissionAction(receive);await f.transport.verifyBot();await f.transport.start(envelope,health);
+  const body={type:"block_actions",api_app_id:"APP",team:{id:"TEAM"},user:{id:"UOWNER"},channel:{id:"DOWNER"},message:{ts:"1.2",user:"UBOT",bot_id:"BOT"},container:{type:"message",channel_id:"DOWNER",message_ts:"1.2"},actions:[{type:"button",action_id:approveId}]};
+  const emit=(patch={})=>f.listeners.get("slack_event")!({type:"interactive",body:{...body,...patch},ack});
+  emit();await vi.waitFor(()=>expect(receive).toHaveBeenCalledTimes(1));expect(ack).toHaveBeenCalledTimes(1);
+  await receive.mock.calls[0][0].ack();expect(ack).toHaveBeenCalledTimes(1);
+  expect(receive.mock.calls[0][0]).toMatchObject({provider:"slack",applicationId:"APP",teamId:"TEAM",userId:"UOWNER",channelId:"DOWNER",messageId:"1.2",actionId:approveId});
+  for(const patch of [{team:{id:"OTHER"}},{channel:{id:"CROOM"}},{message:{ts:"1.2",user:"UOTHER",bot_id:"OTHER"}},{actions:[]}]) emit(patch);
+  await vi.waitFor(()=>expect(ack).toHaveBeenCalledTimes(5));expect(receive).toHaveBeenCalledTimes(1);expect(envelope).not.toHaveBeenCalled();
+  ack.mockRejectedValueOnce(new Error("secret"));emit();await vi.waitFor(()=>expect(health).toHaveBeenCalledWith("error"));expect(receive).toHaveBeenCalledTimes(1);
+  emit({user:{id:"WOWNER"}});await vi.waitFor(()=>expect(receive).toHaveBeenCalledTimes(2));
+  await f.transport.stop();emit();expect(ack).toHaveBeenCalledTimes(7);
 });

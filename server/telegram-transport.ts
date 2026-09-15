@@ -121,7 +121,15 @@ export class TelegramTransport {
     const timer = setTimeout(() => controller.abort(new TelegramTransportError("timeout", { uncertain: sending && dispatched })), pollMs + this.#timeoutMs);
     try {
       dispatched = true;
-      const fetching = this.#fetch(`https://api.telegram.org/bot${this.#token}/${method}`, { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
+      const fetching = this.#fetch(`https://api.telegram.org/bot${this.#token}/${method}`, { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal }).catch(error => {
+        // Only a failed initial DNS lookup proves this request was not sent.
+        // Keep this at the fetch boundary: response-body failures are uncertain.
+        const cause = error instanceof TypeError ? error.cause : undefined;
+        if (!controller.signal.aborted && cause instanceof Error
+          && (cause as NodeJS.ErrnoException).code === "ENOTFOUND"
+          && (cause as NodeJS.ErrnoException).syscall === "getaddrinfo") throw new TelegramTransportError("offline");
+        throw error;
+      });
       void fetching.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
       const response = await guarded(fetching, controller.signal);
       let parsed: unknown;

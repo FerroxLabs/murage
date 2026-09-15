@@ -3,6 +3,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { purgeForgottenEvolutionCopies } from "./evolution-forgetting.ts";
 
 export function applyMemoryTombstones(db: DatabaseSync) {
   db.exec(`UPDATE memory_sources SET state='deleted' WHERE EXISTS (
@@ -23,6 +24,7 @@ export function applyMemoryTombstones(db: DatabaseSync) {
       ON r.id=json_extract(j.value,'$.id') AND r.version=json_extract(j.value,'$.version') WHERE r.state='deleted'
     ) OR EXISTS (SELECT 1 FROM json_each(memory_disclosures.source_versions) j JOIN memory_sources s
       ON s.id=json_extract(j.value,'$.id') WHERE s.state='deleted' OR EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$.revision'))));`);
+  purgeForgottenEvolutionCopies(db);
 }
 
 /** Caller owns the surrounding offline restore transaction. */

@@ -9,13 +9,14 @@ import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
 import { memoryState } from "./repository.ts";
 import { prepareMemoryDisclosure, deliverMemoryDisclosure } from "./disclosures.ts";
 import { requiresDesktopAuthority } from "../desktop-policy.ts";
+import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "../human-principals.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
-function fixture(thread = "private-a") {
+function fixture(thread = "private-a", humanPrincipal?: ReturnType<typeof resolveHumanBinding>) {
   const roster: MemoryRoster = {bots:[{id:"a",threadId:"private-a",section:"alpha"},{id:"b",threadId:"private-b",section:"beta"}],groups:[{id:"room",threadId:"room-thread",memberIds:["a","b"]}]};
   reconcileMemoryRoster(roster);
-  const registry = new InternalCapabilities(); registry.begin("a",thread,"generation");
-  const token = registry.mint({botId:"a",threadId:thread,generation:"generation",depth:100,kind:"memory",skillAuthoring:false});
+  const registry = new InternalCapabilities(); registry.begin("a",thread,"generation",humanPrincipal);
+  const token = registry.mint({botId:"a",threadId:thread,generation:"generation",depth:100,kind:"memory",skillAuthoring:false,...humanPrincipal?{humanPrincipal}:{}});
   const access = memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
   return {roster,registry,access};
 }
@@ -209,4 +210,36 @@ it.each(["private-alias","other-room-alias","membership","remove-thread"])("room
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
   expect(memoryState().policyRevision).toBeGreaterThan(before);
   expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+
+it("adding a fresh independent owner task preserves prior access and grant epoch",async()=>{
+  const f=fixture(),before=memoryState().policyRevision;
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  const next=structuredClone(f.roster);next.bots[0].tasks=[{threadId:"private-a"},{threadId:"fresh-owner-task"}];
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+  expect(f.access.scopeIds).not.toContain(ensureScope("conversation","fresh-owner-task"));
+  closeDatabase();reconcileMemoryRoster(f.roster);expect(memoryState().policyRevision).toBe(before);
+});
+
+it.each(["remove-thread","private-alias","room-alias","membership","section","principal","existing-scope"])("owner task additions still revoke %s changes",change=>{
+  let binding:string|undefined;
+  if(change==="principal"){
+    binding=observeVerifiedHuman({platform:"slack",connectionId:"fixture",authorityId:"team",userId:"person"});
+    linkHumanBinding(ownerMemoryTicket(),{bindingId:binding,expectedRevision:1,as:"person"});
+    bindHumanThread("private-a",resolveHumanBinding(binding));
+  }
+  const f=fixture("private-a",change==="principal"?resolveHumanBinding(binding!):undefined),before=memoryState().policyRevision,next=structuredClone(f.roster);
+  next.bots[0].tasks=[{threadId:"private-a"},{threadId:"fresh-owner-task"}];
+  if(change==="remove-thread"){next.bots[0].threadId="fresh-owner-task";next.bots[0].tasks=[{threadId:"fresh-owner-task"}];}
+  if(change==="private-alias")next.bots[0].tasks[1].threadId="private-b";
+  if(change==="room-alias")next.bots[0].tasks[1].threadId="room-thread";
+  if(change==="membership")next.groups[0].memberIds=["a"];
+  if(change==="section")next.bots[0].section="changed-team";
+  if(change==="principal")linkHumanBinding(ownerMemoryTicket(),{bindingId:binding!,expectedRevision:resolveHumanBinding(binding!).revision,as:"owner"});
+  if(change==="existing-scope")ensureScope("conversation","fresh-owner-task");
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBeGreaterThan(before);expect(()=>assertMemoryAccess(f.access)).toThrow(change==="principal"?"MEMORY_UNAUTHORIZED":"MEMORY_CONTEXT_REVOKED");
 });

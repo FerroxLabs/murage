@@ -1,8 +1,12 @@
+import type { PermissionAction } from "../permission-approvals.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
 import { discordId } from "./event.ts";
 
 type Health = "connected" | "disconnected" | "error" | "blocked";
 export interface DiscordTransport {
+  onPermissionAction?(receive: (event: PermissionAction) => void): void;
+  sendPermission?(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }): Promise<{ channel: string; messageId: string }>;
+  settlePermission?(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }): Promise<void>;
   verifyBot(): Promise<{ applicationId: string; botUserId: string }>;
   start(receive: (event: unknown) => void, health: (state: Health) => void): Promise<void>;
   stop(): Promise<void>;
@@ -14,7 +18,7 @@ interface SDK {
   destroy(): Promise<void>;
   user: { id: string } | null;
   application: { id: string } | null;
-  rest: { get(path: string): Promise<unknown>; post(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> };
+  rest: { patch?(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>; get(path: string): Promise<unknown>; post(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> };
 }
 export type DiscordSDKFactory = (token: string) => Promise<SDK>;
 export const discordClientOptions = () => ({ intents: [4096], partials: [1],
@@ -53,6 +57,8 @@ export class DiscordGatewayTransport implements DiscordTransport {
   private options: { botToken: string; factory?: DiscordSDKFactory };
   private sdk?: Promise<SDK>;
   private identity?: { applicationId: string; botUserId: string };
+  private permissionReceive?: (event: PermissionAction) => void;
+  onPermissionAction(receive: (event: PermissionAction) => void) { this.permissionReceive = receive; }
   private stopped = false;
   private started = false;
   private generation = 0;
@@ -86,6 +92,21 @@ export class DiscordGatewayTransport implements DiscordTransport {
         attachments: message.attachments?.size, components: message.components?.length,
         forwarded: message.reference?.type === 1 || (message.messageSnapshots?.size ?? 0) > 0 });
     });
+    sdk.on("interactionCreate", interaction => {
+      if (!active() || !this.permissionReceive || interaction.isButton?.() !== true || interaction.guildId != null ||
+        interaction.channel?.type !== 1 || interaction.applicationId !== this.identity?.applicationId ||
+        interaction.message?.author?.id !== this.identity?.botUserId || interaction.user?.bot !== false ||
+        !discordId.safeParse(interaction.user?.id).success || !discordId.safeParse(interaction.channelId).success ||
+        !discordId.safeParse(interaction.message?.id).success || !/^murage:[a-f0-9]{48}:[ad]$/.test(interaction.customId) ||
+        typeof interaction.deferUpdate !== "function") return;
+      let acknowledgement: Promise<void> | undefined;
+      const ack = () => acknowledgement ??= Promise.resolve().then(() => interaction.deferUpdate()).then(() => {});
+      void ack().then(() => {
+        if (active()) this.permissionReceive?.({ provider: "discord", applicationId: this.identity!.applicationId,
+          userId: interaction.user.id, channelId: interaction.channelId, messageId: interaction.message.id,
+          actionId: interaction.customId, ack });
+      }).catch(() => { if (active()) health("error"); });
+    });
     sdk.on("shardDisconnect", event => { if (active()) health([4004, 4010, 4011, 4012, 4013, 4014].includes(event?.code) ? "blocked" : "disconnected"); });
     sdk.on("shardReconnecting", () => { if (active()) health("disconnected"); });
     sdk.on("shardResume", () => { if (active()) health("connected"); });
@@ -94,6 +115,33 @@ export class DiscordGatewayTransport implements DiscordTransport {
     if (!active()) await sdk.destroy();
   }
   async stop() { this.stopped = true; this.generation++; if (this.sdk) await (await this.sdk).destroy(); }
+  async sendPermission(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }) {
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    if (!discordId.safeParse(input.dmId).success || !input.text || input.text.length > 2000 ||
+      !/^murage:[a-f0-9]{48}:a$/.test(input.approveId) || input.denyId !== input.approveId.slice(0, -1) + "d") throw new ChannelSendError("invalid-request", false);
+    const sdk = await this.client();
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    try {
+      const result = object(await sdk.rest.post(`/channels/${input.dmId}/messages`, { signal: input.signal, body: {
+        content: input.text, allowed_mentions: { parse: [], replied_user: false }, tts: false, flags: 4,
+        components: [{ type: 1, components: [{ type: 2, style: 3, label: "Approve once", custom_id: input.approveId },
+          { type: 2, style: 4, label: "Deny", custom_id: input.denyId }] }] } }));
+      if (result.channel_id !== input.dmId || !discordId.safeParse(result.id).success) throw new ChannelSendError("invalid-request", true);
+      return { channel: result.channel_id as string, messageId: result.id as string };
+    } catch (error) { throw safeFailure(error, true); }
+  }
+  async settlePermission(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }) {
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    if (!discordId.safeParse(input.dmId).success || !discordId.safeParse(input.messageId).success || !input.text || input.text.length > 2000) throw new ChannelSendError("invalid-request", false);
+    const sdk = await this.client();
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    if (!sdk.rest.patch) throw new ChannelSendError("unavailable", false);
+    try {
+      const result = object(await sdk.rest.patch(`/channels/${input.dmId}/messages/${input.messageId}`, { signal: input.signal,
+        body: { content: input.text, components: [], allowed_mentions: { parse: [], replied_user: false } } }));
+      if (result.channel_id !== input.dmId || result.id !== input.messageId) throw new ChannelSendError("invalid-request", true);
+    } catch (error) { throw safeFailure(error, true); }
+  }
   async sendText(input: { dmId: string; text: string; signal: AbortSignal }) {
     if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
     if (!discordId.safeParse(input.dmId).success || !input.text) throw new ChannelSendError("invalid-request", false);

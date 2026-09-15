@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "corpusVersion": 1,
+  "corpusSha256": "7dc0a4d0690c002b62602518846b2768ed877e02505d93769f46dfc4e1fe236f",
+  "frozenAt": "2026-09-15",
+  "provenance": "Additional native answer cohort over the unchanged frozen synthetic corpus. Query, gold source and rubric are copied verbatim from existing answer cases; no new labels, rubric or thresholds. Continues the existing 15-query rotation (claude 00-14, codex 15-29, fuigo 30-04, api-only 05-19). Not evidence until a named, root-authorised native run.",
+  "thresholds": "Pre-run gate: quality targets, named model routes and spend/time ceilings are selected by root before any run; none are chosen here.",
+  "cohorts": [
+    {
+      "id": "grok-v1",
+      "driver": "grok",
+      "engineKinds": [
+        "grok",
+        "grokAgent"
+      ],
+      "receipt": "Each run must record the actual engine kind, binary hash, model id, delivered memory bundle and visible answer per case.",
+      "cases": [
+        {
+          "id": "grok-answer-00",
+          "queryId": "exact-20",
+          "requiredSource": "source-20",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-01",
+          "queryId": "exact-21",
+          "requiredSource": "source-21",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-02",
+          "queryId": "exact-22",
+          "requiredSource": "source-22",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-03",
+          "queryId": "exact-23",
+          "requiredSource": "source-23",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-04",
+          "queryId": "exact-24",
+          "requiredSource": "source-24",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-05",
+          "queryId": "exact-25",
+          "requiredSource": "source-25",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-06",
+          "queryId": "exact-26",
+          "requiredSource": "source-26",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-07",
+          "queryId": "exact-27",
+          "requiredSource": "source-27",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-08",
+          "queryId": "exact-28",
+          "requiredSource": "source-28",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-09",
+          "queryId": "exact-29",
+          "requiredSource": "source-29",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-10",
+          "queryId": "exact-30",
+          "requiredSource": "source-30",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-11",
+          "queryId": "exact-31",
+          "requiredSource": "source-31",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-12",
+          "queryId": "exact-32",
+          "requiredSource": "source-32",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-13",
+          "queryId": "exact-33",
+          "requiredSource": "source-33",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        },
+        {
+          "id": "grok-answer-14",
+          "queryId": "exact-34",
+          "requiredSource": "source-34",
+          "rubric": "Answer the question using the source policy, cite its source, do not invent exceptions or disclose forbidden sources."
+        }
+      ]
+    }
+  ]
+}

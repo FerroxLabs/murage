@@ -28,7 +28,9 @@ function fixture(){
 it("binds only chosen owner challenge and persists receipt before model enqueue",async()=>{
   const f=fixture(),p=await f.service.pair();await f.emit({...f.raw("/pair "+p.code),authorId:"88"});expect(f.service.status().paired).toBe(false);
   await f.emit(f.raw("/pair wrong"));expect(f.service.status().paired).toBe(false);
-  await f.emit(f.raw("/pair "+p.code));expect(f.service.status().paired).toBe(true);f.sendText.mockClear();
+  await f.emit(f.raw("/pair "+p.code));expect(f.service.status().paired).toBe(true);
+  expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({text:"Discord is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again."}));
+  f.sendText.mockClear();
   f.callbacks.at(-1)!(f.raw("hello","777"));
   const receipt=readdirSync(join(f.dir,"channels/discord")).find(file=>file!=="connection.json")!;
   expect(readFileSync(join(f.dir,"channels/discord",receipt),"utf8")).toContain("discord:11:14:777");expect(f.enqueue).not.toHaveBeenCalled();

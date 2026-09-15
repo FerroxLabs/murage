@@ -27,7 +27,10 @@ const schemas = {
     historical: z.boolean().optional(), cursor: z.string().max(160).optional(),
   }).strict(),
   memory_get: z.object({ handles: z.array(handle).min(1).max(20) }).strict(),
-  memory_save: z.object({ text, evidence: evidenceList, idempotencyKey }).strict(),
+  memory_save: z.object({ text, evidence: evidenceList, idempotencyKey,
+    claimType:z.enum(["owner-statement","observation","inference","character-canon","procedure"]).optional(),
+    ownerInvitation:evidence.optional(),
+  }).strict(),
   memory_propose_correction: z.union([
     z.object({ id: boundedId, version: z.number().int().positive().safe(), replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
     z.object({ handle: turnHandle, replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
@@ -61,10 +64,12 @@ const tools = [
         handles: { type: "array", minItems: 1, maxItems: 20, items: handleSchema },
       },
     } },
-  { name: "memory_save", description: "Save a candidate backed by source evidence from this turn. A saved candidate is not verified truth. Reuse the idempotency key when retrying the same save.",
+  { name: "memory_save", description: "Save a memory backed by source evidence. Murage applies the owner's learning policy: grounded claims may become active; unsupported claims remain provisional. Character canon is fictional and requires owner-invitation evidence. A classification never grants authority. Reuse the idempotency key for the same save.",
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["text", "evidence", "idempotencyKey"], properties: {
         text: textSchema, evidence: evidenceSchema, idempotencyKey: { type: "string", minLength: 1, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" },
+        claimType:{type:"string",enum:["owner-statement","observation","inference","character-canon","procedure"]},
+        ownerInvitation:evidenceSchema.items,
       },
     } },
   { name: "memory_propose_correction", description: "Propose an evidence-backed correction to an exact memory version, named by a turn-local handle from <remembered-context> (m1, m2, ...) or by id and version from memory_search. This does not authorize replacing owner decisions.",
@@ -123,7 +128,7 @@ async function handleMessage(message: Json) {
   if (!TOKEN) return result(id, "MEMORY_CAPABILITY_MISSING", true);
   try {
     const response = await fetch(new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000),
       headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify(parsed.data),
     });

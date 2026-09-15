@@ -1,3 +1,5 @@
+import type { ProcedurePin } from "./procedure-bundles.ts";
+import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 // Bot + thread persistence. bots.json holds bot records (including the
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
@@ -215,6 +217,7 @@ export type GroupDefaultResponder =
  * lives here so switching tasks never moves a pin or working directory into
  * another provider context. */
 export interface GroupTaskRecord {
+  procedurePins?: Record<string, ProcedurePin>;
   threadId: ThreadId;
   title: string;
   createdAt: number;
@@ -229,6 +232,7 @@ export interface GroupTaskRecord {
  * The bulletin is the room's shared instructions — every member's turn gets
  * it as part of its system prompt. */
 export interface GroupRecord {
+  procedurePins?: Record<string, ProcedurePin>;
   id: string;
   /** The active task's thread. Direct-message channels remain single-threaded. */
   threadId: ThreadId;
@@ -273,6 +277,7 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  procedurePin?: ProcedurePin;
   /** Host admission only; paths are always derived from current IDs. */
   localOutputs?: true;
   /** Server-owned automation root; retained for reviewed card resumptions. */
@@ -2045,8 +2050,29 @@ export class Store {
 
   projectBotForTask(botId:string,threadId:string):BotRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
-    return {...bot,threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:task.autoApprove??false,alwaysAllow:structuredClone(task.alwaysAllow??[]),unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+    return {...bot,...(!isWorkspaceOwner(threadHumanPrincipal(threadId))?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:isWorkspaceOwner(threadHumanPrincipal(threadId))&&(task.autoApprove??false),alwaysAllow:isWorkspaceOwner(threadHumanPrincipal(threadId))?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
   }
+  /** Host-only, write-once procedural admission. Never accepted in API patches. */
+  pinTaskProcedures(botId:string, threadId:string, pin:ProcedurePin):ProcedurePin {
+    const task=this.bot(botId)?.tasks?.find(item=>item.threadId===threadId);
+    if(!task)throw new Error("PROCEDURE_TASK_UNAVAILABLE");
+    if(task.procedurePin)return task.procedurePin;
+    task.procedurePin=structuredClone(pin);
+    try{this.saveBots();}catch(error){delete task.procedurePin;throw error;}
+    return task.procedurePin;
+  }
+
+  pinGroupProcedures(groupId:string, threadId:string, botId:string, pin:ProcedurePin):ProcedurePin {
+    const group=this.group(groupId);
+    const holder=group?.dm&&group.threadId===threadId?group:this.groupTaskByThread(groupId,threadId);
+    if(!group?.memberIds.includes(botId)||!holder)throw new Error("PROCEDURE_TASK_UNAVAILABLE");
+    if(holder.procedurePins?.[botId])return holder.procedurePins[botId];
+    const prior=holder.procedurePins;
+    holder.procedurePins={...prior,[botId]:structuredClone(pin)};
+    try{this.saveGroups();}catch(error){holder.procedurePins=prior;throw error;}
+    return holder.procedurePins[botId]!;
+  }
+
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const next={...task,...structuredClone(patch)};

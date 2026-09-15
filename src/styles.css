@@ -362,9 +362,14 @@ body {
    global ring above becomes a sharp blue rectangle inside the rounded
    chrome. Fields keep their own focus:border-*; buttons still use the
    :focus-visible ring. */
-:is(input, textarea, select):focus,
-:is(input, textarea, select):focus-visible {
+:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"])):focus,
+:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"])):focus-visible {
   outline: none;
+}
+
+select.procedure-history-audience:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 ::selection {

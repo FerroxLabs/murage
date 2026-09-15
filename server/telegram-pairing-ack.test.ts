@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { TelegramChannel } from "./telegram-channel.ts";
-import { TelegramTransportError } from "./telegram-transport.ts";
+import { TelegramTransport, TelegramTransportError } from "./telegram-transport.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-const confirmation = "Telegram is paired with Murage. Send a message here to chat with your Chief.";
+const confirmation = "Telegram is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again.";
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "telegram-pairing-ack-")); roots.push(root);
   let updates: any[] = [], now = 1000, current = true;
@@ -43,6 +43,28 @@ it("retries definite ack non-delivery at the durable deadline and stops after th
   f.now(25000); await restarted.pollOnce(); expect(f.transport.sendMessage).toHaveBeenCalledTimes(3);
   f.now(50000); await new TelegramChannel(f.options).pollOnce();
   expect(f.transport.sendMessage).toHaveBeenCalledTimes(3); expect(f.state().records[0]).toMatchObject({ state: "rejected", sendAttempts: 3 });
+  expect(f.enqueue).not.toHaveBeenCalled(); expect(f.runResult).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("uses actual transport DNS classification for bounded durable acknowledgement recovery (persistent=%s)", async persistent => {
+  const f = fixture();
+  const failure = new TypeError("fetch failed", { cause: Object.assign(new Error("injected DNS failure"), { code: "ENOTFOUND", syscall: "getaddrinfo" }) });
+  const fetcher = vi.fn<typeof fetch>();
+  if (persistent) fetcher.mockRejectedValue(failure);
+  else fetcher.mockRejectedValueOnce(failure).mockImplementation(async () => Response.json({ ok: true, result: { message_id: 1, chat: { id: 7 } } }));
+  const transport = new TelegramTransport({ token: "123:FAKE_TOKEN_CANARY_1234567890", fetch: fetcher });
+  f.transport.sendMessage.mockImplementation(input => transport.sendMessage(input));
+  await f.channel.pollOnce();
+  expect(f.state().records[0]).toMatchObject({ state: "queued", sendAttempts: 1, retryAt: 2500 });
+  const restarted = new TelegramChannel(f.options);
+  f.now(2499); await restarted.pollOnce(); expect(fetcher).toHaveBeenCalledTimes(1);
+  f.now(2500); await restarted.pollOnce(); expect(fetcher).toHaveBeenCalledTimes(2);
+  f.now(5500); await restarted.pollOnce();
+  f.now(10000); await new TelegramChannel(f.options).pollOnce();
+  expect(fetcher).toHaveBeenCalledTimes(persistent ? 3 : 2);
+  expect(f.state().records[0].state).toBe(persistent ? "rejected" : "sent");
+  if (persistent) expect(f.state().records[0].sendAttempts).toBe(3);
+  for (const [, options] of fetcher.mock.calls) expect(JSON.parse(options!.body as string)).toMatchObject({ chat_id: "7", text: confirmation });
   expect(f.enqueue).not.toHaveBeenCalled(); expect(f.runResult).not.toHaveBeenCalled();
 });
 

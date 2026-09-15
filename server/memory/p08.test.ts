@@ -19,6 +19,15 @@ const owner=()=>ownerMemoryTicket();
 function notebook(id="a",text="Owner prefers carefully verified backups."){const root=ensureWorkspace(id);writeFileSync(join(root,"MEMORY.md"),text);return root;}
 const action=(body:unknown,ticket=owner())=>memoryOwnerRoute("/api/memory/action",body,ticket,roster);
 
+it("exposes owner learning controls with revision checks and preserves choices on conflict",async()=>{
+  const before=memoryOwnerStatus(owner(),roster).learning;
+  expect(before).toMatchObject({revision:0,automaticFacts:true,automaticProcedures:true,reviewMode:false});
+  await expect(action({action:"configure",learning:{reviewMode:true},learningRevision:0},{})).rejects.toThrow("MEMORY_OWNER_REQUIRED");
+  await action({action:"configure",learning:{automaticFacts:false,reviewMode:true},learningRevision:0});
+  await expect(action({action:"configure",mode:"off",learning:{automaticFacts:true},learningRevision:0})).rejects.toThrow("REVISION_CONFLICT");
+  expect(memoryOwnerStatus(owner(),roster)).toMatchObject({mode:"active",learning:{revision:1,automaticFacts:false,reviewMode:true}});
+});
+
 it("requires desktop-issued owner authority and rejects forged action fields",async()=>{
   expect(()=>memoryOwnerStatus({},roster)).toThrow("MEMORY_OWNER_REQUIRED");
   await expect(action({action:"configure",mode:"active"},{})).rejects.toThrow("MEMORY_OWNER_REQUIRED");

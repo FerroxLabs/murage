@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.server.json",
+  "include": [
+    "../../server/gepa-*.ts",
+    "../../server/memory/gepa-*.ts",
+    "../../server/memory/evolution-policy*.ts",
+    "../../server/memory/evolution-runtime*.ts",
+    "../../server/memory/evolution-forgetting*.ts",
+    "../../server/memory/procedure-evaluator*.ts",
+    "../../server/memory/inference-lease.test.ts",
+    "../../server/memory/extract.test.ts",
+    "../../server/memory/extractor-connections.test.ts",
+    "../../server/memory/relevance.test.ts",
+    "../../server/memory/consolidate-resume.test.ts"
+  ]
+}

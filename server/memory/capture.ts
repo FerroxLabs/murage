@@ -1,8 +1,10 @@
+import { threadHumanPrincipal, isWorkspaceOwner } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { Message } from "../store.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { applyMemoryTombstones } from "./restore.ts";
+import { enqueueProcedureSourceReview } from "./procedure-review.ts";
 
 function enabled(db: DatabaseSync) { return db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "off"; }
 function excludedThread(db:DatabaseSync,threadId:string){return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));}
@@ -12,10 +14,15 @@ function conversationScope(db: DatabaseSync, threadId: string) {
   const id = randomUUID(); db.prepare("INSERT INTO memory_scopes VALUES(?,'conversation',?,'[]',0)").run(id,threadId); return id;
 }
 
-export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; excluded?: string}) {
+export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; excluded?: string; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}) {
   if (!enabled(db)||excludedThread(db,source.threadId)) return;
   const text = redactSecretsInText(source.text);
-  const payload = JSON.stringify({text,kind:source.kind,speaker:source.speaker,outcome:source.outcome,...source.excluded?{excluded:source.excluded}:{}});
+  const payload = JSON.stringify({text,kind:source.kind,speaker:source.speaker,outcome:source.outcome,
+    ...(source.occurredAt !== undefined && Number.isSafeInteger(source.occurredAt) && source.occurredAt >= 0 ? {occurredAt:source.occurredAt} : {}),
+    ...(source.actorId ? {actorId:source.actorId} : {}),
+    ...(source.artifactIds?.length ? {artifactIds:[...source.artifactIds]} : {}),
+    ...(source.action ? {action:{...source.action,label:redactSecretsInText(source.action.label),...(source.action.detail ? {detail:redactSecretsInText(source.action.detail)} : {})}} : {}),
+    ...source.excluded?{excluded:source.excluded}:{}});
   const hash = createHash("sha256").update(payload).digest("hex");
   const scope = conversationScope(db,source.threadId);
   if (db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=? AND revision IS NULL) OR (target_type='import' AND target_id=? AND content_hash=?)").get(source.id,scope,hash)) return;
@@ -31,6 +38,7 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   const meta = db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
   db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,policy_revision,deletion_epoch) VALUES(?,?,?,'capture','1',?,?,?)")
     .run(randomUUID(),source.id,revision,source.excluded?"complete":"pending",meta.policy_revision,meta.deletion_epoch);
+  enqueueProcedureSourceReview(db,source.id,revision);
 }
 
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
@@ -42,8 +50,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // Streaming text waits for the terminal patch; never snapshot each delta.
   if (message.kind === "text" && !userText && !finalText) return;
   captureSource(db,{id:`message:${threadId}:${message.id}`,threadId,messageId:message.id,turnId:message.turnId,parentId:message.parentId,
-    kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?"owner":tool?"tool":message.from?.botId??"assistant",
-    outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",text:userText||finalText?message.text??"":tool?message.tool!.name:"",
+    kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?(isWorkspaceOwner(threadHumanPrincipal(threadId,db))?"owner":"person:"+threadHumanPrincipal(threadId,db).personId):tool?"tool":message.from?.botId??"assistant",
+    outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",text:userText||finalText?message.text??"":tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
+    occurredAt:message.at,actorId:message.role==="user"?threadHumanPrincipal(threadId,db).personId:message.from?.botId,artifactIds:message.artifactIds,
+    ...(tool?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
     ...(!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});
 }
 

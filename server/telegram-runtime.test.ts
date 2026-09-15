@@ -42,7 +42,7 @@ it("routes a paired private Telegram delivery through durable routines, event bu
       const duplicate = manager.findWebhookDelivery(webhookId, input.deliveryId);
       if (duplicate) return duplicate;
       if (manager.activeWebhookRunCount(webhookId) >= 3) throw new Error("pending limit");
-      return manager.enqueueWebhook({ webhookId, telegramConnectionId: connectionId, webhookName: "Telegram message", botId: targetBotId, runOn: "ember", receivedAt: Date.now(), ...input });
+      return manager.enqueueWebhook({ webhookId, telegramConnectionId: connectionId, webhookName: "Telegram message", botId: targetBotId, runOn: "ember", receivedAt: Date.now(), humanPrincipal: { personId: "workspace-owner", bindingId: "local", revision: 1 }, ...input });
     },
     runResult: id => manager.listRuns().find(run => run.id === id) ?? null,
     revokeRuns: async connectionId => {

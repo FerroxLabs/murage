@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { ImageGenerationService, assertCredentialOrigin, parseOpenRouterImageCatalog, type ImageConnection, type ImageProvider } from "./image-generation.ts";
+import { ImageGenerationService, assertCredentialOrigin, parseOpenRouterImageCatalog, type GeneratedImageMetadata, type ImageConnection, type ImageProvider } from "./image-generation.ts";
 const PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const image=()=>new Response(JSON.stringify({model:"reported-image-model",data:[{b64_json:PNG}],usage:{input_tokens:12,output_tokens:23,cost:0.04}}));
 const parameters={output_format:{type:"enum",values:["png","webp"]},quality:{type:"enum",values:["low","medium","high"]},size:{type:"enum",values:["1024x1024"]}};
@@ -245,5 +245,18 @@ it("F1 xAI and OpenRouter edits keep denial, connection-change and single-attemp
   await expect(changed.service.generate(request,changed.hooks,[ref(PNG)])).rejects.toMatchObject({code:"connection-changed"});expect(changed.posts()).toHaveLength(0);
   for(const status of [401,429,503]){const f=strict(provider);const inner=f.fetcher.getMockImplementation()!;f.fetcher.mockImplementation(async(input,init)=>init?.method==="POST"?new Response(CANARY[provider],{status}):inner(input,init));
    await expect(f.service.generate(request,f.hooks,[ref(PNG)])).rejects.toThrow("No fallback");expect(f.posts()).toHaveLength(1);expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith(status<500?"failed":"uncertain");}
+ }
+});
+it("B16 reports Flux usage and cost only when the provider supplied valid numbers and never invents a zero cost",async()=>{
+ const cases:Array<[unknown,Record<string,number>|undefined]>=[[undefined,undefined],[{input_tokens:5},{inputTokens:5}],[{input_tokens:5,cost:-1},{inputTokens:5}],[{input_tokens:5,cost:"0.1"},{inputTokens:5}],[{cost:-1},undefined],[{cost:"0.1"},undefined],[{cost:0},{costUsd:0}]];
+ for(const[usage,expected] of cases){
+  const f=fixture("flux");f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({data:[{b64_json:PNG}],...(usage===undefined?{}:{usage})})));
+  const result=await f.service.generate(f.request,f.hooks);
+  expect(f.fetcher).toHaveBeenCalledOnce();expect(f.publish).toHaveBeenCalledOnce();
+  const published=(f.publish.mock.calls[0] as unknown[])[1] as GeneratedImageMetadata;
+  for(const metadata of [result.metadata,published]){
+   if(expected===undefined)expect(metadata).not.toHaveProperty("usage");else expect(metadata.usage).toEqual(expected);
+   if(expected?.costUsd===undefined)expect(JSON.stringify(metadata)).not.toContain("costUsd");
+  }
  }
 });
