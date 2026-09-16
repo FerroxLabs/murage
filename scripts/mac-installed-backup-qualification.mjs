@@ -227,6 +227,7 @@ ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
 ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
 ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
 ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
+ObjC.bindFunction('AXUIElementIsAttributeSettable',['int',['id','id','unsigned char *']]);
 ObjC.bindFunction('CFEqual',['bool',['id','id']]);
 var queryStarted=Date.now(),visited=0,queryWindows=0;
 function bounded(){if(Date.now()-queryStarted>12000)throw{error:'AX-query-deadline',visited:visited};}
@@ -281,8 +282,13 @@ try{
    // The shortcut starts an asynchronous native Go-to dialog. Never type into the underlying picker.
    var pathField=awaitState(function(){var e=focus();return e&&['AXTextField','AXComboBox'].indexOf(role(e))>=0&&!before.some(function(old){return sameElement(old,e);})?e:false;},'picker-go-to-focus');
    observed.pathRole=role(pathField);observed.pathNames=names(pathField);
-   se.keystroke('a',{using:'command down'});se.keystroke(cmd.path);
+   var settable=Ref(),settableCode=$.AXUIElementIsAttributeSettable(pathField,$('AXValue'),settable);
+   observed.pathSettableCode=settableCode;observed.pathSettable=settableCode===0?Boolean(settable[0]):false;
+   if(settableCode!==0||!observed.pathSettable)throw{error:'picker-path-not-settable',code:settableCode};
+   observed.pathSetCode=$.AXUIElementSetAttributeValue(pathField,$('AXValue'),$(cmd.path));
+   if(observed.pathSetCode!==0)throw{error:'picker-path-set',code:observed.pathSetCode};
    awaitState(function(){var value=readAX(pathField,'AXValue',false);observed.pathReadback=value;return value===cmd.path;},'picker-path-readback');
+   if(!sameElement(pathField,focus()))throw{error:'picker-path-focus-changed'};
    se.keyCode(36);
    awaitState(function(){return !inTree(pathField);},'picker-go-to-dismissed');
    var ready=awaitState(function(){var buttons=openButtons();return buttons.length===1&&readAX(buttons[0],'AXEnabled',true)===true?buttons[0]:false;},'picker-open-enabled');
