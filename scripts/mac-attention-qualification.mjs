@@ -125,7 +125,15 @@ async function journey(){
   for(const name of ['NotificationCenter','ControlCenter'])tree(systemPid(name),'ready-'+name);await dnd(s,false);
   const fd=openSync(path.join(s.private,'app.log'),'wx',0o600);active=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:s.tmp,MURAGE_DATA_DIR:s.data,MURAGE_USER_DATA:s.userData},stdio:['ignore',fd,fd]});closeSync(fd);active.unref();s.pid=active.pid;save(s);
   await until(()=>{const r=ax(s.pid,{op:'manual'});return r.ok;},15000,'MANUAL_AX');
-  await until(()=>{const log=path.join(s.userData,'logs/server.log');if(!existsSync(log))return false;const found=[...readFileSync(log,'utf8').matchAll(/fork .*\/server\/index\.js port=(\d+)/g)].at(-1);if(found)s.port=Number(found[1]);return s.port;},30000,'OWNED_SERVER_PORT');save(s);
+  await until(async()=>{
+   const log=path.join(s.userData,'logs/server.log');if(!existsSync(log))return false;
+   const found=[...readFileSync(log,'utf8').matchAll(/fork .*\/server\/index\.js port=(\d+)/g)].at(-1);if(!found)return false;s.port=Number(found[1]);
+   let health;
+   try{health=await api(s,'/api/health');}catch(error){record('server-not-ready',{port:s.port,error:error.name,code:error.cause?.code??null});return false;}
+   const owned=ps().find(row=>row.pid===health.pid&&row.command.includes(s.app+'/Contents/Resources/server/index.js'));
+   check(health.app==='murage'&&Boolean(owned),'OWNED_SERVER_HEALTH_IDENTITY');
+   record('server-ready',{port:s.port,pid:health.pid});return true;
+  },30000,'OWNED_SERVER_READY');save(s);
   const instances=(await api(s,'/api/instances')).instances;check(instances.length===1&&instances[0].instanceId==='attention-fixture'&&instances[0].driverKind==='claudeAgent'&&instances[0].models.options.some(x=>x.id==='claude-sonnet-5'),'SYNTHETIC_INSTANCE_IDENTITY');
   const roster=(await api(s,'/api/bots?messages=0')).bots;check(Object.values(s.bots).every(b=>roster.some(x=>x.id===b.id&&x.threadId===b.threadId)),'OWNED_DATA_DIR');
   await press(s.pid,'App settings');await press(s.pid,'General');const t=tree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
