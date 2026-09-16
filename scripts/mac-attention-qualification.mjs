@@ -128,13 +128,13 @@ async function selectBot(s,kind){const b=s.bots[kind];await press(s.pid,b.name,[
 async function settings(s,changes){await press(s.pid,'App settings');await press(s.pid,'General',['AXButton'],{windowSelector:true});for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
 // Read the owner-authorized desktop projection. AX does not expose request IDs.
 function inboxObservation(t,sourceLabel){
- const nodes=t.elements,all=texts(t),under=(node,index)=>{let parent=node.parent,steps=0;while(parent>=0){check(++steps<=64,'INBOX_AX_ANCESTRY');if(parent===index)return true;const p=nodes.find(n=>n.index===parent);check(p,'INBOX_AX_PARENT');parent=p.parent;}return false;};
+ const nodes=t.elements,logicalText=elements=>{const out=[];let parent=null,value='';const flush=()=>{if(parent!==null){const finished=value.trim();if(finished)out.push(finished);}parent=null;value='';};for(const node of elements){if(node.role==='AXStaticText'&&typeof node.value==='string'){if(parent===node.parent)value+=node.value;else{flush();parent=node.parent;value=node.value;}}else flush();}flush();return out;},all=[...texts(t),...logicalText(nodes)],under=(node,index)=>{let parent=node.parent,steps=0;while(parent>=0){check(++steps<=64,'INBOX_AX_ANCESTRY');if(parent===index)return true;const p=nodes.find(n=>n.index===parent);check(p,'INBOX_AX_PARENT');parent=p.parent;}return false;};
  check(!all.some(x=>/Displayed items may be stale|could not load|Use Refresh to check|Inbox is unavailable/i.test(x)),'INBOX_ERROR_OR_STALE');
  if(all.some(x=>x.includes('Updating Inbox')))return null;
  if(!all.some(x=>/^While you were away: .* matching items\.$/.test(x)))return null;
  check(all.includes('Page 1 of 1'),'INBOX_COMPLETE_PAGE');
  const lists=nodes.filter(n=>n.role==='AXList'&&n.names.includes('Inbox items'));check(lists.length===1,'INBOX_UNIQUE_LIST');
- const rows=nodes.filter(n=>n.parent===lists[0].index).map(row=>texts({elements:[row,...nodes.filter(n=>under(n,row.index))]}));
+ const rows=nodes.filter(n=>n.parent===lists[0].index).map(row=>{const elements=[row,...nodes.filter(n=>under(n,row.index))];return[...texts({elements}),...logicalText(elements)];});
  const matches=rows.filter(row=>row.includes(sourceLabel));check(matches.length<=1,'INBOX_AMBIGUOUS_REQUEST');
  if(!matches.length)return{settled:true,pending:false,sourceLabel};
  check(matches[0].includes('Approval requested')&&matches[0].includes('Pending')&&matches[0].includes('Open request'),'INBOX_EXACT_PENDING_ROW');

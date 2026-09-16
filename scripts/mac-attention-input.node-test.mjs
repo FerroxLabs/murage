@@ -66,6 +66,27 @@ test('owner Inbox requires one complete settled exact source row and refuses sta
  assert.equal(observe(inboxTree({extra:['Tools, approvals may be stale']}),label).pending,true);
  assert.ok(!source.includes("api(s,'/api/inbox"));
 });
+test('recorded R16 fragmented AXStaticText status and page runs are observed without selector widening',()=>{
+ const raw=(elements)=>({elements});
+ const base=[
+  {index:0,parent:-1,role:'AXApplication',names:[],value:null},
+  {index:1,parent:0,role:'AXStaticText',names:[],value:'While you were away: '},
+  {index:2,parent:0,role:'AXStaticText',names:[],value:'0'},
+  {index:3,parent:0,role:'AXStaticText',names:[],value:' unread on this page. '},
+  {index:4,parent:0,role:'AXStaticText',names:[],value:'0'},
+  {index:5,parent:0,role:'AXStaticText',names:[],value:' matching items.'},
+  {index:6,parent:0,role:'AXGroup',names:[],value:null},
+  {index:7,parent:0,role:'AXStaticText',names:[],value:'Page '},
+  {index:8,parent:0,role:'AXStaticText',names:[],value:'1'},
+  {index:9,parent:0,role:'AXStaticText',names:[],value:' of '},
+  {index:10,parent:0,role:'AXStaticText',names:[],value:'1'},
+  {index:11,parent:0,role:'AXList',names:['Inbox items'],value:null}
+ ];
+ assert.equal(observe(raw(base),'B35 banner').pending,false);
+ const cross=structuredClone(base);cross[4].parent=11;assert.equal(observe(raw(cross),'B35 banner'),null);
+ const nonstatic=structuredClone(base);nonstatic[3].role='AXGroup';assert.equal(observe(raw(nonstatic),'B35 banner'),null);
+ const nonstring=structuredClone(base);nonstring[3].value=1;assert.equal(observe(raw(nonstring),'B35 banner'),null);
+});
 test('pending remounts owner Inbox before every settled read and closes without opening request',async()=>{
  const fn=/async function pending\(s,kind,ms=10000\)\{[\s\S]*?\n\}/.exec(source)[0],calls=[];
  const pending=runInNewContext('('+fn+')',{openPendingInbox:async()=>calls.push('open'),until:async cb=>cb(),readPendingInbox:async()=>{calls.push('read');return{pending:false,settled:true};},press:async(_pid,label)=>calls.push(label)});
