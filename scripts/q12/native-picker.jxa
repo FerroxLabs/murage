@@ -1,0 +1,151 @@
+function run(argv){
+var cmd=JSON.parse(argv[0]),se=Application('System Events'),ps=se.processes.whose({unixId:cmd.pid});
+if(cmd.op==='manualAX'){
+ ObjC.import('ApplicationServices');
+ // JXA bridges kCFBooleanTrue as a CFNumber; wrap a JS boolean to retain CFBoolean.
+ var value=$(true),valueType=String($.CFGetTypeID(value)),booleanType=String($.CFBooleanGetTypeID());
+ if(valueType!==booleanType)return JSON.stringify({ok:false,error:'AX-boolean-type',valueType:valueType,booleanType:booleanType});
+ var app=$.AXUIElementCreateApplication(cmd.pid),code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),value);
+ return JSON.stringify({ok:code===0,code:code,valueType:valueType,booleanType:booleanType});
+}
+if(ps.length!==1)return JSON.stringify({ok:false,error:'process',count:ps.length});var p=ps[0];
+// System Events cannot resolve Chromium AXTimeField descendants. Use the
+// public AX API for this exact control; input still comes from real key events.
+if(cmd.op==='time'){
+ if(!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(cmd.text))return JSON.stringify({ok:false,error:'time-format'});
+ ObjC.import('ApplicationServices');
+ ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
+ ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
+ ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ function read(e,k){var r=Ref();return $.AXUIElementCopyAttributeValue(e,$(k),r)===0?ObjC.deepUnwrap(r[0]):null;}
+ var visited=0,overflow=false;
+ function walk(e,predicate,out,depth){if(depth>64||++visited>4000){overflow=true;return;}if(predicate(e))out.push(e);var children=read(e,'AXChildren')||[];for(var i=0;i<children.length;i++)walk(children[i],predicate,out,depth+1);}
+ var app=$.AXUIElementCreateApplication(cmd.pid),windows=read(app,'AXWindows')||[],fields=[];
+ for(var w=0;w<windows.length;w++)walk(windows[w],function(e){return read(e,'AXRole')==='AXTimeField'&&read(e,'AXTitle')===cmd.label;},fields,0);
+ if(overflow||fields.length!==1)return JSON.stringify({ok:false,error:'time-field',count:fields.length,overflow:overflow});
+ var segments=[];visited=0;walk(fields[0],function(e){return read(e,'AXRole')==='AXIncrementor';},segments,0);
+ var observed=segments.map(function(e){return{title:read(e,'AXTitle'),min:read(e,'AXMinValue'),max:read(e,'AXMaxValue')};});
+ function named(name){return segments.filter(function(e){return read(e,'AXTitle')===name+' '+cmd.label;});}
+ var hour=named('Hours'),minute=named('Minutes'),period=named('AM/PM');
+ if(overflow||hour.length!==1||minute.length!==1||period.length>1||segments.length!==2+period.length)return JSON.stringify({ok:false,error:'time-segments',observed:observed});
+ var low=read(hour[0],'AXMinValue'),high=read(hour[0],'AXMaxValue'),twelve=period.length===1;
+ // Chromium exposes symbolic AM/PM indices as 1-based AX values; retain the
+ // existing 0-based encoding too, but never infer a base from arbitrary ranges.
+ var periodLow=twelve?read(period[0],'AXMinValue'):null,periodHigh=twelve?read(period[0],'AXMaxValue'):null;
+ var periodBase=periodLow===0&&periodHigh===1?0:periodLow===1&&periodHigh===2?1:null;
+ if((twelve?low!==1||high!==12:low!==0||high!==23)||read(minute[0],'AXMinValue')!==0||read(minute[0],'AXMaxValue')!==59||(twelve&&periodBase===null))return JSON.stringify({ok:false,error:'time-ranges',observed:observed});
+ var h=Number(cmd.text.slice(0,2)),m=Number(cmd.text.slice(3)),expectedHour=twelve?(h%12||12):h;
+ var parts=[{e:hour[0],text:String(expectedHour),value:expectedHour},{e:minute[0],text:String(m),value:m}];if(twelve)parts.push({e:period[0],text:h<12?'A':'P',value:periodBase+(h<12?0:1)});
+ p.frontmost=true;
+ for(var j=0;j<parts.length;j++){var focus=$.AXUIElementSetAttributeValue(parts[j].e,$('AXFocused'),$(true));if(focus!==0)return JSON.stringify({ok:false,error:'time-focus',code:focus,observed:observed});delay(0.2);se.keystroke(parts[j].text);delay(0.2);}
+ se.keyCode(48);delay(0.2);
+ var values=parts.map(function(part){return{title:read(part.e,'AXTitle'),value:read(part.e,'AXValue'),description:read(part.e,'AXValueDescription'),expected:part.value};});
+ var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
+ return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
+}
+// Query the owned PID through public AX APIs. System Events remains keyboard-only.
+ObjC.import('ApplicationServices');
+ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
+ObjC.bindFunction('AXUIElementCreateSystemWide',['id',[]]);
+ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
+ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
+ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
+ObjC.bindFunction('AXUIElementIsAttributeSettable',['int',['id','id','unsigned char *']]);
+ObjC.bindFunction('CFEqual',['bool',['id','id']]);
+var queryStarted=Date.now(),visited=0,queryWindows=0;
+function bounded(){if(Date.now()-queryStarted>12000)throw{error:'AX-query-deadline',visited:visited};}
+function readAX(e,k,required){bounded();var value=Ref(),code=$.AXUIElementCopyAttributeValue(e,$(k),value);if(code===0)return ObjC.deepUnwrap(value[0]);if(!required&&(code===-25205||code===-25212))return null;throw{error:'AX-read',attribute:k,code:code,visited:visited};}
+function names(e){return ['AXTitle','AXDescription'].map(function(k){return readAX(e,k,false);}).filter(function(v){return typeof v==='string'&&v.length;});}
+function role(e){return readAX(e,'AXRole',true);}
+function all(){
+ var out=[],app=$.AXUIElementCreateApplication(cmd.pid),ws=readAX(app,'AXWindows',true)||[];queryWindows=ws.length;
+ function walk(e,depth){bounded();if(depth>64||++visited>4000)throw{error:'AX-tree-limit',visited:visited,depth:depth};out.push(e);var children=readAX(e,'AXChildren',false)||[];for(var n=0;n<children.length;n++)walk(children[n],depth+1);}
+ for(var i=0;i<ws.length;i++){var roots=cmd.sheet?(readAX(ws[i],'AXSheets',false)||[]):[ws[i]];for(var j=0;j<roots.length;j++)walk(roots[j],0);}return out;
+}
+function matches(){return all().filter(function(e){return cmd.roles.indexOf(role(e))>=0&&names(e).indexOf(cmd.label)>=0;});}
+try{
+ var timeoutCode=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);
+ if(timeoutCode!==0)throw{error:'AX-timeout-setup',code:timeoutCode};
+ if(cmd.op==='pickPath'){
+  if(cmd.actionButton!==undefined&&cmd.actionButton!=='Open'&&cmd.actionButton!=='Save')throw{error:'picker-action-button'};
+  if(typeof cmd.path!=='string'||cmd.path.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.path))throw{error:'picker-path'};
+  var pickerApp=$.AXUIElementCreateApplication(cmd.pid),observed={requestedPath:cmd.path,requestedPid:cmd.pid,processPresent:ps.length===1,axTrusted:Boolean($.AXIsProcessTrusted()),observations:0,retryableAXReads:0};
+  function snapshot(){visited=0;queryWindows=0;return all();}
+  function sameElement(a,b){return Boolean(a&&b&&$.CFEqual(a,b));}
+  function inTree(element){return snapshot().some(function(e){return sameElement(e,element);});}
+  function focus(){return readAX(pickerApp,'AXFocusedUIElement',false);}
+  function awaitState(fn,label){
+   observed.waitingFor=label;
+   for(;;){
+    bounded();observed.observations++;
+    try{var result=fn();if(result)return result;}
+    catch(error){
+     observed.lastFailure={error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted};
+     // The first AXWindows query can meet a busy app while its native dialog
+     // is opening or closing, or a child may become stale while Go To disappears.
+     // Reobserve a complete snapshot within the original deadline; never
+     // equate a failed traversal with absence or replay a UI action.
+     var opening=label==='picker-open'&&error.error==='AX-read'&&error.code===-25204;
+     var dismissing=label==='picker-go-to-dismissed'&&error.error==='AX-read'&&error.attribute==='AXChildren'&&error.code===-25202;
+     var closing=label==='picker-dismissed'&&error.error==='AX-read'&&error.attribute==='AXWindows'&&error.code===-25204;
+     if(!opening&&!dismissing&&!closing)throw error;
+     observed.axTrusted=Boolean($.AXIsProcessTrusted());observed.processPresent=se.processes.whose({unixId:cmd.pid}).length===1;
+     if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
+     if(!observed.processPresent)throw{error:'picker-process-exited'};
+     observed.retryableAXReads++;
+    }
+    delay(.1);
+   }
+  }
+  function openButtons(){var buttons=snapshot().filter(function(e){return role(e)==='AXButton'&&names(e).indexOf(cmd.actionButton||'Open')>=0;});observed.windowCount=queryWindows;observed.openButtonCount=buttons.length;return buttons;}
+  try{
+   if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
+   p.frontmost=true;
+   var initialButtons=awaitState(function(){var buttons=openButtons();return buttons.length===1?buttons:false;},'picker-open');
+   var initialOpen=initialButtons[0],panel=readAX(initialOpen,'AXParent',true),depth=0;
+   while(['AXSheet','AXWindow'].indexOf(role(panel))<0){if(++depth>32)throw{error:'picker-ancestor'};panel=readAX(panel,'AXParent',true);}
+   observed.panelRole=role(panel);observed.panelNames=names(panel);
+   var before=snapshot();
+   se.keystroke('g',{using:['command down','shift down']});
+   // The shortcut starts an asynchronous native Go-to dialog. Never type into the underlying picker.
+   var pathField=awaitState(function(){var e=focus();return e&&['AXTextField','AXComboBox'].indexOf(role(e))>=0&&!before.some(function(old){return sameElement(old,e);})?e:false;},'picker-go-to-focus');
+   observed.pathRole=role(pathField);observed.pathNames=names(pathField);
+   var settable=Ref(),settableCode=$.AXUIElementIsAttributeSettable(pathField,$('AXValue'),settable);
+   observed.pathSettableCode=settableCode;observed.pathSettable=settableCode===0?Boolean(settable[0]):false;
+   if(settableCode!==0||!observed.pathSettable)throw{error:'picker-path-not-settable',code:settableCode};
+   observed.pathSetCode=$.AXUIElementSetAttributeValue(pathField,$('AXValue'),$(cmd.path));
+   if(observed.pathSetCode!==0)throw{error:'picker-path-set',code:observed.pathSetCode};
+   awaitState(function(){var value=readAX(pathField,'AXValue',false);observed.pathReadback=value;return value===cmd.path;},'picker-path-readback');
+   if(!sameElement(pathField,focus()))throw{error:'picker-path-focus-changed'};
+   se.keyCode(36);
+   awaitState(function(){return !inTree(pathField);},'picker-go-to-dismissed');
+   var ready=awaitState(function(){var buttons=openButtons();return buttons.length===1&&readAX(buttons[0],'AXEnabled',true)===true?buttons[0]:false;},'picker-open-enabled');
+   var pressed=$.AXUIElementPerformAction(ready,$('AXPress'));observed.pressCode=pressed;
+   if(pressed!==0)throw{error:'picker-open-press',code:pressed};
+   // A successful AXPress alone does not prove the dialog accepted its selection.
+   awaitState(function(){return !inTree(panel);},'picker-dismissed');
+   return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed,goToDismissed:true,pickerDismissed:true,elapsedMs:Date.now()-queryStarted});
+  }catch(error){return JSON.stringify({ok:false,error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed,visited:visited,elapsedMs:Date.now()-queryStarted});}
+ }
+ if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return JSON.stringify({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
+ if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length,visited:visited});
+  if(cmd.op==='press'){if(cmd.requireEnabled&&readAX(m[0],'AXEnabled',true)!==true)return JSON.stringify({ok:false,error:'AX-disabled',enabled:false});var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
+  if(!$.AXIsProcessTrusted())throw{error:'AX-client-not-trusted'};
+  var observed={requested:cmd.text,role:role(m[0]),enabled:readAX(m[0],'AXEnabled',true),readback:null};
+  if(typeof cmd.text!=='string'||!cmd.text.length||['AXTextField','AXIncrementor'].indexOf(observed.role)<0||observed.enabled!==true)return JSON.stringify({ok:false,error:'AX-input-control',observed:observed});
+  var settable=Ref();observed.settableCode=$.AXUIElementIsAttributeSettable(m[0],$('AXValue'),settable);observed.settable=observed.settableCode===0&&Boolean(settable[0]);
+  if(!observed.settable)return JSON.stringify({ok:false,error:'AX-input-not-settable',observed:observed});
+  observed.setCode=$.AXUIElementSetAttributeValue(m[0],$('AXValue'),$(cmd.text));
+  if(observed.setCode!==0)return JSON.stringify({ok:false,error:'AX-input-set',observed:observed});
+  try{for(;;){bounded();observed.readback=readAX(m[0],'AXValue',true);var actual=observed.readback;
+   var matched=cmd.numeric===true?(typeof actual==='string'||typeof actual==='number')&&String(actual).trim().length>0&&isFinite(Number(actual))&&isFinite(Number(cmd.text))&&Number(actual)===Number(cmd.text):actual===cmd.text;
+   if(matched)return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed});delay(.1);
+  }}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-input-readback',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed});}
+ }
+ if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted,backend:'AXUIElement'});}
+if(cmd.op==='quit'){p.frontmost=true;delay(0.3);se.keystroke('q',{using:'command down'});return JSON.stringify({ok:true});}
+return JSON.stringify({ok:false,error:'op'});}
