@@ -18,9 +18,9 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: c30c741c1cebe718fd64736c498158c89bcc81e9
+      ARTIFACT_SOURCE_SHA: 55afcb29198e4c265148e041c575d323e8f1735d
       FIXTURE_SOURCE_SHA: ${{ github.sha }}
-      ARTIFACT_RUN_ID: "35049388628"
+      ARTIFACT_RUN_ID: "35107217901"
       ARTIFACT_RUN_ATTEMPT: "1"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:

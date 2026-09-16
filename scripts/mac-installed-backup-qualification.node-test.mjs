@@ -340,7 +340,7 @@ test("configureDue supplies both inherited budgets accepted by current enabledSc
   const inherited=readFileSync(new URL("./b21-mac-closed-native.mjs",import.meta.url),"utf8");
   assert.match(inherited,new RegExp(`maxBytes:${budgets.maxBytes},maxDurationMs:${budgets.maxDurationMs}`));
   const entries={},order=[];
-  const configure=runInNewContext(`(${fn})`,{GUI_SCHEDULE_BUDGETS:budgets,selector:()=>{},typeInto:async(_s,_pid,key,value)=>{entries[key]=value;order.push(key);},ensureChecked:async(_s,_pid,key)=>order.push(key),press:async()=>{},waitText:async()=>{}});
+  const configure=runInNewContext(`(${fn})`,{GUI_SCHEDULE_BUDGETS:budgets,verifyOrdinaryForm:async()=>{},selector:()=>{},typeInto:async(_s,_pid,key,value)=>{entries[key]=value;order.push(key);},ensureChecked:async(_s,_pid,key)=>order.push(key),press:async()=>{},waitText:async()=>{}});
   await configure({},123,5);
   assert.ok(order.indexOf("sizeBudget")<order.indexOf("closedConsent"));assert.ok(order.indexOf("durationBudget")<order.indexOf("closedConsent"));
   const ui=readFileSync(new URL("../src/components/BackupSettings.tsx",import.meta.url),"utf8");
@@ -392,11 +392,54 @@ test("configureDue preserves five-minute lead after slow form entry and renews i
   const budgets=runInNewContext(/const GUI_SCHEDULE_BUDGETS=(.*);/.exec(source)[1]);
   let clock=1800000000000,computedAt,consent=false;const order=[];
   class ClockDate extends Date{static now(){computedAt=clock;return clock;}}
-  const configure=runInNewContext(`(${fn})`,{Date:ClockDate,GUI_SCHEDULE_BUDGETS:budgets,selector:()=>{},typeInto:async(_s,_pid,key)=>{order.push(key);consent=false;clock+=key==='dailyTime'?2000:30000;},ensureChecked:async(_s,_pid,key)=>{order.push(key);clock+=60000;consent=key==='idleConsent';},press:async(_s,_pid,key)=>{order.push(key);assert.equal(consent,true);clock+=40000;},waitText:async()=>{clock+=64000;}});
+  const configure=runInNewContext(`(${fn})`,{Date:ClockDate,GUI_SCHEDULE_BUDGETS:budgets,verifyOrdinaryForm:async()=>{},selector:()=>{},typeInto:async(_s,_pid,key)=>{order.push(key);consent=false;clock+=key==='dailyTime'?2000:30000;},ensureChecked:async(_s,_pid,key)=>{order.push(key);clock+=60000;consent=key==='idleConsent';},press:async(_s,_pid,key)=>{order.push(key);assert.equal(consent,true);clock+=40000;},waitText:async()=>{clock+=64000;}});
   const due=await configure({},123,5);
   assert.deepEqual(order,['timezone','catchup','sizeBudget','durationBudget','closedConsent','dailyTime','idleConsent','enable']);
   assert.equal(computedAt,1800000000000+180000);assert.equal(due,Math.ceil((computedAt+5*60000)/60000)*60000);
   assert.ok(clock<due-60000,'original preScheduled one-minute margin remains under observed slow-call progression');
   const ui=readFileSync(new URL('../src/components/BackupSettings.tsx',import.meta.url),'utf8');assert.match(ui,/const edit=.*setConsent\(false\)/);
   assert.match(source,/Date.now\(\)<s.dueAt-60000/);
+});
+
+
+function formAx(options={}){
+ const source=readFileSync(new URL('./mac-installed-backup-qualification.mjs',import.meta.url),'utf8'),jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)[1];
+ const field=nativeAxElement('AXTextField','Field'),button=nativeAxElement('AXButton','Enable scheduled backups'),window=nativeAxElement('AXWindow','Settings',[field,button]),app={AXWindows:[window]},events=[];let clock=0,set=false,reads=0;
+ button.AXEnabled=options.buttonEnabled??true;field.AXEnabled=options.enabled??true;
+ const dollar=x=>x;Object.assign(dollar,{AXIsProcessTrusted:()=>true,AXUIElementCreateApplication:()=>app,AXUIElementCreateSystemWide:()=>({}),AXUIElementSetMessagingTimeout:()=>0,
+  AXUIElementCopyAttributeValue:(e,k,r)=>{if(set&&e===field&&k==='AXValue'){if(options.readError)return -25204;r[0]=++reads<=(options.delayReads??0)?'':Object.hasOwn(options,'readback')?options.readback:field.AXValue;return 0;}if(!Object.hasOwn(e,k))return -25205;r[0]=e[k];return 0;},
+  AXUIElementIsAttributeSettable:(_e,_k,r)=>{r[0]=options.settable??true;return options.settableCode??0;},
+  AXUIElementSetAttributeValue:(e,k,v)=>{events.push({kind:'set',k,v});set=true;e[k]=v;return options.setCode??0;},AXUIElementPerformAction:()=>{events.push({kind:'press'});return 0;}});
+ const run=runInNewContext(jxa+';run',{Application:()=>({processes:{whose:()=>[{}]},keystroke:()=>assert.fail('keyboard fallback forbidden')}),ObjC:{import(){},bindFunction(){},deepUnwrap:x=>x},$:dollar,Ref:()=>[],Date:{now:()=>clock},delay:()=>{clock+=1000;}});
+ return {query:c=>JSON.parse(run([JSON.stringify({pid:123,roles:['AXTextField'],label:'Field',...c})])),events};
+}
+test('ordinary AX setter admits exact string and nonempty finite numeric readback, never keyboard fallback',()=>{
+ for(const sample of [{text:'UTC',readback:'UTC'},{text:'1',readback:1,numeric:true},{text:'0.09313225746154785',readback:'0.09313225746154785',numeric:true},{text:'UTC',readback:'UTC',delayReads:2}]){
+  const helper=formAx(sample),result=helper.query({op:'focusType',text:sample.text,numeric:sample.numeric});assert.equal(result.ok,true);assert.equal(result.observed.settable,true);assert.equal(result.observed.setCode,0);assert.equal(result.observed.readback,sample.readback);assert.equal(helper.events.filter(x=>x.kind==='set').length,1);
+ }
+ for(const sample of [{settable:false},{settableCode:-25205},{setCode:-25204},{readError:true},{readback:'TC'},{readback:''},{readback:null},{enabled:false},{readback:'Infinity',numeric:true},{readback:false,numeric:true}]){
+  const helper=formAx(sample),result=helper.query({op:'focusType',text:sample.numeric?'1':'UTC',numeric:sample.numeric});assert.equal(result.ok,false,JSON.stringify(sample));assert.equal(helper.events.filter(x=>x.kind==='press').length,0);assert.ok(result.observed);
+ }
+ const helper=formAx({buttonEnabled:false});assert.equal(helper.query({op:'press',roles:['AXButton'],label:'Enable scheduled backups',requireEnabled:true}).ok,false);assert.equal(helper.events.length,0);
+});
+test('pre-enable rereads all ordinary form values and refuses missing numeric values without pressing',async()=>{
+ const source=readFileSync(new URL('./mac-installed-backup-qualification.mjs',import.meta.url),'utf8');
+ const matcher=/function ordinaryValueMatches\(value,expected,numeric\)\{[\s\S]*?\n\}/.exec(source)[0],verify=/async function verifyOrdinaryForm\(s,pid\)\{[\s\S]*?\n\}/.exec(source)[0];
+ for(const bad of [undefined,'',null,'wrong']){const values={timezone:'UTC',catchup:'1',sizeBudget:String(100000000/1024**3),durationBudget:'10'},calls=[];if(bad!==undefined)values.catchup=bad;
+ const fn=runInNewContext(matcher+';('+verify+')',{GUI_SCHEDULE_BUDGETS:{maxBytes:100000000,maxDurationMs:600000},selector:key=>({roles:['AXTextField'],label:key}),ax:(_s,c)=>{calls.push(c.label);return{ok:true,enabled:true,value:values[c.label]};},record(){},check:(v,label)=>{if(!v)throw Error(label);}});
+ if(bad===undefined){await fn({},123);assert.deepEqual(calls,['timezone','catchup','sizeBudget','durationBudget']);}else await assert.rejects(fn({},123),/pre-enable-catchup/);
+ }
+});
+test('registration saves task plist hash before configure failure and never replaces changed ownership',async()=>{
+ const source=readFileSync(new URL('./mac-installed-backup-qualification.mjs',import.meta.url),'utf8'),pin=/function pinTaskPlist\(s\)\{[\s\S]*?\n\}/.exec(source)[0],launch=/async function launchConfigure\(\)\{[\s\S]*?\n\}/.exec(source)[0];
+ const s={manifest:'manifest',settingsEntry:{label:'App settings'},uid:501,label:'task',plist:'/Users/runner/Library/LaunchAgents/task.plist'},saved=[];let bytes='original';
+ const context={process:{env:{HOME:'/Users/runner'}},path:{join:(...p)=>p.join('/')},check:(v,l)=>{if(!v)throw Error(l);},lstatSync:()=>({isFile:()=>true,isSymbolicLink:()=>false,nlink:1,uid:501}),readFileSync:()=>bytes,sha:x=>createHash('sha256').update(x).digest('hex'),saveState:v=>saved.push(structuredClone(v)),loadState:()=>s,beforeSetup:async()=>{},launch:async()=>({pid:123}),openBackupSettings:async()=>{},press:async()=>{},choosePath:async()=>{},waitText:async()=>{},waitInstalled:async()=>{},step:(_l,f)=>f(),launchdJob:()=>({state:'waiting'}),exists:()=>true,configureDue:async()=>{assert.equal(saved.length,1);assert.ok(saved[0].plistSha256);throw Error('injected configure failure');}};
+ const actual=runInNewContext(pin+';({pinTaskPlist,launch:'+launch+'})',context);await assert.rejects(actual.launch(),/injected configure failure/);bytes='changed';assert.throws(()=>actual.pinTaskPlist(s),/task-plist-unchanged/);assert.equal(saved.length,1);
+});
+test('cleanup refuses mismatched or missing plist ownership but still attempts Keychain restoration',async()=>{
+ const source=readFileSync(new URL('./mac-installed-backup-qualification.mjs',import.meta.url),'utf8'),matcher=/function taskPlistMatches\(s\)\{[\s\S]*?\n\}/.exec(source)[0],cleanup=/async function cleanupVerify\(\)\{[\s\S]*?\n\}/.exec(source)[0];
+ for(const ownership of ['matching','changed','missing']){let present=true,job={state:'waiting'};const calls=[],s={uid:501,label:'task',plist:'/Users/runner/Library/LaunchAgents/task.plist',keychainIsolation:{},...(ownership==='missing'?{}:{plistSha256:createHash('sha256').update('original').digest('hex')})};
+ const fn=runInNewContext(matcher+';('+cleanup+')',{process:{env:{HOME:'/Users/runner'}},path:{join:(...x)=>x.join('/')},stateFile:'state',loadState:()=>s,exists:f=>f==='state'||f===s.plist&&present,bundleProcesses:()=>[],launchdJob:()=>job,run:()=>{calls.push('bootout');job=null;return{code:0};},lstatSync:()=>({isFile:()=>true,isSymbolicLink:()=>false,nlink:1,uid:501}),sha:x=>createHash('sha256').update(x).digest('hex'),readFileSync:()=>ownership==='changed'?'changed':'original',rmSync:()=>{calls.push('unlink');present=false;},cleanupKeychain:()=>{calls.push('keychain');return{ok:true};},record(){},check:(v,l)=>{if(!v)throw Error(l);},ROOT:'/root',E:'/root/evidence'});
+ if(ownership==='matching')await fn();else await assert.rejects(fn(),/task-label-and-plist-absent/);assert.ok(calls.includes('keychain'));assert.equal(calls.includes('unlink'),ownership==='matching');assert.equal(present,ownership!=='matching');
+ }
 });

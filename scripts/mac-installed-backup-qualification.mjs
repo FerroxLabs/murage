@@ -307,8 +307,18 @@ try{
  if(cmd.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
  if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return JSON.stringify({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
  if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length,visited:visited});
-  if(cmd.op==='press'){var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
-  p.frontmost=true;var focused=$.AXUIElementSetAttributeValue(m[0],$('AXFocused'),$(true));if(focused!==0)return JSON.stringify({ok:false,error:'AX-focus',code:focused});delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true,backend:'AXUIElement'});
+  if(cmd.op==='press'){if(cmd.requireEnabled&&readAX(m[0],'AXEnabled',true)!==true)return JSON.stringify({ok:false,error:'AX-disabled',enabled:false});var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
+  if(!$.AXIsProcessTrusted())throw{error:'AX-client-not-trusted'};
+  var observed={requested:cmd.text,role:role(m[0]),enabled:readAX(m[0],'AXEnabled',true),readback:null};
+  if(typeof cmd.text!=='string'||!cmd.text.length||['AXTextField','AXIncrementor'].indexOf(observed.role)<0||observed.enabled!==true)return JSON.stringify({ok:false,error:'AX-input-control',observed:observed});
+  var settable=Ref();observed.settableCode=$.AXUIElementIsAttributeSettable(m[0],$('AXValue'),settable);observed.settable=observed.settableCode===0&&Boolean(settable[0]);
+  if(!observed.settable)return JSON.stringify({ok:false,error:'AX-input-not-settable',observed:observed});
+  observed.setCode=$.AXUIElementSetAttributeValue(m[0],$('AXValue'),$(cmd.text));
+  if(observed.setCode!==0)return JSON.stringify({ok:false,error:'AX-input-set',observed:observed});
+  try{for(;;){bounded();observed.readback=readAX(m[0],'AXValue',true);var actual=observed.readback;
+   var matched=cmd.numeric===true?(typeof actual==='string'||typeof actual==='number')&&String(actual).trim().length>0&&isFinite(Number(actual))&&isFinite(Number(cmd.text))&&Number(actual)===Number(cmd.text):actual===cmd.text;
+   if(matched)return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed});delay(.1);
+  }}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-input-readback',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed});}
  }
  if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
 }catch(error){return JSON.stringify({ok:false,error:error.error||'AX-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted,backend:'AXUIElement'});}
@@ -326,11 +336,12 @@ const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{
   const {roles,label,sheet}=selector(key,s);let lastResult=null,queries=0;
   try{await until(()=>{lastResult=ax(s,{op:"count",pid,roles,label,sheet});queries++;return lastResult.ok&&lastResult.count===1;},ms,`present-${key}`);}
   catch(error){record({step:`selector-query-failed-${key}`,pid,roles,label,sheet:Boolean(sheet),queries,result:lastResult});throw error;}
-  const result=ax(s,{op:"press",pid,roles,label,sheet,...(key==="chooseRefs"?{observeControl:true}:{})});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
+  if(key==="enable"){const enabled=ax(s,{op:"state",pid,roles,label,sheet});record({step:"enable-state",result:enabled});check(enabled.ok&&enabled.enabled===true,"enable-enabled");}
+  const result=ax(s,{op:"press",pid,roles,label,sheet,...(key==="enable"?{requireEnabled:true}:{}),...(key==="chooseRefs"?{observeControl:true}:{})});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
 });
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});check(before.ok,`value-${key}`);if(Number(before.value)!==1)check(ax(s,{op:"press",pid,roles,label}).ok,`press-${key}`);const after=ax(s,{op:"value",pid,roles,label});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
-const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:key==="dailyTime"?"time":"focusType",pid,roles,label,text});record({step:`type-observation-${key}`,result:r});check(r.ok,`type-${key}`);});
+const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:key==="dailyTime"?"time":"focusType",pid,roles,label,text,numeric:["catchup","sizeBudget","durationBudget"].includes(key)});record({step:`type-observation-${key}`,result:r});check(r.ok,`type-${key}`);});
 async function waitText(s,pid,key,ms=60000){
   let lastResult=null,queries=0;
   return step(`wait-${key}`,async()=>{
@@ -373,6 +384,23 @@ async function quit(s,handle,label){
   record({step:`exited-${label}`,pid:handle.pid,...result});
 }
 async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry",120000);await press(s,pid,"general");}
+function ordinaryValueMatches(value,expected,numeric){
+  return numeric?(typeof value==="string"||typeof value==="number")&&String(value).trim().length>0&&Number.isFinite(Number(value))&&Number.isFinite(Number(expected))&&Number(value)===Number(expected):value===expected;
+}
+async function verifyOrdinaryForm(s,pid){
+  for(const [key,expected,numeric] of [["timezone","UTC",false],["catchup","1",true],["sizeBudget",String(GUI_SCHEDULE_BUDGETS.maxBytes/1024**3),true],["durationBudget",String(GUI_SCHEDULE_BUDGETS.maxDurationMs/60000),true]]){
+    const {roles,label}=selector(key,s),readback=ax(s,{op:"state",pid,roles,label});record({step:`pre-enable-${key}`,expected,result:readback});
+    check(readback.ok&&readback.enabled===true&&ordinaryValueMatches(readback.value,expected,numeric),`pre-enable-${key}`);
+  }
+}
+function taskPlistMatches(s){
+  try{if(!s.plistSha256||s.plist!==path.join(process.env.HOME,"Library","LaunchAgents",`${s.label}.plist`))return false;const stat=lstatSync(s.plist);return stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1&&stat.uid===s.uid&&sha(readFileSync(s.plist))===s.plistSha256;}catch{return false;}
+}
+function pinTaskPlist(s){
+  check(s.plist===path.join(process.env.HOME,"Library","LaunchAgents",`${s.label}.plist`),"exact-task-plist-path");
+  const stat=lstatSync(s.plist);check(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1&&stat.uid===s.uid,"task-plist-custody");
+  const digest=sha(readFileSync(s.plist));check(!s.plistSha256||s.plistSha256===digest,"task-plist-unchanged");s.plistSha256=digest;saveState(s);return digest;
+}
 async function configureDue(s,pid,minutes){
   await typeInto(s,pid,"timezone","UTC");selector("catchup");await typeInto(s,pid,"catchup","1");
   await typeInto(s,pid,"sizeBudget",String(GUI_SCHEDULE_BUDGETS.maxBytes/1024**3));await typeInto(s,pid,"durationBudget",String(GUI_SCHEDULE_BUDGETS.maxDurationMs/60000));
@@ -381,7 +409,7 @@ async function configureDue(s,pid,minutes){
   // consent (BackupSettings edit), so that consent must be confirmed afterward.
   const due=new Date(Math.ceil((Date.now()+minutes*60000)/60000)*60000),text=`${String(due.getUTCHours()).padStart(2,"0")}:${String(due.getUTCMinutes()).padStart(2,"0")}`;
   selector("dailyTime");await typeInto(s,pid,"dailyTime",text);
-  await ensureChecked(s,pid,"idleConsent");await press(s,pid,"enable");await waitText(s,pid,"enabledNotice");
+  await ensureChecked(s,pid,"idleConsent");await verifyOrdinaryForm(s,pid);await press(s,pid,"enable");await waitText(s,pid,"enabledNotice");
   return due.getTime();
 }
 
@@ -467,10 +495,10 @@ async function launchConfigure(){
   await openBackupSettings(s,app.pid);await press(s,app.pid,"chooseRefs");
   await choosePath(s,app.pid,s.destination,"destination");await choosePath(s,app.pid,s.keyFile,"key");await press(s,app.pid,"saveRefs");await waitText(s,app.pid,"refsNotice");
   await press(s,app.pid,"prepareJob");await waitText(s,app.pid,"staged");await press(s,app.pid,"registerJob");await press(s,app.pid,"installJob");await waitInstalled(s,app.pid);
-  const job=await step("label-loaded",()=>{const value=launchdJob(s);check(value&&exists(s.plist),"exact-label-and-plist");return value;});
+  const job=await step("label-loaded",()=>{const value=launchdJob(s);check(value&&exists(s.plist),"exact-label-and-plist");const plistSha256=pinTaskPlist(s);return{...value,plistSha256};});
   s.dueAt=await configureDue(s,app.pid,5);
   await step("safe-storage-custody",()=>{check(exists(path.join(s.userData,"credentials.bin"))&&keychainItem(s)===0,"credentials-bin-and-keychain-item");return{credentialsBin:true,keychainItem:"present (value not read)"};});
-  s.plistSha256=sha(readFileSync(s.plist));await quit(s,app,"configure");recordSetupDrift(s,"configure");
+  check(taskPlistMatches(s),"registered-plist-unchanged");await quit(s,app,"configure");recordSetupDrift(s,"configure");
   await finishSetup(s,"configure","preScheduled",()=>Date.now()<s.dueAt-60000&&!coordinatorState(s)?.lastClosedResult&&archives(s).length===0);
   s.installed=true;saveState(s);record({step:"configured",label:s.label,plistSha256:s.plistSha256,dueAt:new Date(s.dueAt).toISOString(),job});
 }
@@ -571,11 +599,12 @@ async function cleanupVerify(){
   const remaining=bundleProcesses(s);for(const p of remaining)if(p.command.startsWith(s.app+"/"))process.kill(p.pid,"SIGTERM");
   if(remaining.length)await until(()=>bundleProcesses(s).length===0,60000,"owned-processes-exit",1000).catch(()=>null);
   const job=s.label?launchdJob(s):null,plistPresent=Boolean(s.plist&&exists(s.plist));let manual=null;
-  if(job||plistPresent){manual={bootout:job?run("/bin/launchctl",["bootout",`gui/${s.uid}/${s.label}`]).code:null,unlinked:false};if(plistPresent&&s.plistSha256&&sha(readFileSync(s.plist))===s.plistSha256){rmSync(s.plist);manual.unlinked=true;}}
+  if(job||plistPresent){manual={bootout:null,unlinked:false};try{if(job)manual.bootout=run("/bin/launchctl",["bootout",`gui/${s.uid}/${s.label}`]).code;if(plistPresent){manual.ownershipMatched=taskPlistMatches(s);if(manual.ownershipMatched){rmSync(s.plist);manual.unlinked=true;}else manual.error="task-plist-ownership-mismatch";}}catch(error){manual.error=error?.code??"task-plist-cleanup-failed";}}
   const item=s.keychainService&&s.keychainIsolation?.completed?.includes("default")?keychainItem(s):null;
   // Every restoration is attempted, then verified by re-reading (lib cleanupKeychain).
   const keychain=s.keychainIsolation?cleanupKeychain({runner:run,state:s.keychainIsolation,exists}):{ok:true,reason:"not-started",results:[],verified:null};
   const left=bundleProcesses(s).map(p=>p.pid);
+  const registrationAfterCleanup=s.label?launchdJob(s):null,plistAfterCleanup=Boolean(s.plist&&exists(s.plist));
   // Bounded tails of the app's own logs, copied before task paths are removed:
   // launch() stdout/stderr (main console, [renderer] load-failure/crash lines,
   // electron/main.mjs:2311-2328) and the isolated logs dir (setAppLogsPath at
@@ -595,8 +624,8 @@ async function cleanupVerify(){
   }catch(error){appLogs.push({name:"app-logs",error:error?.code??"capture-failed"});}
   // Exact recorded task paths under ROOT only; the evidence directory is retained for upload.
   if(!left.length)for(const dir of [s.parent,s.appDir,s.tmp,s.private].filter(Boolean))if(dir.startsWith(ROOT+"/")&&dir!==E&&exists(dir))rmSync(dir,{recursive:true,force:true});
-  record({step:"cleanup",terminated:remaining.map(p=>p.pid),left,registrationBeforeCleanup:job,plistPresent,manualRemovalNotAPass:manual,keychainItemBeforeDelete:item,keychainCompleted:s.keychainIsolation?.completed??null,keychainCleanup:keychain,appLogs,productRemovalPassed:Boolean(s.removed)});
-  check(left.length===0,"no-owned-processes-left");check(keychain.ok,"keychain-restored-task-keychain-absent");
+  record({step:"cleanup",terminated:remaining.map(p=>p.pid),left,registrationBeforeCleanup:job,registrationAfterCleanup,plistPresent,plistAfterCleanup,manualRemovalNotAPass:manual,keychainItemBeforeDelete:item,keychainCompleted:s.keychainIsolation?.completed??null,keychainCleanup:keychain,appLogs,productRemovalPassed:Boolean(s.removed)});
+  check(left.length===0,"no-owned-processes-left");check(keychain.ok,"keychain-restored-task-keychain-absent");check(registrationAfterCleanup===null&&!plistAfterCleanup&&!manual?.error,"task-label-and-plist-absent");
 }
 const phases={admit,prepare,probe,"launch-configure":launchConfigure,"await-scheduled":awaitScheduled,"no-replay":noReplay,busy,remove,restore,"cleanup-verify":cleanupVerify};
 try{await phases[phase]();record({step:"phase-complete"});}
