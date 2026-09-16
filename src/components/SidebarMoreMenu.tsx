@@ -65,7 +65,7 @@ export function SidebarMoreMenuPanel({
   );
 }
 
-export function SidebarMoreMenu({ items, compact = false, triggerRef }: { items: MoreMenuItem[]; compact?: boolean; triggerRef?: Ref<HTMLButtonElement> }) {
+export function SidebarMoreMenu({ items, compact = false, triggerRef, approvalCount, approvalsStale = false }: { items: MoreMenuItem[]; compact?: boolean; triggerRef?: Ref<HTMLButtonElement>; approvalCount?: number; approvalsStale?: boolean }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -131,7 +131,7 @@ export function SidebarMoreMenu({ items, compact = false, triggerRef }: { items:
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={attention ? "Tools, items need attention" : "Tools"}
+        aria-label={`Tools${approvalCount !== undefined ? `, ${approvalCount} pending approvals` : ""}${approvalsStale ? ", approvals may be stale" : attention ? ", items need attention" : ""}`}
         title="Tools"
         data-sidebar-more-trigger
         ref={triggerRef}
@@ -151,6 +151,7 @@ export function SidebarMoreMenu({ items, compact = false, triggerRef }: { items:
       >
         <Wrench size={18} aria-hidden="true" className="shrink-0" />
         <span className="flex-1 text-left text-[14px] font-medium">Tools</span>
+        {approvalCount !== undefined && <span data-pending-approval-count aria-live="polite" aria-atomic="true" className="text-[12px] tabular-nums text-ink">{approvalCount}{approvalsStale ? " ?" : ""}</span>}
         {attention && !open && (
           <span data-sidebar-more-attention aria-hidden="true" className="size-2 shrink-0 rounded-full bg-danger" />
         )}

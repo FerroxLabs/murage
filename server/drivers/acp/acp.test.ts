@@ -9,6 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { stripVTControlCharacters } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,8 +19,12 @@ import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { acpErrorDiagnostic, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { redactSecretsInText } from "../../redact.ts";
+import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
+import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
 import { GrokAgentDriver } from "./grok.ts";
+import { FuigoAgentDriver } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
@@ -663,6 +668,117 @@ describe("ACP turns (fake CLI)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" } });
   });
 
+  it.each(["allow", "deny", "full-auto"] as const)("never widens a one-request answer to always-only options: %s", async (behavior) => {
+    const dump = join(scratch, "always-only.json"), cli = join(scratch, "always-only.mjs");
+    // A scripted ACP child offers only standing decisions and records the real
+    // response. It executes no tools and has no model or network connection.
+    writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+const send = message => process.stdout.write(JSON.stringify(message) + "\\n");
+let promptId;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === "always-only" && message.result) {
+    writeFileSync(${JSON.stringify(dump)}, JSON.stringify(message.result));
+    send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+  } else if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "synthetic" } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id;
+    send({ jsonrpc: "2.0", id: "always-only", method: "session/request_permission", params: {
+      toolCall: { kind: "execute", title: "synthetic action" },
+      options: [{ optionId: "allow-standing", kind: "allow_always" }, { optionId: "reject-standing", kind: "reject_always" }]
+    } });
+  }
+});
+`);
+    chmodSync(cli, 0o755);
+    instance = await SelectModelDriver.create({ instanceId: "always-only", displayName: "Always only", environment: {}, enabled: true,
+      config: { cli, fullAuto: behavior === "full-auto" } });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "always-only", text: "go" });
+    if (behavior !== "full-auto") {
+      const opened = await recorder.until(event => event.type === "request.opened");
+      expect(await instance.adapter.respondToRequest("always-only", (opened as any).requestId, { behavior })).toBe("unavailable");
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+      expect(recorder.events.some(event => event.type === "runtime.error" && event.message.includes("cancelling the request"))).toBe(true);
+    }
+    await recorder.until(event => event.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual(behavior === "full-auto"
+      ? { outcome: { outcome: "selected", optionId: "allow-standing" } }
+      : { outcome: { outcome: "cancelled" } });
+  });
+
+  it.each(["deny", "allow", "cancel", "timeout", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
+    "Fuigo denial continuation wire boundary: %s", async (scenario) => {
+      const dump = join(scratch, "fuigo-denial.json");
+      const cli = join(scratch, "denial-cli.mjs");
+      // One scripted permission request, no tool execution or model call.
+      // The dump captures the actual response and prompt count on the wire.
+      writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+const send = message => process.stdout.write(JSON.stringify(message) + "\\n");
+let promptId, prompts = 0;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === "permission" && message.result) {
+    writeFileSync(${JSON.stringify(dump)}, JSON.stringify({ decision: message.result, prompts }));
+    send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+  } else if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "synthetic" } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id; prompts++;
+    send({ jsonrpc: "2.0", id: "permission", method: "session/request_permission", params: {
+      toolCall: { kind: "execute", title: ${JSON.stringify(scenario === "question" ? "AskUserQuestion" : "synthetic write")} },
+      options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: ${JSON.stringify(scenario === "reject-always" ? "reject_always" : "reject_once")} }]
+    } });
+  }
+});
+`);
+      chmodSync(cli, 0o755);
+      const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT,
+        driverKind: scenario === "other-engine" ? "other-test" : FuigoAgentDriver.driverKind,
+        selectModel: undefined,
+      });
+      instance = await driver.create({ instanceId: "denial-test", displayName: "Denial Test", environment: {}, enabled: true,
+        config: { cli, fullAuto: scenario === "full-auto" } });
+      recorder = recordEvents(instance.adapter);
+      // Shorten only this exact production permission deadline; real child I/O
+      // and every other timer keep their ordinary behavior.
+      const originalTimeout = globalThis.setTimeout;
+      const timerSpy = scenario === "timeout" ? vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+        originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args)) as typeof setTimeout) : null;
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "denial-wire", text: "go" });
+        if (scenario !== "full-auto") {
+          const opened = await recorder.until(event => event.type === "request.opened");
+          if (scenario === "cancel") await instance.adapter.interruptTurn("denial-wire", turnId);
+          else if (scenario === "teardown") await instance.dispose();
+          else if (scenario !== "timeout") await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
+            { behavior: scenario === "allow" ? "allow" : "deny" });
+        }
+        await recorder.until(event => event.type === "turn.completed");
+        // settle may kill the child immediately after cancelling its pending ask;
+        // wait for its dump only when the response reached the scripted child.
+        if (scenario === "cancel" || scenario === "teardown") {
+          const native = readFileSync(join(NATIVE_DIR, "denial-wire.ndjson"), "utf8").split("\n").filter(Boolean)
+            .map(line => JSON.parse(line)).filter(entry => entry.dir === "out" && entry.msg?.id === "permission");
+          expect(native.at(-1)?.msg.result).toEqual({ outcome: { outcome: "cancelled" } });
+          return;
+        }
+        const observed = JSON.parse(readFileSync(dump, "utf8"));
+        expect(observed.prompts).toBe(1);
+        const expected = { outcome: { outcome: "selected", optionId: scenario === "allow" || scenario === "full-auto" ? "allow-once" : "reject-once" } };
+        if (scenario === "deny") {
+          expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } });
+          expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+        } else expect(observed.decision).toEqual(scenario === "reject-always" ? { outcome: { outcome: "cancelled" } } : expected);
+      } finally { timerSpy?.mockRestore(); }
+    },
+  );
+
   it("never lets fullAuto answer a question tool routed through request_permission (ASK1)", async () => {
     process.env.FAKE_ACP_MODE = "question-tool";
     instance = await GrokAgentDriver.create({
@@ -971,6 +1087,130 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.hasSession(threadId)).toBe(false);
   });
 
+  it("a prompt rejected after Stop sent session/cancel settles as a cancellation, not an engine error", async () => {
+    await create(GrokAgentDriver, "cancel-reject");
+    const threadId = `t-cancel-reject-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    // The rejection reached the driver after session/cancel and before the
+    // turn settled: the cancellation is not the grace timer winning a race.
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const cancelAt = rows.findIndex(row => row.dir === "out" && row.msg?.method === "session/cancel");
+    const rejectedAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "rpc_rejected" && row.msg?.method === "session/prompt");
+    const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(rejectedAt).toBeGreaterThan(cancelAt);
+    expect(settledAt).toBeGreaterThan(rejectedAt);
+  });
+
+  it("a prompt that ends with another stop reason after Stop settles as a cancellation, not an engine error", async () => {
+    await create(GrokAgentDriver, "cancel-other-reason");
+    const threadId = `t-cancel-other-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    // The result reached the driver after session/cancel and before the turn
+    // settled: the cancellation is not the grace timer winning a race.
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const cancelAt = rows.findIndex(row => row.dir === "out" && row.msg?.method === "session/cancel");
+    const resultAt = rows.findIndex(row => row.dir === "in" && row.msg?.result?.stopReason === "refusal");
+    const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(resultAt).toBeGreaterThan(cancelAt);
+    expect(settledAt).toBeGreaterThan(resultAt);
+  });
+
+  // The cancel guards are deliberately broad. `interruptTurn` is one call for
+  // every interrupter: a user's Stop, the stall watchdog (server/index.ts
+  // ~2507) and a provider-settings change (~512) all reach it identically, and
+  // the driver records the requested stop as `unspecified` precisely because it
+  // cannot tell them apart. A turn that was interrupted is a cancellation
+  // whoever interrupted it — reporting it as an engine error would be the same
+  // false failure these guards exist to remove.
+  it("an interrupt Murage raised itself settles as a cancellation, exactly as a user's Stop does", async () => {
+    await create(GrokAgentDriver, "cancel-other-reason");
+    const threadId = `t-cancel-watchdog-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    // The exact call the stall watchdog and the provider-connection subscriber
+    // make: no argument tells the driver a user asked for this.
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    // Nothing in the driver's own record names an initiator, so the guard that
+    // reads `cancelRequested` cannot be narrowed to a user's Stop without
+    // losing the watchdog and settings-change interrupts entirely.
+    expect(rows.find(row => row.dir === "lifecycle" && row.msg?.event === "stop_requested")?.msg)
+      .toMatchObject({ reason: "unspecified" });
+  });
+
+  const engineStderrRecords = (threadId: string) =>
+    readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
+      .filter((row) => row.msg?.engineStderr !== undefined);
+
+  it("an engine failure writes its last stderr lines to the native log as one bounded, redacted record", async () => {
+    await create(GrokAgentDriver, "stderr-rpc-error");
+    const threadId = `t-stderr-rpc-error-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: false, stopReason: "rpc_error" });
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+    const records = engineStderrRecords(threadId);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ dir: "in", msg: { engineStderr: { stopReason: "rpc_error", truncated: true } } });
+    const lines: string[] = records[0].msg.engineStderr.lines;
+    expect(lines.at(-1)).toBe("STDERR_LAST_LINE retry 15/15 gave up");
+    expect(lines.at(-2)).toMatch(/^auth header «redacted \d+ chars»$/);
+    expect(lines.length).toBeLessThanOrEqual(100);
+    const encoded = JSON.stringify(records[0]);
+    expect(encoded).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_EVICTED_FIRST_LINE/);
+    expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it("an engine exit before the prompt result also keeps its stderr in the native log", async () => {
+    await create(GrokAgentDriver, "exit-with-ansi");
+    const threadId = `t-stderr-exit-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const records = engineStderrRecords(threadId);
+    expect(records).toHaveLength(1);
+    expect(records[0].msg.engineStderr).toMatchObject({ stopReason: "exit_before_result", truncated: false });
+    expect(records[0].msg.engineStderr.lines).toContain("STDERR_VISIBLE_END");
+    expect(JSON.stringify(records[0])).not.toMatch(/\\u001b|SYNTHETICKEYCANARY/);
+  });
+
+  it("a successful turn keeps its stderr out of the native log", async () => {
+    await create(GrokAgentDriver, "stderr-happy");
+    const threadId = `t-stderr-happy-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true });
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+    expect(engineStderrRecords(threadId)).toEqual([]);
+  });
+
+  it("Fuigo retry progress arrives as reasoning and never joins the answer", async () => {
+    await create(GrokAgentDriver, "retry-status-thought");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-retry-status-thought", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true, stopReason: null });
+    const stream = (kind: "assistant_text" | "reasoning_text") =>
+      recorder.events.flatMap(event => event.type === "content.delta" && event.streamKind === kind ? [event.delta] : []).join("");
+    expect(stream("reasoning_text")).toBe("Retrying the model (1/2): empty response from model (reasoning_only)\n\nfixture reasoning");
+    expect(stream("assistant_text")).toBe("fixture final answer");
+    expect(recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : [])).toEqual(["fixture final answer"]);
+    expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
+  });
+
   it("close-confirmed stop: interruptTurn resolves only after the ACP child has exited", async () => {
     const pidFile = join(scratch, "acp.pid");
     process.env.FAKE_ACP_PID_FILE = pidFile;
@@ -1182,6 +1422,48 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
+  it.each(["string", "object"])("terminal compatibility: reasoning-only %s data is visible and classified without invented HTTP status", async shape => {
+    await create(GrokAgentDriver, `reasoning-only:${shape}`);
+    const threadId = `t-reasoning-${shape}`, { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    expect(error).toMatchObject({ message: shape === "string" ? "The model returned reasoning without a visible answer. No reply was produced." : "empty response from model (reasoning_only)", details: expect.stringContaining(shape === "string" ? "Engine failure category: empty_response" : "Engine error kind: empty_response"), diagnostic: { terminalKind: "empty_response" } });
+    expect(error?.type === "runtime.error" ? error.details : "").not.toContain("HTTP");
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+  });
+
+  it("terminal compatibility: unknown nested text stays private", () => {
+    for (const data of ["private request fake-secret-canary", {message:"private request fake-secret-canary"}]) {
+      expect(acpRpcErrorMessage({message:"Internal error",data})).toBe("Internal error");
+      expect(acpRpcErrorDetails({code:-32603,data})).toBe("Engine error code: -32603");
+    }
+  });
+
+  it("terminal compatibility: requested cancel wins a late prompt RPC rejection", async () => {
+    await create(GrokAgentDriver, "cancel-rpc-error");
+    const threadId = "t-cancel-rpc-error";
+    await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ok:true,stopReason:"cancelled"});
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("terminal compatibility: stderr before the 8KiB tail survives in redacted native diagnostics", async () => {
+    await create(GrokAgentDriver, "exit-with-stderr-history");
+    const threadId = "t-stderr-history", {turnId} = await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    await recorder.until(event => event.type === "turn.completed");
+    await instance.adapter.awaitTurnTeardown!(threadId,turnId);
+    const records=readFileSync(join(NATIVE_DIR,`${threadId}.ndjson`),"utf8").trim().split("\n").map(line=>JSON.parse(line));
+    const stderr=records.filter(row=>row.msg?.type==="engine_stderr").map(row=>row.msg.text).join("");
+    expect(stderr).toContain("STDERR_EARLY_CANARY");expect(stderr).toContain("STDERR_VISIBLE_END");
+    expect(stderr.length).toBeGreaterThan(8192);expect(stderr).not.toContain("SYNTHETICKEYCANARY");
+    expect(stderr.length).toBeLessThanOrEqual(256*1024);
+  });
+
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
     await create(GrokAgentDriver, "exit-on-prompt");
     await instance.adapter.sendTurn({ threadId: "t-unsolicited-close", text: "fixture only" });
@@ -1204,6 +1486,44 @@ describe("ACP turns (fake CLI)", () => {
     expect(error.message).not.toContain("\u001b");
     expect(error.message).not.toContain("SYNTHETICKEYCANARY");
     expect(error.message.split("before the prompt result: ")[1].length).toBeLessThanOrEqual(300);
+  });
+
+  // Engine stderr is engine-controlled text, and this exit line is the last
+  // path in core.ts that quoted it with nothing but a secret scrub: a
+  // credential-bearing URL, a user:pass@IP authority, a bidi override and a
+  // BEL all reached the card and messages.db. It now goes through the same
+  // sanitiser `error.data.message` and the JSON-RPC `error.message` use.
+  it("sanitises hostile engine stderr on the exit-before-result line", async () => {
+    await create(GrokAgentDriver, "exit-hostile-stderr");
+    await instance.adapter.sendTurn({ threadId: "t-hostile-stderr", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
+    expect(error.message).toContain("tool_error: fixture failure");
+    expect(error.message).toContain("[link removed]");
+    for (const leaked of ["billing.invalid", "fake-secret-canary", "fakepass", "10.1.2.3", "https://", "\u001b", "\u202e", "\u0007"]) {
+      expect(error.message, leaked).not.toContain(leaked);
+    }
+    expect(error.message.split("before the prompt result: ")[1].length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+  });
+
+  // …and sanitising must not cost the diagnostic it exists to carry. The
+  // fixture is the shape that can actually lose one: four kilobytes of
+  // structured NDJSON records with the fatal line LAST, which is how a CLI
+  // agent goes down. A one-line fixture reads the same whatever the code does
+  // and proves nothing. This one fails if the JSON rule empties the quote
+  // (MU-R7-1) and fails again if the quote is taken from the front of the
+  // window instead of its end (MU-R7-2).
+  it("keeps the fatal last line of a noisy engine readable on the exit-before-result line", async () => {
+    await create(GrokAgentDriver, "exit-noisy-stderr");
+    await instance.adapter.sendTurn({ threadId: "t-noisy-stderr", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
+    const detail = error.message.split("before the prompt result: ")[1];
+    expect(detail).toBeTruthy();
+    expect(detail.endsWith("FATAL: engine could not open the model file: permission denied")).toBe(true);
+    expect(detail.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
   });
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
@@ -1250,9 +1570,37 @@ describe("ACP turns (fake CLI)", () => {
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|fluxrouter\.ai|private response/);
   });
 
-  it.each(["auth", "http", "api", "serialization", "idle_timeout", "rate_limited", "empty_response", "max_tokens_truncation", "doom_loop_detected", "context_length"])("allows typed terminal failure category %s", (error_kind) => {
-    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`Engine failure category: ${error_kind}`);
+  it.each([...ENGINE_ERROR_CATEGORIES, "context_length"])("allows typed terminal failure category %s", (error_kind) => {
+    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`Engine error kind: ${error_kind}`);
+    expect(acpErrorDiagnostic({ eventId: "ev-m00001-1", turnId: "11111111-1111-4111-8111-111111111111" }, "22222222-2222-4222-8222-222222222222", { data: { error_kind } })?.terminalKind).toBe(error_kind);
     expect(acpRpcErrorDetails({ data: { error_kind: `${error_kind}\nfake-secret-canary` } })).toBeUndefined();
+  });
+
+  it.each(["empty", "success", "blank-http", "untyped-prose", "typed-conflict"])("Fuigo 1.0.18 contract %s uses one prompt, reasoning-only retry progress and authoritative typed failure", async variant => {
+    const dump = join(scratch, "fuigo18.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(FuigoDiagnosticDriver, `fuigo18-contract:${variant}`);
+    const { turnId } = await instance.adapter.sendTurn({ threadId: `fuigo18-${variant}`, text: "fixture only" });
+    const completed = await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId);
+    expect(completed).toMatchObject({ ok: variant === "success" });
+    expect(recorder.events.filter(event => event.type === "content.delta" && event.streamKind === "reasoning_text")).toHaveLength(2);
+    const answer = recorder.events.filter(event => (event.type === "content.delta" && event.streamKind === "assistant_text") || (event.type === "item.completed" && event.itemType === "assistant_text"));
+    expect(JSON.stringify(answer)).not.toContain("Retry status");
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    if (variant === "success") {
+      expect(errors).toEqual([]);
+      expect(answer).toContainEqual(expect.objectContaining({ type: "item.completed", text: "The completed answer." }));
+    } else {
+      expect(errors).toHaveLength(1);
+      const error = errors[0];
+      if (variant === "empty") expect(error).toMatchObject({ message: "No visible answer after three attempts", errorKind: "empty_response", diagnostic: { terminalKind: "empty_response" } });
+      if (variant === "blank-http") expect(error).toMatchObject({ message: "Internal error", details: expect.stringContaining("HTTP 503"), errorKind: "api", diagnostic: { httpStatus: 503, terminalKind: "api" } });
+      if (variant === "untyped-prose") { expect(error.errorKind).toBeUndefined(); expect(error.diagnostic?.terminalKind).toBeUndefined(); }
+      if (variant === "typed-conflict") expect(error).toMatchObject({ errorKind: "rate_limited", diagnostic: { terminalKind: "rate_limited" } });
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(JSON.parse(readFileSync(dump, "utf8")).promptRequests).toBe(1);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
   });
 
   it("structured ACP diagnostics omit malformed facts rather than copying private fields",()=>{
@@ -1269,7 +1617,7 @@ describe("ACP turns (fake CLI)", () => {
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
     const observed=variant==="valid"||variant==="terminal";
-    expect(errors[0]).toMatchObject({ message: "Internal error", details: "ACP request: session/prompt\nProvider response: HTTP 404\nEngine error code: -32603"+(variant==="terminal"?"\nEngine failure category: max_tokens_truncation":"") + (observed ? "\nFuigo failure category observed during request: api\nFuigo retry state observed during request: failed" : "") });
+    expect(errors[0]).toMatchObject({ message: "fixture rejection [link removed]", details: "ACP request: session/prompt\nProvider response: HTTP 404"+(variant==="terminal"?"\nEngine error kind: max_tokens_truncation":"")+"\nEngine error code: -32603" + (observed ? "\nFuigo failure category observed during request: api\nFuigo retry state observed during request: failed" : "") });
     const rows=lifecycleRows("t-fuigo-diagnostic").filter(row=>row.turnId===turnId),rejection=rows.find(row=>row.event==="rpc_rejected"&&row.method==="session/prompt")!;
     expect(errors[0].diagnostic).toMatchObject({version:1,diagnosticId:errors[0].eventId,turnId,processGeneration:rejection.processGeneration,rpcId:rejection.rpcId,method:"session/prompt",rpcCode:-32603,httpStatus:404});
     expect(errors[0].diagnostic?.observedKind).toBe(observed?"api":undefined);expect(rejection.observedKind).toBe(observed?"api":undefined);
@@ -1302,13 +1650,442 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
+  it("reads the engine's own error text from Fuigo 1.0.18 object data and Fuigo 1.0.17 string data", () => {
+    const text = "empty response from model (reasoning_only): model=fixture-model, had_reasoning=true, finish_reason=stop";
+    expect(acpEngineErrorText({ message: text, error_kind: "empty_response" })).toBe(text);
+    expect(acpEngineErrorText("No response from model for 90s — the model may be stuck")).toBe("No response from model for 90s — the model may be stuck");
+  });
+
+  it("never shows raw JSON, non-text data or an empty engine message", () => {
+    for (const data of [undefined, null, 42, true, [], ["fake-private-response"], {}, { detail: "fake-private-response" }, { message: 7 }, { message: "   " }, "", "\u0007\u001b[0m",
+      '{"error":{"message":"fake-private-response"}}', '[{"fake":"private-response"}]']) {
+      expect(acpEngineErrorText(data)).toBeUndefined();
+    }
+    expect(acpEngineErrorText({ message: 'upstream 500: {"error":{"message":"fake-private-response"}}' })).toBe("upstream 500");
+  });
+
+  it("strips control characters, links and secrets from engine error text and caps its length", () => {
+    expect(acpEngineErrorText("\u001b[31mfailed\u001b[0m\r\n\tat\u0000 step\u202e two")).toBe("failed at step two");
+    expect(acpEngineErrorText("see https://billing.invalid/?key=fake-secret-canary now")).toBe("see [link removed] now");
+    expect(acpEngineErrorText(`key sk-test-${"SYNTHETICKEYCANARY".repeat(2)}`)).toMatch(/^key «redacted \d+ chars»$/);
+    const long = acpEngineErrorText({ message: "word ".repeat(400) })!;
+    expect(long.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(long.endsWith("…")).toBe(true);
+  });
+
+  // The transcript stores a failed turn as `error: <message>` with the message
+  // cut at ERROR_MESSAGE_MAX, and the card shows exactly that. Engine text
+  // longer than that budget was cut there mid-word with no ellipsis.
+  it("ends engine text on a word inside the transcript's own message limit", () => {
+    const long = acpEngineErrorText({ message: "word ".repeat(40) })!;
+    expect(long.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(long.endsWith("word…")).toBe(true);
+    const unbroken = acpEngineErrorText({ message: "x".repeat(400) })!;
+    expect(unbroken.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(unbroken.endsWith("…")).toBe(true);
+  });
+
+  // A hard cut at ERROR_MESSAGE_MAX lands wherever the character happens to be:
+  // half of a surrogate pair renders as a replacement glyph, so an unbroken
+  // astral token is cut before it, never through it.
+  const loneSurrogate = (text: string) =>
+    [...text].some((ch) => ch.length === 1 && ch.codePointAt(0)! >= 0xd800 && ch.codePointAt(0)! <= 0xdfff);
+
+  it.each([
+    ["an unbroken run of astral characters", "\u{1f642}".repeat(200)],
+    ["one word ending in an astral character astride the limit", `${"x".repeat(155)}\u{1f642}\u{1f642}\u{1f642}`],
+    ["a musical-symbol run", "\u{1d11e}".repeat(200)],
+  ])("cuts %s on a code-point boundary", (_shape, message) => {
+    const text = acpEngineErrorText(message)!;
+    expect(text.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(text.endsWith("\u2026")).toBe(true);
+    expect(loneSurrogate(text)).toBe(false);
+  });
+
+  // A scheme is not what makes a locator dangerous: an engine writes
+  // `host/path?api_key=…` and `user:pass@host` as readily as an https:// URL,
+  // and both carry the credential into the transcript.
+  it("strips credential-bearing locators that carry no scheme", () => {
+    expect(acpEngineErrorText("upstream api.internal.invalid/v1/chat?api_key=fake-secret-canary rejected the call"))
+      .toBe("upstream [link removed] rejected the call");
+    expect(acpEngineErrorText("proxy fixtureuser:fakepass@proxy.internal.invalid:8080 refused the connection"))
+      .toBe("proxy [link removed] refused the connection");
+    expect(acpEngineErrorText("empty response from model (reasoning_only): model=fixture-model, finish_reason=stop"))
+      .toBe("empty response from model (reasoning_only): model=fixture-model, finish_reason=stop");
+  });
+
+  // A locator is dangerous because of what it can carry, not because it has a
+  // scheme — but "has a dot and a slash" describes a source path as often as a
+  // host, and replacing real diagnostic prose with "[link removed]" makes an
+  // error less useful. Both halves of that line are pinned here.
+  it.each([
+    ["scheme-bearing link", "see https://billing.invalid/?key=fake-secret-canary now", "see [link removed] now"],
+    ["query that names a value", "upstream api.internal.invalid/v1/chat?api_key=fake-secret-canary rejected the call", "upstream [link removed] rejected the call"],
+    ["two-label host with a token query", "gateway internal.invalid:8443/v1?token=fake-secret-canary refused", "gateway [link removed] refused"],
+    ["credentials before a dotted host", "proxy fixtureuser:fakepass@proxy.internal.invalid:8080 refused the connection", "proxy [link removed] refused the connection"],
+    ["credentials before a dotless host with a path", "login fixtureuser:fakepass@gateway/admin failed", "login [link removed] failed"],
+    ["deep host with a plain path", "fetch cdn.assets.internal.invalid/bundle.js timed out", "fetch [link removed] timed out"],
+    // A self-hosted provider (Ollama, vLLM, LM Studio on a LAN address) is
+    // addressed by IP literal, so an authority with credentials in front of
+    // one is exactly where a password reaches the transcript — and from there
+    // `tool.name`, `tool.errorDetails` and messages.db. No dotted TLD and no
+    // letters: the dotted-host rules cannot see it.
+    ["credentials before an IPv4 authority", "dial fixtureuser:fakepass@10.1.2.3:8443/v1 failed", "dial [link removed] failed"],
+    ["credentials before an IPv4 authority with no port", "dial fixtureuser:fakepass@10.1.2.3/v1 failed", "dial [link removed] failed"],
+    ["credentials before a bracketed IPv6 authority", "dial fixtureuser:fakepass@[fe80::1]:8443/v1 failed", "dial [link removed] failed"],
+    // A query that names a value carries one whatever the host looks like.
+    // `?api_key=` and `?token=` were caught by the secret-name pass, so only
+    // the hosts with no alphabetic TLD and the plainest key name were left.
+    ["value-bearing query on an IPv4 host", "dial 10.1.2.3:8443/v1?key=fake-secret-canary failed", "dial [link removed] failed"],
+    ["value-bearing query on a dotless host", "dial localhost:11434/api/chat?key=fake-secret-canary failed", "dial [link removed] failed"],
+    ["value-bearing query on a bracketed IPv6 host", "dial [fe80::1]:8443/v1?key=fake-secret-canary failed", "dial [link removed] failed"],
+  ])("removes a credential-bearing locator written as a %s", (_shape, message, expected) => {
+    expect(acpEngineErrorText(message)).toBe(expected);
+  });
+
+  it.each([
+    ["a source path with a line and a column", "guard missing at src/drivers/acp/core.ts:93/foo"],
+    ["an ordinary key:value@thing pair", "queued as retry:2@worker for the next attempt"],
+    ["a sentence ending in a filename", "the engine never wrote config.json?"],
+    ["a rate written as a fraction", "gave up after 15 retries at 1.5s/attempt"],
+    ["Fuigo's own empty-reply detail", "empty response from model (reasoning_only): model=fixture-model, finish_reason=stop"],
+    // An address carries a credential only when something in it is one: a
+    // bare listen address is the most useful line in a local-engine failure.
+    ["a bare IPv4 listen address", "engine bound to 127.0.0.1:11434 and stopped responding"],
+    ["a bare IPv6 listen address", "engine bound to [::1]:11434 and stopped responding"],
+    ["a counter written like an authority", "gave up at attempt:3@10 per minute"],
+    ["a question about a setting", "did the engine send model=fixture? retry to find out"],
+    ["a filename before a question", "the engine wrote no config.json? check the folder"],
+    // A query is only a locator's query when something in front of it is a
+    // HOST. An engine writes `setting?name=value` about its own options far
+    // more often than it writes a bare label with a credential on it, and a
+    // rule anchored to any two-character token blanks the prose instead.
+    ["a setting written like a query", "the engine ignored mode?retry=true and gave up"],
+    ["a tool named after a question mark", "did it use tool?name=shell for that step"],
+  ])("keeps diagnostic prose that only looks like a locator: %s", (_shape, message) => {
+    expect(acpEngineErrorText(message)).toBe(message);
+  });
+
+  // Sanitising can consume the whole line: 300 full stops are cut to the
+  // length cap and then stripped as trailing punctuation, and a message that
+  // is nothing but a link becomes the substitution marker. Either way the card
+  // would show less than the RPC's own message did, so nothing is reported and
+  // the caller keeps that message.
+  it.each([
+    ["a line of punctuation past the length cap", ".".repeat(300)],
+    ["a message that is only a link", "https://billing.invalid/?t=abc"],
+    ["a message that is only a credential", `sk-test-${"SYNTHETICKEYCANARY".repeat(2)}`],
+  ])("reports no engine text when sanitising leaves only an artefact: %s", (_shape, message) => {
+    expect(acpEngineErrorText(message)).toBeUndefined();
+  });
+
+  it("keeps engine text that still says something around the artefact", () => {
+    expect(acpEngineErrorText("see https://billing.invalid/?t=abc now")).toBe("see [link removed] now");
+    expect(acpEngineErrorText("\u{1f642}\u{1f642}\u{1f642}")).toBe("\u{1f642}\u{1f642}\u{1f642}");
+  });
+
+  // The exit line has no fallback text: where `error.data` falls back to the
+  // JSON-RPC message when sanitising leaves nothing (core.ts `engineText ??
+  // message`), a crash has only its stderr. So the rule MU-R4-4 set for
+  // `error.data` — if the sanitised text carries no information, keep the
+  // base message — needs a base to keep here, and structured JSON logging on
+  // stderr is how ordinary CLI agents write. Without a floor the card renders
+  // a bare "<engine> exited N before the prompt result": the
+  // generic-error-with-no-explanation this whole change exists to remove.
+  it("still quotes a reason when the engine logs its stderr as JSON", () => {
+    const record = '{"time":"2026-09-16T03:14:15Z","level":"error","msg":"model load failed"}';
+    expect(acpEngineExitStderrText(record)).toContain("model load failed");
+
+    const ndjson = Array.from(
+      { length: 60 },
+      (_, i) => `{"time":"2026-09-16T03:14:${String(i % 60).padStart(2, "0")}Z","level":"debug","msg":"plugin ${i} registered"}`,
+    ).join("\n");
+    // A reason at all is what this item owns; which end of a long log the
+    // card quotes is the next test's.
+    expect(acpEngineExitStderrText(`${ndjson}\nFATAL: model handshake failed`)).toMatch(/\w/);
+  });
+
+  // The floor is a floor, not a hole: it keeps the JSON a log line is made of,
+  // and nothing else about sanitising changes.
+  it("sanitises the JSON it falls back to", () => {
+    const text = acpEngineExitStderrText('{"msg":"auth refused","url":"https://billing.invalid/?key=fake-secret-canary"}')!;
+    expect(text).toContain("auth refused");
+    expect(text).toContain("[link removed]");
+    for (const leaked of ["billing.invalid", "fake-secret-canary", "https://"]) expect(text, leaked).not.toContain(leaked);
+  });
+
+  // An ordinary one-line stderr still reads exactly as the engine wrote it.
+  it("keeps an ordinary stderr line as written", () => {
+    expect(acpEngineExitStderrText("fake-acp: simulated prompt exit\n")).toBe("fake-acp: simulated prompt exit");
+  });
+
+  // Which END of a crash's stderr the card quotes. The ring holds up to
+  // 8 KiB and the display budget is 160 characters — so the line that
+  // survives must be cut from the TAIL of the sanitised text, not its front,
+  // or the fatal last line of a noisy engine is kilobytes out of frame and
+  // the card quotes plugin-loading chatter instead. Both shapes end the same
+  // way and neither has a word of it in the first 160 characters.
+  it.each([
+    ["a noisy engine", () => Array.from({ length: 200 }, (_, i) => `[warn] plugin ${i} loaded from cache with no manifest`).join("\n"), "FATAL: engine could not open the model file: permission denied"],
+    ["an engine that logs JSON", () => Array.from({ length: 60 }, (_, i) => `{"time":"2026-09-16T03:14:${String(i % 60).padStart(2, "0")}Z","level":"debug","msg":"plugin ${i} registered"}`).join("\n"), "FATAL: model handshake failed"],
+  ])("quotes the last lines of %s, where the fatal one is", (_shape, noise, fatal) => {
+    const text = acpEngineExitStderrText(`${noise()}\n${fatal}\n`)!;
+    expect(text.endsWith(fatal)).toBe(true);
+    expect(text.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(text.startsWith("\u2026")).toBe(true);
+  });
+
+  // The tail cut lands on a code-point boundary too: an unbroken astral run
+  // has no space to cut at from either end.
+  it("cuts the tail of an unbroken astral stderr line on a code-point boundary", () => {
+    const text = acpEngineExitStderrText("\u{1f642}".repeat(2000))!;
+    expect(text.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(text.startsWith("\u2026")).toBe(true);
+    expect(loneSurrogate(text)).toBe(false);
+  });
+
+  // Nothing cuts UNREDACTED text. Round 7 cut a crash dump written as one
+  // long line from the TAIL before redacting it, which threw away the half
+  // of `api_key="…"` that NAMES the credential; `redactSecretsInText` then
+  // saw a bare value, masked nothing, and the key itself reached the card,
+  // the transcript row, `tool.errorDetails` and, through them, messages.db.
+  // The assertion is the dangerous substring's ABSENCE: a mask appearing
+  // somewhere else in the line would not prove the key is gone.
+  it.each([
+    ["a JSON auth record", (key: string) => `booting\n{"event":"auth_failed","status":401,"api_key":"${key}"}\n`],
+    ["a key=value line", (key: string) => `engine request failed: api_key=${key}`],
+    ["a bearer header", (key: string) => `auth header rejected: Bearer ${key}`],
+    ["a bare provider key", (key: string) => `startup: sk-live-${key}`],
+    ["a query parameter", (key: string) => `GET /v1?token=${key}`],
+  ])("never prints the credential of a long one-line crash dump written as %s", (_shape, dump) => {
+    const key = "SYNTHETICKEYCANARY".repeat(250);
+    const text = acpEngineExitStderrText(dump(key));
+    expect(typeof text).toBe("string");
+    expect(text).not.toContain("SYNTHETICKEYCANARY");
+  });
+
+  // The JSON rule cuts the text where a record starts, and on the exit path
+  // everything after that point is the rest of the crash — including the line
+  // that says why. MU-R7-1's floor only catches the case where NOTHING
+  // survives the cut: a single line of start-up chatter in front of the first
+  // record satisfies it, and the card then quotes the chatter as the reason.
+  // A confident wrong reason is worse than the bare line the floor removed.
+  it.each([
+    [
+      "a fatal line after a debug record",
+      '[warn] started\n{"level":"debug","msg":"loading model weights"}\nFATAL: engine could not open the model file: permission denied',
+      "FATAL: engine could not open the model file: permission denied",
+    ],
+    [
+      "a fatal record after a prose line",
+      'Loading model...\n{"level":"fatal","msg":"CUDA out of memory"}',
+      '{"level":"fatal","msg":"CUDA out of memory"}',
+    ],
+    [
+      "an error record after a prose line",
+      'starting up\n{"level":"error","msg":"model load failed: no such file"}',
+      '{"level":"error","msg":"model load failed: no such file"}',
+    ],
+    // The question is what the cut ACTUALLY discards, so it is asked of the
+    // text the cut sees: an invisible control between the brace and the key
+    // hides the record from a test run against the raw tail, and the prose
+    // in front of it would again be quoted as the reason.
+    [
+      "a record opened through an invisible control",
+      'starting up\n{\u200b"level":"error","msg":"model load failed"}',
+      '{ "level":"error","msg":"model load failed"}',
+    ],
+  ])("keeps the reason a crash ends with when prose precedes it: %s", (_shape, stderr, ending) => {
+    const text = acpEngineExitStderrText(`${stderr}\n`)!;
+    expect(text.slice(-ending.length)).toBe(ending);
+  });
+
+  // The locator pass is quadratic in the length of its input: LOCATORS[0]
+  // (`scheme://…`) walks a dotted run forward from every position, fails to
+  // find `://`, and backtracks over it. Measured on this file's own
+  // `acpEngineErrorText` as round 8 shipped it — 16 KiB 85 ms,
+  // 64 KiB 1 272 ms, 128 KiB 8 186 ms, and minutes at 1 MiB. The text is
+  // `error.data.message` / the JSON-RPC `error.message` off a frame bounded
+  // only by ENGINE_FRAME_MAX_BYTES (32 MiB), sanitised SYNCHRONOUSLY on the
+  // server's single event loop, so one large — or merely hostile — provider
+  // error body freezes every room in the app for as long as it takes. No
+  // correctness assertion can see that, so this test is a clock. Round 9
+  // answered it with a bound in front of the locators; round 10 removed the
+  // bound (it cut unredacted text) and made the locator linear instead, and
+  // the round-10 block below clocks every other hostile shape as well.
+  it.each([
+    ["16 KiB", 16],
+    ["64 KiB", 64],
+    ["128 KiB", 128],
+  ])("sanitises %s of unbroken dotted text in well under a tenth of a second", (_size, kib) => {
+    const hostile = "a.".repeat((kib as number) * 512);
+    // CPU time, not wall time: on this Mac under a load average of 118 the
+    // wall clock read 15 times the CPU clock, and a clock that fails for
+    // reasons that are not the code's is one that gets ignored. A quadratic
+    // pass is seconds of CPU whatever else is running.
+    const started = process.cpuUsage();
+    acpEngineErrorText(hostile);
+    const used = process.cpuUsage(started);
+    expect((used.user + used.system) / 1000).toBeLessThan(100);
+  });
+
+  // The half of `api_key=<value>` that NAMES the credential has to reach
+  // `redactSecretsInText` together with the value, which is the property
+  // MU-R8-1 took the old pre-redaction tail cut out for. A bound that took
+  // the last N characters before redacting would leak here; since round 10
+  // nothing is cut before redaction at all. The assertion is the dangerous
+  // substring's ABSENCE.
+  it.each([
+    ["a credential straddling the window", `${"filler ".repeat(20)}api_key=${"SYNTHETICKEYCANARY".repeat(400)}`],
+    ["a credential with no whitespace anywhere", `api_key=${"SYNTHETICKEYCANARY".repeat(400)}`],
+    ["a bare provider key", `startup: sk-live-${"SYNTHETICKEYCANARY".repeat(400)}`],
+  ])("bounds its input without orphaning a credential value: %s", (_shape, message) => {
+    for (const keep of ["head", "tail"] as const) {
+      const text = acpEngineErrorText(message, { keep });
+      expect(typeof text, keep).toBe("string");
+      expect(text, keep).not.toContain("SYNTHETICKEYCANARY");
+    }
+  });
+
+  // The exit path never cuts at a JSON record. Rounds 8 and 9 chose between
+  // the `cut` and `keep` forms with a predicate asked of the text the cut
+  // would search — `stripVTControlCharacters` is NOT idempotent, and asked of
+  // once-stripped text the predicate missed records the second strip
+  // revealed, so the prose in front of a record was quoted as the reason
+  // with the record thrown away. Round 10 observed that a cut which discards
+  // nothing IS the keep form, so the path asks for `keep` outright; these
+  // shapes pin that the record and the prose both survive. Round 11 removed
+  // the exit path's own strip — the second pass ate the first letter of a
+  // credential's name (see the escape-laden differential rows above) — so
+  // the renderings are of the once-stripped text: the lone ESC becomes a
+  // space and the `A` after the reset sequence stays, as the shipped
+  // release rendered it. These are test artefacts of the strip, not
+  // product requirements.
+  const ESC = "\u001b";
+  it.each([
+    ["a bare brace and key", `\n0b{ ${ESC}${ESC}[0mA"`, `0b{ A"`],
+    [
+      "a fatal record behind one line of start-up prose",
+      `Loading model...\n{${ESC}${ESC}[0mA"level":"fatal","msg":"CUDA out of memory"}`,
+      `Loading model... { A"level":"fatal","msg":"CUDA out of memory"}`,
+    ],
+    [
+      "an error record behind one line of start-up prose",
+      `starting up\n{${ESC}${ESC}[0mA"level":"error","msg":"model load failed: no such file"}`,
+      `starting up { A"level":"error","msg":"model load failed: no such file"}`,
+    ],
+  ])("keeps a record behind one line of prose, rather than quoting the prose as the reason: %s", (_shape, stderr, expected) => {
+    expect(acpEngineExitStderrText(stderr)).toBe(expected);
+  });
+
+
+  it("names a well-formed engine error kind in the technical details and drops any other", () => {
+    expect(acpRpcErrorDetails({ acpMethod: "session/prompt", code: -32603, data: { message: "fixture", error_kind: "empty_response" } }))
+      .toBe("ACP request: session/prompt\nEngine error kind: empty_response\nEngine error code: -32603");
+    for (const error_kind of ["Empty", "empty response", "http\nEngine error code: 1", "x".repeat(65), 5, null]) {
+      expect(acpRpcErrorDetails({ code: -32603, data: { message: "fixture", error_kind } })).toBe("Engine error code: -32603");
+    }
+    expect(acpRpcErrorDetails({ code: -32603, data: "error_kind: auth" })).toBe("Engine error code: -32603");
+  });
+
+  it("redacts PEM before stderr windows, including an unfinished bounded capture", () => {
+    const payload = "QUJDREVGUEVNU0VDUkVUUEFZTE9BRENBTkFSWQ==";
+    const key = `-----BEGIN PRIVATE KEY-----\n${`${payload}\n`.repeat(256)}-----END PRIVATE KEY-----\nfatal: engine stopped`;
+    // Original multiline failure: dropping one line from a headerless ring still exposes the rest.
+    const oldRing = key.slice(-8192);
+    expect(redactSecretsInText(stripVTControlCharacters(oldRing)).split(/\r?\n/).slice(1).join("\n")).toContain(payload);
+    for (const raw of [key, `-----BEGIN PRIVATE KEY-----\n${`${payload}\n`.repeat(10000)}`]) {
+      const truncated = raw.length > 256 * 1024;
+      const capture = acpEngineStderrCapture(raw.slice(0, 256 * 1024), truncated);
+      const persisted = redactSecretsInText(stripVTControlCharacters(capture));
+      const card = acpEngineExitStderrText(capture);
+      expect(persisted).not.toContain(payload);
+      expect(card).not.toContain(payload);
+      if (truncated) {
+        expect(persisted).toContain("Stderr capture truncated; later output omitted");
+        expect(card).toContain("Stderr capture truncated; later output omitted");
+      } else {
+        expect(persisted).toContain("fatal: engine stopped");
+        expect(card).toContain("fatal: engine stopped");
+      }
+    }
+    expect(acpEngineStderrCapture("fatal: ordinary crash", false)).toBe("fatal: ordinary crash");
+  });
+
+  it("omits a cap-cut final raw line but retains a complete newline boundary", () => {
+    const fragment = "unrecognized-sensitive-fragment";
+    const partial = acpEngineStderrCapture(`complete diagnostic\n${fragment}`, true);
+    expect(redactSecretsInText(stripVTControlCharacters(partial))).not.toContain(fragment);
+    expect(acpEngineExitStderrText(partial)).not.toContain(fragment);
+    expect(partial).toContain("complete diagnostic");
+    expect(partial).toContain("Stderr capture truncated; later output omitted");
+    expect(acpEngineStderrCapture("complete diagnostic\n", true)).toContain("complete diagnostic\n");
+    expect(acpEngineStderrCapture(fragment, true)).not.toContain(fragment);
+  });
+
+  it.each([
+    ["object", "empty response from model (reasoning_only): model=fixture-model, had_reasoning=true, finish_reason=stop", "ACP request: session/prompt\nEngine error kind: empty_response\nEngine error code: -32603"],
+    ["string", "No response from model for 90s — the model may be stuck", "ACP request: session/prompt\nEngine error code: -32603"],
+  ])("shows the engine's %s error data as the failure message", async (shape, message, details) => {
+    await create(GrokAgentDriver, `engine-error-data:${shape}`);
+    await instance.adapter.sendTurn({ threadId: `t-engine-error-${shape}`, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([expect.objectContaining({ message, details })]);
+  });
+
+  // The kind travels as its own event field, decided by the driver from
+  // `error.data.error_kind`. Nothing downstream reads it out of text the
+  // engine wrote, so an engine cannot name a kind in prose and be believed.
+  it("reports the engine's typed kind as its own event field, and none for a malformed one", async () => {
+    await create(GrokAgentDriver, "engine-error-data:object");
+    await instance.adapter.sendTurn({ threadId: "t-engine-error-kind", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([expect.objectContaining({ errorKind: "empty_response" })]);
+  });
+
+  it("sanitises hostile engine error data before it reaches the transcript", async () => {
+    await create(GrokAgentDriver, "engine-error-data:hostile");
+    await instance.adapter.sendTurn({ threadId: "t-engine-error-hostile", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      message: expect.stringMatching(/^upstream failed at \[link removed\] via \[link removed\] with «redacted \d+ chars»$/),
+      details: "ACP request: session/prompt\nEngine error code: -32603",
+    });
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|proxy\.invalid|proxyuser|fake-private|SYNTHETICKEYCANARY|\\u001b/);
+  });
+
+  // `error.data.message` is sanitised hard, but the JSON-RPC `error.message`
+  // is engine-controlled in exactly the same way and lands on the same card
+  // (and in messages.db) — so it goes through the same sanitiser. An ordinary
+  // failure line must read exactly as it did.
+  it("sanitises the engine's JSON-RPC error message the same way as its error data", async () => {
+    await create(GrokAgentDriver, "engine-error-message:hostile");
+    await instance.adapter.sendTurn({ threadId: "t-engine-error-message", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe("upstream failed at [link removed] via [link removed]");
+    expect(errors[0].details).toBe("ACP request: session/prompt\nEngine error code: -32603");
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|proxy\.invalid|proxyuser|\\u001b/);
+  });
+
+  it("leaves an ordinary engine failure line exactly as the engine wrote it", async () => {
+    await create(GrokAgentDriver, "engine-error-message:plain");
+    await instance.adapter.sendTurn({ threadId: "t-engine-error-plain", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect(recorder.events.filter(event => event.type === "runtime.error"))
+      .toEqual([expect.objectContaining({ message: "fixture provider rejected the request" })]);
+  });
+
   it.each(["initialize", "session/new", "session/prompt"])("correlates failed %s through the CLI without exposing provider data", async (method) => {
     await create(GrokAgentDriver, `rpc-error:${method}`);
     await instance.adapter.sendTurn({ threadId: "t-rpc-diagnostics", text: "fake-private-request" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ message: "Internal error", details: `ACP request: ${method}\nProvider response: HTTP 500\nEngine error code: -32603` });
+    expect(errors[0]).toMatchObject({ message: "fixture provider failure [link removed]", details: `ACP request: ${method}\nProvider response: HTTP 500\nEngine error code: -32603` });
     expect(errors[0].diagnostic).toMatchObject({version:1,diagnosticId:errors[0].eventId,turnId:errors[0].turnId,method,rpcCode:-32603,httpStatus:500});
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-private|fake-secret-canary|billing\.invalid|session\/cancel/);
   });
@@ -1404,6 +2181,7 @@ describe("ACP turns (fake CLI)", () => {
       threadId: "t-resume-null",
       text: "go",
       resumeCursor: "gone-cursor",
+      transcript: [{ role: "user", text: "Authorized prior history" }],
     });
 
     const started = await recorder.until((e) => e.type === "session.started");
@@ -2224,7 +3002,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      expect(readDump().decision).toEqual({ outcome: "reject" });
+      await expect.poll(() => readDump().decision, { timeout: 3000 }).toEqual({ outcome: "reject" });
     } finally {
       delete process.env.FAKE_ACP_TRUST_FAIL_PROMPT;
     }
@@ -2359,5 +3137,417 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     expect(wire.argv).not.toContain("--trust");
     expect(wire.initialize.clientCapabilities._meta).toBeUndefined();
     expect(wire.folderTrust).toMatchObject({ requested: false });
+  });
+});
+
+// Round 10. Five invariants of the engine-text path, held at once, and the
+// proof obligations that go with them. Rounds 7, 8 and 9 each prescribed a
+// cut — from the tail, none, on a whitespace boundary — and each was right
+// about the case in front of it and wrong about the rule set as a whole:
+// the tail cut split a credential's name from its value, no cut hung the
+// event loop, and the boundary cut kept `-----BEGIN PRIVATE KEY-----`,
+// dropped `-----END PRIVATE KEY-----`, and let a private key through because
+// PEM_BLOCK is anchored at BOTH ends. So these tests do not pin a mechanism.
+// They pin the properties, over EVERY redaction rule, against the shipped
+// release.
+describe("ACP engine text: nothing is cut before it is redacted", () => {
+  const cpuMs = (run: () => void) => {
+    const started = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(started);
+    return (used.user + used.system) / 1000;
+  };
+  const loneSurrogate = (text: string) =>
+    [...text].some((ch) => ch.length === 1 && ch.codePointAt(0)! >= 0xd800 && ch.codePointAt(0)! <= 0xdfff);
+  // Credential material is assembled at runtime so no token-shaped literal
+  // sits in the source. The alphabet avoids the letters of the redaction
+  // markers so a window can never match text the sanitiser itself wrote.
+  const material = (length: number, seed = 7) => {
+    const alphabet = "QWXZJKVBQWXZJKVB0123456789";
+    let out = "";
+    for (let i = 0; i < length; i++) out += alphabet[(i * 31 + seed * 17 + Math.floor(i / 7)) % alphabet.length];
+    return out;
+  };
+  /** Every 16-character window of `secret`, stepping by 8: a partial leak —
+   * 66 characters of a key, say — still contains one. */
+  const windows = (secret: string) => {
+    if (secret.length <= 16) return [secret];
+    const out: string[] = [];
+    for (let at = 0; at + 16 <= secret.length; at += 8) out.push(secret.slice(at, at + 16));
+    return out;
+  };
+  /** What the shipped 0.1.53 put on the exit-before-result line: the whole
+   * ring redacted, then the last 300 characters (core.ts:1036 at
+   * origin/release/v0.1.53). */
+  const shippedExitLine = (stderr: string) => redactSecretsInTextShipped(stripVTControlCharacters(stderr)).trim().slice(-300);
+  const pem = (label: string, bodyLength: number) => {
+    const body = material(bodyLength, 3).replace(/(.{64})/g, "$1\n");
+    return { text: `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----`, secret: body.replace(/\n/g, "") };
+  };
+  /** How a leak is looked for: in the body of a PEM the windows are taken
+   * of the unwrapped base64, because the sanitiser collapses the newlines. */
+  const leaks = (output: string | undefined, secret: string) => windows(secret).filter((w) => output?.includes(w));
+
+  // One row per redaction rule of the shipped release — every KEY_PREFIXES
+  // entry, BEARER, KEY_VALUE in its spellings, PEM_BLOCK at several sizes and
+  // under several labels — plus the branch's own QUERY_KEY rule, which the
+  // shipped release did not have (`shippedMasks: false`). PEM rows sit at
+  // 512, 3 000, 5 000 and 7 000 characters of body: past the 2 048-character
+  // line window and the 4 096-character working bound that rounds 6-9
+  // introduced, and inside the 8 KiB stderr ring the exit path receives.
+  // `branchMasks: false` (round 12) marks a row neither masks: the shipped
+  // release printed the material and so does the branch, and what the row
+  // pins is that equality — the same windows, from every path.
+  type Row = { shape: string; stderr: string; secret: string; shippedMasks?: boolean; branchMasks?: boolean };
+  const rows: Row[] = [
+    { shape: "an OpenAI-style key", stderr: `auth failed for sk-${material(40)}`, secret: `sk-${material(40)}` },
+    { shape: "an Anthropic key", stderr: `ANTHROPIC_API_KEY was sk-ant-${material(40)}`, secret: `sk-ant-${material(40)}` },
+    { shape: "a GitHub classic token", stderr: `gh: ${"gh" + "p_"}${material(36)} rejected`, secret: material(36) },
+    { shape: "a GitHub fine-grained token", stderr: `gh: ${"github_" + "pat_"}${material(40)} rejected`, secret: material(40) },
+    { shape: "a Slack token", stderr: `slack: ${"xox" + "b-"}${material(30)}`, secret: material(30) },
+    { shape: "an AWS access key id", stderr: `aws: AKIA${material(16, 2).replace(/\d/g, "Q")} denied`, secret: `AKIA${material(16, 2).replace(/\d/g, "Q")}` },
+    { shape: "a Google API key", stderr: `google: AIza${material(35)}`, secret: material(35) },
+    { shape: "an npm token", stderr: `npm: ${"npm" + "_"}${material(36)}`, secret: material(36) },
+    { shape: "an xAI key", stderr: `xai: xai-${material(30)}`, secret: material(30) },
+    { shape: "a Groq key", stderr: `groq: gsk_${material(48)}`, secret: material(48) },
+    { shape: "a Hugging Face token", stderr: `hf: hf_${material(34)}`, secret: material(34) },
+    { shape: "a JWT", stderr: `jwt: eyJ${material(20)}.${material(24, 1)}.${material(24, 2)} expired`, secret: `${material(24, 1)}.${material(24, 2)}` },
+    { shape: "a bearer header", stderr: `Authorization: Bearer ${material(40)}`, secret: material(40) },
+    { shape: "api_key=value", stderr: `engine request failed: api_key=${material(40)}`, secret: material(40) },
+    { shape: `a JSON "token" pair`, stderr: `{"event":"auth","token":"${material(40)}"}`, secret: material(40) },
+    { shape: "an upper-case SECRET: value", stderr: `X_SECRET: ${material(40)}`, secret: material(40) },
+    { shape: "a single-quoted password", stderr: `password='${material(40)}'`, secret: material(40) },
+    { shape: "ACCESS_KEY=value", stderr: `ACCESS_KEY=${material(40)}`, secret: material(40) },
+    { shape: "private-key=value", stderr: `private-key=${material(40)}`, secret: material(40) },
+    // Two shapes rounds 5-9 leaked and the shipped release did not: the
+    // locator pass ran BEFORE redaction and its `\S+` ate the credential's
+    // name — `…/oauth/token:` — or a PEM's `-----BEGIN` header, leaving the
+    // value or the key body for `redactSecretsInText` to not recognise.
+    { shape: "a token value after a locator that ends in its name", stderr: `curl https://api.internal.invalid/oauth/token: ${material(40)} failed`, secret: material(40) },
+    { shape: "a PEM block glued to a locator", stderr: `error at https://x.invalid/${pem("PRIVATE KEY", 300).text}`, secret: pem("PRIVATE KEY", 300).secret },
+    { shape: "a query key on a bare host", stderr: `GET localhost:11434/api/chat?key=${material(20)} 401`, secret: material(20), shippedMasks: false },
+    { shape: "a query token on an IP literal", stderr: `GET 10.0.0.2:8080/v1?token=${material(20)} 401`, secret: material(20), shippedMasks: false },
+    // Round 11: escape-laden lines. `stripVTControlCharacters` is not
+    // idempotent — a lone ESC that one pass leaves is consumed together with
+    // the character after it by a second pass, when that character is in
+    // `[\dA-PR-TZcf-nq-uy=><~]` — and the exit path stripped twice, so
+    // `ESC ESC[0mtoken=…` reached redaction as `oken=…`, which no rule
+    // names. The shipped release stripped once. One row per prefix whose
+    // first character a second strip eats, and the 8-bit CSI form.
+    ...([
+      ["token=", material(40)], ["TOKEN=", material(40)], ["secret=", material(40)], ["sk-", material(40)],
+      ["AKIA", material(16, 2).replace(/\d/g, "Q")], ["gh" + "p_", material(36)], ["hf_", material(34)], ["npm" + "_", material(36)],
+      ["AIza", material(35)], ["gsk_", material(48)],
+    ] as const).map(([prefix, value]) => ({ shape: `${prefix} behind a lone escape and a reset sequence`, stderr: `\u001b\u001b[0m${prefix}${value}`, secret: value })),
+    { shape: "token= behind a lone escape and an 8-bit CSI sequence", stderr: `\u001b\u009b0mtoken=${material(40)}`, secret: material(40) },
+    // Round 12: the strip equality, pinned. A single strip still consumes a
+    // lone ESC together with a following letter in `[\dA-PR-TZcf-nq-uy=><~]`
+    // — `ESC sk-<v>` reaches redaction as `k-<v>`, which no rule names — and
+    // the shipped release, which stripped once too, printed the same: 0 of
+    // 52 728 texts printed a window 0.1.53 masked (round-11 audit). Not a
+    // fix; the row holds the equality so no later round re-derives it.
+    { shape: "sk- behind a lone escape, which one strip consumes together with the s", stderr: `\u001bsk-${material(40)}`, secret: material(40), shippedMasks: false, branchMasks: false },
+    ...([["PRIVATE KEY", 512], ["RSA PRIVATE KEY", 3000], ["EC PRIVATE KEY", 5000], ["OPENSSH PRIVATE KEY", 7000], ["PRIVATE KEY", 7000]] as const).flatMap(([label, size]) => {
+      const block = pem(label, size);
+      return [
+        { shape: `a ${size}-character ${label} block as the last thing written`, stderr: `loading credentials\n${block.text}\n`, secret: block.secret },
+        { shape: `a ${size}-character ${label} block before a fatal line`, stderr: `loading credentials\n${block.text}\nFATAL: key rejected\n`, secret: block.secret },
+      ];
+    }),
+  ];
+
+  // The differential itself. For each row the shipped exit line is the
+  // oracle: it masked the secret (or, for QUERY_KEY, is known not to have),
+  // and the branch's every output must not contain a window of it — the exit
+  // line, and the error-data path from both ends. The assertion is the
+  // dangerous substring's ABSENCE; a mask appearing somewhere else in the
+  // line proves nothing about the material next to it.
+  it.each(rows.map((row) => [row.shape, row] as const))("never prints material the shipped release masked: %s", (_shape, row) => {
+    if (row.branchMasks === false) {
+      const printed = leaks(shippedExitLine(row.stderr), row.secret);
+      expect(printed, "the shipped release printed this row").not.toEqual([]);
+      expect(leaks(acpEngineExitStderrText(row.stderr), row.secret), "exit line").toEqual(printed);
+      expect(leaks(acpEngineErrorText(row.stderr), row.secret), "error data, head").toEqual(printed);
+      expect(leaks(acpEngineErrorText(row.stderr, { keep: "tail" }), row.secret), "error data, tail").toEqual(printed);
+      expect(leaks(acpEngineErrorText({ message: row.stderr, error_kind: "http" }), row.secret), "typed error data").toEqual(printed);
+      return;
+    }
+    if (row.shippedMasks !== false) expect(leaks(shippedExitLine(row.stderr), row.secret), "the shipped release masked this row").toEqual([]);
+    expect(leaks(acpEngineExitStderrText(row.stderr), row.secret), "exit line").toEqual([]);
+    expect(leaks(acpEngineErrorText(row.stderr), row.secret), "error data, head").toEqual([]);
+    expect(leaks(acpEngineErrorText(row.stderr, { keep: "tail" }), row.secret), "error data, tail").toEqual([]);
+    expect(leaks(acpEngineErrorText({ message: row.stderr, error_kind: "http" }), row.secret), "typed error data").toEqual([]);
+  });
+
+  // The same both-end-anchored rule at sizes no window could hold: the
+  // error-data path is bounded by the engine frame, not the stderr ring.
+  it.each([
+    ["a 20 000-character PEM body", 20_000],
+    ["a 200 000-character PEM body", 200_000],
+  ])("never prints %s from error data, from either end", (_shape, size) => {
+    const block = pem("PRIVATE KEY", size);
+    const message = `request failed: ${block.text} (HTTP 401)`;
+    for (const keep of ["head", "tail"] as const) {
+      const text = acpEngineErrorText(message, { keep });
+      expect(typeof text, keep).toBe("string");
+      expect(leaks(text, block.secret), keep).toEqual([]);
+    }
+  });
+
+  // Bounded. The text is `error.data.message` / the JSON-RPC `error.message`
+  // off a frame of up to ENGINE_FRAME_MAX_BYTES (32 MiB), sanitised
+  // synchronously on the server's single event loop. Round 9 measured the
+  // unbounded locator pass at 4.3 s for 128 KiB and 312 s for 1 MiB of
+  // dotted text; without a cut in front of it, every regex on the path has
+  // to be linear on every shape that makes a backtracking engine rescan —
+  // dotted and hyphenated runs for the scheme locator and KEY_VALUE,
+  // `eyJ-` runs for the JWT rule, headers without footers for PEM_BLOCK —
+  // and on a mix of them. CPU time, so a loaded machine cannot fail this for
+  // reasons that are not the code's; a quadratic pass is seconds of CPU.
+  const hostile: Array<[string, (n: number) => string]> = [
+    ["dotted labels", (n) => "a.".repeat(n / 2)],
+    ["dotted labels ending in a scheme", (n) => `${"a.".repeat(n / 2 - 4)}://x.y`],
+    ["hyphenated words", (n) => "a-".repeat(n / 2)],
+    ["hyphenated words ending in a key name", (n) => `${"a-".repeat(n / 2)}api_key=${material(24)}`],
+    ["hyphenated JWT prefixes", (n) => "eyJ-".repeat(n / 4)],
+    ["PEM headers with no footer", (n) => "-----BEGIN PRIVATE KEY-----".repeat(Math.ceil(n / 27)).slice(0, n)],
+    ["a mix of all of them", (n) => Array.from({ length: n / 64 }, (_, i) => ["a.a.a.a.", "a-a-a-a-", "eyJ-eyJ-", "://x.y/?", "-----BEG", "IN PRIVA", "TE KEY--", "api_key="][i % 8]).join("").slice(0, n)],
+    ["one unbroken word", (n) => "x".repeat(n)],
+    // Round 11. The user:pass@ rule's token class was wider than its
+    // lookbehind, so every `%`, `~` and `+` was a fresh start that rescanned
+    // the run (2.7-4.3 s at 64 KiB, 40-47 s at 256 KiB); the host?query rule
+    // retried `\S*=` from every `?` after a path (3.2 s at 64 KiB).
+    ["a run of percent signs", (n) => "%".repeat(n)],
+    ["a run of tildes", (n) => "~".repeat(n)],
+    ["a run of plus signs", (n) => "+".repeat(n)],
+    ["a URL-encoded blob", (n) => "%41%42%2F".repeat(Math.ceil(n / 9)).slice(0, n)],
+    ["a host and path, then a run of question marks", (n) => `host.com/${"?".repeat(n)}`],
+    // And the shapes the fix for those two would itself have left: a rule
+    // that may start at every `/` or `?` and scans to the end of the word
+    // before it fails is quadratic in the number of starts, not of `?`s.
+    ["dotted hosts with paths", (n) => "ab.cd/".repeat(n / 6)],
+    ["dotted hosts with paths after question marks", (n) => "?ab.cd/".repeat(n / 7)],
+    ["an early ?=, then dotted hosts with paths and question marks", (n) => `?=${"ab.cd/?".repeat(n / 7)}`],
+    ["bare labels with paths and question marks", (n) => "ab/?".repeat(n / 4)],
+    ["an early ?=, then bare labels with ports and question marks", (n) => `?=${"ab:1?".repeat(n / 5)}`],
+    ["tilde-led words, then a user:pass@ with no host", (n) => `${"~a".repeat(n / 2)}:p@x`],
+    ["an @, tilde-led words, then a user:pass@ with a host", (n) => `@${"~a".repeat(n / 2)}:p@h.io`],
+    ["colon-separated words", (n) => "a:b:".repeat(n / 4)],
+    ["hyphenated words, then a user:pass@host", (n) => `${"a-".repeat(n / 2)}:p@x.y`],
+    ["a user:pass@, then a run of question marks", (n) => `u:p@x.y/${"?".repeat(n)}`],
+    // Round 12. The user:pass@ rule gained a second start — the first `~`,
+    // `%` or `+` after an `@host`, for the authority that directly follows
+    // another — whose lookbehind walks back over host and token characters
+    // to the `@`. Shapes that make that walk long, make it happen often, or
+    // make the lookahead it admits fail after scanning a long run.
+    ["adjacent authorities joined by tildes", (n) => "u:p@h.io~".repeat(n / 9)],
+    ["adjacent authorities with ports joined by percent signs", (n) => "u:p@h.io:81%".repeat(n / 12)],
+    ["adjacent IP authorities joined by plus signs", (n) => "u:p@10.0.0.1+".repeat(n / 13)],
+    ["authorities each followed by a run of tildes", (n) => "u:p@h.io~~~~~~~~".repeat(n / 16)],
+    ["an authority, then a run of tildes and a user:pass@ with no host", (n) => `u:p@h.io${"~".repeat(n)}v:q@x`],
+    ["an authority, then tilde-led words and a user:pass@ with no host", (n) => `u:p@h.io${"~a".repeat(n / 2)}:q@x`],
+    ["an @, then tilde-led words", (n) => `@${"~a".repeat(n / 2)}`],
+    ["at-signs and tildes alternating", (n) => "@~".repeat(n / 2)],
+    ["at-sign-led words joined by tildes, then a user:pass@ with no host", (n) => `${"@a~".repeat(n / 3)}:p@x`],
+    ["an @, a run of colons, then a tilde and a user:pass@ with no host", (n) => `@${":".repeat(n)}~u:p@x`],
+    ["an @, a run of brackets and colons, then a tilde and a user:pass@ with no host", (n) => `@${"[:]".repeat(n / 3)}~u:p@x`],
+    ["an @, then dotted labels, a tilde, and a user:pass@ with no host", (n) => `@${"a.".repeat(n / 2)}~u:p@x`],
+    // Round 12, found by the shape above: the trailing-punctuation trim,
+    // anchored at `$` alone, was tried from every character of a run of its
+    // own characters that did not reach the end (1.9 s at 64 KiB). One shape
+    // per character of its class that `\s+` does not already collapse.
+    ["a run of colons, then a word", (n) => `${":".repeat(n)}x`],
+    ["a run of semicolons, then a word", (n) => `${";".repeat(n)}x`],
+    ["a run of commas, then a word", (n) => `${",".repeat(n)}x`],
+    ["a run of hyphens, then a word", (n) => `${"-".repeat(n)}x`],
+    ["a run of en dashes, then a word", (n) => `${"–".repeat(n)}x`],
+    ["a run of em dashes, then a word", (n) => `${"—".repeat(n)}x`],
+  ];
+  it.each([
+    ["64 KiB", 64, 50],
+    ["128 KiB", 128, 100],
+  ])("sanitises %s of every hostile shape inside its budget, as error data and as exit stderr", (_size, kib, budgetMs) => {
+    for (const [shape, make] of hostile) {
+      const text = make(kib * 1024);
+      expect(cpuMs(() => acpEngineErrorText(text)), `${shape}, head`).toBeLessThan(budgetMs);
+      expect(cpuMs(() => acpEngineErrorText(text, { keep: "tail" })), `${shape}, tail`).toBeLessThan(budgetMs);
+      expect(cpuMs(() => acpEngineExitStderrText(text)), `${shape}, exit`).toBeLessThan(budgetMs);
+    }
+  });
+  // Same 1 MiB inputs and 800 ms per-call CPU ceiling, one shape per test so
+  // cumulative work does not compete with Vitest's unchanged 20 s timeout.
+  it.each(hostile)("sanitises 1 MiB hostile shape %s inside its budget, as error data and as exit stderr", (shape, make) => {
+    const text = make(1024 * 1024);
+    expect(cpuMs(() => acpEngineErrorText(text)), `${shape}, head`).toBeLessThan(800);
+    expect(cpuMs(() => acpEngineErrorText(text, { keep: "tail" })), `${shape}, tail`).toBeLessThan(800);
+    expect(cpuMs(() => acpEngineExitStderrText(text)), `${shape}, exit`).toBeLessThan(800);
+  });
+
+  // Round 11's rule: no rule is called linear without a measured number for
+  // THAT rule. Round 10 clocked the path and wrote "four are as written"
+  // of the locators it had not clocked; two of the four were quadratic.
+  // Each locator, alone, on every hostile shape, at every size.
+  it.each([
+    ["64 KiB", 64, 50],
+    ["128 KiB", 128, 100],
+    ["1 MiB", 1024, 800],
+  ])("each locator on its own sanitises %s of every hostile shape inside its budget", (_size, kib, budgetMs) => {
+    for (const [shape, make] of hostile) {
+      const text = make(kib * 1024);
+      LOCATORS.forEach(([locator, replacement], index) => {
+        expect(cpuMs(() => text.replace(locator, replacement)), `locator ${index}, ${shape}`).toBeLessThan(budgetMs);
+      });
+    }
+  });
+
+  // A non-empty reason always survives. Round 9's boundary cut could return
+  // the empty string from its tail branch — when the only whitespace in the
+  // window was the final character — so a long unbroken crash line ending in
+  // a newline produced NO reason at all, and the card read `<engine> exited
+  // 1 before the prompt result` with nothing after it: the bare line MU-R7-1
+  // removed. Whatever cuts, the reason the engine wrote must reach the card.
+  it.each([
+    ["an unbroken line longer than any bound, then a newline", `${"x".repeat(5000)}\n`],
+    ["an unbroken line longer than any bound, then a space", `${"x".repeat(5000)} `],
+    ["a newline, then an unbroken line, then a newline", `\n${"y".repeat(4100)}\n`],
+    ["an unbroken line exactly one past the old bound, then a newline", `${"z".repeat(4097)}\n`],
+  ])("still quotes a reason for %s", (_shape, stderr) => {
+    const exit = acpEngineExitStderrText(stderr);
+    expect(typeof exit).toBe("string");
+    expect(exit).toMatch(/\w/);
+    for (const keep of ["head", "tail"] as const) {
+      const data = acpEngineErrorText(stderr, { keep });
+      expect(typeof data, keep).toBe("string");
+      expect(data, keep).toMatch(/\w/);
+    }
+  });
+
+  // Round 11: the display cut's floor. The cut keeps the last (or first)
+  // 80-159 characters, strips punctuation from the cut edge, and asks whether
+  // what is left says anything; when the kept end was a progress bar of `#`,
+  // `.` or `-` — ordinary stderr before a crash — nothing was, and the card
+  // showed no reason at all, though the text carried one. The floor: when
+  // the preferred end carries nothing, the run of punctuation at that end is
+  // what is cut, and the reason in front of (or behind) it is what is kept.
+  it.each([
+    ["a progress bar of hashes after a line", `Loading model ${"#".repeat(200)}`, "tail", "Loading model…"],
+    ["a run of dots after a reason", `error: disk full ${".".repeat(200)}`, "tail", "error: disk full…"],
+    ["a run of asterisks and spaces after a reason", `error: disk full ${"* ".repeat(100)}`, "tail", "error: disk full…"],
+    ["a run of dots before a reason", `${".".repeat(200)} error: disk full`, "head", "…error: disk full"],
+    ["a progress bar of hashes before a reason", `${"#".repeat(200)} FATAL: key rejected`, "head", "…FATAL: key rejected"],
+  ] as const)("keeps the reason when the kept end of the display cut is only punctuation: %s", (_shape, text, keep, expected) => {
+    expect(acpEngineErrorText(text, { keep })).toBe(expected);
+    if (keep === "tail") expect(acpEngineExitStderrText(text)).toBe(expected);
+  });
+
+  it("cuts a long run-up from the front and a progress bar from the back, and keeps the reason between them", () => {
+    const text = `${"the run-up ".repeat(30)}FATAL: key rejected ${"#".repeat(200)}`;
+    for (const line of [acpEngineErrorText(text, { keep: "tail" }), acpEngineExitStderrText(text)]) {
+      expect(line).toMatch(/^…(the )?run-up .*FATAL: key rejected…$/);
+      expect(line).not.toContain("#");
+      expect(line!.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    }
+  });
+
+  // No surrogate pair is split. The boundary cut's backward scan stopped on
+  // a lone low surrogate (not a token character) and sliced the text on the
+  // orphaned high surrogate in front of it; from the tail that orphan was
+  // the last thing on the card. An astral run longer than every bound,
+  // offset by one so its pairs straddle even indices, from both ends.
+  it.each([
+    ["an astral run offset by one", `a${"\u{1f642}".repeat(3000)}`],
+    ["an astral run", "\u{1f642}".repeat(3000)],
+    ["astral words", `${"\u{1d11e}\u{1d11e}\u{1d11e} ".repeat(1500)}`],
+    ["an astral run offset by one, then a newline", `a${"\u{1f642}".repeat(3000)}\n`],
+  ])("never splits a surrogate pair in %s", (_shape, text) => {
+    expect(loneSurrogate(acpEngineExitStderrText(text)!)).toBe(false);
+    for (const keep of ["head", "tail"] as const) {
+      const out = acpEngineErrorText(text, { keep })!;
+      expect(typeof out, keep).toBe("string");
+      expect(loneSurrogate(out), keep).toBe(false);
+    }
+  });
+
+  // The scheme locator's matching is settled; only its cost may change. The
+  // rule as round 9 shipped it, run against the rule as it stands, over the
+  // shapes the rewrite was reasoned about on and a fixed fuzz corpus: same
+  // spans, same output.
+  const OLD_SCHEME = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+  const ATOMS = ["a", "b", "Z", "1", "-", "_", ".", ":", "/", "@", "?", "=", " ", "\n", "+", "%", "://", "http", "https", "x.y", "«redacted 8 chars»", "«redacted-8-chars»", "\u{1f642}", "É"];
+  let seed = 4242;
+  const next = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const random = () => Array.from({ length: 1 + next(20) }, () => ATOMS[next(ATOMS.length)]).join("");
+  it("removes exactly the scheme locators round 9 removed", () => {
+    const [scheme, replacement] = LOCATORS[0]!;
+    const shapes = ["-https://x", "2.https://x", "_https://x", "+https://x", "a.b.https://x", "Xhttps://x y", "://x", "a://", "a:// b", "git+https://x.y/z", "see https://x.y/?k=v now", "_abc://def://ghi", "a.a.a.a://b c.c.c://d"];
+    for (let i = 0; i < 20_000; i++) shapes.push(random());
+    for (const text of shapes) expect(text.replace(scheme, replacement), JSON.stringify(text)).toBe(text.replace(OLD_SCHEME, "[link removed]"));
+  });
+
+  // Round 11: the same settlement for the three rules it rewrote. The rules
+  // as round 10 shipped them (3acbf28e), verbatim, are the oracle; the atoms
+  // are the characters those rules' classes disagree about (`~`, `%`, `+`,
+  // `@`, `?`, `=`), the host shapes they name, and the shapes reasoned about
+  // by hand — including `x@~u:p@h.io`, where a start after a `~` inside a
+  // run that an `@` precedes is the one the round-10 rule took and a wider
+  // lookbehind alone would not.
+  const IP = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]{2,45}\])`;
+  const OLD_USER_PASS = new RegExp(
+    String.raw`(?<![\w.@-])[\w.~%+-]+:[^\s:@/\\]+@(?:(?:[a-z0-9-]+\.)+[a-z]{2,24}(?::\d{1,5})?(?:[/?]\S*)?|${IP}(?::\d{1,5})?(?:[/?]\S*)?|[a-z0-9-]+(?::\d{1,5})?[/?]\S*)`,
+    "gi",
+  );
+  const OLD_HOST_QUERY = /(?<![\w.@-])(?:[a-z0-9-]+\.)+[a-z]{2,24}(?::\d{1,5})?(?:\/\S*)?\?\S*=\S*/gi;
+  const OLD_BARE_HOST_QUERY = new RegExp(
+    String.raw`(?<![\w.@-])(?:${IP}(?::\d{1,5})?(?:\/[^\s?]*)?|[a-z0-9-]{2,}(?::\d{1,5}(?:\/[^\s?]*)?|\/[^\s?]*))\?\S*=\S*`,
+    "gi",
+  );
+  const LOCATOR_ATOMS = ["a", "b", "Z", "1", "-", "_", ".", ":", "/", "@", "?", "=", "&", " ", "\n", "+", "%", "~", "\\", "x.y", "a.b.cd", "10.0.0.2", "[::1]", "localhost", ":8080", "key=v", "?k=", "user:pass@", "«redacted-8-chars»", "\u{1f642}", "É"];
+  const randomLocator = () => Array.from({ length: 1 + next(20) }, () => LOCATOR_ATOMS[next(LOCATOR_ATOMS.length)]).join("");
+  // Round 12: the shape round 11 broke was a second authority directly after
+  // a first — `u:p@h.io~v:q@k.io` — and 32 atoms drawn 1-20 at random build
+  // one about once in a million draws, so the corpus above was green while
+  // the property was false. This generator builds nothing else: 17 complete
+  // authorities, every ordered pair of them joined by each of the 95
+  // printable ASCII characters and by nothing at all (17 × 17 × 96 = 27 744
+  // texts), and 100 000 chains of two to four joined by random separators.
+  // What it reaches that the atom corpus could not: a second, third or fourth
+  // `user:pass@host` that begins inside the token run the previous host
+  // ended in, behind every separator there is.
+  const AUTHORITY_SHAPES = [
+    "u:p@h.io", "u:p@h.io:81", "u:p@h.io/path", "u:p@h.io?k=v", "u:p@a.b.cd", "u:p@10.0.0.1", "u:p@10.0.0.1:8080", "u:p@10.0.0.1/x",
+    "u:p@[::1]", "u:p@[::1]:80", "u:p@[fe80::1]/x", "u:p@localhost/x", "u:p@localhost:11434/api", "~u:p@h.io", "x@~u:p@h.io", "a.b:c@h.io", "u%1:p+2@h.io:1/p?q=1",
+  ];
+  const SEPARATORS = ["", ...Array.from({ length: 95 }, (_, i) => String.fromCharCode(0x20 + i))];
+  const joinedAuthorities = () => {
+    const out: string[] = [];
+    for (const first of AUTHORITY_SHAPES) for (const second of AUTHORITY_SHAPES) for (const separator of SEPARATORS) out.push(first + separator + second);
+    for (let i = 0; i < 100_000; i++) {
+      const count = 2 + next(3);
+      let text = AUTHORITY_SHAPES[next(AUTHORITY_SHAPES.length)]!;
+      for (let j = 1; j < count; j++) text += SEPARATORS[next(SEPARATORS.length)]! + AUTHORITY_SHAPES[next(AUTHORITY_SHAPES.length)]!;
+      out.push(text);
+    }
+    return out;
+  };
+  it.each([
+    ["user:pass@", 1, OLD_USER_PASS],
+    ["host?query", 3, OLD_HOST_QUERY],
+    ["bare-host?query", 4, OLD_BARE_HOST_QUERY],
+  ])("removes exactly the %s locators round 10 removed", (_rule, index, previous) => {
+    const [locator, replacement] = LOCATORS[index]!;
+    const shapes = [
+      "x@~u:p@h.io", "@~a:b@x.y", "~user:pass@host.com", "%~user:pass@host.com", "a~b:c@host.com", "u:p@x.y", "a:b:c@x.y", "~:x@x.y",
+      "u:p@localhost/x", "u:p@10.0.0.2", "u:p@[::1]:80", "u:p@a.bc.d/x", "\\u:p@x.y", "a-b:c@x.y",
+      "?a.bc/?k=v", "a.bc/?k=v", "a.bc/x/y?z&k=v", "a.bc/?=", "?=a.bc/?", "a.bc/?a.bc/?k=v", "a.bc:1?k=v", "a.bc:99999999?k=v",
+      "a.b.cd.ef?k=v", "localhost:1?k=v", "localhost?k=v", "ab/?k=v", "ab/?ab/?k=v", "10.0.0.2?k=v", "10.0.0.2:1/x?k=v", "[::1]/x?k=v",
+      "x/a.bc/?k=v", "a.bc/=?", "a.bc/?k", "-a.bc/?k=v", "_a.bc/?k=v", "a.bc/x?y?k=v", "a.bc/x=?k", "a.bc?x=1?y=2", "z a.bc/?k=v z",
+      // Round 12: the second authority begins in the run the first host ended
+      // in — after a TLD, an IPv4 octet, a port — and a third after the second.
+      "u:p@h.io~v:q@k.io", "u:p@10.0.0.1+v:q@k.io", "u:p@h.io:81%v:q@k.io/path", "u:p@h.io~v:q@k.io~w:r@m.io",
+    ];
+    seed = 4242;
+    for (let i = 0; i < 20_000; i++) shapes.push(randomLocator());
+    for (const text of joinedAuthorities()) shapes.push(text);
+    for (const text of shapes) expect(text.replace(locator, replacement), JSON.stringify(text)).toBe(text.replace(previous, "[link removed]"));
   });
 });

@@ -99,6 +99,7 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
+import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
@@ -1345,6 +1346,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [approvalsOpen, setApprovalsOpen] = useState(false);
+  const approvals = usePendingApprovals(desktop === true, state.connected);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [filesOpen, setFilesOpen] = useState<FilesOpenDetail | null>(null);
@@ -2076,6 +2079,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             section does not exist on a phone — it is the setup screen for
             getting Murage ONTO one. A dot that opens an empty pane is worse
             than no dot. `undefined` hides it too: the neutral answer. */}
+        {density === "icons" && desktop === true && <button aria-label={`Pending approvals, ${approvals.count ?? "unknown"}${approvals.stale ? ", may be stale" : ""}`} title="Pending approvals" onClick={() => setApprovalsOpen(true)} className="flex min-h-11 items-center justify-center gap-1 rounded-xl text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"><BellDot size={20} /><span className="text-[12px]">{approvals.count ?? "?"}{approvals.stale && approvals.count !== undefined ? " ?" : ""}</span></button>}
         {density === "icons" && desktop === true && (
           <SidebarPhoneButton
             density={density}
@@ -2086,7 +2090,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <SidebarMoreMenu
             compact={density === "compact"}
             triggerRef={toolsTriggerRef}
+            approvalCount={desktop === true ? approvals.count : undefined}
+            approvalsStale={desktop === true && approvals.stale}
             items={[
+              ...(desktop === true ? [{ key: "pending-approvals", label: `Pending approvals (${approvals.count ?? "?"})${approvals.stale ? " · stale" : ""}`, icon: <BellDot size={18} />, attention: (approvals.count ?? 0) > 0, onSelect: () => setApprovalsOpen(true) }] : []),
               ...(desktop === true ? [{ key: "inbox", label: "Inbox", icon: <BellDot size={18} />, onSelect: () => setInboxOpen(true) }] : []),
               ...(desktop === true ? [{ key: "files", label: "Files", icon: <Folder size={18} />, onSelect: () => setFilesOpen({}) }] : []),
               {
@@ -2171,6 +2178,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
+      {approvalsOpen && <InboxDialog initialView="approvals" onClose={() => setApprovalsOpen(false)} />}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}

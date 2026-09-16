@@ -12,6 +12,9 @@
 # repo would need a cross-repo token this workflow has no business holding.
 name: Package Windows
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -24,7 +27,7 @@ jobs:
   package:
     name: NSIS installer
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,8 +44,49 @@ jobs:
       - name: clean build outputs
         shell: bash
         run: rm -rf dist dist-server release
+      - name: Pinned native Python for GEPA
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13.15'
+          architecture: x64
+          check-latest: false
+      - name: Build unsigned pinned GEPA worker
+        shell: pwsh
+        run: |
+          python -I native/gepa/build-windows.py "$env:RUNNER_TEMP/gepa-windows"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Sign GEPA native images before freezing their manifest
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: https://eus.codesigning.azure.net
+          signing-account-name: ferrox-labs-signing
+          certificate-profile-name: ferroxlabs
+          files-folder: ${{ github.workspace }}/dist-native/gepa/win32-x64
+          files-folder-filter: exe,dll,pyd
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-digest: SHA256
+          exclude-azure-cli-credential: true
+          timeout: 300
+      - name: Verify signed GEPA runtime and freeze trusted metadata
+        shell: pwsh
+        run: |
+          ./native/gepa/verify-windows.ps1 -Bundle "$pwd/dist-native/gepa/win32-x64" -Receipt "$pwd/qualification-evidence/gepa-windows-signatures.json"
+          & "$env:RUNNER_TEMP/gepa-windows/venv/Scripts/python.exe" -I native/gepa/offline-fixture.py -- "$pwd/dist-native/gepa/win32-x64/gepa-worker.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node native/gepa/create-manifest.mjs "$pwd/dist-native/gepa/win32-x64" win32-x64 "$pwd/qualification-evidence/gepa-package-metadata.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package (Azure Trusted Signing)
-        run: pnpm package:win
+        shell: pwsh
+        run: |
+          $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
+          $hash = $metadata.extraMetadata.murageGepaManifests.'win32-x64'
+          if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Missing trusted GEPA manifest hash' }
+          pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -53,6 +97,17 @@ jobs:
           echo "version: $(node -p "require('./package.json').version")"
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
+      - name: Record installer identity and verify publisher
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -LiteralPath release -Filter 'Murage-*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one versioned Murage installer' }
+          $installer = $installers[0]
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+          if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Installer signature is invalid or untimestamped' }
+          $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          if ($publisher -ne 'Ferrox Labs, LLC') { throw 'Unexpected installer publisher' }
+          @{ sourceSha = (git rev-parse HEAD); file = $installer.Name; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant(); publisher = $publisher } | ConvertTo-Json | Set-Content -LiteralPath qualification-evidence/windows-installer.json -Encoding utf8
       # Three things silently produce an installer that builds fine and is
       # broken in the field, and none of them can be checked from the Mac the
       # release is cut on — the artifact carries only the .exe. So assert them
@@ -127,6 +182,14 @@ jobs:
           kill $pid 2>/dev/null || true
           exit 1
 
+      - name: Retain Windows qualification receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-qualification-evidence
+          path: qualification-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-installer
@@ -136,4 +199,4 @@ jobs:
             release/*.zip
             release/latest.yml
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

@@ -28,6 +28,18 @@ import { hostStoppedActivityName } from "../../shared/host-stop";
 import type { RoutineRun } from "../lib/routines";
 
 describe("stream delta buffer", () => {
+  it("keeps Fuigo retry-status thought text out of the answer buffer", () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const flushed: Array<Array<[string, { text: string; reasoning: string }]>> = [];
+    const buffer = createStreamDeltaBuffer(entries => flushed.push(entries));
+    try {
+      buffer.push("fuigo18", "reasoning_text", "HTTP 503. Retrying model request.\n\n");
+      buffer.push("fuigo18", "assistant_text", "Recovered answer.");
+      buffer.flush();
+      expect(flushed).toEqual([[["fuigo18", { text: "Recovered answer.", reasoning: "HTTP 503. Retrying model request.\n\n" }]]]);
+    } finally { buffer.dispose(); vi.unstubAllGlobals(); }
+  });
   it("falls back to 100ms when rAF is paused and emits the pending channels once", () => {
     vi.useFakeTimers();
     const callbacks = new Map<number, FrameRequestCallback>();

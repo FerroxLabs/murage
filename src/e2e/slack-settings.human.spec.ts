@@ -50,9 +50,9 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   expect(await page.evaluate(() => (window as any).__credentialCalls)).toEqual([{ name: "slackAppToken" }, { name: "slackBotToken" }]);
   await page.getByLabel("Workspace ID", { exact: true }).fill("TEAM"); await page.getByLabel("App ID", { exact: true }).fill("APP"); await page.getByLabel("Owner member ID", { exact: true }).fill("UOWNER");
   await page.getByRole("button", { name: "Save workspace details" }).click(); await expect(page.getByText("Workspace details saved. Pairing has not started.")).toBeVisible(); expect(pairs).toBe(0);
-  await page.getByRole("button", { name: "Pair with Chief" }).click(); await expect(page.getByText("/pair " + "a".repeat(64))).toBeVisible();
+  await page.getByRole("button", { name: "Pair with Chief" }).click(); await expect(page.getByText("pair " + "a".repeat(64), { exact: true })).toBeVisible();
   await expect(page.getByLabel("Workspace ID", { exact: true })).toBeDisabled(); await expect(page.getByLabel("Bot token (saved)", { exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "Copy pairing command" }).click(); expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/pair " + "a".repeat(64));
+  await page.getByRole("button", { name: "Copy pairing message" }).click(); expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("pair " + "a".repeat(64));
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("a".repeat(64));
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
@@ -62,7 +62,7 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   }
   state = { ...state, state: "retry", paired: true, enabled: false, error: "transport-error" };
   await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("Connection saved · reconnecting", { exact: true })).toBeVisible();
-  await expect(page.getByText("/pair " + "a".repeat(64))).toHaveCount(0);
+  await expect(page.getByText("pair " + "a".repeat(64), { exact: true })).toHaveCount(0);
   fail = true; await page.getByRole("button", { name: "Retry connection" }).click(); await expect(page.getByText("Reconnect could not complete.", { exact: false })).toBeVisible(); await expect(page.getByText("private-secret-canary")).toHaveCount(0);
   fail = false; await page.getByRole("button", { name: "Retry connection" }).click(); await expect(page.getByText("Connected to Chief", { exact: true })).toBeVisible(); expect(retries).toBe(2);
   await page.getByRole("button", { name: "Revoke connection" }).click(); expect(revokes).toBe(1); await expect(page.getByLabel("Workspace ID", { exact: true })).toBeEnabled();

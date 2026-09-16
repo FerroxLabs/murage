@@ -10,6 +10,7 @@ import {
   HARNESS_RESOURCE_DIRECTORIES,
   bundledFuigoPath,
   harnessResourceEnvironment,
+  packagedGepaManifestEnvironment,
   DEV_STATIC_DIRECTORY,
   devHarnessEnvironment,
 } from "./harness-resources.mjs";
@@ -28,12 +29,44 @@ describe("harnessResourceEnvironment", () => {
       MURAGE_LIBRARY_DIR: join(resources, "library"),
       MURAGE_BOT_LIBRARY_DIR: join(resources, "bot-library"),
       MURAGE_FUIGO_DIR: join(resources, "fuigo"),
+      MURAGE_GEPA_DIR: join(resources, "gepa-worker"),
     });
   });
 
   it("refuses a missing resources path rather than emitting a bare relative one", () => {
     expect(() => harnessResourceEnvironment(undefined)).toThrow(/resources path/);
     expect(() => harnessResourceEnvironment("")).toThrow(/resources path/);
+  });
+});
+
+describe("trusted packaged GEPA manifest environment", () => {
+  const appPath = "/Applications/Murage.app/Contents/Resources/app.asar";
+  const pin = "a".repeat(64);
+  function source(raw) {
+    const bytes = Buffer.from(raw);
+    return {
+      stat: file => { expect(file).toBe(join(appPath, "package.json")); return { isFile: () => true, isSymbolicLink: () => false, size: bytes.length }; },
+      read: file => { expect(file).toBe(join(appPath, "package.json")); return bytes; },
+    };
+  }
+  it.each([["darwin", "arm64"], ["darwin", "x64"], ["win32", "x64"], ["linux", "x64"]])("reads the exact %s-%s pin from merged app package metadata", (platform, arch) => {
+    expect(packagedGepaManifestEnvironment({ packaged: true, appPath, platform, arch }, source(JSON.stringify({ murageGepaManifests: { [`${platform}-${arch}`]: pin } })))).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: pin });
+  });
+  it.each(["{}", "{invalid", JSON.stringify({ murageGepaManifests: { "darwin-x64": pin } }), JSON.stringify({ murageGepaManifests: { "darwin-arm64": "invalid" } }), JSON.stringify({ extraMetadata: { murageGepaManifests: { "darwin-arm64": pin } } })])("fails closed for missing, corrupt or wrong-target package metadata", raw => {
+    const env = { MURAGE_GEPA_MANIFEST_SHA256: "ambient-forged-pin", ...packagedGepaManifestEnvironment({ packaged: true, appPath, platform: "darwin", arch: "arm64" }, source(raw)) };
+    expect(env.MURAGE_GEPA_MANIFEST_SHA256).toBe("");
+  });
+  it("does not read package files in development or follow a symlinked metadata file", () => {
+    const refuse = () => { throw Error("must not read"); };
+    expect(packagedGepaManifestEnvironment({ packaged: false, appPath }, { stat: refuse, read: refuse })).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: "" });
+    expect(packagedGepaManifestEnvironment({ packaged: true, appPath, platform: "darwin", arch: "arm64" }, { stat: () => ({ isFile: () => true, isSymbolicLink: () => true, size: 10 }), read: refuse })).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: "" });
+  });
+  it("sets the trusted pin after other environment composition and before the utility fork", () => {
+    const main = readFileSync(join(repoRoot, "electron/main.mjs"), "utf8");
+    const start = main.indexOf("async function startServerOn(port) {");
+    const pinRead = main.indexOf("Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }))", start);
+    const fork = main.indexOf("utilityProcess.fork(entry", start);
+    expect(pinRead).toBeGreaterThan(start); expect(fork).toBeGreaterThan(pinRead);
   });
 });
 

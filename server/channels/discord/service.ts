@@ -6,6 +6,8 @@ import { writeFileAtomic } from "../../atomic.ts";
 import { ChannelSendError, DurableDelivery, type ChannelRuns } from "../durable-delivery.ts";
 import { normalizeDiscordMessage, discordBindingSchema, discordId, discordPrompt, type DiscordBinding } from "./event.ts";
 import type { DiscordTransport } from "./transport.ts";
+import { PermissionApprovals } from "../permission-approvals.ts";
+import type { TelegramApprovalActions } from "../../telegram-approvals.ts";
 
 const chosenSchema = z.object({ applicationId: discordId, ownerUserId: discordId, chiefBotId: z.string().min(1).max(180) }).strict();
 export type DiscordChosen = z.infer<typeof chosenSchema>;
@@ -24,6 +26,7 @@ interface Options {
   isCurrentChief: (botId: string) => boolean;
   runs: (binding: DiscordBinding) => ChannelRuns;
   revokeRuns: (connectionId: string) => Promise<void>;
+  approvals?: Pick<TelegramApprovalActions, "pending" | "resolve">;
   now?: () => number;
 }
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -31,6 +34,7 @@ export class DiscordService {
   private connection?: Connection;
   private transport?: DiscordTransport;
   private ledger?: DurableDelivery;
+  private approvals?: PermissionApprovals;
   private generation = 0;
   private live = false;
   private authorised = false;
@@ -113,6 +117,14 @@ export class DiscordService {
     } finally { this.connecting = false; }
   }
   private makeLedger(binding: DiscordBinding) {
+    this.approvals?.clear();
+    const transport = this.transport!;
+    this.approvals = this.options.approvals && transport.sendPermission && transport.settlePermission && transport.onPermissionAction
+      ? new PermissionApprovals({ provider: "discord", applicationId: binding.applicationId,
+        ownerUserId: binding.ownerUserId, dmId: binding.dmId, actions: this.options.approvals,
+        active: () => this.live && this.isCurrent(binding), maxText: 2000, now: this.options.now,
+        messages: { send: input => transport.sendPermission!(input), settle: input => transport.settlePermission!(input) } })
+      : undefined;
     this.ledger = new DurableDelivery({ file: join(this.options.dataDir, "channels", "discord", binding.connectionId + ".json"),
       bindingKey: digest(JSON.stringify(binding)), recipient: binding.dmId, isCurrent: () => this.live && this.isCurrent(binding),
       runs: this.options.runs(binding), now: this.options.now,
@@ -124,6 +136,10 @@ export class DiscordService {
   }
   private async start(generation: number) {
     const transport = this.transport!;
+    transport.onPermissionAction?.(event => {
+      if (generation !== this.generation || !this.live) return;
+      void this.approvals?.receive(event).catch(() => { this.error = "approval-failed"; });
+    });
     await transport.start(raw => {
       void this.receive(raw, generation).catch(async () => {
         if (generation !== this.generation) return;
@@ -154,7 +170,7 @@ export class DiscordService {
     } else if (message.dmId !== c.binding.dmId) { return; }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
-      ...(pairedNow ? { prompt: "", response: "Discord is paired with Murage. Send a message here to chat with your Chief. Review approvals in Murage." } : discordPrompt(message.text)) });
+      ...(pairedNow ? { prompt: "", response: "Discord is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : discordPrompt(message.text)) });
     // Gateway has no per-message ACK. Durable receipt precedes model work.
     if (generation === this.generation) queueMicrotask(() => { void this.tick().catch(() => { this.error = "delivery-failed"; }); });
   }
@@ -162,6 +178,7 @@ export class DiscordService {
     if (!this.live) return;
     if (!this.connection || !this.options.isCurrentChief(this.connection.chosen.chiefBotId)) { await this.pause(); return; }
     await this.ledger?.drain();
+    await this.approvals?.publish();
   }
   private schedule(generation: number) {
     clearTimeout(this.timer);
@@ -177,7 +194,7 @@ export class DiscordService {
     const generation = this.generation;
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
-  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
+  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
   async pause() {
     await this.disable(false);
   }

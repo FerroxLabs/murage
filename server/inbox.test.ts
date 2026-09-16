@@ -135,3 +135,24 @@ it("projects explicit saved-file identities without treating ordinary text as a 
   expect(listInbox(db, { view: "results" }, access)).toMatchObject({ total: 1, items: [{ kind: "artifact", duplicates: 2, link: { threadId: "thread", messageId: "replayed", artifactId } }] });
   expect(listInbox(db, {}, access).total).toBe(0);
 });
+
+
+it("approval attention spans tasks and rooms, ignores read and snooze, and excludes expired or settled requests", () => {
+  const { db } = fixture();
+  const all = { owner: true, threads: ["thread", "subtask", "room"].map(threadId => ({ threadId, label: threadId })) };
+  for (const [index, tool] of ["Bash", "agents_delegate_bot", "generate_image", undefined].entries())
+    put(db, { id: `ask-${index}`, card: { requestId: `ask-${index}`, tool, options: [] } }, index % 2 ? "subtask" : "room");
+  put(db, { id: "routine", card: { requestId: "routine", routineRequest: {}, options: [] } });
+  put(db, { id: "skill", card: { requestId: "skill", skillRequest: {}, options: [] } });
+  put(db, { id: "expired", card: { requestId: "expired", expired: true, unattended: true } });
+  put(db, { id: "cancelled", card: { requestId: "cancelled", dismissed: true } });
+  put(db, { id: "memory", kind: "text", text: "automatic memory written" });
+  const first = listInbox(db, { view: "approvals", pageSize: 1 }, all);
+  expect(first.total).toBe(6); expect(first.items).toHaveLength(1);
+  updateInboxState(db, { id: first.items[0].id, version: first.items[0].version, read: true, snoozedUntil: Date.now()+60000 }, all);
+  expect(listInbox(db, { view: "approvals" }, all).total).toBe(6);
+  expect(listInbox(db, { view: "approvals" }, access).total).toBe(2);
+  expect(inboxRequest(db, { method: "GET", path: "/api/inbox", query: { view: "approvals" } }, { ...all, owner: false }).status).toBe(404);
+  put(db, { id: "skill", card: { requestId: "skill", skillRequest: {}, answered: "Denied" } });
+  expect(listInbox(db, { view: "approvals" }, all).total).toBe(5);
+});

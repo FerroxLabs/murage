@@ -1,3 +1,4 @@
+import { DEFAULT_MEMORY_EVOLUTION_POLICY, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 /** Optional evidence selection, not assertion confidence. Cosine bands are a
  * relative relevance heuristic: they cannot prove a fact or universal abstention.
  * Exact references and explicit event questions impose additional support checks.
@@ -61,7 +62,7 @@ function absenceOnlySupport(query:string,text:string):boolean {
   return ![...words(query)].some(word=>substantive.has(word));
 }
 
-export function selectMemoryEvidence<T extends Candidate>(query:string,candidates:T[]):T[]{
+export function selectMemoryEvidence<T extends Candidate>(query:string,candidates:T[],policy:MemoryEvolutionPolicy=DEFAULT_MEMORY_EVOLUTION_POLICY):T[]{
   const references=exactReferences(query),needsChange=seeksDescribedChange(query);
   const eligible=candidates.filter(candidate=>references.every(reference=>containsReference(candidate.text,reference))&&(!needsChange||describesChange(candidate.text,query))&&!absenceOnlySupport(query,candidate.text));
   if(!eligible.length)return [];
@@ -75,10 +76,10 @@ export function selectMemoryEvidence<T extends Candidate>(query:string,candidate
     if(references.length)return true; // literal matches still respect scope and event support
     const matches=[...queryWords].filter(word=>documents[index].has(word));
     if(!best)return matches.length>0; // honest lexical fallback, no invented semantic score
-    if(typeof candidate.similarity==="number"&&Number.isFinite(candidate.similarity)&&candidate.similarity>=best*0.8)return true;
+    if(typeof candidate.similarity==="number"&&Number.isFinite(candidate.similarity)&&candidate.similarity>=best*policy.retrieval.semanticBandRatio)return true;
     // Independent query facets can support several records even when their cosine
     // values differ. Common words shared by most candidates cannot rescue a weak
     // semantic match; there is no top-one cap or conversion from RRF to confidence.
-    return matches.some(word=>(frequency.get(word)??0)<=Math.max(1,Math.floor(eligible.length/4)));
+    return matches.some(word=>(frequency.get(word)??0)<=Math.max(1,Math.floor(eligible.length/policy.retrieval.rareFacetDivisor)));
   });
 }

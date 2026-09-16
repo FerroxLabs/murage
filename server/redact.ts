@@ -53,23 +53,144 @@ const KEY_PREFIXES: RegExp[] = [
   /\bxai-[A-Za-z0-9_-]{20,}/g, // xAI
   /\bgsk_[A-Za-z0-9]{40,}/g, // Groq
   /\bhf_[A-Za-z0-9]{30,}/g, // Hugging Face
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, // jwt
 ];
+
+// ── linear time ───────────────────────────────────────────────────────
+// Since the ACP engine-error path stopped cutting text before it is
+// redacted (server/drivers/acp/core.ts, round 10), this function sees an
+// engine's error text WHOLE — bounded only by ENGINE_FRAME_MAX_BYTES, 32 MiB —
+// on the server's single event loop, and a rule whose cost is quadratic in
+// its input is a way to freeze every room in the app with one error body.
+//
+// Three rules were. Each had the same shape: a `\b` in front of a character
+// class that contains `-`, so on text like `a-a-a-…` EVERY other position is
+// a place to start, and from each the engine rescans the run to its end
+// before giving up. Measured before the rewrite, on this function:
+//   KEY_VALUE  `a-a-…` + `api_key=`             3.3 s at 64 KiB, 15 s at 128 KiB
+//   JWT        `eyJ-eyJ-…`                       3.1 s at 64 KiB
+//   PEM_BLOCK  `-----BEGIN PRIVATE KEY-----` × n  2.9 s at 1 MiB (no END: each
+//              BEGIN's lazy body scans to the end of the text)
+// Every other rule was single-digit milliseconds at 1 MiB.
+//
+// The rewrites keep the MATCHES identical — same spans, same output — and
+// change only where the engine is allowed to start. A match may start only
+// where a run of the class begins (`(?<![class])`); a cheap lookahead decides
+// ONCE per run whether anything in it can match; and a lazy group in front of
+// the original pattern walks to the position the original would have matched
+// at, which is re-emitted unchanged. Start positions are then sparse, each
+// run is scanned a bounded number of times, and the first candidate the lazy
+// group reaches is the one that matches — so the cost is linear. The proof
+// that the outputs are the same is server/redact.test.ts, which runs the
+// original rules as an oracle over a fixed fuzz corpus and the shapes this
+// argument was made on.
+
+/** A JSON Web Token: three base64url segments, the first beginning `eyJ`.
+ * Anchored at the start of a run of segment characters; the lookahead asks
+ * once per run whether it is followed by two more segments of at least eight
+ * characters; the lazy group then walks to the first `\b`+`eyJ` inside the
+ * run, exactly where the original `\beyJ…` started. */
+const JWT =
+  /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)([A-Za-z0-9_-]*?)\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/g;
 const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
-const PEM_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)/g;
+/** A PEM private-key block: the header, everything up to the FIRST footer,
+ * the footer. The original `(-----BEGIN …)([\s\S]*?)(-----END …)` scanned
+ * from every header to the end of the text when no footer followed, so n
+ * headers cost n passes over the text. `redactPemBlocks` below does what
+ * that regex did, in one pass: find the next header, find the first footer
+ * after it, mask what lies between, continue after the footer — and stop at
+ * the first header with no footer, because no later header can have one. */
+const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PEM_CLOSE = /-----END [A-Z ]*PRIVATE KEY-----/g;
+function redactPemBlocks(text: string): string {
+  let out = "";
+  let pos = 0;
+  for (;;) {
+    PEM_OPEN.lastIndex = pos;
+    const open = PEM_OPEN.exec(text);
+    if (!open) break;
+    const bodyAt = open.index + open[0].length;
+    PEM_CLOSE.lastIndex = bodyAt;
+    const close = PEM_CLOSE.exec(text);
+    if (!close) break;
+    out += `${text.slice(pos, open.index)}${open[0]}\n${mask(text.slice(bodyAt, close.index).trim())}\n${close[0]}`;
+    pos = close.index + close[0].length;
+  }
+  return out + text.slice(pos);
+}
 /** key=value / key: value / key="value" where the key is secret-shaped.
  * The value must be a single token of some length; prose after a colon
- * ("password: leave blank…") has spaces and does not match. */
-const KEY_VALUE =
-  /\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\3/gi;
+ * ("password: leave blank…") has spaces and does not match.
+ *
+ * The original: `\b((?:[A-Za-z0-9_-]*_)?NAME s?)(SEP)(QUOTE)(VALUE)\3`,
+ * where NAME is the alternation below. The name always ends where its run of
+ * `[A-Za-z0-9_-]` ends, because every separator character is outside that
+ * class — so whether a run can match is a property of the RUN, not of the
+ * position inside it, and the output is the same wherever inside the run the
+ * match starts, because the text in front of the name is emitted unchanged
+ * either way. Two forms, anchored at the run start:
+ *   A. the name has an underscored prefix: a lookahead asks once whether the
+ *      run ends in `_NAME` followed by a separator and a value; if it does
+ *      the first `\b` in the run matches, exactly as the original did there;
+ *   B. no prefix: the lazy group walks to the first `\b` at which NAME itself
+ *      begins, with the separator and value after it.
+ * Groups: 1 the lookahead's quote, 2/3 form A's prefix and name, 4/5 form
+ * B's, 6 separator, 7 quote, 8 value. */
+const NAME = String.raw`(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?`;
+const KEY_VALUE = new RegExp(
+  String.raw`(?<![A-Za-z0-9_-])(?:(?=[A-Za-z0-9_-]*_${NAME}["']?\s*[=:]\s*(["']?)[A-Za-z0-9._~+/=-]{8,}\1)([A-Za-z0-9_-]*?)\b([A-Za-z0-9_-]*_${NAME})|([A-Za-z0-9_-]*?)\b(${NAME}))(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\7`,
+  "gi",
+);
+
+/** `?key=…` / `&key=…` / `?token=…`. A bare `key` is refused everywhere else
+ * (see isSecretName: "the key: value pair" is ordinary English), but in a
+ * query string it names a credential as often as `api_key` does — and it is
+ * the spelling a self-hosted engine's URL uses, on hosts (an IP literal, a
+ * bare `localhost`) that no link rule recognises.
+ *
+ * No length floor: the floor the rules above carry exists to keep prose
+ * readable, and here the parameter's NAME has already settled what the value
+ * is. A short key is still a key, and this rule is the only thing standing
+ * between one and the native protocol log. `token` rides along for the same
+ * reason: it IS in the secret-name vocabulary, but KEY_VALUE's eight-character
+ * floor let a short one through, and in query position that floor buys
+ * nothing.
+ *
+ * Three narrowings keep that breadth off ordinary prose, and they are the
+ * whole of what this rule does NOT mask:
+ *  1. Query position only. The match must start at `?` or `&`, so
+ *     "the token: leave this prose alone" and `const token = await getToken()`
+ *     read as written.
+ *  2. The optional prefix must end in `_` or `-`, so `?access_token=` and
+ *     `?x-api-key=` match while `?notoken=` and `?monkey=` do not.
+ *  3. A purely numeric value is left alone: no provider issues a number as a
+ *     credential, and `?max_tokens=4096` — the commonest parameter in this
+ *     product's domain — is the most diagnostic part of an engine's own
+ *     request line. `?max_keys=10` goes the same way. */
+const QUERY_KEY = /([?&](?:[A-Za-z0-9_-]*[_-])?(?:keys?|tokens?)=)([A-Za-z0-9._~+/=-]+)/gi;
+/** Narrowing 3 above: a bare number is not a credential. */
+const NUMERIC_VALUE = /^\d+$/;
+
+/** The rules of `redactSecretsInText`, in the order it runs them, each by
+ * name and on its own. This is the list the function runs, and the list the
+ * clock in redact.test.ts puts a number on rule by rule: no rule here is
+ * called linear without a measured number for that rule. */
+export const TEXT_RULES: readonly (readonly [string, (text: string) => string])[] = [
+  ["PEM_BLOCK", redactPemBlocks],
+  ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string) => text.replace(re, (m) => mask(m))] as const),
+  ["JWT", (text) => text.replace(JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
+  ["BEARER", (text) => text.replace(BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
+  ["KEY_VALUE", (text) => text.replace(
+    KEY_VALUE,
+    (_m, _q: string, leadA: string | undefined, keyA: string | undefined, leadB: string | undefined, keyB: string | undefined, sep: string, quote: string, value: string) =>
+      `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`,
+  )],
+  ["QUERY_KEY", (text) => text.replace(QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`))],
+];
 
 export function redactSecretsInText(text: string): string {
   if (!text || text.length < 8) return text;
   let out = text;
-  out = out.replace(PEM_BLOCK, (_m, open: string, body: string, close: string) => `${open}\n${mask(body.trim())}\n${close}`);
-  for (const re of KEY_PREFIXES) out = out.replace(re, (m) => mask(m));
-  out = out.replace(BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`);
-  out = out.replace(KEY_VALUE, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
+  for (const [, rule] of TEXT_RULES) out = rule(out);
   return out;
 }
 

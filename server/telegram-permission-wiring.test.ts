@@ -5,9 +5,9 @@ import { normalizeTelegramUpdate } from "./telegram-update.ts";
 import { isQuestionCard, questionsForCard } from "../shared/questions.ts";
 it("actual root approval actions bind live card, instance and thread and resolve only once", async () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const start = source.indexOf("approvals: targetBotId =>", source.indexOf("const telegram = new TelegramService"));
-  const end = source.indexOf("\n  enqueue:", start);
-  const expression = source.slice(start + "approvals: ".length, end).trim().replace(/,$/, "");
+  const start = source.indexOf("= targetBotId =>", source.indexOf("const channelApprovalActions:"));
+  const end = source.indexOf("\nconst telegram =", start);
+  const expression = source.slice(start + 2, end).trim().replace(/;$/, "");
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "Write", subtitle: "fixture.txt", answered: undefined as string | undefined } };
   let currentChief: typeof bot | null = bot;
@@ -35,9 +35,9 @@ it("normalizes callbacks only from identifiable humans in private chats", () => 
 });
 it("actual root approval actions publish a question with its questions and answer it through the validated question path (ASK3)", async () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const start = source.indexOf("approvals: targetBotId =>", source.indexOf("const telegram = new TelegramService"));
-  const end = source.indexOf("\n  enqueue:", start);
-  const expression = source.slice(start + "approvals: ".length, end).trim().replace(/,$/, "");
+  const start = source.indexOf("= targetBotId =>", source.indexOf("const channelApprovalActions:"));
+  const end = source.indexOf("\nconst telegram =", start);
+  const expression = source.slice(start + 2, end).trim().replace(/;$/, "");
   const bot = { id: "bot", name: "Ember", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const questions = [{ id: "q1", question: "Which format?", options: [{ label: "Summary" }, { label: "Detailed" }], multiSelect: false, allowOther: true }];
   const message = { id: "card", card: { requestId: "request", subtitle: "Which format?", options: ["Summary", "Detailed"], questions, answered: undefined as string | undefined } };

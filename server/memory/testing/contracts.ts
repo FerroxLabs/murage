@@ -41,6 +41,44 @@ export function validateCorpus(input: unknown): MemoryCorpus {
   return corpus;
 }
 
+const cohortSchema = z.object({
+  version: z.literal(1), corpusVersion: z.literal(1), corpusSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  frozenAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), provenance: z.string().min(1), thresholds: z.string().min(1),
+  cohorts: z.array(z.object({
+    id: z.string().min(1), driver: z.string().min(1), engineKinds: z.array(z.string().min(1)).min(1), receipt: z.string().min(1),
+    cases: z.array(z.object({ id: z.string().min(1), queryId: z.string(), requiredSource: z.string(), rubric: z.string() })),
+  })).min(1),
+});
+export type AnswerCohorts = z.infer<typeof cohortSchema>;
+
+/** Additional native answer cohorts bind to the exact frozen corpus bytes and may
+ * only reuse its gold: no new driver label collision, labels, rubric or case count. */
+export function validateAnswerCohorts(corpus: MemoryCorpus, corpusSha256: string, input: unknown): AnswerCohorts {
+  const doc = cohortSchema.parse(input);
+  if (doc.corpusSha256 !== corpusSha256) throw new Error("cohort is not bound to the frozen corpus bytes");
+  const existingDrivers = new Set(corpus.answerCases.map(a => a.driver as string));
+  const perDriver = corpus.answerCases.length / existingDrivers.size;
+  const answerFamilies = new Set(corpus.answerCases.map(a => corpus.queries.find(q => q.id === a.queryId)!.family));
+  const rubrics = new Set(corpus.answerCases.map(a => a.rubric));
+  const ids = new Set(corpus.answerCases.map(a => a.id));
+  const drivers = new Set(existingDrivers);
+  for (const cohort of doc.cohorts) {
+    if (drivers.has(cohort.driver)) throw new Error(`answer driver ${cohort.driver} already has a cohort`);
+    drivers.add(cohort.driver);
+    if (cohort.cases.length !== perDriver) throw new Error("unbalanced answer cohort");
+    for (const c of cohort.cases) {
+      if (ids.has(c.id)) throw new Error(`duplicate answer case identity ${c.id}`);
+      ids.add(c.id);
+      const q = corpus.queries.find(query => query.id === c.queryId);
+      if (!q || !answerFamilies.has(q.family) || !q.expected.includes(c.requiredSource)) throw new Error("answer source not in query gold set");
+      const prior = corpus.answerCases.find(a => a.queryId === c.queryId);
+      if (prior && prior.requiredSource !== c.requiredSource) throw new Error(`cohort changes frozen gold for ${c.queryId}`);
+      if (!rubrics.has(c.rubric)) throw new Error("cohort introduces an unfrozen rubric");
+    }
+  }
+  return doc;
+}
+
 /** The harness verifies evidence, not merely a fast successful function return. */
 export function requireMeasuredHit(result: { backend: string; visited: number; ids: string[] }, expected: string) {
   if (!result.backend || result.visited < 1 || !result.ids.includes(expected)) throw new Error("benchmark did not exercise expected retrieval path");

@@ -46,6 +46,13 @@
 //                     `session/elicitation` spelling); the client's reply is
 //                     written to FAKE_ACP_DUMP as `decision`
 //                   | exit-on-cancel | exit-on-prompt | exit-with-ansi
+//                   | exit-hostile-stderr (exit before the prompt result with
+//                     stderr the driver must sanitise: a bidi override, a BEL,
+//                     an https URL with a ?key= and a user:pass@IP authority)
+//                   | exit-noisy-stderr (exit before the prompt result after
+//                     writing what a real CLI agent writes on the way down:
+//                     kilobytes of structured NDJSON records, with the fatal
+//                     line LAST)
 //                   | interleave (message → tool → message → tool → message)
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
@@ -84,6 +91,26 @@
 //   FAKE_ACP_TERM_MS     linger delay before exiting (default 400, max 10 s)
 //   FAKE_ACP_TERM_MARK   path written when SIGTERM arrives
 //   FAKE_ACP_EXIT_GATE   with TERM=gate, exit once this file exists (max 10 s)
+//
+// Engine error fixtures (MU):
+//   FAKE_ACP_MODE=engine-error-data:object|string|hostile  fail session/prompt
+//   FAKE_ACP_MODE=engine-error-message:hostile|plain  fail session/prompt with
+//     the content in the JSON-RPC message instead of `error.data`
+//                        with -32603 whose data is Fuigo 1.0.18's typed object
+//                        ({message, error_kind}), Fuigo <=1.0.17's plain string,
+//                        or hostile text the driver must sanitise
+//   FAKE_ACP_MODE=cancel-reject  hold session/prompt open like cancel-ack, but
+//                        answer session/cancel by REJECTING the prompt (-32603,
+//                        error_kind cancelled) and stay alive
+//   FAKE_ACP_MODE=cancel-other-reason  hold session/prompt open like cancel-ack,
+//                        but answer session/cancel by RESOLVING the prompt with
+//                        a stop reason that is not "cancelled" ("refusal")
+//   FAKE_ACP_MODE=stderr-rpc-error|stderr-happy  write more than 8 KiB of stderr
+//                        (ANSI styling, a key-shaped canary, a known last line),
+//                        then fail session/prompt with -32603 or complete it
+//   FAKE_ACP_MODE=retry-status-thought  Fuigo 1.0.18's retry progress: an
+//                        agent_thought_chunk tagged _meta["fuigo/retryStatus"],
+//                        then ordinary reasoning and the answer
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
@@ -493,7 +520,7 @@ function handle(msg: any) {
   if (mode === `rpc-error:${msg.method}`) {
     return out({ jsonrpc: "2.0", id: msg.id, error: {
       code: -32603, message: "Internal error", acpMethod: "session/cancel",
-      data: { http_status: 500, message: "fake-private-response", request: "fake-private-request", url: "https://billing.invalid/?key=fake-secret-canary" },
+      data: { http_status: 500, message: "fixture provider failure https://billing.invalid/?key=fake-secret-canary", request: "fake-private-request", url: "https://billing.invalid/?key=fake-secret-canary" },
     } });
   }
   if (mode === "unknown-rpc-error" && msg.method === "session/prompt") {
@@ -608,6 +635,37 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode.startsWith("fuigo18-contract:")) {
+        const variant = mode.slice("fuigo18-contract:".length);
+        dumpState.promptRequests = Number(dumpState.promptRequests ?? 0) + 1;
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState));
+        const retry = (attempt: number, message: string) => out({ jsonrpc: "2.0", method: "session/update", params: {
+          sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: message },
+            _meta: { "fuigo/retryStatus": { type: "retrying", attempt, error_type: variant === "success" ? "api" : "empty_response", http_status: 503 } } },
+        } });
+        retry(1, "Retry status: HTTP 503, retrying request.\n\n");
+        retry(2, "Retry status: final engine attempt.\n\n");
+        if (variant === "success") {
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The completed answer." } } } });
+          result(msg.id, { stopReason: "end_turn", _meta: { pending_attempts: ["superseded-503-attempt"] } });
+        } else {
+          const data = variant === "empty" ? { message: "No visible answer after three attempts", error_kind: "empty_response" }
+            : variant === "blank-http" ? { message: "   ", error_kind: "api", http_status: 503 }
+              : variant === "untyped-prose" ? { message: "empty response from model (reasoning_only)" }
+                : { message: "empty response from model (reasoning_only)", error_kind: "rate_limited" };
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data } });
+        }
+        return;
+      }
+      if (mode === "reasoning-only:string" || mode === "reasoning-only:object") {
+        const message = "empty response from model (reasoning_only)";
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: mode.endsWith(":string") ? message : { message, error_kind: "empty_response" } } });
+        return;
+      }
+      if (mode === "exit-with-stderr-history") {
+        process.stderr.write("STDERR_EARLY_CANARY\nsk-test-" + "SYNTHETICKEYCANARY".repeat(24) + "\n" + ("x".repeat(4000) + "\n").repeat(4) + "STDERR_VISIBLE_END\n", () => process.exit(4));
+        return;
+      }
       if (mode.startsWith("fuigo-diagnostic:")) {
         const variant = mode.slice("fuigo-diagnostic:".length);
         const params: any = {
@@ -629,11 +687,11 @@ function handle(msg: any) {
           if (variant === "unmatched") out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "Internal error" } });
           result(msg.id, { stopReason: "end_turn" });
         } else {
-          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 404, message: "fake-secret-canary",...(variant==="terminal"?{error_kind:"max_tokens_truncation"}:{}) } } });
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 404, message: "fixture rejection https://billing.invalid/?key=fake-secret-canary",...(variant==="terminal"?{error_kind:"max_tokens_truncation"}:{}) } } });
         }
         return;
       }
-      if (mode === "cancel-ack") {
+      if (mode === "cancel-ack" || mode === "cancel-rpc-error" || mode === "cancel-reject" || mode === "cancel-other-reason") {
         pendingCancelAckPrompt = msg.id;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
         setInterval(() => {}, 1_000);
@@ -644,10 +702,21 @@ function handle(msg: any) {
         setInterval(() => {}, 1_000);
         return;
       }
-      if (mode === "exit-on-prompt" || mode === "exit-with-ansi") {
+      if (mode === "exit-on-prompt" || mode === "exit-with-ansi" || mode === "exit-hostile-stderr" || mode === "exit-noisy-stderr") {
+        // Four kilobytes of structured debug records with the fatal line
+        // last: how a CLI agent actually goes down, and the shape that says
+        // whether the card quotes the END of a crash or its run-up.
+        const noisy = `${Array.from({ length: 40 }, (_, i) =>
+          `{"time":"2026-09-16T03:14:${String(i).padStart(2, "0")}Z","level":"debug","msg":"plugin ${i} registered from the model cache"}`).join("\n")
+          }\nFATAL: engine could not open the model file: permission denied\n`;
         const diagnostic = mode === "exit-with-ansi"
           ? `\u001b[31mtool_error: fixture failure\u001b[0m\nsk-test-${"SYNTHETICKEYCANARY".repeat(24)}\n\u001b[32mSTDERR_VISIBLE_END\u001b[0m\n`
-          : "fake-acp: simulated prompt exit\n";
+          // A bidi override, a BEL, a credential-bearing https URL and a
+          // user:pass@IP-literal authority — the content the engine-error
+          // fixtures put in `error.data`, written to stderr instead.
+          : mode === "exit-hostile-stderr"
+            ? `\u001b[31mtool_error: fixture failure\u001b[0m\n\u202ereached https://billing.invalid/?key=fake-secret-canary\u0007\nvia proxyuser:fakepass@10.1.2.3:8443/v1 and gave up\n`
+            : mode === "exit-noisy-stderr" ? noisy : "fake-acp: simulated prompt exit\n";
         process.stderr.write(diagnostic, () => process.exit(1073807364));
         return;
       }
@@ -655,9 +724,49 @@ function handle(msg: any) {
         void loadProof(msg.id, msg.params?.sessionId).catch(() => { process.exitCode = 1; });
         return;
       }
+      if (mode.startsWith("engine-error-data:")) {
+        const data = {
+          object: { message: "empty response from model (reasoning_only): model=fixture-model, had_reasoning=true, finish_reason=stop", error_kind: "empty_response" },
+          string: "No response from model for 90s — the model may be stuck",
+          hostile: {
+            message: `\u001b[31mupstream failed\u001b[0m\r\n\u0007at https://billing.invalid/?key=fake-secret-canary via proxyuser:fake-secret-canary@proxy.invalid:8080 with sk-test-${"SYNTHETICKEYCANARY".repeat(2)}: {"error":{"request":"fake-private-request"}}`,
+            error_kind: "http\nEngine error code: 1",
+            token: "fake-secret-canary",
+          },
+        }[mode.slice("engine-error-data:".length)];
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data } });
+        return;
+      }
+      // The same hostile content in the JSON-RPC `error.message` instead of
+      // `error.data`: an engine controls both, and both reach the card.
+      if (mode.startsWith("engine-error-message:")) {
+        const message = {
+          hostile: `\u001b[31mupstream\u001b[0m\u0007 failed at https://billing.invalid/?key=fake-secret-canary via proxyuser:fake-secret-canary@proxy.invalid:8080`,
+          plain: "fixture provider rejected the request",
+        }[mode.slice("engine-error-message:".length)];
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message } });
+        return;
+      }
+      if (mode === "stderr-rpc-error" || mode === "stderr-happy") {
+        const lines = ["STDERR_EVICTED_FIRST_LINE"];
+        for (let i = 0; i < 200; i++) lines.push(`\u001b[2mretry ${i}: empty response from model (reasoning_only), waiting\u001b[0m`);
+        lines.push(`auth header sk-test-${"SYNTHETICKEYCANARY".repeat(2)}`);
+        lines.push("\u001b[33mSTDERR_LAST_LINE retry 15/15 gave up\u001b[0m");
+        process.stderr.write(`${lines.join("\n")}\n`, () => {
+          // let the driver read stderr before the prompt settles
+          setTimeout(() => {
+            if (mode === "stderr-happy") result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+            else out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { message: "fixture engine failure" } } });
+          }, 200);
+        });
+        return;
+      }
       if (mode === "credit-exhausted") {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: {
           http_status: 402,
+          // Fuigo 1.0.18 tags a provider rejection `api`. The typed kind rides
+          // the whole path here: driver event -> bus -> store -> API -> card.
+          error_kind: "api",
           message: "API error (status 402 Payment Required): Your credit balance is exhausted. https://billing.invalid/?token=fake-secret-canary",
         } } });
         return;
@@ -695,6 +804,15 @@ function handle(msg: any) {
         );
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      if (mode === "retry-status-thought") {
+        // Wire shape of fuigo-shell retry_status_update (1.0.18): a thought, never answer text.
+        const retryStatus = { type: "retrying", attempt: 1, max_retries: 2, reason: "empty response from model (reasoning_only)", error_type: "empty_response" };
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Retrying the model (1/2): empty response from model (reasoning_only)\n\n" }, _meta: { "fuigo/retryStatus": retryStatus } } } });
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "fixture reasoning" } } } });
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fixture final answer" } } } });
+        complete();
+        return;
+      }
       if (mode === "folder-trust") {
         // the reply says what the session was built with, the way a real
         // turn's answer would (or would not) carry an AGENTS.md instruction
@@ -1054,12 +1172,33 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
+      if (mode === "cancel-rpc-error" && pendingCancelAckPrompt !== null) {
+        out({ jsonrpc: "2.0", id: pendingCancelAckPrompt, error: { code: -32603, message: "Internal error", data: "empty response from model (reasoning_only)" } });
+        pendingCancelAckPrompt = null;
+        break;
+      }
       if (mode === "cancel-ack" && pendingCancelAckPrompt !== null) {
         // A cooperative agent acknowledges promptly but only exits when the
         // client terminates it — the gap close-confirmed stop must cover.
         const id = pendingCancelAckPrompt;
         pendingCancelAckPrompt = null;
         result(id, { stopReason: "cancelled" });
+        break;
+      }
+      if (mode === "cancel-reject" && pendingCancelAckPrompt !== null) {
+        // The engine ends the cancelled prompt with a JSON-RPC error instead of
+        // stopReason "cancelled", and keeps running until it is terminated.
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        out({ jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error", data: { message: "turn cancelled by client", error_kind: "cancelled" } } });
+        break;
+      }
+      if (mode === "cancel-other-reason" && pendingCancelAckPrompt !== null) {
+        // The engine ends the cancelled prompt with its own stop reason rather
+        // than "cancelled", and keeps running until it is terminated.
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        result(id, { stopReason: "refusal" });
         break;
       }
       if (mode === "exit-on-cancel") {

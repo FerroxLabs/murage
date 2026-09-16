@@ -106,7 +106,14 @@ export class DurableDelivery {
       if (r.state === "accepted" && r.response === undefined) {
         if (this.state.records.filter(x => x.state === "queued" && x.response === undefined).length >= 3) continue;
         // enqueue must return a retained receipt on retry across the cross-file crash window.
-        const run = this.options.runs.enqueue({ deliveryId: r.deliveryId, prompt: r.prompt });
+        let run:{id:string};
+        try{run=this.options.runs.enqueue({ deliveryId: r.deliveryId, prompt: r.prompt });}
+        catch(error){
+          if(!(error instanceof Error)||!/^HUMAN_(?:LINK_REQUIRED|BINDING_REVOKED)/.test(error.message))throw error;
+          change(x=>{x.response="Link this channel account to yourself or another person in Murage Memory settings, then send your message again.";});
+          r=lookup();
+          continue;
+        }
         if (!this.active()) return;
         change(x => { x.runId = run.id; x.state = "queued"; }); r = lookup();
       }

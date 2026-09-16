@@ -1,3 +1,4 @@
+import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory";
@@ -9,10 +10,12 @@ export type InternalCapability = Readonly<{
   kind: InternalCapabilityKind;
   skillAuthoring: boolean;
   expiresAt: number;
+  humanPrincipal?: HumanPrincipal;
 }>;
 type Budget = { committed: number; pending: number };
 type Generation = {
   botId: string;
+  humanPrincipal?: HumanPrincipal;
   id: string;
   claims: Set<InternalCapability>;
   budgets: Record<"create" | "handoff", Budget>;
@@ -39,11 +42,11 @@ export class InternalCapabilities {
     }
   }
 
-  begin(botId: string, threadId: string, generation: string = randomUUID()): string {
+  begin(botId: string, threadId: string, generation: string = randomUUID(), humanPrincipal?: HumanPrincipal): string {
     if (!botId || !threadId || !generation) throw new Error("invalid internal turn owner");
     this.revokeThread(threadId);
     this.#generations.set(threadId, {
-      botId, id: generation, claims: new Set(),
+      botId, humanPrincipal, id: generation, claims: new Set(),
       budgets: { create: { committed: 0, pending: 0 }, handoff: { committed: 0, pending: 0 } },
     });
     return generation;
@@ -52,6 +55,7 @@ export class InternalCapabilities {
   mint(input: Omit<InternalCapability, "expiresAt">): string {
     const owner = this.#generations.get(input.threadId);
     if (!owner || owner.id !== input.generation || owner.botId !== input.botId
+      || JSON.stringify(owner.humanPrincipal) !== JSON.stringify(input.humanPrincipal)
       || !Number.isInteger(input.depth) || input.depth < 0
       || !["agents", "connectors", "computer", "memory"].includes(input.kind)
       || typeof input.skillAuthoring !== "boolean") throw new Error("invalid internal capability owner");
@@ -77,6 +81,7 @@ export class InternalCapabilities {
   }
 
   isActive(claim: InternalCapability): boolean {
+    if(claim.humanPrincipal){try{assertHumanPrincipal(claim.humanPrincipal);}catch{return false;}}
     const owner = this.#generations.get(claim.threadId);
     return Boolean(owner && owner.id === claim.generation && owner.botId === claim.botId
       && owner.claims.has(claim) && claim.expiresAt > this.#now());

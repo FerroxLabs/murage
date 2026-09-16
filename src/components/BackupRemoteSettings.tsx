@@ -1,7 +1,14 @@
 import {useEffect,useRef,useState} from "react";
 import {resticS3TargetSchema,resticS3CredentialsSchema} from "../../server/backup-restic-target";
 import type {BackupRemoteStatus} from "../../server/backup-remote-host";
-type RemoteBridge=NonNullable<NonNullable<Window["muragebox"]>["backupRemote"]>;
+type RetentionPolicy={keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number};
+// Retention methods are optional: an older desktop bridge simply does not offer removal.
+type RemoteBridge=NonNullable<NonNullable<Window["muragebox"]>["backupRemote"]>&{
+ saveMaintenanceCredentials?(remoteRef:string,revision:number,credentials:{accessKeyId:string;secretAccessKey:string}):Promise<{saved:boolean}>;
+ previewRetention?(remoteRef:string,revision:number,policy:RetentionPolicy):Promise<unknown>;
+ applyRetention?(remoteRef:string,revision:number,policy:RetentionPolicy,previewId:string):Promise<{state:string;previewId:string;removed:number}>;
+ clearRetentionReview?(remoteRef:string,revision:number,previewId:string):Promise<unknown>;
+};
 export interface RemoteDraft {label:string;endpoint:string;bucket:string;prefix:string;region:string;accessKeyId:string;secretAccessKey:string;sessionToken:string;bucketLookup:"auto"|"path"|"dns"}
 const empty:RemoteDraft={label:"Remote backup",endpoint:"",bucket:"",prefix:"murage",region:"",accessKeyId:"",secretAccessKey:"",sessionToken:"",bucketLookup:"auto"};
 export function remoteBackupInput(draft:RemoteDraft){
@@ -11,6 +18,20 @@ export function remoteBackupInput(draft:RemoteDraft){
  return{label,endpoint:target.data.endpoint,bucket:target.data.bucket,prefix:target.data.prefix,region:target.data.region,bucketLookup:target.data.bucketLookup,credentials:credentials.data};
 }
 const labels:Record<string,string>={unconfigured:"No remote destination saved","password-required":"Choose the repository password",disconnected:"Destination saved, not connected",connected:"Repository connection confirmed",initializing:"Repository setup needs review","needs-review":"Remote backup needs review",unavailable:"Remote backup unavailable in this app"};
+export interface RetentionDraft {keepLast:string;keepDaily:string;keepWeekly:string;keepMonthly:string}
+const retentionFields=[["keepLast","Keep latest copies"],["keepDaily","Keep daily copies"],["keepWeekly","Keep weekly copies"],["keepMonthly","Keep monthly copies"]] as const;
+const retentionIssues:Record<string,string>={"repository-locked":"the repository stayed locked","forget-failed":"the provider did not confirm removal","prune-failed":"unused storage was not fully reclaimed","operation-failed":"the result could not be confirmed"};
+/** Explicit whole-number counts only; an empty form is not a policy. */
+export function remoteRetentionPolicy(draft:RetentionDraft):RetentionPolicy|null{
+ const policy:RetentionPolicy={};
+ for(const [key] of retentionFields){const raw=draft[key].trim();if(!raw)continue;if(!/^[1-9][0-9]{0,3}$/.test(raw)||Number(raw)>1000)return null;policy[key]=Number(raw);}
+ return Object.keys(policy).length?policy:null;
+}
+export function remoteRetentionPreview(value:unknown){
+ if(!value||typeof value!=="object")throw Error("Invalid preview");const v=value as Record<string,unknown>;
+ if(typeof v.previewId!=="string"||!/^[a-f0-9]{64}$/.test(v.previewId)||!Array.isArray(v.remove)||v.remove.length>1000||v.remove.some(id=>typeof id!=="string"||!/^[a-f0-9]{64}$/.test(id))||!Number.isSafeInteger(v.keep)||Number(v.keep)<1)throw Error("Invalid preview");
+ return{previewId:v.previewId,remove:v.remove as string[],keep:Number(v.keep),lockRelease:v.lockRelease==="unconfirmed"};
+}
 export function remoteBackupCatalogue(value:unknown){
  if(!value||typeof value!=="object")throw Error("Invalid catalogue");const v=value as Record<string,unknown>;
  if(!Array.isArray(v.backups)||v.backups.length>1000||!Number.isSafeInteger(v.ignored)||Number(v.ignored)<0)throw Error("Invalid catalogue");
@@ -23,15 +44,22 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
  if(v.configured&&(!Number.isSafeInteger(v.revision)||Number(v.revision)<1||typeof v.remoteRef!=="string"||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(v.remoteRef)))throw Error("Invalid binding");
  const result:BackupRemoteStatus={supported:v.supported,pending:v.pending,configured:v.configured,state:v.state};
  if(Number.isSafeInteger(v.revision)&&Number(v.revision)>=0)result.revision=Number(v.revision);
-  if(v.configured){result.remoteRef=String(v.remoteRef);if(typeof v.label==="string"&&v.label.length<=80)result.label=v.label;result.passwordSelected=v.passwordSelected===true;}
+  if(v.configured){result.remoteRef=String(v.remoteRef);if(typeof v.label==="string"&&v.label.length<=80)result.label=v.label;result.passwordSelected=v.passwordSelected===true;result.maintenanceSelected=v.maintenanceSelected===true;}
  const upload=v.lastUpload as Record<string,unknown>|undefined;
- if(upload){if(!["not-uploaded","needs-review","verified"].includes(String(upload.state))||typeof upload.jobId!=="string"||!/^[a-f0-9]{64}$/.test(upload.jobId))throw Error("Invalid upload status");result.lastUpload={state:upload.state as "not-uploaded"|"needs-review"|"verified",jobId:upload.jobId};}
+ if(upload){if(!["not-uploaded","needs-review","verified"].includes(String(upload.state))||typeof upload.jobId!=="string"||!/^[a-f0-9]{64}$/.test(upload.jobId))throw Error("Invalid upload status");result.lastUpload={state:upload.state as "not-uploaded"|"needs-review"|"verified",jobId:upload.jobId,...(upload.lockRelease==="unconfirmed"?{lockRelease:"unconfirmed" as const}:{})};}
  const automatic=v.automaticUpload as Record<string,unknown>|undefined;
  if(automatic!==undefined){if(!automatic||typeof automatic.enabled!=="boolean"||!(automatic.enabled?["enabled","needs-review"]:["disabled"]).includes(String(automatic.state)))throw Error("Invalid automatic upload policy");result.automaticUpload={enabled:automatic.enabled,state:automatic.state as "disabled"|"enabled"|"needs-review"};}
+ const retention=v.retention as Record<string,unknown>|null|undefined;
+ if(retention!==undefined){
+  if(!retention||!["forgetting","pruning","complete","needs-review"].includes(String(retention.state))||(retention.removed!==undefined&&(!Number.isSafeInteger(retention.removed)||Number(retention.removed)<0))||(retention.error!==undefined&&!Object.hasOwn(retentionIssues,String(retention.error)))||(retention.previewId!==undefined&&(typeof retention.previewId!=="string"||!/^[a-f0-9]{64}$/.test(retention.previewId))))throw Error("Invalid retention status");
+  result.retention={state:retention.state as "forgetting"|"pruning"|"complete"|"needs-review",...(retention.removed!==undefined?{removed:Number(retention.removed)}:{}),...(retention.error!==undefined?{error:retention.error as "repository-locked"|"forget-failed"|"prune-failed"|"operation-failed"}:{}),...(typeof retention.previewId==="string"?{previewId:retention.previewId}:{}),...(retention.lockRelease==="unconfirmed"?{lockRelease:"unconfirmed" as const}:{})};
+ }
  return result;
 }
 export function remoteBackupError(cause:unknown){
  const code=cause instanceof Error?cause.message:"";
+ if(code.includes("MAINTENANCE_REQUIRED"))return "Save a separate maintenance access key before previewing removals.";
+ if(code.includes("RETENTION_CHANGED"))return "The repository changed since the preview. Nothing was removed. Preview again before removing copies.";
  if(code.includes("BACKUP_REMOTE_CHANGED"))return "The saved destination changed. Refresh status and review it before trying again.";
  if(code.includes("PASSWORD_REQUIRED"))return "Choose your independently saved repository-password file first.";
  if(code.includes("JOB_CHANGED"))return "The latest local backup changed. Refresh and review the backup before uploading.";
@@ -41,12 +69,14 @@ export function remoteBackupError(cause:unknown){
 const inputClass="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass="min-h-11 rounded-lg border border-hairline/40 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 export function BackupRemoteSettings(){
- const bridge=typeof window!=="undefined"?window.muragebox?.backupRemote:undefined;
+ const bridge=typeof window!=="undefined"?window.muragebox?.backupRemote as RemoteBridge|undefined:undefined;
  const [status,setStatus]=useState<BackupRemoteStatus|null>(null),[latest,setLatest]=useState<{jobId:string;bytes:number;verifiedAt:number}|null>(null);
  const [draft,setDraft]=useState<RemoteDraft>(empty),[editing,setEditing]=useState(false),[uploadConsent,setUploadConsent]=useState(false);
  const [busy,setBusy]=useState<string|null>(null),[stale,setStale]=useState(false),[error,setError]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null);
  const [catalogue,setCatalogue]=useState<(ReturnType<typeof remoteBackupCatalogue>&{ref:string;revision:number})|null>(null),[selectedBackup,setSelectedBackup]=useState("");
  const [downloaded,setDownloaded]=useState<string|null>(null);
+ const [maintenance,setMaintenance]=useState({accessKeyId:"",secretAccessKey:""}),[retentionDraft,setRetentionDraft]=useState<RetentionDraft>({keepLast:"",keepDaily:"",keepWeekly:"",keepMonthly:""});
+ const [preview,setPreview]=useState<(ReturnType<typeof remoteRetentionPreview>&{ref:string;revision:number;policy:string})|null>(null),[removalConsent,setRemovalConsent]=useState(false);
  const mounted=useRef(true),gate=useRef(false),version=useRef(0);
  async function refresh(expected:number){
   if(!bridge)return;
@@ -54,7 +84,7 @@ export function BackupRemoteSettings(){
   const next=remoteBackupStatus(remote);if(!mounted.current||version.current!==expected)return;
   setStatus(next);setStale(false);const receipt=schedule?.lastVerified;
   setLatest(receipt&&/^[a-f0-9]{64}$/.test(receipt.jobId)&&Number.isSafeInteger(receipt.bytes)&&receipt.bytes>0&&Number.isFinite(receipt.verifiedAt)?{jobId:receipt.jobId,bytes:receipt.bytes,verifiedAt:receipt.verifiedAt}:null);
-  setUploadConsent(false);
+  setUploadConsent(false);setPreview(null);setRemovalConsent(false);
  }
  async function run(action:string,work:(api:RemoteBridge,expected:number)=>Promise<void>){
   if(gate.current||!bridge)return;gate.current=true;const expected=++version.current;setBusy(action);setError(null);setNotice(null);
@@ -66,6 +96,8 @@ export function BackupRemoteSettings(){
  const payload=remoteBackupInput(draft),configured=status?.configured===true;
  const binding=typeof status?.remoteRef==="string"&&Number.isSafeInteger(status.revision)?{ref:status.remoteRef,revision:status.revision!}:null;
  const available=catalogue&&binding&&catalogue.ref===binding.ref&&catalogue.revision===binding.revision?catalogue:null;
+ const retentionPolicy=remoteRetentionPolicy(retentionDraft);
+ const currentPreview=preview&&binding&&retentionPolicy&&preview.ref===binding.ref&&preview.revision===binding.revision&&preview.policy===JSON.stringify(retentionPolicy)?preview:null;
  const change=(key:keyof RemoteDraft,value:string)=>{setDraft(current=>({...current,[key]:value}));setUploadConsent(false);};
  return <section aria-labelledby="remote-backup-title" className="min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4">
   <h3 id="remote-backup-title" className="text-[15px] font-medium text-ink">Remote backup (optional)</h3>
@@ -92,9 +124,10 @@ export function BackupRemoteSettings(){
     <button className={buttonClass} type="button" disabled={locked||!binding||!status.passwordSelected||status.state==="needs-review"||status.state==="initializing"} onClick={()=>void run("connect",async(api,expected)=>{if(!binding)return;await api.connect(binding.ref,binding.revision);await refresh(expected);if(mounted.current)setNotice("Existing repository connection confirmed. No backup was uploaded.");})}>{busy==="connect"?"Connecting…":"Connect existing repository"}</button>
     {latest?<p className="text-[13px] text-ink-secondary">Latest verified local backup: {new Date(latest.verifiedAt).toLocaleString()} · {latest.bytes.toLocaleString()} bytes.</p>:<p className="text-[13px] text-ink-secondary">Complete a scheduled local backup first. Only a locally verified backup can be uploaded here.</p>}
     {status.lastUpload&&<p role="status" className="text-[13px] text-ink-secondary">Recorded remote result for the latest backup: {status.lastUpload.state==="verified"?"copy verified by readback":status.lastUpload.state==="needs-review"?"needs review; no automatic retry":"not uploaded"}. This is saved evidence, not a live storage check.</p>}
+    {status.lastUpload?.lockRelease==="unconfirmed"&&<p className="text-[12px] text-warning">The storage provider did not confirm the repository lock was released after this upload. Later removal may be refused until the lock is cleared at the provider.</p>}
     {status.lastUpload?.state==="needs-review"&&<div className="space-y-2"><p className="text-[12px] text-ink-secondary">Check whether the original upload finished. This downloads and verifies the existing encrypted copy; it does not upload again. Provider transfer charges may apply.</p><button className={buttonClass} type="button" disabled={locked||!binding||!latest||!bridge?.reconcileLatest} onClick={()=>void run("reconcile",async(api,expected)=>{if(!binding||!latest)return;const result=await api.reconcileLatest(binding.ref,binding.revision,latest.jobId);await refresh(expected);if(mounted.current)setNotice(result.state==="verified"?"Existing remote copy verified. Nothing was uploaded again.":"The existing remote copy could not be verified. Review is still required; nothing was uploaded again.");})}>{busy==="reconcile"?"Checking existing copy…":"Check existing remote copy"}</button></div>}
     <label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink"><input type="checkbox" checked={uploadConsent} disabled={locked||status.state!=="connected"||!latest} onChange={event=>setUploadConsent(event.target.checked)} className="mt-1 size-4 shrink-0 accent-accent focus-visible:ring-2 focus-visible:ring-accent-border"/><span>Upload this encrypted backup to my saved remote storage. Provider charges may apply.</span></label>
-    <button className={buttonClass} type="button" disabled={locked||!binding||status.state!=="connected"||!latest||!uploadConsent} onClick={()=>void run("upload",async(api,expected)=>{if(!binding||!latest)return;const result=await api.uploadLatest(binding.ref,binding.revision,latest.jobId);await refresh(expected);if(mounted.current)setNotice(result.state==="verified"?"Remote copy uploaded and verified by readback. Your local backup is unchanged.":"Upload needs review. Your local backup is unchanged; nothing will be retried automatically.");})}>{busy==="upload"?"Uploading and verifying…":"Upload latest verified backup"}</button>
+    <button className={buttonClass} type="button" disabled={locked||!binding||status.state!=="connected"||!latest||!uploadConsent} onClick={()=>void run("upload",async(api,expected)=>{if(!binding||!latest)return;const result=await api.uploadLatest(binding.ref,binding.revision,latest.jobId);await refresh(expected);if(mounted.current)setNotice((result.state==="verified"?"Remote copy uploaded and verified by readback. Your local backup is unchanged.":"Upload needs review. Your local backup is unchanged; nothing will be retried automatically.")+((result as {lockRelease?:string}).lockRelease==="unconfirmed"?" The provider did not confirm the repository lock was released.":""));})}>{busy==="upload"?"Uploading and verifying…":"Upload latest verified backup"}</button>
     <div className="space-y-3 border-t border-hairline/40 pt-3">
      <h4 className="text-[13px] font-medium text-ink">Automatic remote uploads</h4>
      <p className="text-[13px] text-ink-secondary">When enabled, future locally verified backups are uploaded to this saved destination while Murage is open. Existing backups are not uploaded. Your provider may charge for transfers and storage.</p>
@@ -104,6 +137,36 @@ export function BackupRemoteSettings(){
      <button className={buttonClass} type="button" disabled={locked||!binding||!bridge?.setAutomaticUpload||(!status.automaticUpload?.enabled&&(status.state!=="connected"||!status.passwordSelected))} onClick={()=>void run("automatic",async(api,expected)=>{if(!binding||!api.setAutomaticUpload)return;const enabled=!status.automaticUpload?.enabled;await api.setAutomaticUpload(binding.ref,binding.revision,enabled);await refresh(expected);if(mounted.current)setNotice(enabled?"Automatic uploads enabled for future verified backups. Existing backups were not uploaded.":"Automatic uploads disabled. A running upload is not cancelled.");})}>{busy==="automatic"?"Saving automatic upload setting…":status.automaticUpload?.enabled?"Disable automatic uploads":"Enable automatic uploads"}</button>
      {!bridge?.setAutomaticUpload&&<p className="text-[12px] text-ink-secondary">Automatic uploads require an updated desktop app.</p>}
     </div>
+    {bridge?.previewRetention&&bridge.applyRetention&&bridge.saveMaintenanceCredentials&&<div className="space-y-3 border-t border-hairline/40 pt-3">
+     <h4 className="text-[13px] font-medium text-ink">Remote retention (optional)</h4>
+     <p className="text-[13px] text-ink-secondary">Remove older remote copies of this installation only after you preview them. The latest verified copy is always kept. Other installations and older untagged copies are never removed. Removing copies cannot be undone.</p>
+     <p role="status" className="text-[13px] text-ink">Maintenance access key: {status.maintenanceSelected?"saved":"not saved"}. Use a separate key that may delete repository data; routine uploads never use it.</p>
+     <form className="space-y-3" onSubmit={event=>{event.preventDefault();if(locked||!binding||!maintenance.accessKeyId||!maintenance.secretAccessKey)return;void run("maintenance",async(api,expected)=>{
+      try{await api.saveMaintenanceCredentials!(binding.ref,binding.revision,{...maintenance});}finally{setMaintenance({accessKeyId:"",secretAccessKey:""});}
+      await refresh(expected);if(mounted.current)setNotice("Maintenance access key saved securely. Nothing was removed.");
+     });}}>
+      <fieldset disabled={locked||!binding} className="min-w-0 space-y-3"><legend className="text-[13px] font-medium text-ink">Maintenance access key</legend>
+       {([["accessKeyId","Maintenance access key ID"],["secretAccessKey","Maintenance secret access key"]]as const).map(([key,label])=><label key={key} className="block text-[13px] text-ink-secondary">{label}<input className={inputClass} type="password" value={maintenance[key]} maxLength={4096} autoComplete="off" spellCheck={false} onChange={event=>{const value=event.target.value;setMaintenance(current=>({...current,[key]:value}));}} required/></label>)}
+      </fieldset>
+      <button className={buttonClass} type="submit" disabled={locked||!binding||!maintenance.accessKeyId||!maintenance.secretAccessKey}>{busy==="maintenance"?"Saving maintenance key…":"Save maintenance access key"}</button>
+     </form>
+     <fieldset disabled={locked||!binding} className="grid min-w-0 gap-3 sm:grid-cols-2"><legend className="text-[13px] font-medium text-ink">Copies to keep for this installation</legend>
+      {retentionFields.map(([key,label])=><label key={key} className="block text-[13px] text-ink-secondary">{label}<input className={inputClass} inputMode="numeric" value={retentionDraft[key]} maxLength={4} autoComplete="off" onChange={event=>{const value=event.target.value;setRetentionDraft(current=>({...current,[key]:value}));setPreview(null);setRemovalConsent(false);}}/></label>)}
+     </fieldset>
+     <p className="text-[12px] text-ink-secondary">Enter whole numbers from 1 to 1000 and leave unused fields empty. There is no default.</p>
+     <button className={buttonClass} type="button" disabled={locked||!binding||status.state!=="connected"||!status.maintenanceSelected||!retentionPolicy||!latest} onClick={()=>void run("preview",async(api,expected)=>{if(!binding||!retentionPolicy)return;const value=remoteRetentionPreview(await api.previewRetention!(binding.ref,binding.revision,retentionPolicy));if(mounted.current&&version.current===expected){setPreview({...value,...binding,policy:JSON.stringify(retentionPolicy)});setRemovalConsent(false);}})}>{busy==="preview"?"Previewing removals…":"Preview removals"}</button>
+     {currentPreview&&<div className="space-y-2">
+      <p role="status" className="text-[13px] text-ink">{currentPreview.remove.length===0?"Nothing would be removed.":currentPreview.remove.length===1?"1 remote copy would be removed.":currentPreview.remove.length+" remote copies would be removed."} {currentPreview.keep===1?"1 copy is kept.":currentPreview.keep+" copies are kept."}</p>
+      {currentPreview.remove.length>0&&<>
+       <ul className="list-disc pl-5 text-[12px] text-ink-secondary">{currentPreview.remove.slice(0,10).map(id=><li key={id} className="break-all">{id.slice(0,12)}</li>)}{currentPreview.remove.length>10&&<li>and {currentPreview.remove.length-10} more</li>}</ul>
+       <label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink"><input type="checkbox" checked={removalConsent} disabled={locked} onChange={event=>setRemovalConsent(event.target.checked)} className="mt-1 size-4 shrink-0 accent-accent focus-visible:ring-2 focus-visible:ring-accent-border"/><span>Permanently remove exactly these previewed copies and reclaim unused storage. This cannot be undone.</span></label>
+       <button className={buttonClass} type="button" disabled={locked||!binding||!removalConsent||!retentionPolicy} onClick={()=>void run("retention",async(api,expected)=>{if(!binding||!retentionPolicy||!currentPreview)return;const result=await api.applyRetention!(binding.ref,binding.revision,retentionPolicy,currentPreview.previewId);await refresh(expected);if(mounted.current)setNotice(result.state==="complete"?(result.removed===1?"Removed 1 previewed copy and reclaimed unused storage.":"Removed "+result.removed+" previewed copies and reclaimed unused storage."):result.state==="nothing-to-remove"?"Nothing needed removing.":"Removal needs review. Nothing will be retried automatically.");})}>{busy==="retention"?"Removing previewed copies…":"Remove previewed copies"}</button>
+      </>}
+      {currentPreview.lockRelease&&<p className="text-[12px] text-warning">The provider did not confirm the repository lock was released. Removal may be refused until the lock is cleared at the provider.</p>}
+     </div>}
+     {status.retention&&<p role="status" className="text-[13px] text-ink-secondary">Last removal: {status.retention.state==="complete"?"completed":status.retention.state==="needs-review"?"needs review — "+(status.retention.error?retentionIssues[status.retention.error]:"the result could not be confirmed"):"not finished; needs review"}. This is saved evidence, not a live storage check.</p>}
+     {status.retention&&["needs-review","forgetting","pruning"].includes(status.retention.state)&&status.retention.previewId&&<button className={buttonClass} type="button" disabled={locked||!binding||!bridge.clearRetentionReview} onClick={()=>void run("clear",async(api,expected)=>{const previewId=status.retention?.previewId;if(!binding||!previewId)return;await api.clearRetentionReview!(binding.ref,binding.revision,previewId);await refresh(expected);if(mounted.current)setNotice("Removal review cleared. Preview again before removing anything.");})}>{busy==="clear"?"Clearing review…":"Mark removal reviewed"}</button>}
+    </div>}
     <div className="space-y-3 border-t border-hairline/40 pt-3">
      <h4 className="text-[13px] font-medium text-ink">Recover a remote backup</h4>
      <p className="text-[13px] text-ink-secondary">You can recover a remote copy even if the original local backup is gone. Finding and downloading use your storage connection; provider charges may apply. Your current installation stays unchanged.</p>

@@ -9,6 +9,8 @@ import { inspectEncryptedInstallationBackup,writeEncryptedInstallationBackup,res
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 import { backupFixture,testAgeKeys } from "./testing/backup-fixture.ts";
 import * as encryption from "./installation-backup-encryption.ts";
+import { MemoryIndex } from "./memory/index.ts";
+import { MemoryEligibility } from "./memory/eligibility.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
 it("captures raw fidelity and safe recovery in one encrypted file, then restores a separate paused installation",async()=>{
@@ -89,4 +91,54 @@ it("new encrypted CLI requires an explicit policy and hash-bound separate restor
     const result=await installationRecoveryCommand(["restore-encrypted-new","--data-dir",target,"--archive",archive,"--sha256",String(saved.sha256),"--age-tool",keys.ageExecutable],{readIdentity:async()=>keys.identity});
     expect(result.activationAvailable).toBe(false);expect(existsSync(join(target,"bots.json"))).toBe(true);
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+},20000);
+
+it("headless encrypted roundtrip retains WAL-visible memories, pauses authority and rebuilds recall without stale projection",async()=>{
+  const f=backupFixture(),keys=testAgeKeys(),index=new MemoryIndex(join(f.data,"memory-index.db"));
+  rmSync(join(f.data,"config.json"));
+  for(const name of ["door-identity","folder-trust.json","skill-index.db"])writeFileSync(join(f.data,name),"synthetic authority or cache");
+  f.db.exec(`INSERT INTO memory_scopes VALUES('scope','bot','bot','["bot"]',1);
+    INSERT INTO memory_records VALUES('remembered',1,'scope','fact','quartz lighthouse preference','owner-statement','active',1,1,NULL,NULL,1);
+    INSERT INTO memory_records VALUES('forgotten',1,'scope','fact','quartz forgotten preference','owner-statement','active',1,1,NULL,NULL,1);
+    INSERT INTO memory_projection_receipts VALUES('remembered',1,1,'indexed','indexed',NULL);
+    INSERT INTO memory_projection_receipts VALUES('forgotten',1,1,'indexed','indexed',NULL);`);
+  index.upsert([{id:"remembered",version:1,scopeId:"scope",text:"quartz lighthouse preference",deleted:false},{id:"forgotten",version:1,scopeId:"scope",text:"quartz forgotten preference",deleted:false}]);
+  index.vector({id:"remembered",version:1,scopeId:"scope",text:"quartz lighthouse preference",deleted:false},"fixture-model",0,[0.2,0.4]);
+  const detailsOriginal=f.db.prepare("SELECT * FROM memory_record_details WHERE record_id='remembered'").get();
+  const paths=["bots.json","messages.db","messages.db-wal","messages.db-shm","memory-index.db","memory-index.db-wal","memory-index.db-shm","door-identity","folder-trust.json","skill-index.db"];
+  const originals=paths.map(name=>readFileSync(join(f.data,name)));
+  try{
+    const archive=join(f.parent,"headless.age"),saved=await writeEncryptedInstallationBackup(f.data,archive,{...keys,selection});
+    expect(existsSync(join(f.data,"config.json"))).toBe(false);expect(saved.coverage.components).toContainEqual(expect.objectContaining({path:"config.json",status:"missing"}));
+    const inspected=await inspectEncryptedInstallationBackup(archive,f.parent,keys);
+    expect(inspected.manifest.recovery).toMatchObject({missing:expect.arrayContaining(["config.json"])});
+    const raw=new DatabaseSync(join(inspected.stateDirectory,"raw","memory-index.db"),{readOnly:true});try{
+      expect(raw.prepare("SELECT text FROM entries WHERE id='remembered'").get()?.text).toBe("quartz lighthouse preference");expect(raw.prepare("SELECT COUNT(*) AS n FROM vectors").get()?.n).toBe(1);
+    }finally{raw.close();}
+    // Opening the copied WAL-mode database above can create new local sidecars;
+    // its archive file list establishes that source WAL/SHM were never copied.
+    for(const name of ["memory-index.db-wal","memory-index.db-shm"])expect(inspected.manifest.files.some(file=>file.path===`raw/${name}`)).toBe(false);
+    for(const name of ["config.json","door-identity","folder-trust.json","skill-index.db"])expect(existsSync(join(inspected.stateDirectory,"raw",name))).toBe(false);
+    expect(existsSync(join(inspected.stateDirectory,"recovery","memory-index.db"))).toBe(false);rmSync(inspected.directory,{recursive:true,force:true});
+    const target=join(f.parent,"headless-restored"),restored=await restoreEncryptedInstallationNew(target,archive,saved.sha256,keys);
+    expect(restored.rawFidelityActivated).toBe(false);expect(()=>assertRestoreReviewed(target)).toThrow();
+    const config=JSON.parse(readFileSync(join(target,"config.json"),"utf8"));expect(config.engineDiscovery).toBe("explicit");expect(Object.values(config.instances).every((value:any)=>value.enabled===false)).toBe(true);
+    for(const name of ["memory-index.db","door-identity","folder-trust.json","skill-index.db"])expect(existsSync(join(target,name))).toBe(false);
+    const authority=new DatabaseSync(join(target,"messages.db"),{readOnly:true});let rows:any[],meta:any;
+    try{
+      meta=authority.prepare("SELECT * FROM memory_meta").get();expect(meta.mode).toBe("paused");
+      expect(authority.prepare("SELECT * FROM memory_record_details WHERE record_id='remembered'").get()).toEqual(detailsOriginal);
+      expect(authority.prepare("SELECT state FROM memory_records WHERE id='remembered'").get()?.state).toBe("active");expect(authority.prepare("SELECT state FROM memory_records WHERE id='forgotten'").get()?.state).toBe("deleted");
+      expect(authority.prepare("SELECT target_id FROM memory_tombstones").get()?.target_id).toBe("forgotten");expect(authority.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id='remembered'").get()?.lexical_status).toBe("pending");
+      rows=authority.prepare("SELECT id,version,scope_id,text,state FROM memory_records").all();
+    }finally{authority.close();}
+    // Offline reconstruction proof only; review/memory pause barriers remain set.
+    const rebuilt=new MemoryIndex(join(f.parent,"rebuilt-memory-index.db")),eligibility=new MemoryEligibility(join(target,"messages.db"));
+    try{
+      rebuilt.upsert(rows.map(row=>({id:row.id,version:row.version,scopeId:row.scope_id,text:row.text,deleted:row.state==="deleted"})));
+      const allowed=eligibility.read({scopeIds:["scope"],policyRevision:meta.policy_revision,deletionEpoch:meta.deletion_epoch,historical:false,cursor:""}).allowed;
+      expect(rebuilt.search("quartz",allowed,null,"fixture-model").hits.map(hit=>hit.id)).toEqual(["remembered"]);
+    }finally{rebuilt.close();eligibility.close();}
+    paths.forEach((name,i)=>expect(readFileSync(join(f.data,name)),name).toEqual(originals[i]));expect(existsSync(join(f.data,"config.json"))).toBe(false);
+  }finally{index.close();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 },20000);

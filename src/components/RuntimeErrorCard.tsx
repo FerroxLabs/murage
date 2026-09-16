@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { AlertTriangle, Hourglass, RefreshCw, Settings2 } from "lucide-react";
-import { classifyLocalResourceConflict, type LocalResourceConflict } from "../../shared/provider-error";
+import { classifyLocalResourceConflict, engineErrorCategory, type LocalResourceConflict } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
@@ -8,8 +8,8 @@ import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDet
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 /** Plain-text diagnostics only. No provider HTML or automatic retry. */
-export function RuntimeErrorCard({ message, details, diagnostic: tracking, turnId, incident, setup, onRetry, onOpenProviderSettings }: {
-  message: string; details?: string; setup?: ReactNode;
+export function RuntimeErrorCard({ message, details, errorKind, diagnostic: tracking, turnId, incident, setup, onRetry, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; setup?: ReactNode;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
   onRetry?: () => void; onOpenProviderSettings: () => void;
 }) {
@@ -18,6 +18,12 @@ export function RuntimeErrorCard({ message, details, diagnostic: tracking, turnI
   if (conflict) return <ResourceBusyCard conflict={conflict} message={message} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} />;
   const safetyBlocked = !setup && (isProviderSafetyBlock(message) || isProviderSafetyBlock(details ?? ""));
   const generic = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i.test(message.trim());
+  // Fixed copy for the kind the driver reported (Fuigo's error_kind), led
+  // before the engine's own message; an unknown kind keeps the plain card.
+  // Read from the structured field only — the details begin with the engine's
+  // own message, which must never be able to choose this copy.
+  const category = engineErrorCategory(errorKind);
+  const explanation = category ? t(`runtimeError.engineKind.${category}`) : undefined;
   const diagnostic = details || message;
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
@@ -25,9 +31,10 @@ export function RuntimeErrorCard({ message, details, diagnostic: tracking, turnI
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger" aria-hidden="true"><AlertTriangle size={19} /></span>
         <div className="min-w-0 flex-1">
           <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? "The provider blocked this request" : "This request hit a problem"}</h3>
-          <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{generic
+          <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{explanation ?? (generic
             ? "The engine reported an error without explaining what went wrong. Any available diagnostic information is below."
-            : message}</p>
+            : message)}</p>
+          {explanation && !generic && <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{message}</p>}
         </div>
       </div>
       {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked

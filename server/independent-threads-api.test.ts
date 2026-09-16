@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { connect, type Socket } from "node:net";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -156,4 +157,33 @@ it("new task retains the visible engine and model through the actual API and dis
   expect(invocation.argv).toContain(modelTwo);
   expect(invocation.argv).not.toContain("--resume");
   expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:state.threadId})).status).toBe(200);
+},30000);
+
+
+it("dispatches pinned skill bytes through explicit references and native discovery across owner edits",async()=>{
+  const bot=await create(),skillRoot=join(fixture.info.dataDir,"workspaces",bot.id,"skills","pinned-fixture"),stateRoot=join(fixture.info.dataDir,"skill-state",bot.id);
+  mkdirSync(skillRoot,{recursive:true});mkdirSync(stateRoot,{recursive:true});
+  const edit=(body:string)=>{
+    const text=`---\nname: pinned-fixture\ndescription: Verify the pinned fixture\n---\n${body}\n`;
+    writeFileSync(join(skillRoot,"SKILL.md"),text);
+    writeFileSync(join(stateRoot,"skills.json"),JSON.stringify({"pinned-fixture":{description:"Verify the pinned fixture",enabled:true,source:"fixture:owner",sha256:createHash("sha256").update(text).digest("hex"),importedAt:new Date().toISOString(),warnings:[],skippedFiles:[]}}));
+  };
+  edit("ORIGINAL PROCEDURE");
+  const first=await hold(bot.id,bot.first,"__fixture_procedure_probe__ pin-first");
+  expect(first.procedureProbe.explicit).toContain("ORIGINAL PROCEDURE");expect(first.procedureProbe.native).toBe(first.procedureProbe.explicit);
+  await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+  edit("OWNER REVISED PROCEDURE");
+  const continued=await hold(bot.id,bot.first,"__fixture_procedure_probe__ pin-continued");
+  expect(continued.procedureProbe.explicit).toContain("ORIGINAL PROCEDURE");expect(continued.procedureProbe.native).toBe(continued.procedureProbe.explicit);
+  await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+  const next=await hold(bot.id,bot.second,"__fixture_procedure_probe__ pin-next",true);
+  expect(next.procedureProbe.explicit).toContain("OWNER REVISED PROCEDURE");expect(next.procedureProbe.native).toBe(next.procedureProbe.explicit);
+  await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.second});
+  const custom=join(fixture.info.dataDir,"procedure-custom-project");mkdirSync(custom);writeFileSync(join(custom,"owner.txt"),"untouched");
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{})).body.task;
+  await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{cwd:custom,modelSelection:{instanceId:"verification",model:modelOne}});
+  const customRun=await hold(bot.id,third.threadId,"__fixture_procedure_probe__ pin-custom");
+  expect(realpathSync(customRun.procedureProbe.cwd)).toBe(realpathSync(custom));expect(customRun.procedureProbe.explicit).toContain("OWNER REVISED PROCEDURE");expect(customRun.procedureProbe.native).toBeNull();
+  expect(existsSync(join(custom,".agents"))).toBe(false);expect(readFileSync(join(custom,"owner.txt"),"utf8")).toBe("untouched");
+  await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:third.threadId});
 },30000);

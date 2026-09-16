@@ -10,7 +10,7 @@
 // Keeping the mapping in one exported object is what makes that testable: the
 // electron-builder `extraResources` `to:` names and the env names the server
 // reads are asserted against each other instead of drifting apart in silence.
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /** env variable → the extraResources `to:` directory it must point at. */
@@ -30,6 +30,8 @@ export const HARNESS_RESOURCE_DIRECTORIES = Object.freeze({
   // an unset value here can never read as "empty": server/env-path.ts throws a
   // named error rather than silently reporting no engine.
   MURAGE_FUIGO_DIR: "fuigo",
+  // GEPA is an app-owned native worker; no system Python or PATH fallback.
+  MURAGE_GEPA_DIR: "gepa-worker",
 });
 
 /** The static UI root when there is no Resources directory to read it out of.
@@ -95,4 +97,33 @@ export function harnessResourceEnvironment(resourcesPath) {
     environment[key] = path.join(resourcesPath, directory);
   }
   return environment;
+}
+
+/** Trust only the packaged app's own metadata. extraMetadata is merged into
+ * package.json's top level by electron-builder. An empty value deliberately
+ * clears any pin inherited from the launching shell; runtime admission then
+ * reports GEPA_RESOURCE_UNPINNED. No developer or system-Python fallback. */
+export function packagedGepaManifestEnvironment(
+  { packaged, appPath, platform = process.platform, arch = process.arch },
+  { stat = lstatSync, read = readFileSync } = {},
+) {
+  const unavailable = { MURAGE_GEPA_MANIFEST_SHA256: "" };
+  const target = `${platform}-${arch}`;
+  if (!packaged || typeof appPath !== "string" || !path.isAbsolute(appPath)
+    || !["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"].includes(target)) return unavailable;
+  try {
+    const file = path.join(appPath, "package.json"), details = stat(file);
+    if (!details.isFile() || details.isSymbolicLink() || details.size < 1 || details.size > 1024 * 1024) return unavailable;
+    const bytes = read(file);
+    if (bytes.length !== details.size || bytes.length > 1024 * 1024) return unavailable;
+    const metadata = JSON.parse(bytes.toString("utf8"));
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !Object.hasOwn(metadata, "murageGepaManifests")) return unavailable;
+    const pins = metadata.murageGepaManifests;
+    if (!pins || typeof pins !== "object" || Array.isArray(pins) || !Object.hasOwn(pins, target)) return unavailable;
+    const pin = pins[target];
+    return typeof pin === "string" && /^[a-f0-9]{64}$/.test(pin)
+      ? { MURAGE_GEPA_MANIFEST_SHA256: pin } : unavailable;
+  } catch {
+    return unavailable;
+  }
 }

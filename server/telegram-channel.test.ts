@@ -35,7 +35,7 @@ it("pairs only exact private human challenge then persists and deduplicates deli
   expect(channel.status().paired).toBe(true); expect(f.enqueue).not.toHaveBeenCalled();
   f.updates([message(4, "ignore me", { from: { id: 8, is_bot: false } }), message(5, "do work")]);
   await channel.pollOnce(); expect(f.enqueue).toHaveBeenCalledTimes(1);
-  expect(f.enqueue.mock.calls[0]).toEqual([{ deliveryId: "telegram:123:5", prompt: expect.stringContaining("UNTRUSTED TELEGRAM") }]);
+  expect(f.enqueue.mock.calls[0]).toEqual([{ deliveryId: "telegram:123:5", prompt: expect.stringContaining("UNTRUSTED TELEGRAM"), senderId: "7" }]);
   expect(f.transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: "7", text: "Done" }));
   const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
   expect(f.enqueue).toHaveBeenCalledTimes(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2); // pairing confirmation + work reply
@@ -59,6 +59,20 @@ it("never retries uncertain sends or crash-stale sending records", async () => {
   const state = JSON.parse(readFileSync(f.options.file, "utf8")); state.records[0].state = "sending"; writeFileSync(f.options.file, JSON.stringify(state));
   const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
   expect(restarted.status().uncertain).toBe(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2); // confirmation + uncertain reply
+});
+it("retains only the typed uncertain-send cause without retrying after restart", async () => {
+  const f = fixture(), channel = new TelegramChannel(f.options), challenge = channel.beginPairing();
+  f.transport.sendMessage.mockRejectedValueOnce(new TelegramTransportError("timeout", { uncertain: true }));
+  f.updates([message(1, `/pair ${challenge.code}`)]); await channel.pollOnce();
+  expect(channel.status()).toMatchObject({ paired: true, uncertain: 1, deliveryError: "timeout" });
+  const saved = JSON.parse(readFileSync(f.options.file, "utf8"));
+  expect(saved.records[0]).toMatchObject({ state: "uncertain", deliveryError: "timeout" });
+  f.updates([]);
+  await channel.pollOnce();
+  const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
+  expect(restarted.status()).toMatchObject({ uncertain: 1, deliveryError: "timeout" });
+  expect(f.transport.sendMessage).toHaveBeenCalledTimes(1);
+  expect(f.enqueue).not.toHaveBeenCalled();
 });
 it("retries definitive non-delivery only after the provider retry deadline, without replaying the run", async () => {
   const f = fixture(); let now = 0;
@@ -133,5 +147,5 @@ it("a text reply the approvals manager captures as a question answer is never en
   expect(channel.status().pending).toBe(0);
   // and an ordinary message afterwards is a prompt again
   f.updates([message(4, "now do the work")]); await channel.pollOnce();
-  expect(f.enqueue).toHaveBeenCalledExactlyOnceWith({ deliveryId: "telegram:123:4", prompt: expect.stringContaining("now do the work") });
+  expect(f.enqueue).toHaveBeenCalledExactlyOnceWith({ deliveryId: "telegram:123:4", prompt: expect.stringContaining("now do the work"), senderId: "7" });
 });

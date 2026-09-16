@@ -110,6 +110,11 @@ it("sends the engine attributed remembered words with no provenance JSON while M
   expect(sent.text).not.toMatch(PROVENANCE);
   expect(sent.text).not.toMatch(/[[{]\s*"/);
   expect(sent.system).toBe("persona");
+  // The final-answer citation rule is conditional and outside remembered data.
+  const attributionRule = "When task instructions require source attribution, cite only the relevant supplied handle beside the supported claim (for example [m1]).";
+  expect(sent.text).toContain(attributionRule);
+  expect(sent.text.indexOf(attributionRule)).toBeLessThan(sent.text.indexOf(MEMORY_REFERENCE_OPEN));
+  expect(sent.text).toContain("Otherwise, do not add citations just because memory is present.");
   expect(sent.memoryContext).toBeUndefined();
 });
 

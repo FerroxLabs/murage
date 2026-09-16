@@ -8,8 +8,8 @@ const statusLabel = (status: string) => status.replaceAll("-", " ").replace(/^./
 
 /** Opening navigates to the exact persisted source. Only that conversation's
  * existing controls can answer an approval or resolve a request. */
-export function Inbox({ onOpen, onClose, refreshKey = 0 }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number }) {
-  const [view, setView] = useState<InboxView>("needs-you");
+export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-you" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
+  const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
@@ -26,10 +26,16 @@ export function Inbox({ onOpen, onClose, refreshKey = 0 }: { onOpen: (link: Inbo
     void api(`/api/inbox?${params}`, { signal: controller.signal }).then(value => {
       if (!controller.signal.aborted) setResult(value as InboxPage);
     }).catch(reason => {
-      if (!controller.signal.aborted) { setResult(null); setError(reason instanceof Error ? reason.message : "Inbox could not load."); }
+      if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "Inbox could not load."); }
     }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
   }, [view, query, page, includeSnoozed, revision, refreshKey]);
+
+  useEffect(() => {
+    if (view !== "approvals") return;
+    const timer = window.setInterval(() => setRevision(current => current + 1), 5000);
+    return () => window.clearInterval(timer);
+  }, [view]);
 
   const update = async (item: InboxItem, change: Omit<InboxStateUpdate, "id" | "version">) => {
     if (changing.current || busy) return;
@@ -48,36 +54,37 @@ export function Inbox({ onOpen, onClose, refreshKey = 0 }: { onOpen: (link: Inbo
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2"><button className={button} disabled={busy} onClick={() => setRevision(current => current + 1)}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Inbox</button>}</div>
     </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">Background results and requests that need your attention. Reading or snoozing never answers a request.</p>
+    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{view === "approvals" ? "Unresolved approvals and questions stay here until answered, cancelled or expired. Open a request to review its full details and respond." : "Background results and requests that need your attention. Reading or snoozing never answers a request."}</p>
     <nav aria-label="Inbox views" className="mt-4 flex flex-wrap gap-2">
-      {(["needs-you", "results", "all"] as const).map(value => <button key={value} className={`${button} ${view === value ? "border-accent bg-accent/10" : ""}`} aria-pressed={view === value} onClick={() => chooseView(value)}>
-        {value === "needs-you" ? `Needs you${result ? ` (${result.needsYou})` : ""}` : value === "results" ? "Results" : "All"}
+      {(["approvals", "needs-you", "results", "all"] as const).map(value => <button key={value} className={`${button} ${view === value ? "border-accent bg-accent/10" : ""}`} aria-pressed={view === value} onClick={() => chooseView(value)}>
+        {value === "approvals" ? "Pending approvals" : value === "needs-you" ? `Needs you${result ? ` (${result.needsYou})` : ""}` : value === "results" ? "Results" : "All"}
       </button>)}
     </nav>
     <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setPage(0); }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button} disabled={busy}>Search</button>
     </form>
-    <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>
+    {view !== "approvals" && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
     {result && <p className="mb-3 text-[12px] text-ink-secondary">While you were away: {result.unread} unread on this page. {result.total} matching items.</p>}
     {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
-    {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Use Refresh to check the current source.</p>}
+    {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
     {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : view === "needs-you" ? "Nothing needs your attention right now." : "No items in this view yet."}</p>}
     <ul className="space-y-3" aria-label="Inbox items">
       {list.map(item => <li key={item.id} className="rounded-xl border border-hairline/50 bg-inset p-4" data-inbox-id={item.id}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-secondary"><span>{item.sourceLabel}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time></div>
+        {view === "approvals" && <p className="mt-2 text-[12px] text-ink-secondary">Waiting {Math.max(0, Math.floor((Date.now() - item.at) / 60000))} min for your {item.title.includes("Question") ? "answer" : "approval"}.</p>}
         <h2 className="mt-2 break-words text-[15px] font-medium">{item.title}</h2>
         <div className="mt-2 flex flex-wrap gap-2 text-[12px]"><span className="rounded bg-control px-2 py-1">{statusLabel(item.status)}</span><span className="rounded bg-control px-2 py-1">{item.read ? "Read" : "Unread"}</span>
           {item.duplicates > 1 && <span className="px-1 py-1 text-ink-secondary">{item.duplicates} matching receipts</span>}
-          {item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
+          {view !== "approvals" && item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
         </div>
         {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
           <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
           <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
-          {item.snoozedUntil !== null && item.snoozedUntil > Date.now()
+          {view !== "approvals" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
             ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
-            : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>}
+            : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
         </div>
       </li>)}
     </ul>

@@ -1,0 +1,137 @@
+# Native Intel GEPA helper only. No application build, notarization or release.
+name: Intel Mac GEPA qualification
+on:
+  push:
+    branches: [qualification/gepa-intel-20260916]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full reviewed commit SHA; must equal the workflow commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: gepa-intel-qualification-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  intel-helper:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+    steps:
+      - name: Admit exact source and native disposable Intel runner
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$SOURCE_SHA" = "$WORKFLOW_SHA"
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -m)" = x86_64
+          test "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" != 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Record source and ABI/toolchain identity
+        run: |
+          set -euo pipefail
+          mkdir qualification-evidence
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git rev-parse HEAD > qualification-evidence/source-sha.txt
+          sw_vers > qualification-evidence/macos.txt
+          uname -a > qualification-evidence/uname.txt
+          xcodebuild -version > qualification-evidence/xcode.txt
+          printf '%s\n' "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" > qualification-evidence/run.txt
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install manifest validation dependencies without application build hooks
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Import the existing Developer ID into a throwaway keychain
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/mac-qualification.keychain-db"
+          security list-keychains -d user > "$RUNNER_TEMP/mac-qualification-keychains.txt"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          printf '%s' "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/mac-qualification-cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/mac-qualification-cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          rm "$RUNNER_TEMP/mac-qualification-cert.p12"
+      - name: Run unchanged signed native helper producer and six offline scenarios
+        run: |
+          set -euo pipefail
+          python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-intel-build" "$RUNNER_TEMP/mac-qualification.keychain-db"
+      - name: Retain signed helper and exact native receipts
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import json, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gepa-intel-build'
+          evidence = pathlib.Path('qualification-evidence')
+          state = json.loads((root / 'state.json').read_text())
+          assert state['status'] == 'BUILT_SIGNED_STAGED'
+          assert state['target'] == 'darwin-x64' and state['architecture'] == 'x86_64'
+          assert state['sourceSha'] == os.environ['SOURCE_SHA']
+          result = json.loads((root / 'logs/signed-offline-fixture.log').read_text())
+          assert result['classification'] == 'offline-fixture-scripted-reflection'
+          assert [row['scenario'] for row in result['scenarios']] == ['actual-gepa-scripted-reflection', 'actual-gepa-unchanged-reflection', 'alignment', 'correlation', 'cancel', 'wall']
+          for name in ['state.json', 'source-identity.json', 'input-hashes.txt', 'unsigned-native.json']:
+              shutil.copyfile(root / name, evidence / name)
+          for name in ['runtime-identity.log', 'signed-offline-fixture.log', 'manifest.log']:
+              shutil.copyfile(root / 'logs' / name, evidence / name)
+          shutil.copyfile('dist-native/gepa/darwin-x64/manifest.json', evidence / 'helper-manifest.json')
+          PYTHON
+          tar -czf qualification-evidence/gepa-darwin-x64.tar.gz -C dist-native/gepa darwin-x64
+          shasum -a 256 qualification-evidence/gepa-darwin-x64.tar.gz > qualification-evidence/SHA256SUMS
+      - name: Preserve sanitized stage failure evidence
+        if: always()
+        run: node scripts/collect-gepa-build-evidence.mjs "$RUNNER_TEMP/gepa-intel-build" "$PWD/qualification-evidence"
+      - name: Remove task-owned signing material and restore keychain search list
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import os, pathlib, shlex, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          prior = root / 'mac-qualification-keychains.txt'
+          failed = False
+          try:
+              if prior.exists():
+                  subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', *shlex.split(prior.read_text())], check=True)
+          except Exception as error:
+              print(type(error).__name__)
+              failed = True
+          keychain = root / 'mac-qualification.keychain-db'
+          if keychain.exists():
+              failed |= subprocess.run(['security', 'delete-keychain', str(keychain)]).returncode != 0
+          for name in ['mac-qualification-cert.p12', 'mac-qualification-notary.p8', 'mac-qualification-keychains.txt']:
+              (root / name).unlink(missing_ok=True)
+          evidence = pathlib.Path('qualification-evidence')
+          if evidence.exists():
+              (evidence / 'cleanup.txt').write_text('FAILED\n' if failed else 'PASS\n')
+          raise SystemExit(1 if failed else 0)
+          PYTHON
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: gepa-intel-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-evidence/
+          if-no-files-found: error
+          retention-days: 7

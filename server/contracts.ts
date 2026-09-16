@@ -167,7 +167,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -474,7 +474,8 @@ export interface ProviderInstance {
   generateText?(prompt: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
-  extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
+  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
+  extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal, dispatch?: import("./memory/extract.ts").MemoryExtractionDispatch): Promise<string>;
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability
    * from a generic helper that may expose prompts in argv or lack approvals. */

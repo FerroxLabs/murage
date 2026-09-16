@@ -8,6 +8,7 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const {
   buildDiagnosticsReport,
+  collectChannelDiagnostics,
   decodeLogTail,
   diagnosticsFileName,
   formatDesktopCrashRecord,
@@ -16,6 +17,48 @@ const {
   redactSecretsInLine,
   CREDENTIAL_ENV_NAMES,
 } = require("./diagnostics.mjs");
+
+describe("channel diagnostics", () => {
+  it("exports useful channel health while dropping private fields and raw errors", async () => {
+    const requested = [];
+    const summary = await collectChannelDiagnostics(async channel => {
+      requested.push(channel);
+      return { enabled: true, paired: true, pending: 2, uncertain: 1, canReplaceToken: true,
+        resumeState: "blocked", error: "PRIVATE_ERROR", deliveryError: "PRIVATE_DELIVERY",
+        ownerUserId: "PRIVATE_ID", token: "PRIVATE_TOKEN", resumeMessage: "PRIVATE_MESSAGE",
+        nextRetryAt: 123456, invented: true };
+    });
+    expect(requested).toEqual(["telegram", "slack", "discord"]);
+    const report = buildDiagnosticsReport({ channelSummary: summary });
+    expect(report).toContain("telegram.pending=2");
+    expect(report).toContain("slack.resumeState=blocked");
+    expect(report).toContain("discord.canReplaceToken=true");
+    expect(report).toContain("telegram.hasError=true");
+    expect(report).toContain("telegram.hasDeliveryError=true");
+    expect(report).not.toMatch(/PRIVATE_|ownerUserId|nextRetryAt|invented/);
+  });
+  it("retains healthy channels when one rejects and another returns malformed data", async () => {
+    const summary = await collectChannelDiagnostics(async channel => {
+      if (channel === "telegram") throw Error("PRIVATE_EXCEPTION");
+      return channel === "slack" ? [] : { enabled: false, pending: 0 };
+    });
+    const report = buildDiagnosticsReport({ channelSummary: summary });
+    expect(report).toContain("telegram.available=false");
+    expect(report).toContain("slack.available=false");
+    expect(report).toContain("discord.available=true");
+    expect(report).toContain("discord.pending=0");
+    expect(report).not.toContain("PRIVATE_EXCEPTION");
+  });
+  it("revalidates report input rather than trusting a caller supplied summary", () => {
+    const report = buildDiagnosticsReport({ channelSummary: { telegram: {
+      available: true, state: "PRIVATE_STATE", resumeState: "PRIVATE_RESUME", pending: -1,
+      uncertain: Infinity, rejected: 1.5, enabled: "PRIVATE_VALUE", token: "PRIVATE_TOKEN", hasError: "PRIVATE_ERROR",
+    }, PRIVATE_CHANNEL: { available: true } } });
+    expect(report).toContain("telegram.available=true");
+    expect(report).toContain("telegram.hasError=false");
+    expect(report).not.toMatch(/PRIVATE_|pending=|uncertain=|rejected=|enabled=/);
+  });
+});
 
 // The desktop shell cannot import TypeScript, so its credential list is a
 // hand copy of server/config.ts WORKSPACE_CREDENTIAL_ENV. This test is the

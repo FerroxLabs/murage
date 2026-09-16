@@ -1,11 +1,22 @@
+import { ProcedureEvaluationAdmissions } from "./ProcedureEvaluationAdmissions";
+import type { ProcedureEvolutionStatus } from "@/lib/procedure-evaluation-admissions";
+import { MemoryEvolutionControls } from "./MemoryEvolutionControls";
+import type { MemoryEvolutionStatus } from "@/lib/memory-evolution-controls";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, useStore } from "@/state/store";
 import { useDesktopSurface } from "@/lib/use-surface";
 import type { MemoryRecord } from "../../shared/memory";
+import { MemoryLearningControls, MemoryHealth, type MemoryLearning, type MemoryHealthStatus } from "./MemoryLearningControls";
 import { MemoryNotebookPicker } from "./MemoryNotebookPicker";
+import { MemoryPeople, type HumanBindingsStatus, type HumanLinkIntent, type HumanShareIntent } from "./MemoryPeople";
 import { MemoryReview, memoryButtonClass, memoryInputClass, type MemoryAction, type MemoryAudience, type MemoryInspection } from "./MemoryReview";
 
 export interface MemoryStatus {
+  evolution?:MemoryEvolutionStatus|null;
+  classificationEvolution?:MemoryEvolutionStatus|null;
+  procedureEvolution?:ProcedureEvolutionStatus|null;
+  learning?: MemoryLearning;
+  health?: MemoryHealthStatus;
   mode: "off" | "capture" | "active" | "paused";
   policyRevision: number; deletionEpoch: number;
   configuration: { excludedThreadIds: string[]; extractorInstanceId: string | null };
@@ -31,13 +42,14 @@ const request = (action: MemoryAction) => api("/api/memory/action", { method: "P
 const message = (error: unknown) => error instanceof Error ? error.message : "Memory request failed. Try again.";
 
 export function memoryModeDescription(mode: MemoryStatus["mode"]): string {
-  return mode === "active" ? "Capture and recall are on." : mode === "capture" ? "Capture is on. Recall is off." : mode === "paused" ? "Memory is paused. Capture and recall are off." : "Memory is off. Capture and recall are off.";
+  return mode === "active" ? "Capture and recall are on." : mode === "capture" ? "Capture is on. Recall is off." : mode === "paused" ? "Processing and recall are paused. New sources are still captured." : "Memory is off. Capture and recall are off.";
 }
 
 export function MemorySettings({ botId, onNavigate, compact = false }: { botId?: string; onNavigate?: () => void; compact?: boolean }) {
   const desktop = useDesktopSurface();
   const { state, dispatch } = useStore();
   const [status, setStatus] = useState<MemoryStatus | null>(null);
+  const [people, setPeople] = useState<HumanBindingsStatus | null>(null);
   const [records, setRecords] = useState<MemoryRecord[]>([]);
   const [query, setQuery] = useState("");
   const [scopeId, setScopeId] = useState("");
@@ -72,6 +84,10 @@ export function MemorySettings({ botId, onNavigate, compact = false }: { botId?:
     if (!mounted.current) return;
     setStatus(next); setMode(next.mode); setExtractor(next.configuration.extractorInstanceId ?? ""); setExcluded(next.configuration.excludedThreadIds);
   }, []);
+  const loadPeople = useCallback(async () => {
+    const next = await request({ action: "humans" }) as HumanBindingsStatus;
+    if (mounted.current) setPeople(next);
+  }, []);
   const loadRecords = useCallback(async (nextCursor?: string, filters = applied.current) => {
     const result = await request(memoryListAction(filters.query, filters.scopeId, filters.recordState, botId, nextCursor, filters.view)) as { records: MemoryRecord[]; nextCursor?: string; scopeIds?: string[] | null; searchNotice?: string };
     if (!mounted.current) return;
@@ -88,12 +104,12 @@ export function MemorySettings({ botId, onNavigate, compact = false }: { botId?:
     let cancelled = false;
     setBusy(true); setError(null);
     applied.current = { query: "", scopeId: "", recordState: "", view: "search" };
-    setQuery(""); setScopeId(""); setRecordState(""); setView("search"); setPageIndex(0); setPageCursors([undefined]); setInspection(null); setRecords([]); setCursor(undefined); setConflicts([]); setConflictCursor(undefined); setSearchNotice(undefined);
-    void Promise.all([loadStatus(), request(memoryListAction("", "", "", botId, undefined, "search"))]).then(([, result]) => {
+    setQuery(""); setScopeId(""); setRecordState(""); setView("search"); setPageIndex(0); setPageCursors([undefined]); setInspection(null); setRecords([]); setCursor(undefined); setConflicts([]); setConflictCursor(undefined); setSearchNotice(undefined); setPeople(null);
+    void Promise.all([loadStatus(), request(memoryListAction("", "", "", botId, undefined, "search")), botId ? Promise.resolve() : loadPeople()]).then(([, result]) => {
       if (!cancelled) { setRecords(result.records); setCursor(result.nextCursor); setScopeIds(result.scopeIds ?? null); }
     }).catch(error => { if (!cancelled) setError(message(error)); }).finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
-  }, [desktop, botId, loadStatus]);
+  }, [desktop, botId, loadPeople, loadStatus]);
   useEffect(() => {
     if (status?.model.state !== "downloading") return;
     const timer = window.setInterval(() => { void loadStatus().catch(error => { if (mounted.current) setError(message(error)); }); }, 1500);
@@ -113,6 +129,14 @@ export function MemorySettings({ botId, onNavigate, compact = false }: { botId?:
     await Promise.all([loadStatus(), loadRecords()]);
     if (view === "review") await loadConflicts();
   });
+  const changePerson = async (intent: HumanLinkIntent) => {
+    await request({ action: "human-link", ...intent });
+    await loadPeople();
+  };
+  const sharePerson = async (intent: HumanShareIntent) => {
+    await request({ action: "human-share", ...intent });
+    await loadPeople();
+  };
   const subjects = [...state.bots.map(bot => ({ value: `bot:${bot.id}`, label: bot.name })), ...state.groups.map(group => ({ value: `room:${group.id}`, label: `Room: ${group.name}` }))];
   const subjectFields = () => { const separator = subject.indexOf(":"); return { subjectType: subject.slice(0, separator), subjectId: subject.slice(separator + 1) }; };
   const threads = [...new Map([
@@ -127,12 +151,14 @@ export function MemorySettings({ botId, onNavigate, compact = false }: { botId?:
   </>;
   if (desktop !== true) return <section className="rounded-xl bg-card p-4"><h2 className="text-[15px] font-medium">Managed memory</h2><p role="status" className="mt-2 text-[13px] text-ink-secondary">{desktop === undefined ? "Checking owner access…" : "Memory management is available in the local desktop app. Remote sessions cannot manage workspace memory."}</p></section>;
   return <section aria-label={botId ? "Bot memory" : "Workspace memory"} className={`min-w-0 space-y-4 text-ink ${compact ? "p-3" : "rounded-xl bg-card p-4"}`} data-testid="memory-settings" data-compact={compact || undefined}>
-    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[16px] font-medium">{botId ? "Bot memory" : "Workspace memory"}</h2><button className={memoryButtonClass} disabled={busy} onClick={() => void run(async () => { await Promise.all([loadStatus(), loadRecords()]); })}>Refresh memory</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[16px] font-medium">{botId ? "Bot memory" : "Workspace memory"}</h2><button className={memoryButtonClass} disabled={busy} onClick={() => void run(async () => { await Promise.all([loadStatus(), loadRecords(), ...(botId ? [] : [loadPeople()])]); })}>Refresh memory</button></div>
     {!compact && <p className="text-[13px] text-ink-secondary">Search saved knowledge, inspect its source and choose who can use it.</p>}
     {busy && <p role="status" className="text-[13px] text-ink-secondary">Working…</p>}
     {error && <p role="alert" className="break-words text-[13px] text-danger">{error}</p>}
     {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
     {status && <>
+      <MemoryHealth status={status} />
+      {!botId && people && <MemoryPeople people={people} audiences={status.scopes} disabled={busy} onLink={changePerson} onShare={sharePerson} onRefresh={loadPeople} />}
       {compact ? <p role="status" className="text-[13px] text-ink-secondary">{memoryModeDescription(status.mode)}{status.mode !== "active" && " Saved records remain available here."}{status.workerError ? " Processing needs attention." : status.runtime?.indexing ? " Search index is updating." : ""}</p> : <>
       <p className="text-[12px] text-ink-secondary">{botId ? `${records.length} records on this page${cursor ? " · more available" : ""}` : `${status.records.active} active records · ${status.records.candidate} awaiting review`} · Workspace mode: {status.mode === "active" ? "Capture and recall" : status.mode === "capture" ? "Capture only" : status.mode === "paused" ? "Paused" : "Off"}</p>
       <p className="text-[12px] text-ink-secondary">{memoryModeDescription(status.mode)} {status.mode === "active" && status.model.state !== "ready" ? "Keyword-only recall; the optional local model is not ready." : status.model.state === "ready" ? "Local semantic model ready." : "The optional local model is not ready."} {status.workerError ? "Processing needs attention." : status.runtime?.indexing ? "Search index is updating." : ""}</p>
@@ -162,13 +188,17 @@ export function MemorySettings({ botId, onNavigate, compact = false }: { botId?:
       {compact && <div className="space-y-2 border-t border-hairline/40 pt-3 text-[13px]"><p className="text-ink-secondary">Manage capture, imports and the optional local model for the workspace.</p><button type="button" className={memoryButtonClass} onClick={() => { onNavigate?.(); dispatch({ type: "showTeamMap", memory: true }); }}>Open workspace memory settings</button></div>}
       {!compact && status.retention && <p className="text-[12px] text-ink-secondary">Retained source data: {status.retention.sourceBytes.toLocaleString()} bytes. Archived memories stay available for historical recall; nothing is permanently forgotten automatically.</p>}
       {!compact && !botId && <>
+      {status.learning && <MemoryLearningControls key={status.learning.revision} learning={status.learning} disabled={busy} onRefresh={loadStatus} onSave={async (learning, learningRevision) => { await request({ action: "configure", learning, learningRevision }); await loadStatus(); }} />}
+      <MemoryEvolutionControls status={status.evolution??null} disabled={busy} onRefresh={loadStatus}/>
+      <MemoryEvolutionControls kind="classification" status={status.classificationEvolution??null} disabled={busy} onRefresh={loadStatus}/>
+      <ProcedureEvaluationAdmissions status={status.procedureEvolution??null} disabled={busy} onRefresh={loadStatus}/>
       <details className="rounded-lg border border-hairline/40 p-3"><summary className="cursor-pointer text-[14px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Workspace settings and processing</summary>
         <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); void perform({ action: "configure", mode, excludedThreadIds: excluded, extractorInstanceId: extractor || null }, "Memory settings saved."); }}>
           <fieldset disabled={busy} className="space-y-3"><legend className="sr-only">Memory configuration</legend>
             <label className="block space-y-1 text-[13px]">Memory mode<select className={memoryInputClass} value={mode} onChange={event => setMode(event.target.value as MemoryStatus["mode"])}><option value="off">Off</option><option value="capture">Capture only</option><option value="active">Capture and recall</option><option value="paused">Paused</option></select></label>
             <label className="block space-y-1 text-[13px]">Extractor preference<select className={memoryInputClass} value={extractor} onChange={event => setExtractor(event.target.value)}><option value="">No optional extractor</option>{status.extractors.map(item => <option key={item.instanceId} value={item.instanceId} disabled={!item.eligible}>{item.label}</option>)}</select></label>
             {status.extractors.find(item => item.instanceId === extractor)?.reason && <p className="text-[13px] text-ink-secondary">{status.extractors.find(item => item.instanceId === extractor)?.reason}</p>}
-            <p className="text-[12px] text-ink-secondary">Optional: use this connection to turn captured text into memory candidates for review. Uses your existing key and may incur model charges.</p>
+            <p className="text-[12px] text-ink-secondary">Optional: use this connection to learn from captured text. Automatic learning and review follow the controls above. Uses your existing key and may incur model charges.</p>
             <fieldset className="space-y-1"><legend className="text-[13px] font-medium">Exclude conversations from capture</legend><p className="text-[12px] text-ink-secondary">Excluding a conversation also retires its existing memory sources. Including it again does not restore retired memories.</p>{threads.map(thread => <label key={thread.id} className="flex min-h-10 items-center gap-2 text-[13px]"><input type="checkbox" checked={excluded.includes(thread.id)} onChange={event => setExcluded(previous => event.target.checked ? [...previous, thread.id] : previous.filter(id => id !== thread.id))} />{thread.label}</label>)}</fieldset>
             <button className={memoryButtonClass}>Save memory settings</button>
           </fieldset>

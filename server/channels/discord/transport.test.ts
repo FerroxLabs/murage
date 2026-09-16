@@ -6,7 +6,7 @@ function fixture(){
   const listeners=new Map<string,(...args:any[])=>void>();
   const post=vi.fn(async(_path:string,_options:unknown):Promise<unknown>=>({channel_id:"14",id:"15"}));
   const sdk={on:(name:string,cb:(...args:any[])=>void)=>listeners.set(name,cb),login:vi.fn(async()=>{listeners.get("clientReady")?.();}),destroy:vi.fn(async()=>{}),user:{id:"12"},application:{id:"11"},
-    rest:{get:vi.fn(async(path:string)=>path==="/users/@me"?{id:"12",bot:true}:{id:"11"}),post}};
+    rest:{patch:vi.fn(async()=>({channel_id:"14",id:"15"})),get:vi.fn(async(path:string)=>path==="/users/@me"?{id:"12",bot:true}:{id:"11"}),post}};
   const factory:DiscordSDKFactory=async()=>sdk;
   return {sdk,listeners,post,transport:new DiscordGatewayTransport({botToken:"fake-only",factory})};
 }
@@ -37,4 +37,27 @@ it("rejects invalid success/auth/forbidden and pre-dispatch cancellation",async(
   await expect(f.transport.sendText({dmId:"14",text:"hi",signal:controller.signal})).rejects.toMatchObject({uncertain:true});
   for(const [status,code] of [[401,"auth"],[403,"forbidden"],[400,"invalid-request"]]){f.post.mockRejectedValue({status});await expect(f.transport.sendText({dmId:"14",text:"hi",signal:controller.signal})).rejects.toMatchObject({code,uncertain:false});}
   controller.abort();await expect(f.transport.sendText({dmId:"14",text:"hi",signal:controller.signal})).rejects.toMatchObject({code:"offline",uncertain:false});expect(f.post).toHaveBeenCalledTimes(4);
+});
+
+const approveId = `murage:${"a".repeat(48)}:a`, denyId = approveId.slice(0, -1) + "d";
+it("sends exact permission summaries with native buttons and clears the original message", async () => {
+  const f=fixture(), signal=new AbortController().signal, text="Run @everyone <@13> exactly";
+  await f.transport.sendPermission({dmId:"14",text,approveId,denyId,signal});
+  expect(f.post.mock.calls[0][1]).toMatchObject({body:{content:text,allowed_mentions:{parse:[]},components:[{components:[{label:"Approve once",custom_id:approveId},{label:"Deny",custom_id:denyId}]}]}});
+  await expect(f.transport.sendPermission({dmId:"14",text:"x".repeat(2001),approveId,denyId,signal})).rejects.toMatchObject({code:"invalid-request",uncertain:false});
+  expect(f.post).toHaveBeenCalledTimes(1);
+  await f.transport.settlePermission({dmId:"14",messageId:"15",text:"Denied",signal});
+  expect(f.sdk.rest.patch).toHaveBeenCalledWith("/channels/14/messages/15",expect.objectContaining({body:{content:"Denied",components:[],allowed_mentions:{parse:[],replied_user:false}}}));
+});
+it("acks buttons before delivery and rejects other providers, groups, authors, failures and stopped events", async () => {
+  const f=fixture(), receive=vi.fn(), health=vi.fn(), ack=vi.fn(async()=>{});
+  f.transport.onPermissionAction(receive);await f.transport.verifyBot();await f.transport.start(vi.fn(),health);
+  const event={isButton:()=>true,guildId:null,channel:{type:1},applicationId:"11",message:{id:"15",author:{id:"12"}},user:{id:"13",bot:false},channelId:"14",customId:approveId,deferUpdate:ack};
+  const emit=(patch={})=>f.listeners.get("interactionCreate")!({...event,...patch});
+  emit();await vi.waitFor(()=>expect(receive).toHaveBeenCalledTimes(1));
+  expect(ack).toHaveBeenCalledTimes(1);await receive.mock.calls[0][0].ack();expect(ack).toHaveBeenCalledTimes(1);
+  expect(receive.mock.calls[0][0]).toMatchObject({provider:"discord",applicationId:"11",userId:"13",channelId:"14",messageId:"15",actionId:approveId});
+  for(const patch of [{guildId:"99"},{applicationId:"99"},{message:{id:"15",author:{id:"99"}}},{customId:"approve"},{channel:{type:3}}]) emit(patch);
+  ack.mockRejectedValueOnce(new Error("secret"));emit();await vi.waitFor(()=>expect(health).toHaveBeenCalledWith("error"));
+  expect(receive).toHaveBeenCalledTimes(1);await f.transport.stop();emit();expect(ack).toHaveBeenCalledTimes(2);
 });

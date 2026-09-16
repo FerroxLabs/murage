@@ -1,5 +1,17 @@
+import type { SkillProcedureContext } from "./skills.ts";
+import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
+import { createProcedureReviewHost } from "./procedure-review-host.ts";
+import { pendingProcedureReviews, processProcedureReview } from "./memory/procedure-review.ts";
+import { createMemoryEvolutionRuntime, type EvolutionRuntimeOptions } from "./memory/evolution-runtime.ts";
+import { createProcedureEvaluator } from "./memory/procedure-evaluator.ts";
+import { readMemoryLearning } from "./memory/learning-policy.ts";
+import { verifyGepaBundle } from "./gepa-resource.ts";
+import { skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, assertSkillProcedureEvidence } from "./skills.ts";
+import { observeVerifiedHuman, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
+import { personalityImprint } from "../shared/bot-identity.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
+import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
 import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
@@ -7,6 +19,7 @@ import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProvider
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
+import { captureBotReveals, pendingBotRevealJobs } from "./memory/reveal-capture.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
@@ -19,7 +32,7 @@ import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
-import { memoryAccess, type MemoryAccess } from "./memory/policy.ts";
+import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
@@ -317,7 +330,11 @@ import {
   rejectStagedSkillWrite,
   removeSkill,
   setSkillEnabled,
-  skillsSystemPrompt,
+  migrateSkillDiscoveryToTasks,
+  rollbackSkillRevision,
+  skillRevisionHistory,
+  scopedSkillRevisionHistory,
+  rollbackScopedSkillRevision,
   stageSkillWrite,
   assertMemorySkillReview,
 } from "./skills.ts";
@@ -383,7 +400,8 @@ import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
-import { TelegramService } from "./telegram-service.ts";
+import { TelegramService, TelegramTokenRefusal } from "./telegram-service.ts";
+import type { TelegramApprovalActions } from "./telegram-approvals.ts";
 import { SlackService } from "./channels/slack/service.ts";
 import { SlackSocketTransport } from "./channels/slack/transport.ts";
 import type { SlackBinding } from "./channels/slack/event.ts";
@@ -677,7 +695,9 @@ const internalTurnOwners = new Map<string, {
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
 function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace): void {
-  internalCapabilities.begin(botId, threadId, generation);
+  const humanPrincipal=threadHumanPrincipal(threadId);
+  assertHumanPrincipal(humanPrincipal);
+  internalCapabilities.begin(botId, threadId, generation,humanPrincipal);
   memoryDispatches.delete(threadId);
   internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId,
     coordination: coordination ?? (depth === 0 ? coordinationBudget.begin(botId, generation) : undefined), tokens: {} });
@@ -691,7 +711,7 @@ function internalToken(botId: string, threadId: string, generation: string, kind
     return previous;
   }
   const token = internalCapabilities.mint({ botId, threadId, generation: owner.generation,
-    depth: owner.depth, skillAuthoring: owner.skillAuthoring, kind });
+    depth: owner.depth, skillAuthoring: owner.skillAuthoring, kind, humanPrincipal:threadHumanPrincipal(threadId) });
   owner.tokens[kind] = token;
   return token;
 }
@@ -936,7 +956,7 @@ const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directRuns = new IndependentThreadRuns<BotRecord>();
 function botForDirectThread(botId:string,threadId:string):BotRecord|null {
   const run=directRuns.get(threadId);
-  return run?{...run.snapshot,alwaysAllow:structuredClone(store.taskByThread(botId,threadId)?.alwaysAllow??run.snapshot.alwaysAllow),busy:true,activity:store.taskByThread(botId,threadId)?.activity??"working"}:store.projectBotForTask(botId,threadId);
+  return run?{...run.snapshot,alwaysAllow:isWorkspaceOwner(threadHumanPrincipal(threadId))?structuredClone(store.taskByThread(botId,threadId)?.alwaysAllow??run.snapshot.alwaysAllow):[],busy:true,activity:store.taskByThread(botId,threadId)?.activity??"working"}:store.projectBotForTask(botId,threadId);
 }
 function directThreadBusy(botId:string,threadId:string):boolean { return Boolean(directRuns.get(threadId)||store.taskByThread(botId,threadId)?.busy); }
 function requestedDirectBot(botId:string,requested:unknown):BotRecord {
@@ -1203,7 +1223,9 @@ type AskBotOutcome = {
 function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
-  const threadId = target.threadId;
+  const task=humanTask(store,targetBotId,threadHumanPrincipal(sourceThreadId??target.threadId));
+  if(!task)return Promise.resolve({status:"error",text:"(no audience task)"});
+  const threadId = task.threadId;
   const releaseSlot = holdCoordinationSlot(threadId);
   return new Promise((resolve) => {
     let text = "";
@@ -1233,6 +1255,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
     // the still-running work becomes a delegation claim ticket instead.
     const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
+      threadId,
       commsDepth: depth + 1,
       eventId,
       coordination,
@@ -1477,23 +1500,72 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
     MURAGE_HARNESS_URL:`http://127.0.0.1:${PORT}`,MURAGE_MEMORY_TOKEN:internalToken(botId,threadId,generation,"memory")}};
 }
 let memoryMigrationCursor: string | undefined;
+let memoryIdleLane = 0;
+let procedureReviews: ReturnType<typeof createProcedureReviewHost> | undefined;
+let procedureEvolution:ReturnType<typeof createProcedureEvaluator>|undefined;
+function evolutionModelIdentity():string|null {
+  const selected=memoryExtractorInstanceId();if(!selected)return null;
+  const instance=registry.get(selected);
+  if(!["@murage/flux-fast","@murage/flux-standard","@murage/flux-auto"].includes(selected)&&(!instance?.enabled||typeof instance.extractMemory!=="function"))return null;
+  return `${selected}:${providerBankRevision(cfg.modelProviders?.bank??"[]")}`;
+}
+/** Isolated verification may supply the existing evaluator dependencies through
+ * in-process preload code. Packaged desktop children never read this hook. */
+type VerificationProcedureEvaluator={worker:EvolutionRuntimeOptions["worker"];evaluate:NonNullable<EvolutionRuntimeOptions["evaluate"]>};
+const verificationProcedureEvaluator=process.env.MURAGE_ALLOW_DEV_DESKTOP_SECRET==="1"&&process.env.MURAGE_DESKTOP_PARENT!=="1"
+  ?(globalThis as Record<symbol,unknown>)[Symbol.for("murage.verification.procedure-evaluator")] as VerificationProcedureEvaluator|undefined:undefined;
+const evolutionRuntimeOptions:EvolutionRuntimeOptions={
+  availabilityIdentity:()=>{
+    const directory=process.env.MURAGE_GEPA_DIR;let resourceMetadata:unknown=null;
+    if(directory&&isAbsolute(directory)&&directory===join(process.env.MURAGE_RESOURCES_PATH??"","gepa-worker")){
+      try{const stat=lstatSync(join(directory,"manifest.json"));resourceMetadata=[stat.ino,stat.size,stat.mtimeMs,stat.isSymbolicLink()];}catch{/* Missing metadata is a stable unavailable fingerprint. */}
+    }
+    return createHash("sha256").update(JSON.stringify([evolutionModelIdentity(),directory??null,process.env.MURAGE_GEPA_MANIFEST_SHA256??null,resourceMetadata,memoryState().policyRevision,readMemoryLearning(database()).revision])).digest("hex");
+  },
+  modelIdentity:evolutionModelIdentity,
+  worker:()=>{
+    const directory=process.env.MURAGE_GEPA_DIR,pin=process.env.MURAGE_GEPA_MANIFEST_SHA256,resources=process.env.MURAGE_RESOURCES_PATH;
+    if(process.env.MURAGE_DESKTOP_PARENT!=="1"||!directory||!isAbsolute(directory)||!resources||directory!==join(resources,"gepa-worker")||!pin)return {available:false,reason:"GEPA_RESOURCE_UNAVAILABLE"};
+    try{
+      const admitted=verifyGepaBundle(directory,`${process.platform}-${process.arch}`,pin),cwd=mkdtempSync(join(DATA_DIR,".memory-evolution-"));
+      return {available:true,workerDigest:admitted.manifestSha256,command:{executable:admitted.executable,args:[],cwd,expectedPythonVersion:admitted.expectedPythonVersion},cleanup:()=>rmSync(cwd,{recursive:true,force:true})};
+    }catch{return {available:false,reason:"GEPA_RESOURCE_UNAVAILABLE"};}
+  },
+  resolveExtractor:identity=>identity===evolutionModelIdentity()?resolveMemoryExtractor(memoryExtractorInstanceId(),registry.instances()):null,
+};
+const memoryEvolution=createMemoryEvolutionRuntime(evolutionRuntimeOptions);
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
   if(providerConfigBusy||providerBankDispatchFenced())return;
   const selected=memoryExtractorInstanceId();
-  if(!selected)return;
   const extractor=resolveMemoryExtractor(selected,registry.instances());
   fluxMediaRequests++;
-  try{return await consolidateMemorySource(jobId,extractor,signal);}finally{fluxMediaRequests--;}
+  try{
+    await captureBotReveals(jobId,()=>({bots:store.bots,groups:store.groups}),extractor,signal);
+    if(extractor)return await consolidateMemorySource(jobId,extractor,signal);
+  }finally{fluxMediaRequests--;}
 },onIdleConsolidation:async(signal)=>{
   if(providerConfigBusy||providerBankDispatchFenced())return;
   const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
   memoryMigrationCursor = migrated.nextCursor;
   syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
   const selected=memoryExtractorInstanceId();
-  const extractor=resolveMemoryExtractor(selected,registry.instances());
-  if(!extractor)return;
-  const [jobId]=pendingMemoryConsolidationJobs(1);
-  if(jobId){fluxMediaRequests++;try{return await consolidateMemorySource(jobId,extractor,signal);}finally{fluxMediaRequests--;}}
+  const [revealJob]=pendingBotRevealJobs(1);
+  const [jobId]=selected?pendingMemoryConsolidationJobs(1):[];
+  const [reviewId]=procedureReviews?pendingProcedureReviews(1,procedureReviews.host):[];
+  const evolutionId=memoryEvolution.pending();
+  const pending=[revealJob,jobId,reviewId,evolutionId];
+  let lane=-1;
+  for(let offset=0;offset<4;offset++){const next=(memoryIdleLane+offset)%4;if(pending[next]){lane=next;break;}}
+  if(lane<0)return;
+  memoryIdleLane=(lane+1)%4;
+  const extractor=lane<2?resolveMemoryExtractor(selected,registry.instances()):null;
+  fluxMediaRequests++;
+  try{
+    if(lane===0)return await captureBotReveals(revealJob,()=>({bots:store.bots,groups:store.groups}),extractor,signal);
+    if(lane===1)return await consolidateMemorySource(jobId,extractor,signal);
+    if(lane===3)return await memoryEvolution.run(evolutionId!,signal);
+    return await processProcedureReview(reviewId,procedureReviews!.host,signal);
+  }finally{fluxMediaRequests--;}
 }});
 memoryWorker.start();
 const sendSequencer = new SendSequencer();
@@ -3270,7 +3342,7 @@ bus.subscribe((event: RuntimeEvent) => {
         role: "bot",
         kind: "activity",
         ...(event.turnId ? { turnId: event.turnId } : {}),
-        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, authRequired: event.authRequired, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}), ...(diagnostic ? { diagnostic } : {}) },
+        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, ERROR_MESSAGE_MAX)}`, ok: false, setup: event.setup, authRequired: event.authRequired, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.errorKind ? { errorKind: event.errorKind } : {}), ...(event.providerError ? { providerError: event.providerError } : {}), ...(diagnostic ? { diagnostic } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful
@@ -3657,7 +3729,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
-    const targetThreadId = store.bot(toBotId)?.threadId;
+    const targetThreadId = humanTask(store,toBotId,threadHumanPrincipal(sourceThreadId))?.threadId;
     const releaseSlot = targetThreadId ? holdCoordinationSlot(targetThreadId) : () => {};
     const target = store.bot(toBotId);
     if (targetThreadId) {
@@ -3701,6 +3773,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       });
     };
     return startTurn(toBotId, text, {
+      threadId:targetThreadId,
       commsDepth,
       eventId,
       coordination,
@@ -4061,6 +4134,13 @@ async function startTurn(
   const threadId = opts?.threadId ?? profile.threadId;
   const bot=store.projectBotForTask(botId,threadId);
   if(!bot)throw Object.assign(new Error("no such task"),{status:404});
+  const humanPrincipal=threadHumanPrincipal(threadId);
+  assertHumanPrincipal(humanPrincipal);
+  const humanIsOwner=isWorkspaceOwner(humanPrincipal);
+  if(!humanIsOwner){
+    if(!opts?.automationSource&&!opts?.commsDepth&&!opts?.cardContinuation&&!opts?.memoryRedispatch)throw Object.assign(new Error("This conversation belongs to a channel person. Start a new owner task to chat."),{status:403});
+    bot.autoApprove=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
+  }
   if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
@@ -4089,6 +4169,7 @@ async function startTurn(
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
   const { instance, providerRoute } = turnRouting(bot, opts?.runOn);
+  if(!humanIsOwner&&(instance.driverKind==="boxAgent"||opts?.runOn==="cloud"))throw Object.assign(new Error("This channel person has no cloud computer grant. Choose a chat engine."),{status:403});
   const instanceId = instance.instanceId;
   const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
   activeProviderSelections.delete(threadId);
@@ -4183,7 +4264,7 @@ async function startTurn(
     `You are ${bot.name}, a personal bot in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
-    bot.persona && `Personality: ${bot.persona}`,
+    `Personality: ${personalityImprint(bot.persona)}`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -4206,15 +4287,18 @@ async function startTurn(
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       let browser: Awaited<ReturnType<typeof browserIntegration>> = null;
+      const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
+        createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
+      const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const selectedSkills = selectBundledSkills(
         text,
         [
           ...(instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : []),
           ...(skillAuthoring ? ["skillAuthoring"] : []),
         ],
-        availableSkills(),
+        pinnedProcedures.catalogue,
       );
-      if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
+      if (humanIsOwner && selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration();
       }
       // the user's connected apps, but only to a driver that can mount
@@ -4228,7 +4312,7 @@ async function startTurn(
       // user-configured MCP servers (config.json mcpServers): same rule as
       // composio — only to a driver that can mount them. Their tools are
       // never pre-allowed, so every call rides the normal permission flow.
-      if (instance.adapter.capabilities.customMcp === true) {
+      if (humanIsOwner && instance.adapter.capabilities.customMcp === true) {
         const custom = customMcpServers(cfg);
         if (Object.keys(custom).length) integrations.custom = custom;
       }
@@ -4238,10 +4322,14 @@ async function startTurn(
       // MEMORY.md lives. API/box engines have no local filesystem story.
       const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
       const privateWorkspace = worksInWorkspace ? ensureTaskWorkspace(bot.id,threadId) : undefined;
+      if (privateWorkspace && opts?.runOn !== "cloud") {
+        migrateSkillDiscoveryToTasks(bot.id, !store.tasks(bot.id).some(other => other.threadId !== threadId && other.busy) && !activeGroupTurnForBot(bot.id));
+        preparePinnedProcedures(bot.id, threadId, procedurePin, true, procedureContext(bot.id,threadId));
+      }
       const skillInstructions = renderSkillInstructions(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
       });
-      const packagePlaybooks = installedPlaybookInstructions(text, bot.playbooks);
+      const packagePlaybooks = installedPlaybookInstructions(text, pinnedProcedures.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
@@ -4250,6 +4338,7 @@ async function startTurn(
       // pin the task to the default so the header chip never shows the
       // bot's folder for a task that runs elsewhere.
       if (opts?.runOn === "cloud") store.pinTaskCwd(bot.id, threadId, undefined, { none: true });
+      if(!humanIsOwner&&privateWorkspace)store.patchTask(bot.id,threadId,{cwd:privateWorkspace});
       const pinnedCwd =
         privateWorkspace && opts?.runOn !== "cloud"
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
@@ -4268,7 +4357,7 @@ async function startTurn(
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
-      if (dwebUrl) integrations.dweb = { url: dwebUrl };
+      if (humanIsOwner && dwebUrl) integrations.dweb = { url: dwebUrl };
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
       // Mounting host tools does not reserve the host for this entire turn.
       // The broker arbitrates actual host actions; private screens and other
@@ -4499,7 +4588,7 @@ async function startTurn(
       if(computerKind&&!directRuns.claim(run,[...(computerKind==="local"?[]:[computerKind==="vm"?"computer:vm":`computer:bot:${bot.id}`]),`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
       const liveBot = store.bot(bot.id);
       if (
-        liveBot &&
+        humanIsOwner && liveBot &&
         builtInBrowserEnabled(cfg) &&
         liveBot.browser !== false &&
         instance.adapter.capabilities.browserMcp === true
@@ -4593,6 +4682,7 @@ async function startTurn(
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
       submissionBoundary.started();
+      preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
           if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
@@ -4655,7 +4745,7 @@ async function startTurn(
             : "") +
           routinePrompt +
           learnPrompt +
-          (privateWorkspace ? skillsSystemPrompt(bot.id) : "") +
+          (privateWorkspace ? pinnedProcedures.importedPrompt : "") +
           skillInstructions +
           packagePlaybooks +
           outputInstructions +
@@ -4947,6 +5037,8 @@ async function interruptRoutineGroupGoal(
 }
 
 routines = new RoutineManager({
+  validateInstructionPromotion: (routine, proposal) => procedureReviews?.validateRoutinePromotion(routine, proposal) ?? false,
+  validateInstructionEvidence: (context, evidence) => procedureReviews?.validateRoutineEvidence(context, evidence) ?? false,
   validateWatchSource,
   readWatchSource: async (ownerBotId, botId, source, signal) => {
     validateWatchSource(ownerBotId, botId, source);
@@ -4961,9 +5053,9 @@ routines = new RoutineManager({
     (origin.platform === "slack" && slackBinding?.connectionId === origin.connectionId && slackBinding.chiefBotId === botId && slack?.isCurrent(slackBinding) === true) ||
     (origin.platform === "discord" && discordBinding?.connectionId === origin.connectionId && discordBinding.chiefBotId === botId && discord?.isCurrent(discordBinding) === true)),
   emit: broadcast,
-  channelThread: botId => {
-    const bot = store.bot(botId);
-    return bot && !bot.hidden ? { threadId: bot.threadId } : null;
+  channelThread: (botId,principal) => {
+    if(!principal)throw new Error("HUMAN_LINK_REQUIRED");
+    return humanTask(store,botId,principal);
   },
   botState: (botId) => {
     const bot = store.bot(botId);
@@ -5001,21 +5093,7 @@ routines = new RoutineManager({
       goalRunId: runId,
     });
   },
-  interruptTurn: async (botId, threadId, runOn) => {
-    const bot = store.bot(botId);
-    cancelDirectTurnDispatch(botId, threadId);
-    const instance = runOn === "cloud"
-      ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-      : bot
-        ? registry.get(bot.modelSelection.instanceId)
-        : null;
-    try {
-      await releaseBrowserCapabilityForThread(threadId);
-      await instance?.adapter.interruptTurn(threadId);
-    } finally {
-      closeOpenApprovals(threadId);
-    }
-  },
+  interruptTurn: async (botId, threadId) => { await interruptDirectThread(botId,threadId); },
   interruptGoal: interruptRoutineGroupGoal,
   onRunChanged: syncRoutineRunToSource,
   onRunFailed: (run) => {
@@ -5024,6 +5102,27 @@ routines = new RoutineManager({
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
   },
+});
+procedureReviews = createProcedureReviewHost({
+  store,
+  routines: () => routines,
+  automaticFailureRetry:false,
+  evaluate:(snapshot,signal)=>procedureEvolution!.evaluate(snapshot,signal),
+  evaluationReadiness:snapshot=>procedureEvolution?.readiness(snapshot)??{ready:false,reason:"PROCEDURE_CORPUS_ADMISSION_REQUIRED"},
+  onPublished:(snapshot,receipt,current)=>procedureEvolution?.published(snapshot,receipt,current),
+  validateEvidence: (context, evidence) => {
+    try { assertSkillProcedureEvidence({ audienceKey: context.audienceKey, allowedScopeIds: context.scopeIds }, evidence); return true; } catch { return false; }
+  },
+  skills: {
+    current: (botId, name, context) => skillEvolutionDescriptor(botId, name, { audienceKey: context.audienceKey, allowedScopeIds: context.scopeIds }),
+    publish: (snapshot, receipt, context) => publishEvaluatedScopedSkill(snapshot, receipt, { audienceKey: context.audienceKey, allowedScopeIds: context.scopeIds }),
+    wasPublished: (snapshot, receipt, context) => wasEvaluatedScopedSkillPublished(snapshot, receipt, { audienceKey: context.audienceKey, allowedScopeIds: context.scopeIds }),
+  },
+});
+procedureEvolution=createProcedureEvaluator({...evolutionRuntimeOptions,...(verificationProcedureEvaluator?{worker:verificationProcedureEvaluator.worker,evaluate:verificationProcedureEvaluator.evaluate}:{}),host:procedureReviews.host,readInstruction:procedureReviews.readInstruction,
+  modelLabel:()=>{const selected=memoryExtractorInstanceId();return selected?.startsWith("@murage/flux-")?`Flux Router · ${selected.slice("@murage/flux-".length)}`:selected?registry.get(selected)?.displayName??"Selected memory model":"No selected memory model";},
+  audienceLabel:target=>{const bot=store.bot(target.ownerId),group=store.groups.find(item=>item.threadId===target.threadId||item.tasks?.some(task=>task.threadId===target.threadId));return group?`Room: ${group.name}`:`Private task audience for ${bot?.name??"selected bot"}`;},
+  workerReady:verificationProcedureEvaluator?()=>verificationProcedureEvaluator.worker().available:()=>Boolean(process.env.MURAGE_DESKTOP_PARENT==="1"&&process.env.MURAGE_GEPA_DIR&&process.env.MURAGE_GEPA_MANIFEST_SHA256&&existsSync(join(process.env.MURAGE_GEPA_DIR,"manifest.json"))),
 });
 for (const run of routines.listRuns().filter(run => run.watch && ["changed", "failed"].includes(run.watch.outcome))) syncRoutineRunToSource(run);
 // The scheduler receipt and room transcript live in separate durable stores.
@@ -5075,11 +5174,23 @@ if (recoveryOwners.length > 0) {
   );
 }
 routines.start();
-const telegram = new TelegramService({ dataDir: DATA_DIR,
-  isCurrentTarget: targetBotId => store.workspaceChief()?.id === targetBotId,
-  approvals: targetBotId => {
+let telegramHumanBindingId:string|undefined;
+let slackHumanBindingId:string|undefined;
+let discordHumanBindingId:string|undefined;
+function channelHumanAttention(bindingId:string|undefined){
+  try{if(!bindingId)throw new Error("unlinked");const principal=resolveHumanBinding(bindingId);return {humanBindingState:"linked" as const,humanPersonId:principal.personId};}
+  catch{return {humanBindingState:"link-required" as const,humanBindingAttention:"Link the verified channel account to yourself or another person in Memory settings before sending messages."};}
+}
+function channelHumanIsOwner(bindingId:string|undefined){try{return !!bindingId&&isWorkspaceOwner(resolveHumanBinding(bindingId));}catch{return false;}}
+const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefined) => TelegramApprovalActions = (targetBotId,bindingId) => {
+    const boundBot=()=>{
+      const id=bindingId?.();if(!channelHumanIsOwner(id))return null;
+      const task=humanTask(store,targetBotId,resolveHumanBinding(id!));
+      return task?store.projectBotForTask(targetBotId,task.threadId):null;
+    };
     const pending = () => {
-      const bot = store.bot(targetBotId);
+      if(!channelHumanIsOwner(bindingId?.()))return [];
+      const bot = boundBot();
       if (!bot || bot.hidden || store.workspaceChief()?.id !== targetBotId) return [];
       return store.messagesFor(bot.threadId).flatMap(message => {
         const card = message.card;
@@ -5103,15 +5214,16 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     // (plain JS on purpose: telegram-permission-wiring.test.ts evaluates this expression as written)
     return { pending, resolve: async (approval, behavior) => {
       const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
-      const bot = store.bot(targetBotId);
+      const bot = boundBot();
       if (!current || !bot) return false;
       const card = store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card;
       // a question is never answered with allow/deny
       if (!card?.requestId || isQuestionCard(card)) return false;
-      return (await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name })) !== "unavailable";
+      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name });
+      return outcome === (behavior === "allow" ? "allowed-once" : "rejected");
     }, answer: async (approval, reply) => {
       const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
-      const bot = store.bot(targetBotId);
+      const bot = boundBot();
       const card = current && bot ? store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card : undefined;
       if (!bot || !card?.requestId || !isQuestionCard(card)) return { ok: false, error: "This question is no longer open." };
       // The same validation and scope as the desktop card: the answer is
@@ -5122,21 +5234,29 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
       const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, decided.behavior, decided.message, { id: bot.id, name: bot.name }, decided.answers);
       return outcome === "unavailable" ? { ok: false, error: "Your bot stopped waiting for this answer." } : { ok: true };
     } };
-  },
+  };
+const telegram = new TelegramService({ dataDir: DATA_DIR,
+  isCurrentTarget: targetBotId => store.workspaceChief()?.id === targetBotId,
+  approvals: targetBotId=>channelApprovalActions(targetBotId,()=>telegramHumanBindingId),
+  onVerifiedSender:(connectionId,userId)=>{telegramHumanBindingId=observeVerifiedHuman({platform:"telegram",connectionId,authorityId:connectionId,userId});},
   enqueue: (connectionId, targetBotId, input) => {
     if (store.workspaceChief()?.id !== targetBotId || dataWritersStopped) throw new Error("Telegram target is unavailable");
+    const bindingId=observeVerifiedHuman({platform:"telegram",connectionId,authorityId:connectionId,userId:input.senderId});
+    const humanPrincipal=resolveHumanDelivery(bindingId,input.deliveryId);
     const webhookId = "telegram:" + connectionId;
     const duplicate = routines!.findWebhookDelivery(webhookId, input.deliveryId);
     if (duplicate) return duplicate;
     if (routines!.activeWebhookRunCount(webhookId) >= 3) throw new Error("Telegram has three unfinished tasks; review them in Murage.");
     return routines!.enqueueWebhook({ webhookId, telegramConnectionId: connectionId, webhookName: "Telegram message",
-      botId: targetBotId, runOn: "ember", receivedAt: Date.now(), ...input });
+      botId: targetBotId, runOn: "ember", receivedAt: Date.now(), ...input,humanPrincipal });
   },
   runResult: id => {
     const run = routines!.listRuns().find(run => run.id === id);
+    if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
     return run ? { status: run.status, output: run.output && redactSecretsInText(run.output), error: run.error } : null;
   },
   revokeRuns: async connectionId => {
+    revokeHumanConnection("telegram",connectionId);
     for (const run of routines!.listRuns().filter(run => run.telegramConnectionId === connectionId)) {
       routines!.closeEventBudget(run.id);
       if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
@@ -5156,7 +5276,7 @@ if (cfg.telegram?.botToken && cfg.telegram.targetBotId) {
 
 function slackStatus() {
   const status = slack?.status() ?? { state: "idle", paired: false, enabled: false, error: null, nextRetryAt: null, pending: 0, uncertain: 0, rejected: 0, needsReview: 0 };
-  return { ...status, paired: slackRequiresRevoke && status.paired, requiresRevoke: slackRequiresRevoke, busy: slackOperationBusy,
+  return { ...status, ...channelHumanAttention(slackHumanBindingId), paired: slackRequiresRevoke && status.paired, requiresRevoke: slackRequiresRevoke, busy: slackOperationBusy,
     appConfigured: Boolean(cfg.slack?.appToken), botConfigured: Boolean(cfg.slack?.botToken),
     configured: Boolean(cfg.slack?.appToken && cfg.slack.botToken) };
 }
@@ -5164,27 +5284,32 @@ function makeSlack(targetBotId: string) {
   const { teamId, appId, ownerUserId, appToken, botToken } = cfg.slack ?? {};
   if (!teamId || !appId || !ownerUserId || !appToken || !botToken) throw new Error("Save Slack app and bot credentials and choose the workspace, app and owner first.");
   return new SlackService({ dataDir: DATA_DIR, chosen: { teamId, appId, ownerUserId, chiefBotId: targetBotId },
+    approvals: channelApprovalActions(targetBotId,()=>slackHumanBindingId),
     transport: () => new SlackSocketTransport({ appToken, botToken }),
     isCurrentChief: botId => !dataWritersStopped && store.workspaceChief()?.id === botId,
     runs: binding => {
       slackBinding = binding;
+      const humanBindingId=slackHumanBindingId=observeVerifiedHuman({platform:"slack",connectionId:binding.connectionId,authorityId:binding.teamId,userId:binding.ownerUserId});
       return {
         enqueue: input => {
           if (dataWritersStopped || store.workspaceChief()?.id !== binding.chiefBotId || !slack?.isCurrent(binding)) throw new Error("Slack binding is unavailable");
+          const humanPrincipal=resolveHumanDelivery(humanBindingId,input.deliveryId);
           const webhookId = "slack:" + binding.connectionId;
           const duplicate = routines!.findWebhookDelivery(webhookId, input.deliveryId);
           if (duplicate) return duplicate;
           if (routines!.activeWebhookRunCount(webhookId) >= 3) throw new Error("Slack has three unfinished tasks; review them in Murage.");
           return routines!.enqueueWebhook({ webhookId, webhookName: "Slack message", channelOrigin: { platform: "slack", connectionId: binding.connectionId },
-            botId: binding.chiefBotId, runOn: "ember", receivedAt: Date.now(), ...input });
+            botId: binding.chiefBotId, runOn: "ember", receivedAt: Date.now(), ...input,humanPrincipal });
         },
         result: id => {
           const run = routines!.listRuns().find(item => item.id === id && item.channelOrigin?.platform === "slack" && item.channelOrigin.connectionId === binding.connectionId);
+          if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
           return run ? { status: run.status, output: run.output && redactSecretsInText(run.output.replaceAll(appToken, "«redacted»").replaceAll(botToken, "«redacted»")), error: run.error ? "Review the task in Murage." : undefined } : null;
         },
       };
     },
     revokeRuns: async connectionId => {
+      revokeHumanConnection("slack",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "slack" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
         if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
@@ -5209,7 +5334,7 @@ if (cfg.slack?.appToken && cfg.slack.botToken && cfg.slack.targetBotId) {
 
 function discordStatus() {
   const status = discord?.status() ?? { state: "idle", paired: false, enabled: false, error: null, nextRetryAt: null, pending: 0, uncertain: 0, rejected: 0, needsReview: 0 };
-  return { ...status, paired: discordRequiresRevoke && status.paired, requiresRevoke: discordRequiresRevoke, busy: discordOperationBusy,
+  return { ...status, ...channelHumanAttention(discordHumanBindingId), paired: discordRequiresRevoke && status.paired, requiresRevoke: discordRequiresRevoke, busy: discordOperationBusy,
     botConfigured: Boolean(cfg.discord?.botToken),
     configured: Boolean(cfg.discord?.botToken) };
 }
@@ -5217,27 +5342,32 @@ function makeDiscord(targetBotId: string) {
   const { applicationId, ownerUserId, botToken } = cfg.discord ?? {};
   if (!applicationId || !ownerUserId || !botToken) throw new Error("Save Discord bot credentials and choose the application and owner first.");
   return new DiscordService({ dataDir: DATA_DIR, chosen: { applicationId, ownerUserId, chiefBotId: targetBotId },
+    approvals: channelApprovalActions(targetBotId,()=>discordHumanBindingId),
     transport: () => new DiscordGatewayTransport({ botToken }),
     isCurrentChief: botId => !dataWritersStopped && store.workspaceChief()?.id === botId,
     runs: binding => {
       discordBinding = binding;
+      const humanBindingId=discordHumanBindingId=observeVerifiedHuman({platform:"discord",connectionId:binding.connectionId,authorityId:binding.applicationId,userId:binding.ownerUserId});
       return {
         enqueue: input => {
           if (dataWritersStopped || store.workspaceChief()?.id !== binding.chiefBotId || !discord?.isCurrent(binding)) throw new Error("Discord binding is unavailable");
+          const humanPrincipal=resolveHumanDelivery(humanBindingId,input.deliveryId);
           const webhookId = "discord:" + binding.connectionId;
           const duplicate = routines!.findWebhookDelivery(webhookId, input.deliveryId);
           if (duplicate) return duplicate;
           if (routines!.activeWebhookRunCount(webhookId) >= 3) throw new Error("Discord has three unfinished tasks; review them in Murage.");
           return routines!.enqueueWebhook({ webhookId, webhookName: "Discord message", channelOrigin: { platform: "discord", connectionId: binding.connectionId },
-            botId: binding.chiefBotId, runOn: "ember", receivedAt: Date.now(), ...input });
+            botId: binding.chiefBotId, runOn: "ember", receivedAt: Date.now(), ...input,humanPrincipal });
         },
         result: id => {
           const run = routines!.listRuns().find(item => item.id === id && item.channelOrigin?.platform === "discord" && item.channelOrigin.connectionId === binding.connectionId);
+          if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
           return run ? { status: run.status, output: run.output && redactSecretsInText(run.output.replaceAll(botToken, "«redacted»")), error: run.error ? "Review the task in Murage." : undefined } : null;
         },
       };
     },
     revokeRuns: async connectionId => {
+      revokeHumanConnection("discord",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "discord" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
         if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
@@ -5610,7 +5740,12 @@ async function runGroupMemberTurn(
   const latestUser = [...store.activePath(threadId)].reverse().find(
     (message) => message.role === "user" && message.kind === "text" && message.text,
   );
-  const skills = availableSkills();
+  const procedureHolder = group.dm ? group : store.groupTaskByThread(group.id, threadId)!;
+  const procedurePin = procedureHolder.procedurePins?.[bot.id] ?? store.pinGroupProcedures(group.id, threadId, bot.id,
+    {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)),
+      ...(procedureHolder.pinnedCwd !== undefined ? {legacyRoomWorkspace:true as const} : {})});
+  const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
+  const skills = pinnedProcedures.catalogue;
   const selectedSkills = mergeSkills(
     selectBundledSkills(
       serializeRoomContext(threadId, userName),
@@ -5752,7 +5887,7 @@ async function runGroupMemberTurn(
     `You are ${bot.name}, a bot in the room "${group.name}" in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
-    bot.persona && `Personality: ${bot.persona}`,
+    `Personality: ${personalityImprint(bot.persona)}`,
     `Room members: ${roster}, and ${userName} (the human).`,
     group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
     // A room turn is the ONE place a Chief runs at hop 0 and therefore holds
@@ -5786,7 +5921,11 @@ async function runGroupMemberTurn(
   // same workspace + memory as a 1:1 turn — the room is a different
   // conversation, not a different bot
   const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
-  const workspace = worksInWorkspace ? ensureWorkspace(bot.id) : undefined;
+  const workspace = worksInWorkspace ? (procedurePin.legacyRoomWorkspace ? ensureWorkspace(bot.id) : ensureTaskWorkspace(bot.id, threadId)) : undefined;
+  if (workspace) {
+    migrateSkillDiscoveryToTasks(bot.id, !store.tasks(bot.id).some(other => other.threadId !== threadId && other.busy));
+    preparePinnedProcedures(bot.id, threadId, procedurePin, true, procedureContext(bot.id,threadId));
+  }
   // The room's folder pins here — on the first turn that actually
   // dispatches, not at PATCH time — so a folder set on a never-used room
   // still takes effect, while a room that already worked somewhere never
@@ -5817,9 +5956,9 @@ async function runGroupMemberTurn(
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
     (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
-    (workspace ? skillsSystemPrompt(bot.id) : "") +
+    (workspace ? pinnedProcedures.importedPrompt : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
-    installedPlaybookInstructions(text, bot.playbooks);
+    installedPlaybookInstructions(text, pinnedProcedures.playbooks);
 
   // run the turn and wait for it to settle, folding the reply text so a
   // chained @mention can be routed afterwards
@@ -6007,6 +6146,7 @@ async function runGroupMemberTurn(
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       submissionBoundary.started();
+      preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       return guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
           if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
@@ -6559,6 +6699,7 @@ function startGroupTurn(
   // Capture the chosen thread once. Manual sends use the active task; a
   // scheduled team goal supplies its detached background task explicitly.
   const threadId = options.threadId ?? group.threadId;
+  if(!isWorkspaceOwner(threadHumanPrincipal(threadId)))throw Object.assign(new Error("This is a channel person’s delegated conversation. Start an owner room to send a message."),{status:403});
   const ownsThread = group.dm
     ? group.threadId === threadId
     : Boolean(store.groupTaskByThread(group.id, threadId));
@@ -7470,7 +7611,7 @@ function configStatus() {
     webSearch: { provider: cfg.webSearch?.provider ?? "engine",
       tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey), firecrawlConfigured: Boolean(cfg.webSearch?.firecrawlApiKey) },
     notifications: resolveNotificationPreferences(cfg.notifications),
-    telegram: { configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status() },
+    telegram: { configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status(),...channelHumanAttention(telegramHumanBindingId) },
     slack: slackStatus(),
     discord: discordStatus(),
     // not a secret — the sidebar shows it
@@ -8452,8 +8593,8 @@ const server = createServer(async (req, res) => {
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
       const threads = [
-        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: bot.name, botId: bot.id }))),
-        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: group.name }))),
+        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
+        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
       ];
       const result = inboxRequest(database(), { method, path,
         query: { view: (url.searchParams.get("view") ?? "needs-you") as InboxView, query: url.searchParams.get("query") ?? "",
@@ -8466,7 +8607,15 @@ const server = createServer(async (req, res) => {
       try {
         const body=method==="POST"?await readBody(req):undefined;
         const result=await memoryOwnerRoute(path,body,ownerMemoryTicket(),{bots:store.bots,groups:store.groups},{
+          evolution:memoryEvolution,
+          procedureEvolution,
           runtimeStatus:()=>memoryWorker.status(),
+          humanBindingChanged:async(bindingId)=>{
+            const roots=routines!.listRuns().filter(run=>run.humanPrincipal?.bindingId===bindingId&&["queued","running","waiting"].includes(run.status));
+            const rootThreads=new Set(roots.map(run=>run.threadId));
+            for(const run of roots)await routines!.cancelRun(run.id);
+            for(const bot of store.bots)for(const run of directRuns.forBot(bot.id)){if(!rootThreads.has(run.threadId)&&threadHumanPrincipal(run.threadId).bindingId===bindingId)await interruptDirectThread(bot.id,run.threadId);}
+          },
           startSkillReview:async({botId,source,request})=>{
             const target=store.bot(botId);
             const instance=target?registry.get(target.modelSelection.instanceId):null;
@@ -8536,6 +8685,7 @@ const server = createServer(async (req, res) => {
         ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
+        assertHumanPrincipal(internalClaim.humanPrincipal??threadHumanPrincipal(internalClaim.threadId));
         if (!internalCapabilities.isActive(internalClaim) || !store.bot(internalClaim.botId)
           || !connectorThread(internalClaim.botId, internalClaim.threadId)) {
           throw Object.assign(new Error("internal turn capability is no longer active"), { status: 401 });
@@ -8543,12 +8693,21 @@ const server = createServer(async (req, res) => {
       };
       const internalOwner = internalTurnOwners.get(internalClaim.threadId);
       if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401, { error: "internal turn owner is unavailable" });
+      requireActiveInternal();
+      if(!isWorkspaceOwner(threadHumanPrincipal(internalClaim.threadId)) && requiredKind!=="memory" && !["/api/internal/agents","/api/internal/ask-bot","/api/internal/delegate-bot","/api/internal/check-delegation","/api/internal/wait-delegation"].includes(path) && !/^\/api\/internal\/delegations\/[\w-]{4,64}$/.test(path))return json(res,403,{error:"This channel person has no workspace management, connector, or computer grant."});
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
         // Turn-local handles (m1, m2, …) resolve only through the receipt of
         // the dispatch this capability was minted for (MEMJSON2).
-        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker,memoryDispatches.get(internalClaim.threadId)));
+        const extractor = !providerConfigBusy && !providerBankDispatchFenced() && /\/(?:save|propose-correction)$/.test(path)
+          ? resolveMemoryExtractor(memoryExtractorInstanceId(),registry.instances()) : null;
+        const cancelled = new AbortController();
+        const cancel = () => cancelled.abort();
+        req.once("aborted",cancel);res.once("close",cancel);
+        if(extractor?.ground){const ground=extractor.ground;extractor.ground=(input,maxTokens,signal)=>ground(input,maxTokens,AbortSignal.any([signal,cancelled.signal]));}
+        try{return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker,memoryDispatches.get(internalClaim.threadId),extractor));}
+        finally{req.off("aborted",cancel);res.off("close",cancel);}
       }
       const internalEventId = internalOwner.eventId;
       const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
@@ -9028,7 +9187,7 @@ const server = createServer(async (req, res) => {
           currentTarget = freshTarget;
         }
         requireActiveInternal();
-        const channel = getOrCreateChannel(store, currentFrom, currentTarget);
+        const channel = getOrCreateChannel(store, currentFrom, currentTarget,fromThreadId);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         admitEventAction("handoff", eventAdmissionId);
@@ -9036,7 +9195,8 @@ const server = createServer(async (req, res) => {
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
-        if (outcome.status === "timeout" && !delegationWatch.has(currentTarget.threadId)) {
+        const peerThreadId=humanTask(store,toBotId,threadHumanPrincipal(fromThreadId))!.threadId;
+        if (outcome.status === "timeout" && !delegationWatch.has(peerThreadId)) {
           // The peer's turn is still running — only the wait ended. Convert
           // the ask into a delegation claim ticket: the watch mirrors the
           // terminal state into the channel AND the asker's thread when the
@@ -9044,7 +9204,7 @@ const server = createServer(async (req, res) => {
           // Losing the reply was the old behavior, and it read as "the bots
           // don't respond to each other".
           const taskId = newId();
-          delegationWatch.set(currentTarget.threadId, {
+          delegationWatch.set(peerThreadId, {
             channelId: channel.id,
             toBotId,
             toBotName: currentTarget.name,
@@ -9587,12 +9747,31 @@ const server = createServer(async (req, res) => {
     // also start disabled, until explicitly enabled through PATCH below.
     const routineWrite =
       (path === "/api/routines" && method === "POST") ||
+      (/^\/api\/routines\/[\w-]+\/instructions\/rollback$/.test(path) && method === "POST") ||
       (/^\/api\/routines\/[\w-]+$/.test(path) && (method === "PATCH" || method === "DELETE"));
     if (routineWrite && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
     }
     if (path === "/api/routines" && method === "POST") {
       return json(res, 201, { routine: routines!.create(await readBody(req)) });
+    }
+    const instructionRollback = path.match(/^\/api\/routines\/([\w-]+)\/instructions\/rollback$/);
+    if (instructionRollback && method === "POST") {
+      const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body) ||
+          typeof body.expectedRevision !== "string" || !body.expectedRevision || body.expectedRevision.length > 200 ||
+          typeof body.targetRevision !== "string" || !body.targetRevision || body.targetRevision.length > 200 ||
+          !Number.isSafeInteger(body.expectedUpdatedAt) || body.expectedUpdatedAt < 0 ||
+          Object.keys(body).some(key => !["expectedRevision", "expectedUpdatedAt", "targetRevision"].includes(key))) {
+        return json(res, 400, { error: "Provide the current instruction revision and the retained revision to restore." });
+      }
+      try {
+        const routine = routines!.rollbackInstructions(instructionRollback[1], body.expectedRevision, body.expectedUpdatedAt, body.targetRevision);
+        return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return json(res, detail === "ROUTINE_INSTRUCTION_CONFLICT" ? 409 : 400, { error: detail });
+      }
     }
     let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
@@ -10247,7 +10426,7 @@ const server = createServer(async (req, res) => {
       } finally { discordOperationBusy = false; }
     }
     if (path === "/api/telegram/status" && method === "GET") return json(res, 200, {
-      configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status() });
+      configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status(),...channelHumanAttention(telegramHumanBindingId) });
     if (path === "/api/telegram/pair" && method === "POST") {
       const body = await readBody(req);
       const target = store.workspaceChief();
@@ -12056,6 +12235,26 @@ const server = createServer(async (req, res) => {
       return json(res, 201, { installed, errors });
     }
 
+    m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)\/(history|rollback)$/);
+    if (m && ((m[3] === "history" && method === "GET") || (m[3] === "rollback" && method === "POST"))) {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res,404,{error:"no such route"});
+      if (!store.bot(m[1]!)) return json(res,404,{error:"no such bot"});
+      if (m[3] === "history") {
+        const threadId=url.searchParams.get("threadId");
+        if(threadId!==null&&!/^[\w-]+$/.test(threadId))return json(res,400,{error:"Invalid procedure thread"});
+        const context=threadId?procedureContext(m[1]!,threadId):undefined;
+        if(threadId&&!context)return json(res,409,{error:"Procedure audience is unavailable"});
+        const history=context?scopedSkillRevisionHistory(m[1]!,m[2]!,context):skillRevisionHistory(m[1]!,m[2]!);
+        return history ? json(res,200,history) : json(res,404,{error:"no such skill"});
+      }
+      const input=z.object({expectedRevision:z.string().min(1).max(256),targetRevision:z.string().min(1).max(256),threadId:z.string().regex(/^[\w-]+$/).optional()}).strict().safeParse(await readBody(req));
+      if(!input.success)return json(res,400,{error:"Exact current and retained target revisions are required"});
+      const context=input.data.threadId?procedureContext(m[1]!,input.data.threadId):undefined;
+      if(input.data.threadId&&!context)return json(res,409,{error:"Procedure audience is unavailable"});
+      const result=context?rollbackScopedSkillRevision(m[1]!,m[2]!,input.data.expectedRevision,input.data.targetRevision,context):rollbackSkillRevision(m[1]!,m[2]!,input.data.expectedRevision,input.data.targetRevision);
+      return "error" in result ? json(res,409,result) : json(res,200,{skill:result});
+    }
+
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)$/);
     if (m && method === "GET") {
       const text = readSkillFile(m[1]!, m[2]!);
@@ -13463,6 +13662,28 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
       if (patch.flux !== undefined) return json(res, 409, { error: "Use the Flux Router connection card to change its key." });
+      // B17: Telegram rejected the saved token (401). A token for the SAME bot may replace it without
+      // revoking: TelegramService.replaceToken proves the bot id with getMe BEFORE commit writes anything,
+      // then resumes the saved pairing. Every refusal is a 409, so Electron restores credentials.bin.
+      if (patch.telegram?.botToken && Object.keys(patch.telegram).length === 1 && telegram.status().canReplaceToken) {
+        if (Object.keys(patch).length !== 1) return json(res, 409, { error: "Save the replacement Telegram token on its own." });
+        if (dataWritersStopped || providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+        const targetBotId = cfg.telegram?.targetBotId, replacement = { telegram: { botToken: patch.telegram.botToken } };
+        if (!targetBotId) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
+        try {
+          await telegram.replaceToken(replacement.telegram.botToken, targetBotId, () => {
+            saveConfig(url.searchParams.get("secretStorage") === "external" ? { telegram: { botToken: "" } } : replacement);
+            syncCredentialEnv(replacement);
+            Object.assign(cfg, loadConfig());
+          });
+        } catch (error) {
+          if (error instanceof TelegramTokenRefusal) return json(res, 409, { error: error.message });
+          throw error;
+        }
+        const status = configStatus();
+        broadcast({ kind: "config", ...status });
+        return json(res, 200, status);
+      }
       if (patch.telegram && (telegram.status().enabled || telegram.status().connecting || telegram.status().requiresRevoke)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (patch.slack) {
         if (dataWritersStopped || slackOperationBusy || slackRequiresRevoke) return json(res, 409, { error: "Revoke Slack before changing its credentials or owner binding." });
@@ -14172,4 +14393,15 @@ const gracefulShutdown = createGracefulShutdown({
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, gracefulShutdown);
+}
+
+/** The scheduler has already pinned instructions and assigned this thread. */
+function procedureRoutineSnapshot(threadId:string):{id:string;instructionRevision:string}|undefined {
+  const run=routines?.listRuns().find(item=>item.threadId===threadId && (item.status==="running"||item.status==="waiting"));
+  return run?.instructionRevision ? {id:run.routineId,instructionRevision:run.instructionRevision} : undefined;
+}
+
+function procedureContext(botId:string,threadId:string):SkillProcedureContext|undefined {
+  const current=backgroundMemoryAudience(botId,threadId,{bots:store.bots,groups:store.groups});
+  return current?{audienceKey:current.audienceKey,allowedScopeIds:current.scopeIds}:undefined;
 }

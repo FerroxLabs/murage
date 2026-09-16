@@ -43,6 +43,10 @@ async function setup(page:Page,withRemote=false){
     reconcileLatest:async(ref:string,revision:number,jobId:string)=>{w.calls.push({action:"remote-reconcile",ref,revision,jobId});w.remoteState.lastUpload={state:"verified",jobId};sessionStorage.setItem("fixtureRemoteStatus",JSON.stringify(w.remoteState));return{state:"verified",jobId,snapshotId:"c".repeat(64)};},
     listBackups:async(ref:string,revision:number)=>{w.calls.push({action:"remote-list",ref,revision});return{repositoryId:"b".repeat(64),backups:[{snapshotId:"d".repeat(64),jobId:"a".repeat(64),createdAt:1700000000000,verified:false}],ignored:1};},
     downloadBackup:async(ref:string,revision:number,snapshotId:string)=>{w.calls.push({action:"remote-download",ref,revision,snapshotId});return w.remoteMode==="cancel"?{cancelled:true}:{saved:true,archivePath:"/fixture-downloads/Murage-backup/backup.age",directory:"/fixture-downloads/Murage-backup"};},
+    saveMaintenanceCredentials:async(ref:string,revision:number,credentials:any)=>{w.calls.push({action:"remote-maintenance",ref,revision,keyLength:String(credentials?.accessKeyId).length});if(w.remoteMode==="maintenance-fail")throw Error("PRIVATE_REMOTE_CANARY");w.remoteState={...w.remoteState,maintenanceSelected:true};return{saved:true};},
+    previewRetention:async(ref:string,revision:number,policy:any)=>{w.calls.push({action:"remote-preview",ref,revision,policy});w.previewCount=(w.previewCount??0)+1;return{previewId:String(w.previewCount).repeat(64),remove:["e".repeat(64),"f".repeat(64)],keep:1};},
+    applyRetention:async(ref:string,revision:number,policy:any,previewId:string)=>{w.calls.push({action:"remote-apply",ref,revision,policy,previewId});if(w.remoteMode==="retention-changed")throw Error("BACKUP_REMOTE_RETENTION_CHANGED PRIVATE_REMOTE_CANARY");const review=w.remoteMode==="retention-review";w.remoteState={...w.remoteState,retention:review?{state:"needs-review",removed:2,previewId,error:"repository-locked",lockRelease:"unconfirmed"}:{state:"complete",removed:2,previewId}};return review?{state:"needs-review",previewId,removed:2,error:"repository-locked",lockRelease:"unconfirmed"}:{state:"complete",previewId,removed:2};},
+    clearRetentionReview:async(ref:string,revision:number,previewId:string)=>{w.calls.push({action:"remote-clear",ref,revision,previewId});const next={...w.remoteState};delete next.retention;w.remoteState=next;return{cleared:true};},
    };
   }
  },withRemote);
@@ -274,3 +278,55 @@ test("automatic remote uploads require explicit consent and preserve review paus
  await page.evaluate(()=>{const w=window as any;w.remoteState.state="connected";delete w.muragebox.backupRemote.setAutomaticUpload;});await refresh.click();await expect(enable).toBeDisabled();await expect(panel.getByText("Automatic uploads require an updated desktop app.")).toBeVisible();
  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload"))).toEqual([]);expect(errors).toEqual([]);
 });
+test("remote retention requires a separate maintenance key, an exact preview and explicit removal consent",async({page},info)=>{
+ const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
+ await page.addInitScript(()=>{if(!sessionStorage.getItem("fixtureRemoteStatus"))sessionStorage.setItem("fixtureRemoteStatus",JSON.stringify({supported:true,pending:false,configured:true,state:"connected",revision:2,remoteRef:"remote-one",label:"Fixture remote",passwordSelected:true,maintenanceSelected:false}));});
+ await setup(page,true);
+ const panel=page.getByRole("region",{name:"Remote backup (optional)"}),refresh=panel.getByRole("button",{name:"Refresh remote backup status",exact:true});
+ const saveKey=panel.getByRole("button",{name:"Save maintenance access key",exact:true}),previewButton=panel.getByRole("button",{name:"Preview removals",exact:true}),keepLast=panel.getByLabel("Keep latest copies",{exact:true});
+ await expect(panel.getByText("Maintenance access key: not saved.",{exact:false})).toBeVisible();await expect(saveKey).toBeDisabled();await expect(previewButton).toBeDisabled();
+ await keepLast.fill("1");await expect(previewButton).toBeDisabled();
+ await page.evaluate(()=>{(window as any).remoteMode="maintenance-fail";});
+ await panel.getByLabel("Maintenance access key ID",{exact:true}).fill("FAKE_MAINTENANCE");await panel.getByLabel("Maintenance secret access key",{exact:true}).fill("FAKE_MAINTENANCE_SECRET");
+ await saveKey.click();await expect(panel.getByLabel("Maintenance secret access key",{exact:true})).toHaveValue("");await expect(panel.getByText("PRIVATE_REMOTE_CANARY",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).remoteMode="ok";});await refresh.click();
+ await panel.getByLabel("Maintenance access key ID",{exact:true}).fill("FAKE_MAINTENANCE");await panel.getByLabel("Maintenance secret access key",{exact:true}).fill("FAKE_MAINTENANCE_SECRET");
+ await saveKey.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Maintenance access key saved securely. Nothing was removed.")).toBeVisible();await expect(panel.getByText("Maintenance access key: saved.",{exact:false})).toBeVisible();
+ for(const value of ["0","1001","2.5"]){await keepLast.fill(value);await expect(previewButton).toBeDisabled();}
+ await keepLast.fill("1");await expect(previewButton).toBeEnabled();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>["remote-preview","remote-apply"].includes(c.action)).length)).toBe(0);
+ await previewButton.focus();await page.keyboard.press("Enter");await expect(panel.getByText("2 remote copies would be removed.",{exact:false})).toBeVisible();
+ const consent=panel.getByRole("checkbox",{name:"Permanently remove exactly these previewed copies and reclaim unused storage. This cannot be undone."}),removeButton=panel.getByRole("button",{name:"Remove previewed copies",exact:true});
+ await expect(removeButton).toBeDisabled();
+ for(const width of [390,820,1440])await inspect(page,info,"remote-retention-preview",width);
+ await keepLast.fill("2");await expect(removeButton).toHaveCount(0);await keepLast.fill("1");await expect(removeButton).toHaveCount(0);
+ await previewButton.click();await expect(removeButton).toBeDisabled();await consent.focus();await page.keyboard.press("Space");await expect(removeButton).toBeEnabled();
+ await page.evaluate(()=>{(window as any).remoteMode="retention-changed";});await removeButton.click();
+ await expect(panel.getByText("The repository changed since the preview. Nothing was removed.",{exact:false})).toBeVisible();await expect(panel.getByText("PRIVATE_REMOTE_CANARY",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).remoteMode="ok";});await refresh.click();await expect(removeButton).toHaveCount(0);
+ await previewButton.click();await consent.check();await page.evaluate(()=>{(window as any).remoteMode="retention-review";});await removeButton.focus();await page.keyboard.press("Enter");
+ await expect(panel.getByText("Removal needs review. Nothing will be retried automatically.")).toBeVisible();
+ await expect(panel.getByText("Last removal: needs review",{exact:false})).toContainText("the repository stayed locked");
+ const clear=panel.getByRole("button",{name:"Mark removal reviewed",exact:true});await expect(clear).toBeEnabled();
+ for(const width of [390,820,1440])await inspect(page,info,"remote-retention-review",width);
+ await clear.click();await expect(panel.getByText("Removal review cleared. Preview again before removing anything.")).toBeVisible();await expect(clear).toHaveCount(0);
+ const calls=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action.startsWith("remote-")));
+ expect(calls.filter((c:any)=>c.action==="remote-apply")).toEqual([{action:"remote-apply",ref:"remote-one",revision:2,policy:{keepLast:1},previewId:"2".repeat(64)},{action:"remote-apply",ref:"remote-one",revision:2,policy:{keepLast:1},previewId:"3".repeat(64)}]);
+ expect(calls.filter((c:any)=>c.action==="remote-clear")).toEqual([{action:"remote-clear",ref:"remote-one",revision:2,previewId:"3".repeat(64)}]);
+ expect(JSON.stringify(calls)).not.toContain("FAKE_MAINTENANCE");expect(errors).toEqual([]);
+});
+
+for(const phase of ["forgetting","pruning"]){
+ test(`remote unfinished ${phase} offers review and requires fresh preview`,async({page},info)=>{
+  await page.addInitScript(phase=>sessionStorage.setItem("fixtureRemoteStatus",JSON.stringify({supported:true,pending:false,configured:true,state:"connected",revision:2,remoteRef:"remote-one",label:"Fixture remote",passwordSelected:true,maintenanceSelected:true,retention:{state:phase,previewId:"f".repeat(64),removed:2}})),phase);
+  await setup(page,true);const panel=page.getByRole("region",{name:"Remote backup (optional)"});
+  await expect(panel.getByText("Last removal: not finished; needs review.",{exact:false})).toBeVisible();
+  const clear=panel.getByRole("button",{name:"Mark removal reviewed",exact:true});await expect(clear).toBeEnabled();
+  for(const width of [390,820,1440])await inspect(page,info,`unfinished-${phase}`,width);
+  await page.evaluate(()=>{(window as any).remoteState.pending=true;});await panel.getByRole("button",{name:"Refresh remote backup status",exact:true}).click();await expect(clear).toBeDisabled();
+  await page.evaluate(()=>{(window as any).remoteState.pending=false;});await panel.getByRole("button",{name:"Refresh remote backup status",exact:true}).click();await expect(clear).toBeEnabled();
+  await clear.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Removal review cleared. Preview again before removing anything.")).toBeVisible();await expect(clear).toHaveCount(0);
+  await expect(panel.getByRole("button",{name:"Remove previewed copies",exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>["remote-clear","remote-apply","remote-preview"].includes(c.action)))).toEqual([{action:"remote-clear",ref:"remote-one",revision:2,previewId:"f".repeat(64)}]);
+ });
+}

@@ -320,3 +320,89 @@ it("keeps a generated image in the conversation when its Files copy fails and fi
   expect(imageMessages(f)).toHaveLength(1);
   expect(imageReceipts()).toEqual([expect.objectContaining({ stage: "registered", artifact_id: repeated.artifact.artifactId })]);
 });
+
+// B16: Flux reference-edit state, recovery, admission and route limits through ImageOperations.
+const fluxEdit = { connectionId: "flux", prompt: "fixture", operation: "edit" };
+const pngReference = (): ImageReference[] => [{ bytes: png, mime: "image/png" }];
+const operationState = (generation: string) => (database().prepare("SELECT state FROM image_operations WHERE generation=?").get(generation) as { state: string } | undefined)?.state;
+const approvalCards = (f: ReturnType<typeof fixture>) => f.store.messagesFor(f.actor.threadId).filter(message => message.card?.tool === "generate_image");
+
+it("B16 saves the Flux edit attempt state for each provider outcome and publishes no image", async () => {
+  for (const [mode, state] of [[400, "failed"], [503, "uncertain"], ["throw", "uncertain"], ["invalid-json", "uncertain"], ["deny", "not-dispatched"]] as const) {
+    const f = generationFixture();
+    if (mode !== "deny") f.fetcher.mockImplementationOnce(async () => {
+      if (mode === "throw") throw Error("lost response");
+      return typeof mode === "number" ? new Response("provider refused", { status: mode }) : new Response("not json");
+    });
+    const job = f.run("outcome", fluxEdit, pngReference()), refused = expect(job).rejects.toThrow();
+    const card = await f.card();
+    expect(f.operations.resolve(f.actor.threadId, card.card!.requestId!, mode === "deny" ? "deny" : "allow")).toBe(mode === "deny" ? "rejected" : "allowed-once");
+    await refused;
+    expect(operationState(f.actor.generation)).toBe(state);
+    expect(f.fetcher).toHaveBeenCalledTimes(mode === "deny" ? 0 : 1);
+    expect(imageMessages(f)).toHaveLength(0);
+    expect(approvalCards(f)).toHaveLength(1);
+  }
+});
+
+it("B16 keeps a received Flux edit locally when publication fails and finishes it on the same request_id with one fetch and one approval", async () => {
+  const f = generationFixture();
+  faults.saveImage = 1;
+  const job = f.run("kept", fluxEdit, pngReference()), refusal = expect(job).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  expect(operationState(f.actor.generation)).toBe("publish-pending");
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(imageMessages(f)).toHaveLength(0);
+  const resumed = await f.run("kept", fluxEdit, pngReference());
+  expect(operationState(f.actor.generation)).toBe("published");
+  expect(resumed.artifact).toMatchObject({ artifactId: expect.any(String) });
+  expect(readFileSync(resumed.artifact.path)).toEqual(png);
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(imageMessages(f)).toHaveLength(1);
+  expect(approvalCards(f)).toHaveLength(1);
+  expect(f.waiting.mock.calls.filter(call => call[1])).toHaveLength(1);
+});
+
+it("B16 releases an ungranted Flux alias edit before approval, while a refused OpenRouter edit keeps the turn's one attempt", async () => {
+  const f = generationFixture();
+  await expect(f.run("alias", { ...fluxEdit, model: "flux-image-gpt2-high" }, pngReference())).rejects.toMatchObject({ code: "unsupported-model", correctablePreflight: true });
+  expect(f.waiting).not.toHaveBeenCalled();
+  expect(f.fetcher).not.toHaveBeenCalled();
+  expect(approvalCards(f)).toHaveLength(0);
+  expect(operationState(f.actor.generation)).toBeUndefined();
+  const job = f.run("corrected", fluxEdit, pngReference());
+  await approveNext(f); await job;
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(approvalCards(f)).toHaveLength(1);
+  expect(f.waiting.mock.calls.filter(call => call[1])).toHaveLength(1);
+  expect(operationState(f.actor.generation)).toBe("published");
+
+  const o = fixture();
+  const fetcher = vi.fn<typeof fetch>(async input => {
+    if (String(input) === "https://openrouter.ai/api/v1/images/models") return new Response(JSON.stringify({ data: [{ id: "vendor/model", architecture: { output_modalities: ["image"] }, supported_parameters: { output_format: { values: ["png"] } } }] }));
+    throw Error(`unexpected fetch ${String(input)}`);
+  });
+  const service = new ImageGenerationService({ resolveConnection: () => ({ id: "openrouter", provider: "openrouter", apiKey: "FAKE_B16", revision: "1" }), connectionIds: () => ["openrouter"], fetch: fetcher });
+  const openRouterEdit = { connectionId: "openrouter", model: "vendor/model", prompt: "fixture", operation: "edit" };
+  const run = (id: string) => o.operations.execute(o.actor, id, openRouterEdit, (reserve, publish) => service.generate(openRouterEdit, { reserve, publish, assertActive: o.actor.assertActive, signal: o.actor.signal }, pngReference()));
+  await expect(run("refused")).rejects.toMatchObject({ code: "unsupported-edit", correctablePreflight: false });
+  expect(operationState(o.actor.generation)).toBe("not-dispatched");
+  expect(o.waiting).not.toHaveBeenCalled();
+  expect(approvalCards(o)).toHaveLength(0);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  expect(() => run("new-id")).toThrow("One image attempt");
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("B16 resolves two exactly 10 MiB conversation PNG attachments as 20 MiB of references and refuses one more reference", () => {
+  const f = fixture(), MiB = 1024 * 1024, name = (path: string) => path.split(/[\\/]/).at(-1)!;
+  const exact = [1, 2].map(fill => { const bytes = Buffer.alloc(10 * MiB, fill); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); });
+  const extra = saveImage(png, "image/png");
+  f.store.appendMessage(f.actor.threadId, { role: "user", kind: "text", text: "references", attachments: [...exact, extra].map(item => ({ kind: "image", path: item.path, mime: item.mime })) });
+  const refs = imageReferences(f.store, f.actor.threadId, exact.map(item => name(item.path)));
+  expect(refs).toHaveLength(2);
+  expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(20 * MiB);
+  for (const [index, item] of refs.entries()) { expect(item.mime).toBe("image/png"); expect(item.bytes.length).toBe(10 * MiB); expect(item.bytes.equals(readFileSync(exact[index]!.path))).toBe(true); }
+  expect(() => imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)))).toThrow("total at most 20 MB");
+});

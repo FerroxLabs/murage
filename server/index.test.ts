@@ -749,6 +749,13 @@ describe("harness HTTP API", () => {
       expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
       expect(errorMessage.tool.name).toContain("credit balance is exhausted");
       expect(errorMessage.tool.errorDetails).toContain("Provider response: HTTP 402");
+      // The driver reads the engine's typed kind out of `error.data.error_kind`
+      // and carries it as the runtime.error event's own `errorKind` field. That
+      // field only matters if it survives the event bus, the store and the API
+      // — the card reads it from the stored message, never from the text. This
+      // is the whole pass-through, running for real.
+      expect(errorMessage.tool.errorKind).toBe("api");
+      expect(errorMessage.tool.errorDetails).toContain("Engine error kind: api");
       expect(errorMessage.tool.name.length).toBeLessThanOrEqual(167);
       expect(JSON.stringify(errorMessage)).not.toMatch(/fake-secret-canary|billing\.invalid|Internal error/);
       const db = new DatabaseSync(join(data, "messages.db"), { readOnly: true });
@@ -756,6 +763,7 @@ describe("harness HTTP API", () => {
         const persisted = JSON.parse(String(db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(bot.threadId, errorMessage.id)?.json));
         expect(persisted.tool.providerError).toEqual(errorMessage.tool.providerError);
         expect(persisted.tool.errorDetails).toBe(errorMessage.tool.errorDetails);
+        expect(persisted.tool.errorKind).toBe("api");
         expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
       } finally { db.close(); }
     } finally {

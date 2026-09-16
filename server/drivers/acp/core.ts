@@ -15,6 +15,7 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
+import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import {
   fromElicitationForm,
   fromElicitationUrl,
@@ -52,6 +53,10 @@ import {
 
 /** Lifecycle facts of a JSON-RPC error: validated numbers only, and a method
  * only when the response matched a pending request (R1-T8). */
+function reasoningOnlyData(data: unknown): boolean {
+  // Legacy string-only compatibility. Fuigo 1.0.18 object kinds are never inferred from prose.
+  return typeof data === "string" && data.trim().toLowerCase() === "empty response from model (reasoning_only)";
+}
 function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): LifecycleFields {
   const fields: LifecycleFields = {};
   if (typeof rpcId === "number" && Number.isSafeInteger(rpcId) && rpcId >= 0) fields.rpcId = rpcId;
@@ -60,7 +65,7 @@ function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): Li
   if (typeof code === "number" && Number.isSafeInteger(code)) fields.rpcCode = code;
   const status = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) fields.httpStatus = status;
-  const terminalKind=data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined;
+  const terminalKind=(data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined) ?? (reasoningOnlyData(data)?"empty_response":undefined);
   if(terminalKind)fields.terminalKind=terminalKind;
   return fields;
 }
@@ -72,7 +77,7 @@ export function acpErrorDiagnostic(base:{eventId:string;turnId:string},processGe
   return parseRuntimeErrorDiagnostic({version:1,diagnosticId:base.eventId,turnId:base.turnId,processGeneration,
     rpcId:facts.rpcId,method:facts.method,rpcCode:facts.rpcCode,httpStatus:facts.httpStatus,terminalKind:facts.terminalKind,observedKind:failureKind(candidate.fuigoObservedKind)});
 }
-import { classifyProviderError } from "../../../shared/provider-error.ts";
+import { classifyProviderError, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
 
 /** Some ACP providers wrap actionable billing failures in "Internal error".
@@ -87,7 +92,383 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
     }
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
+  if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+}
+
+/** C0/C1 controls, zero-width characters and bidi overrides: none belongs in one line of error text. */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const INVISIBLE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]+/g;
+/** Locators that can carry a credential. A scheme is not what makes one
+ * dangerous: engines write `host/path?api_key=…` and `user:pass@host` as
+ * readily as an https:// URL, and the transcript must hold neither.
+ *
+ * Each form is deliberately narrow, because "a dot and a slash" describes a
+ * source path at least as often as a host and replacing real diagnostic prose
+ * with "[link removed]" makes an error less useful: `src/core.ts:93/foo`, a
+ * `retry:2@worker` pair and a sentence ending in `config.json?` all survive.
+ *
+ * Each entry is the rule and what replaces its match. The rules run on
+ * REDACTED text (see `acpEngineErrorText`) whose masks have been made into
+ * single tokens, so a `?key=«redacted 8 chars»` is one `\S+` to them, and
+ * their input is bounded only by ENGINE_FRAME_MAX_BYTES (32 MiB). So each
+ * has to be linear in that input, and each is clocked on its own, on every
+ * hostile shape, in acp.test.ts — no rule here is called linear on the
+ * strength of how it reads. Round 10 called four of them linear "as
+ * written" and two were not: the user:pass@ rule's token class was wider
+ * than its lookbehind, so a run of `%`, `~` or `+` was a start position at
+ * every character (2.2 s of CPU at 64 KiB, measured, and 40 s at 256 KiB);
+ * the host?query rule retried `\S*=` from every `?` after a path (1.9 s at
+ * 64 KiB of `host.com/?????…`) and, with only that fixed by ending the path
+ * at the first `?`, still scanned to the end of the word from every `/` or
+ * `?` a dotted host followed (967 ms at 64 KiB and 3.0 s at 128 KiB of
+ * `ab.cd/ab.cd/…`; 1.8 s at 128 KiB of `?ab.cd/?ab.cd/…`).
+ * Four of the five are now in the sparse-start form redact.ts uses: a match
+ * may begin only where a run of the rule's own characters begins (the
+ * user:pass@ rule also at the first `~`, `%` or `+` after an `@host`, for
+ * the authority that directly follows another — its comment says why that
+ * is still one candidate per run); a lookahead there decides once per run
+ * whether anything in it can match; and a lazy group walks to the position
+ * the round-10 rule matched at, which is re-emitted in front of the marker.
+ * The test that each removes exactly the spans its round-10 form removed is
+ * in acp.test.ts. */
+/** An IP-literal authority: a dotted IPv4 quad or a bracketed IPv6. Neither
+ * ends in an alphabetic TLD, so the dotted-host rules below cannot see one —
+ * and a self-hosted engine (Ollama, vLLM, LM Studio on a LAN address) is
+ * addressed exactly this way, which makes it where a credential in an
+ * authority actually shows up. */
+const IP_HOST = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]{2,45}\])`;
+/** What may follow a `user:pass@`: a dotted or IP-literal host, with or
+ * without a port and a path, or any host with a path. */
+const AUTHORITY_HOST = String.raw`(?:(?:[a-z0-9-]+\.)+[a-z]{2,24}(?::\d{1,5})?(?:[/?]\S*)?|${IP_HOST}(?::\d{1,5})?(?:[/?]\S*)?|[a-z0-9-]+(?::\d{1,5})?[/?]\S*)`;
+export const LOCATORS: readonly (readonly [RegExp, string])[] = [
+  // scheme://… — as `\b[a-z][a-z0-9+.-]*:\/\/\S+`, which is what this rule
+  // matches, but that form is quadratic: on `a.a.a.a…` every other position
+  // is a `\b`, and from each the engine walks the dotted run to its end
+  // looking for `://` and backtracks over it. Round 9 measured it at 4.3 s
+  // for 128 KiB and 312 s for 1 MiB. This form may start only where a run of
+  // scheme characters begins; the lookahead asks once per run whether it is
+  // followed by `://` and something; and the lazy group walks to the first
+  // `\b`+letter in the run — exactly where the original started — and is
+  // put back in front of the marker. The test that round 9's rule and this
+  // one remove the same spans is in acp.test.ts.
+  [/(?<![a-z0-9+.-])(?=[a-z0-9+.-]*:\/\/\S)([a-z0-9+.-]*?)\b(?:[a-z][a-z0-9+.-]*:\/\/\S+)/gi, "$1[link removed]"],
+  // user:pass@ authority, before a dotted or IP-literal host, or before any
+  // host with a path. An IP literal needs no path: nothing else is shaped
+  // like a dotted quad, so `retry:2@worker` and `attempt:3@10` still survive.
+  //
+  // As round 10 wrote it: `(?<![\w.@-])[\w.~%+-]+:[^\s:@/\\]+@HOST`. The
+  // token class holds `~`, `%` and `+` and the lookbehind does not, so in a
+  // run of them every character was a start and each start rescanned the
+  // run to its end. This form starts only where a run of token characters
+  // begins, asks once whether the run ends in `:pass@HOST`, and walks — the
+  // lazy group, under the round-10 lookbehind — to the first character
+  // round 10 could start at, which is the run's start unless an `@`
+  // precedes it (`x@~u:p@h.io` starts at `u`, as before). Widening the
+  // lookbehind alone would have left that shape unmasked.
+  //
+  // Round 11 started ONLY there, and that was not round 10 either. A match
+  // ends where its host does, and a host with no path ends in a letter or a
+  // digit, so when a second authority follows the first with one token
+  // character between them — `u:p@h.io~v:q@k.io`, `u:p@10.0.0.1+v:q@k.io`,
+  // `u:p@h.io:81%v:q@k.io/path` — the scan resumes inside the run `h.io~v`,
+  // whose start the first match consumed, and the start round 10 took at
+  // `v` (after a `~`) was never tried: the second password reached the card.
+  // The second alternative of the start is that position — after a `~`, `%`
+  // or `+` from which a walk back over host and token characters (`[\w.:\[\]-]`
+  // is what a pathless host and the rest of its run are spelled in) reaches
+  // an `@`: the first such character after an `@host`. Any position round 10
+  // could start at can be added here without changing a match, because the
+  // lazy group is empty there and what follows it is round 10's own body;
+  // what the walk-back buys is the clock. It cannot cross a `~`, `%` or `+`,
+  // so each of them is walked over by one candidate at most, at most one
+  // candidate per run reaches an `@`, and only that one pays for the
+  // lookahead. Equivalence (0 diffs over 147 787 shapes, adjacent
+  // authorities behind every printable separator among them) and the clock
+  // are both in acp.test.ts.
+  [new RegExp(
+    String.raw`(?:(?<![\w.~%+-])|(?<=@[\w.:\[\]-]*[~%+]))(?=[\w.~%+-]*:[^\s:@/\\]+@${AUTHORITY_HOST})([\w.~%+-]*?)(?<![\w.@-])[\w.~%+-]+:[^\s:@/\\]+@${AUTHORITY_HOST}`,
+    "gi",
+  ), "$1[link removed]"],
+  // sub.domain.tld[:port]/path — three or more labels name a host, not a file.
+  // As written: its `\S*` is last, so nothing is retried behind it, and a
+  // start inside a dotted run is refused by the lookbehind.
+  [/(?<![\w.@-])(?:[a-z0-9-]+\.){2,}[a-z]{2,24}(?::\d{1,5})?[/?]\S*/gi, "[link removed]"],
+  // host[:port][/path]?key=value — a query that names a value can carry one.
+  //
+  // As round 10 wrote it: `(?<![\w.@-])HOST(?:\/\S*)?\?\S*=\S*`, which
+  // retried `\S*=` from every `?` the path held, and — the path ended at
+  // the first `?` — still scanned to the end of the word from every `/` a
+  // dotted host followed. A match here always runs to the end of the word,
+  // so a word holds at most one, at the FIRST position round 10 matched at:
+  // the first dotted host (with its port) that a `/` or `?` follows. If the
+  // query after that one has no `=`, no later one in the word has either,
+  // because the first `?` after a later start is the same `?` or one after
+  // it. So: start at a word, find that host in a lookahead (its lazy walk
+  // costs each start at most its own host; the lookahead is atomic, so a
+  // failed query is not retried from the next host), re-emit the prefix and
+  // host, and ask the query question once.
+  [/(?<!\S)(?=(\S*?)(?<![\w.@-])((?:[a-z0-9-]+\.)+[a-z]{2,24}(?::\d{1,5})?)(?=[/?]))\1\2(?:\/[^\s?]*)?\?[^\s=]*=\S*/gi, "$1[link removed]"],
+  // The same query, on a host the rule above cannot recognise: an IP literal
+  // or a single dotless label (`localhost:11434/api/chat?key=…`). The query
+  // is what makes it dangerous, so a bare address with no query still reads.
+  //
+  // The host half is anchored as tightly as every other rule here: a dotless
+  // label only names a host when it carries a port or a path, because
+  // `mode?retry=true` is how an engine writes about its own settings and
+  // blanking that prose is the cost this file keeps paying. A credential in a
+  // query on a bare label (`localhost?key=…`) is still masked by
+  // `redactSecretsInText`'s query-position rule, which does not need a host.
+  //
+  // Same construction as the rule above, for the same reason (`ab/?ab/?…`
+  // was a start at every `ab`, each scanning to the end of the word). The
+  // three host alternatives spell out what round 10's nesting allowed after
+  // each: an IP literal with or without a port before `/` or `?`; a label,
+  // with or without a port, before `/`; a label with a port before `?`.
+  [new RegExp(
+    String.raw`(?<!\S)(?=(\S*?)(?<![\w.@-])(${IP_HOST}(?::\d{1,5})?(?=[/?])|[a-z0-9-]{2,}(?::\d{1,5})?(?=\/)|[a-z0-9-]{2,}:\d{1,5}(?=\?)))\1\2(?:\/[^\s?]*)?\?[^\s=]*=\S*`,
+    "gi",
+  ), "$1[link removed]"],
+];
+/** Where a JSON object or array (a provider response body) starts, truncated or not. */
+const JSON_START = /[{[]\s*["{[]/;
+
+/** How `acpEngineErrorText` treats the two shapes its callers disagree
+ * about. The defaults are what an engine's own error message needs; the
+ * engine-exit path, which quotes a crash's stderr, asks for the others. */
+type EngineTextOptions = {
+  /** `cut` (default) ends the text where a JSON body starts: an `error.data`
+   * message that runs into a provider response must not spill it onto the
+   * card. `keep` is what the exit path asks for — see `acpEngineExitStderrText`. */
+  json?: "cut" | "keep";
+  /** Which end of a text longer than the display budget survives. `head`
+   * (default) is how a sentence is read: an engine's error message says what
+   * it has to say first. `tail` is how a crash log is read: the fatal line is
+   * the LAST one, and everything above it is the run-up. */
+  keep?: "head" | "tail";
+};
+
+/** What the sanitiser puts in a locator's place, and the mask
+ * `redactSecretsInText` leaves behind: neither says anything about the
+ * failure on its own. */
+const SUBSTITUTIONS = /\[link removed\]|«redacted \d+ chars»/g;
+/** The mask `redactSecretsInText` leaves, and the same mask with its spaces
+ * turned to hyphens for the locator pass, so a masked value inside a
+ * locator (`?key=«redacted 8 chars»`) is one token to `\S+` and the whole
+ * locator goes, rather than "[link removed] 8 chars»". */
+const MASK = /«redacted (\d+) chars»/g;
+const MASK_TOKEN = /«redacted-(\d+)-chars»/g;
+
+/** Whether a sanitised line still tells the reader something. Everything can
+ * be consumed on the way through — 300 full stops are cut to the length cap
+ * and then stripped as trailing punctuation, a message that is only a link
+ * becomes only the marker — and a card showing "…" or "[link removed]" says
+ * less than the JSON-RPC message it replaced. Punctuation and whitespace
+ * around the markers do not count; letters, digits and symbols (an engine
+ * that answers in emoji is still answering) do. */
+function carriesInformation(text: string): boolean {
+  return /[^\s\p{P}]/u.test(text.replace(SUBSTITUTIONS, " "));
+}
+
+/** Cut at a UTF-16 index without splitting a surrogate pair: half a pair
+ * renders as a replacement glyph, so an unbroken astral token is cut before
+ * the character rather than through it. `keep` says which end is kept: the
+ * first `limit` units, or the last. */
+function cutCodePoints(text: string, limit: number, keep: "head" | "tail" = "head"): string {
+  if (text.length <= limit) return text;
+  if (keep === "head") {
+    const lead = text.charCodeAt(limit - 1);
+    return text.slice(0, lead >= 0xd800 && lead <= 0xdbff ? limit - 1 : limit);
+  }
+  const start = text.length - limit;
+  const trail = text.charCodeAt(start);
+  return text.slice(trail >= 0xdc00 && trail <= 0xdfff ? start + 1 : start);
+}
+
+/** The engine's own explanation of a failed request: Fuigo 1.0.18 sends
+ * `error.data` as `{ message, error_kind }`, Fuigo <=1.0.17 as a plain string.
+ * Made safe for one line of transcript text: terminal escapes and controls,
+ * any JSON body, links and credential-shaped values are removed, whitespace
+ * collapses and the length is capped. Any other shape yields nothing.
+ *
+ * ORDER IS THE SAFETY ARGUMENT, and it is the shipped 0.1.53's: redact the
+ * WHOLE text first, cut afterwards. Nothing here — no character, token, line
+ * or boundary cut, and no window in front of this function — runs on
+ * unredacted text. That is the only rule under which every redaction rule
+ * still matches, and it is not a matter of keeping the head or cutting on
+ * whitespace: PEM_BLOCK is anchored at BOTH ends, so a cut that keeps
+ * `-----BEGIN PRIVATE KEY-----` and drops `-----END PRIVATE KEY-----` leaves
+ * a rule that no longer matches and a key that reaches the card, whichever
+ * end was kept and wherever the cut landed. Rounds 7, 8 and 9 each shipped a
+ * cut that was safe for the rule in front of it and unsafe for that one.
+ *
+ * What makes "no cut" affordable is that every regex on this path is linear
+ * in its input: the locator rules above, and `redactSecretsInText`'s rules,
+ * three of which were rewritten for it (server/redact.ts). The input is an
+ * engine's error text off a frame bounded only by ENGINE_FRAME_MAX_BYTES
+ * (32 MiB), sanitised synchronously on the server's single event loop, and
+ * measured (CPU time, the clock in acp.test.ts) at 1-16 ms for 64 KiB,
+ * 2-10 ms for 128 KiB and 9-75 ms for 1 MiB of each shape that makes a
+ * backtracking engine rescan — dotted, hyphenated, `eyJ-` and header-only
+ * runs and a mix of them. Round 8's unbounded pipeline took 4.3 s and 312 s
+ * on the first of those at 128 KiB and 1 MiB.
+ *
+ * The cuts that remain both run on redacted text. The JSON cut ends the text
+ * at an ASCII brace or bracket; the display cut lands on a word boundary or,
+ * failing one, on a code-point boundary (`cutCodePoints`), so no surrogate
+ * pair is split. The display cut cannot leave nothing where the engine wrote
+ * something: when the end it keeps is only punctuation (a progress bar of
+ * `#` before a crash), the floor below cuts that run instead and keeps the
+ * text that carries the information, from the same end. The JSON cut can —
+ * a message that is only a JSON body yields nothing — and that is the
+ * point of it. */
+export function acpEngineErrorText(data: unknown, options: EngineTextOptions = {}): string | undefined {
+  const raw = typeof data === "string"
+    ? data
+    : data && typeof data === "object" && !Array.isArray(data) ? (data as { message?: unknown }).message : undefined;
+  if (typeof raw !== "string") return undefined;
+  const keep = options.keep ?? "head";
+  let text = redactSecretsInText(stripVTControlCharacters(raw).replace(INVISIBLE_CONTROLS, " "));
+  const json = options.json === "keep" ? -1 : text.search(JSON_START);
+  if (json >= 0) text = text.slice(0, json);
+  text = text.replace(MASK, "«redacted-$1-chars»");
+  for (const [locator, replacement] of LOCATORS) text = text.replace(locator, replacement);
+  // The trailing-punctuation trim is found from the run's own start (the
+  // lookbehind), as `informativeEnd` finds its run: anchored at `$` alone,
+  // `[…]+$` was tried from every character of a run that did not reach the
+  // end and walked to the end of the run each time — 1.9 s of CPU for 64 KiB
+  // of `:` before one word (round 12, measured), on the error-data path
+  // whose input is the engine frame.
+  text = text.replace(MASK_TOKEN, "«redacted $1 chars»").replace(/\s+/g, " ").replace(/(?<![\s:;,\-–—])[\s:;,\-–—]+$/, "").trim();
+  if (!carriesInformation(text)) return undefined;
+  if (text.length <= ERROR_MESSAGE_MAX) return text;
+  // One character of the budget belongs to the ellipsis. Prefer a word
+  // boundary inside it, so the visible message ends (or begins) on a word
+  // rather than wherever the transcript's own cut happened to land. Half a
+  // budget is the most either end will give up looking for one.
+  const limit = ERROR_MESSAGE_MAX - 1;
+  if (keep === "tail") {
+    const line = `…${cutTail(text, limit).replace(/^[\s.,;:!?\-–—]+/, "")}`;
+    if (carriesInformation(line)) return line;
+    // The floor. The kept end was only punctuation — a progress bar of `#`,
+    // `.` or `-` is ordinary stderr before a crash — and the reason is in
+    // front of it. Cut the run instead, and keep the tail of what is left,
+    // which ends on a character that says something by construction; a
+    // second ellipsis marks the run that was cut.
+    const body = text.slice(0, informativeEnd(text));
+    return body.length <= limit ? `${body}…` : `…${cutTail(body, limit - 1).replace(/^[\s.,;:!?\-–—]+/, "")}…`;
+  }
+  const line = `${cutHead(text, limit).replace(/[\s.,;:!?\-–—]+$/, "")}…`;
+  if (carriesInformation(line)) return line;
+  const body = text.slice(informativeStart(text));
+  return body.length <= limit ? `…${body}` : `…${cutHead(body, limit - 1).replace(/[\s.,;:!?\-–—]+$/, "")}…`;
+}
+
+/** The last `limit` characters of `text`, from a word boundary inside the
+ * second half of them when there is one. */
+function cutTail(text: string, limit: number): string {
+  const start = text.length - limit;
+  const boundary = text.indexOf(" ", start - 1);
+  return boundary >= 0 && boundary < text.length - limit / 2 ? text.slice(boundary + 1) : cutCodePoints(text, limit, "tail");
+}
+
+/** The first `limit` characters of `text`, to a word boundary inside the
+ * second half of them when there is one. */
+function cutHead(text: string, limit: number): string {
+  const boundary = text[limit] === " " ? limit : text.lastIndexOf(" ", limit);
+  return boundary > limit / 2 ? text.slice(0, boundary) : cutCodePoints(text, limit);
+}
+
+/** Where the information in `text` ends: the index past its last character
+ * that is not whitespace, punctuation or part of a sanitiser marker — the
+ * same notion `carriesInformation` uses. The trailing run is found from its
+ * own start only (the lookbehind), so a long run of punctuation that is not
+ * at the end is scanned once, not from every character in it. */
+function informativeEnd(text: string): number {
+  const blanked = text.replace(SUBSTITUTIONS, (marker) => " ".repeat(marker.length));
+  const tail = /(?<![\s\p{P}])[\s\p{P}]+$/u.exec(blanked);
+  return tail ? tail.index : blanked.length;
+}
+
+/** Where the information in `text` begins: the index of its first character
+ * that is not whitespace, punctuation or part of a sanitiser marker. */
+function informativeStart(text: string): number {
+  const blanked = text.replace(SUBSTITUTIONS, (marker) => " ".repeat(marker.length));
+  return /^[\s\p{P}]+/u.exec(blanked)?.[0].length ?? 0;
+}
+
+/** The reason quoted on the `exited <code> before the prompt result` line:
+ * the failed engine's bounded stderr capture, prepared before redaction
+ * by `acpEngineStderrCapture`, sanitised as the
+ * engine's `error.data` and JSON-RPC `error.message` are, and quoted from
+ * its END, because the last lines of a crash are the ones worth quoting.
+ *
+ * No window is taken in front of the sanitiser, for the reason
+ * `acpEngineErrorText` gives: rounds 6-9 took the last 2 KiB of the ring on
+ * a line boundary first, and a private key longer than that lost its
+ * `-----BEGIN` line, stopped matching PEM_BLOCK, and reached the card.
+ *
+ * The driver passes its bounded capture through `acpEngineStderrCapture`
+ * first. It retains the stream's beginning so a PEM header cannot scroll
+ * out before redaction, closes an unfinished PEM only for masking, and
+ * explicitly marks any omitted suffix. No headerless raw ring is passed here.
+ *
+ * The text is stripped of terminal escapes ONCE, inside `acpEngineErrorText`.
+ * Rounds 6-10 stripped it here as well, and `stripVTControlCharacters` is
+ * not idempotent: a lone ESC that the first pass leaves is consumed together
+ * with the character after it by the second, when that character is one of
+ * `[\dA-PR-TZcf-nq-uy=><~]` — which covers `t`, `s`, `A`, `g`, `h` and `n`
+ * — so `ESC ESC[0mtoken=…` reached redaction as `oken=…`, a name no rule
+ * knows, and the value was printed. Redaction depends on the strip being a
+ * strip and not a cut; one pass is one.
+ *
+ * The JSON rule is asked for `keep`, always. MU-R8-2 decided that this path
+ * prefers the `cut` form only when the cut would discard NOTHING — a crash
+ * whose stderr is a JSON record, or ends in one, keeps the record, because
+ * on the crash path the record usually IS the reason, and one line of
+ * start-up prose in front of it must not be quoted as the reason with the
+ * record thrown away. A cut that discards nothing is the keep form; so the
+ * two branches rounds 8 and 9 chose between were the same text, and the
+ * predicate that chose between them was the identity. `keep` says so.
+ *
+ * The accepted consequence stands: an engine that dumps a provider response
+ * body to stderr as it dies shows that body, redacted, on the EXIT card —
+ * and it is this path only. `error.data` and the JSON-RPC `message` keep
+ * `json: "cut"`, where a message running into a provider body must not spill
+ * it. Do not fix this back.
+ *
+ * The floor stays underneath: a card reading only `<engine> exited 1 before
+ * the prompt result` is the generic error with no explanation this file
+ * exists to remove, and stderr that says anything at all is quoted. */
+export function acpEngineExitStderrText(stderr: string): string | undefined {
+  return acpEngineErrorText(stderr, { keep: "tail", json: "keep" });
+}
+
+/** Prepare the existing bounded stderr prefix for both redaction sinks.
+ * A capture cut may remove a PEM footer. Close only that unfinished block
+ * for masking; never recover or display its body. Detection strips a COPY,
+ * while the original raw text goes to each sink's existing single strip pass.
+ * The diagnostic is a prefix once capped, so say explicitly that later output
+ * was omitted instead of presenting its last line as the process's final line. */
+export function acpEngineStderrCapture(stderr: string, truncated: boolean): string {
+  // A cap-cut token may no longer match its redaction rule. Retain only
+  // complete raw lines at that boundary, before closing an unfinished PEM.
+  if (truncated && !stderr.endsWith("\n")) stderr = stderr.slice(0, stderr.lastIndexOf("\n") + 1);
+  const stripped = stripVTControlCharacters(stderr);
+  const markers = /-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----/g;
+  let open = false;
+  for (const marker of stripped.matchAll(markers)) open = marker[1] === "BEGIN";
+  return stderr + (open ? "\n-----END PRIVATE KEY-----\n[Unfinished private-key block masked]" : "")
+    + (truncated ? "\n[Stderr capture truncated; later output omitted]" : "");
+}
+
+/** Fuigo's typed failure kind, a snake_case token. Read only from
+ * `error.data.error_kind`: it travels as its own field so nothing has to
+ * recover it from text the engine wrote. */
+export function acpEngineErrorKind(data: unknown): string | undefined {
+  const kind = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as { error_kind?: unknown }).error_kind : undefined;
+  return typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind) ? kind : undefined;
 }
 
 const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHODS);
@@ -96,15 +477,17 @@ const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHOD
 export function acpRpcErrorDetails(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return;
   const { code, data, acpMethod } = error as { code?: unknown; data?: unknown; acpMethod?: unknown };
-  const status = data && typeof data === "object" && !Array.isArray(data)
-    ? (data as { http_status?: unknown }).http_status : undefined;
+  const { http_status: status } = data && typeof data === "object" && !Array.isArray(data)
+    ? data as { http_status?: unknown } : {};
+  const kind = acpEngineErrorKind(data);
   const facts: string[] = [];
   if (typeof acpMethod === "string" && ACP_DIAGNOSTIC_METHODS.has(acpMethod)) facts.push(`ACP request: ${acpMethod}`);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
+  // The same kind the event carries in `errorKind`, kept in the details so a
+  // pasted diagnostic still names it.
+  if (kind) facts.push(`${ENGINE_ERROR_KIND_PREFIX}${kind}`);
   if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
-  const kind = data && typeof data === "object" && !Array.isArray(data)
-    ? failureKind((data as { error_kind?: unknown }).error_kind) : undefined;
-  if (kind) facts.push(`Engine failure category: ${kind}`);
+  if (!kind && reasoningOnlyData(data)) facts.push("Engine failure category: empty_response");
   return facts.length ? facts.join("\n") : undefined;
 }
 
@@ -282,7 +665,7 @@ const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
  * question (Fuigo's ask_user_question, an ACP elicitation) takes `answer`
  * with the owner's validated picks, or a deny that is an explicit skip
  * (0.1.52 ASK3). */
-type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => void;
+type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => boolean | void;
 
 /** Fuigo's ACP extension request for its AskUserQuestion tool. The ACP wire
  * prefixes extension methods with `_`; the leader gateway may nest the real
@@ -311,6 +694,8 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
 /** After session/cancel the agent may still answer the prompt; past this the
  * turn settles as cancelled and the child is terminated. */
 const ACP_CANCEL_GRACE_MS = 5_000;
+/** Most engine stderr lines one failed turn keeps in its native log. */
+const ENGINE_STDERR_LINES = 100;
 /** A stop that starts with session/cancel reaches the kill only after the
  * grace period, so its close budget is measured from there. */
 const acpStopBudget = (): TeardownWait => {
@@ -443,7 +828,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // supports (mcpCapabilities.http/.sse only add EXTRA transports), so
       // an injected stdio proxy — e.g. the peer-agent comms tool — attaches
       // fine here. env is the ACP {name,value}[] shape.
-      const acpMcpServers = (turn: SendTurnInput) => {
+      const acpMcpServers = (turn: SendTurnInput, memoryName = "murage-memory") => {
         const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
@@ -453,7 +838,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         const memory = turn.integrations?.memory;
         if (memory) {
-          servers.push({ name: "murage-memory", command: memory.command, args: memory.args, env: acpEnv(memory.env) });
+          servers.push({ name: memoryName, command: memory.command, args: memory.args, env: acpEnv(memory.env) });
         }
         const composio = turn.integrations?.composio;
         if (composio) {
@@ -492,7 +877,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // collision keeps the built-in (reserved names are filtered at the
         // config boundary; this is defense in depth).
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
-          if (name === "murage-memory") continue;
+          if (name === "murage-memory" || name === memoryName) continue;
           if (servers.some((existing) => existing.name === name)) continue;
           if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
@@ -527,7 +912,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           return { turnId };
         }
         if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
-        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId }) : null;
+        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId, memoryTools: Boolean(turn.integrations?.memory) }) : null;
         const grokBinding = support.driverKind === "grokAgent" ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
         if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
         const replayGrokTurn = () => ({ ...turn, text: ["[The provider session binding changed. Continue from this authorised conversation history:]", "",
@@ -539,7 +924,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
             : turn;
-        const mcpServers = acpMcpServers(turn);
+        const ownedMemoryAlias = support.driverKind === "fuigoAgent" && turn.integrations?.memory && !providerBinding
+          ? newFuigoMemoryAlias() : null;
+        const mcpServers = acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory");
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
         const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
@@ -552,6 +939,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
         const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "" };
+        // Existing 256 KiB diagnostic cap, preserving the start before any
+        // redaction. Never keep a second raw tail that can lose a PEM header.
+        let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
+        const STDERR_DIAGNOSTIC_CHARS = 256 * 1024;
         const asks = new Map<string, AcpAskFinish>();
         let nextId = 1;
         let sessionId: string | null = null;
@@ -617,6 +1008,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
         };
 
+        /** A failed turn keeps the engine's last stderr lines in the thread's
+         * native log as one bounded, redacted record for support; otherwise
+         * the ring is gone with the process. */
+        const persistEngineStderr = (stopReason: string | null) => {
+          const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
+          let lines = redactSecretsInText(stripVTControlCharacters(captured)).split(/\r?\n/);
+          // eslint-disable-next-line no-control-regex -- matching them is the point
+          lines = lines.map((line) => line.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trimEnd()).filter(Boolean);
+          if (!lines.length) return;
+          const kept = lines.slice(-ENGINE_STDERR_LINES);
+          appendNative(threadId, {
+            dir: "in",
+            source: SOURCE,
+            msg: { engineStderr: { stopReason, lines: kept, truncated: stderrDiagnosticTruncated || kept.length < lines.length } },
+          });
+        };
+
         const settle = (
           ok: boolean,
           stopReason: string | null,
@@ -632,6 +1040,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             cancelRequested: state.cancelRequested,
             promptSent: state.promptSent,
           });
+          if (!ok) persistEngineStderr(stopReason);
           if (interruptTimer) clearTimeout(interruptTimer);
           // FUIGOTRUST2 (1): a routed turn's per-turn FUIGO_HOME is removed
           // on the child's close — but a turn that never spawned (its card
@@ -845,19 +1254,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const params = msg.params ?? {};
           flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
-          // ONE-TIME first, then any other option of that polarity. Murage's
-          // card answers one request: "Yes" is allow-once, and any "always"
-          // memory lives in Murage's own grants, which re-answer the NEXT
-          // request. Taking the first `allow*` option instead would hand the
-          // engine a standing grant Murage never sees again — Fuigo lists its
-          // `allow_always` "allow all edits during this session" row BEFORE
-          // `allow_once` on every edit prompt (fuigo-workspace prompter.rs,
-          // read off the 1.0.12 wire), so that ordering is real, not
-          // hypothetical. The fallback keeps agents that offer only
-          // `allow_always` / `reject_always` answerable rather than cancelled.
-          const optionFor = (want: "allow" | "reject") => {
+          // A card answers only this request. Never widen it to an engine's
+          // standing grant when the matching one-time option is unavailable.
+          // Explicit fullAuto retains its existing broader fallback.
+          const optionFor = (want: "allow" | "reject", allowStanding = false) => {
             const usable = options.filter((o) => typeof o.optionId === "string" && String(o.kind ?? "").startsWith(want));
-            return (usable.find((o) => o.kind === `${want}_once`) ?? usable[0])?.optionId ?? null;
+            return (usable.find((o) => o.kind === `${want}_once`) ?? (allowStanding ? usable[0] : undefined))?.optionId ?? null;
           };
           const cancelled = { outcome: { outcome: "cancelled" } };
           const missing = (want: string) =>
@@ -876,8 +1278,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
           const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          if (ownedMemoryAlias && !config.fullAuto && !questionTool && state.promptSent &&
+            sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
+            Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
+            const allow = fuigoMemoryAllowOnce(toolCall, options, ownedMemoryAlias);
+            if (allow) return send({ jsonrpc: "2.0", id: msg.id,
+              result: { outcome: { outcome: "selected", optionId: allow } } });
+          }
           if (config.fullAuto && !questionTool) {
-            const allow = optionFor("allow");
+            const allow = optionFor("allow", true);
             if (!allow) missing("allow");
             return send({
               jsonrpc: "2.0",
@@ -897,7 +1306,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({
               jsonrpc: "2.0",
               id: msg.id,
-              result: optionId ? { outcome: { outcome: "selected", optionId } } : cancelled,
+              result: optionId ? {
+                outcome: { outcome: "selected", optionId },
+                // Fuigo 1.0.13 treats a bare reject_once as turn cancellation.
+                // Its response-level feedback extension keeps the tool denied
+                // while allowing a safe explanation in this same native turn.
+                ...(support.driverKind === "fuigoAgent" && !config.fullAuto && !questionTool &&
+                  behavior === "deny" && source === "user" &&
+                  options.some(option => option.optionId === optionId && option.kind === "reject_once")
+                  ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
+                  : {}),
+              } : cancelled,
             });
             emit({
               ...base(threadId, turnId),
@@ -907,6 +1326,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source: optionId ? source : "system",
               approvalScope: controlsHost ? "local-computer" : undefined,
             });
+            return Boolean(optionId);
           };
           const timer = setTimeout(() => {
             emit({ ...base(threadId, turnId), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
@@ -1041,12 +1461,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        let stderr = "";
         const attachChild = (proc: NonNullable<typeof child>) => {
         proc.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
         proc.stderr.on("data", (c) => {
-          stderr += c;
-          if (stderr.length > 8192) stderr = stderr.slice(-8192);
+          const text = String(c), remaining = STDERR_DIAGNOSTIC_CHARS - stderrDiagnostic.length;
+          stderrDiagnostic += text.slice(0, Math.max(0, remaining));
+          if (text.length > remaining) stderrDiagnosticTruncated = true;
         });
         proc.on("error", (e) => {
           if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
@@ -1054,6 +1474,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           settle(false, "spawn_error");
         });
         proc.on("close", (code, signal) => {
+          // Redact before splitting records, so a credential crossing a chunk
+          // boundary is not exposed. A capped partial final line is omitted.
+          const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
+          const diagnostic = redactSecretsInText(stripVTControlCharacters(captured));
+          for (let offset = 0; offset < diagnostic.length; offset += 4096) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr", turnId, processGeneration: lifecycle.generation, text: diagnostic.slice(offset, offset + 4096) } });
+          if (stderrDiagnosticTruncated) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr_truncated", turnId, limitChars: STDERR_DIAGNOSTIC_CHARS } });
           // Observed before settle() clears pending RPC state. A close with no
           // earlier stop_requested is unsolicited; its initiator stays unknown.
           lifecycle.record("closed", {
@@ -1069,9 +1495,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (!state.settled) {
             if (state.cancelRequested) {
               settle(true, "cancelled");
+              stderrDiagnostic = "";
               return;
             }
-            const detail = redactSecretsInText(stripVTControlCharacters(stderr)).trim().slice(-300);
+            // Engine stderr is engine-controlled text like `error.data` and
+            // the JSON-RPC `error.message`, and it lands in the same two
+            // places: the card and messages.db. So it is sanitised by the
+            // same function — controls and bidi out, credential-bearing
+            // locators and secrets removed, one line, inside the
+            // transcript's own length — and quoted from its END, which is
+            // where a crash's fatal line is.
+            const detail = acpEngineExitStderrText(captured);
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
@@ -1079,6 +1513,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
             settle(false, "exit_before_result");
           }
+          stderrDiagnostic = "";
         });
         };
 
@@ -1298,6 +1733,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const reason = result?.stopReason;
             if (reason === "end_turn") settle(true, null);
             else if (reason === "cancelled") settle(true, "cancelled");
+            // An interrupt already sent session/cancel. An engine that ends
+            // the cancelled request under its own stop reason stopped because
+            // it was asked to, exactly as the rejection and close paths treat
+            // it: a cancellation, never an error card.
+            //
+            // Deliberately broad: `cancelRequested` is set by every
+            // interrupter — a user's Stop, a room deadline, the stall watchdog
+            // (server/index.ts ~2507) and a provider-settings change (~512) —
+            // and the driver cannot tell them apart (the stop is recorded as
+            // `unspecified`). A turn that was interrupted is a cancellation
+            // whoever interrupted it; calling one of them an engine failure
+            // would be the false-failure bug this guard exists to remove.
+            else if (state.cancelRequested) settle(true, "cancelled");
             else {
               const errorMessage = typeof result?.error === "string" && result.error
                 ? result.error
@@ -1315,6 +1763,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
           } catch (e) {
             if (!state.settled) {
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
               const providerError = classifyProviderError(e);
@@ -1324,10 +1773,28 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"
                 || message === support.loginNote;
               const eventBase=base(threadId,turnId);
+              // An RPC rejection shows the engine's own explanation (its
+              // `error.data`) when it sent one; fixed credit copy still wins.
+              // Classification above keeps reading the JSON-RPC message.
+              const rpc = e as { acpMethod?: unknown; data?: unknown };
+              const engineText = providerError?.kind !== "credits" && providerError?.kind !== "payment" && !reasoningOnlyData(rpc?.data) && typeof rpc?.acpMethod === "string"
+                ? acpEngineErrorText(rpc.data) : undefined;
+              // The kind travels structurally. The card reads this field, not
+              // the error text, so an engine cannot claim a kind in prose.
+              const errorKind = acpEngineErrorKind(rpc?.data);
+              // The JSON-RPC `error.message` is engine-controlled text too —
+              // `acpRpcErrorMessage` returns it verbatim — and it reaches the
+              // card and messages.db by the same route as `error.data`. So it
+              // is sanitised by the same function: controls, embedded JSON
+              // bodies, credential-bearing locators and secrets out, one line,
+              // inside the transcript's own length. Classification above still
+              // reads the raw message, and a line that sanitises to nothing is
+              // the generic failure text rather than the raw one.
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message,
+                message: engineText ?? acpEngineErrorText(message) ?? "ACP request failed",
+                ...(errorKind ? { errorKind } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error
                   ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]
@@ -1443,7 +1910,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               finish("answer", "user", decision.answers);
               return "answered";
             }
-            finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            const delivered = finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            if (delivered === false) return "unavailable";
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },
           hasSession: (threadId) => active.has(threadId),

@@ -1,3 +1,4 @@
+import { memoryExtractionMessages } from "./extract.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance } from "../contracts.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./extractor-connections.ts";
@@ -37,6 +38,7 @@ describe("memory extractor connections", () => {
     const body = JSON.parse(String(init.body));
     expect(body).toMatchObject({ model: "flux-fast", max_tokens: 100, stream: false });
     expect(body).not.toHaveProperty("tools");
+    expect(body.messages).toEqual(memoryExtractionMessages("Owner prefers daily reports."));
     key = null;
     expect(() => extract("source", 100, new AbortController().signal)).toThrow("MEMORY_EXTRACTOR_UNAVAILABLE");
     expect(request).toHaveBeenCalledTimes(1);

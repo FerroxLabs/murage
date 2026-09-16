@@ -1,0 +1,2 @@
+# Base package only; no provider, datasets or experiment-tracking extras.
+gepa==0.1.4 --hash=sha256:12b971039599625c156d2231f6d72a29c31a22e9c237689459b5f1a3c353f532

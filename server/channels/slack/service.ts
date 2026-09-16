@@ -6,6 +6,8 @@ import { writeFileAtomic } from "../../atomic.ts";
 import { ChannelSendError, DurableDelivery, type ChannelRuns } from "../durable-delivery.ts";
 import { normalizeSlackMessage, slackBindingSchema, slackId, slackPrompt, type SlackBinding } from "./event.ts";
 import type { SlackTransport } from "./transport.ts";
+import { PermissionApprovals } from "../permission-approvals.ts";
+import type { TelegramApprovalActions } from "../../telegram-approvals.ts";
 
 const chosenSchema = z.object({ teamId: slackId, appId: slackId, ownerUserId: slackId, chiefBotId: z.string().min(1).max(180) }).strict();
 export type SlackChosen = z.infer<typeof chosenSchema>;
@@ -24,6 +26,7 @@ interface Options {
   isCurrentChief: (botId: string) => boolean;
   runs: (binding: SlackBinding) => ChannelRuns;
   revokeRuns: (connectionId: string) => Promise<void>;
+  approvals?: Pick<TelegramApprovalActions, "pending" | "resolve">;
   now?: () => number;
 }
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -31,6 +34,7 @@ export class SlackService {
   private connection?: Connection;
   private transport?: SlackTransport;
   private ledger?: DurableDelivery;
+  private approvals?: PermissionApprovals;
   private generation = 0;
   private live = false;
   private authorised = false;
@@ -108,6 +112,14 @@ export class SlackService {
     } finally { this.connecting = false; }
   }
   private makeLedger(binding: SlackBinding) {
+    this.approvals?.clear();
+    const transport = this.transport!;
+    this.approvals = this.options.approvals && transport.sendPermission && transport.settlePermission && transport.onPermissionAction
+      ? new PermissionApprovals({ provider: "slack", applicationId: binding.appId, teamId: binding.teamId,
+        ownerUserId: binding.ownerUserId, dmId: binding.dmId, actions: this.options.approvals,
+        active: () => this.live && this.isCurrent(binding), maxText: 3000, now: this.options.now,
+        messages: { send: async input => ({ messageId: (await transport.sendPermission!(input)).ts }), settle: input => transport.settlePermission!(input) } })
+      : undefined;
     this.ledger = new DurableDelivery({ file: join(this.options.dataDir, "channels", "slack", binding.connectionId + ".json"),
       bindingKey: digest(JSON.stringify(binding)), recipient: binding.dmId, isCurrent: () => this.live && this.isCurrent(binding),
       runs: this.options.runs(binding), now: this.options.now,
@@ -119,6 +131,10 @@ export class SlackService {
   }
   private async start(generation: number) {
     const transport = this.transport!;
+    transport.onPermissionAction?.(event => {
+      if (generation !== this.generation || !this.live) return;
+      void this.approvals?.receive(event).catch(() => { this.error = "approval-failed"; });
+    });
     await transport.start((raw, ack) => { void this.receive(raw, ack, generation).catch(() => { if (generation === this.generation) this.error = "intake-failed"; }); }, state => {
       if (generation !== this.generation) return;
       if (state === "connected") { this.state = this.connection?.binding ? "connected" : "pairing"; this.error = null; this.retryFailures = 0; this.nextRetryAt = null; }
@@ -135,13 +151,14 @@ export class SlackService {
     const message = normalizeSlackMessage(raw, { ...c.chosen, botUserId: c.identity.userId, botId: c.identity.botId });
     if (!message) { await ack(); return; }
     if (!c.binding) {
-      if (!c.pairing || c.pairing.expiresAt <= this.now() || !/^\/pair [a-f0-9]{64}$/.test(message.text) || digest(message.text.slice(6)) !== c.pairing.hash) { await ack(); return; }
+      const challenge = /^\/?pair ([a-f0-9]{64})$/.exec(message.text.trim());
+      if (!c.pairing || c.pairing.expiresAt <= this.now() || !challenge || digest(challenge[1]) !== c.pairing.hash) { await ack(); return; }
       const binding = slackBindingSchema.parse({ ...c.chosen, botUserId: c.identity.userId, botId: c.identity.botId, dmId: message.dmId, connectionId: randomUUID() });
       this.save({ ...c, binding, pairing: null }); this.makeLedger(binding); this.state = "connected";
     } else if (message.dmId !== c.binding.dmId) { await ack(); return; }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
-      ...(pairedNow ? { prompt: "", response: "Slack is paired with Murage. Send a message here to chat with your Chief. Review approvals in Murage." } : slackPrompt(message.text)) });
+      ...(pairedNow ? { prompt: "", response: "Slack is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : slackPrompt(message.text)) });
     await ack();
     if (this.now() - started > 1000) this.error = "ack-slow";
     // Model work stays outside receipt/ACK handling.
@@ -151,6 +168,7 @@ export class SlackService {
     if (!this.live) return;
     if (!this.connection || !this.options.isCurrentChief(this.connection.chosen.chiefBotId)) { await this.pause(); return; }
     await this.ledger?.drain();
+    await this.approvals?.publish();
   }
   private schedule(generation: number) {
     clearTimeout(this.timer);
@@ -166,7 +184,7 @@ export class SlackService {
     const generation = this.generation;
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
-  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
+  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
   async pause() {
     await this.disable(false);
   }

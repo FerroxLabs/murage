@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -48,11 +49,32 @@ export type RoutineRunStatus =
   | "cancelled"
   | "missed";
 
+export interface RoutineInstructionRevision {
+  id: string;
+  prompt: string;
+  parentId?: string;
+  author: "owner" | "learned" | "rollback";
+  createdAt: number;
+  evaluationReceiptId?: string;
+  evidence?: Array<{ kind: "source" | "record"; id: string; revision: number; scopeId: string }>;
+  rollbackOf?: string;
+}
+
+export interface RoutineInstructionPromotion {
+  expectedRevision: string;
+  expectedUpdatedAt: number;
+  prompt: string;
+  evaluationReceiptId: string;
+  evidence: Array<{ kind: "source" | "record"; id: string; revision: number; scopeId: string }>;
+}
+
 export interface Routine {
   watch?: RoutineWatchBinding;
   id: string;
   name: string;
   prompt: string;
+  instructionRevision?: string;
+  instructionHistory?: RoutineInstructionRevision[];
   target: RoutineTarget;
   /** A bot routine's owner, or the lead coordinator for a room goal. */
   botId: string;
@@ -82,6 +104,9 @@ export interface RoutineRun {
   routineName: string;
   /** Snapshot the work so an edited/deleted definition cannot rewrite history. */
   prompt?: string;
+  instructionRevision?: string;
+  instructionEvidence?: RoutineInstructionRevision["evidence"];
+  instructionEvaluationReceiptId?: string;
   /** Snapshot of the legacy calendar/display length. */
   durationMinutes?: number;
   /** Snapshot of the optional active-work safety cap. */
@@ -105,6 +130,7 @@ export interface RoutineRun {
   webhookId?: string;
   telegramConnectionId?: string;
   channelOrigin?: ChannelOrigin;
+  humanPrincipal?: HumanPrincipal;
   deliveryId?: string;
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
@@ -196,6 +222,9 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  /** Host evaluator must validate the retained receipt, exact candidate and current source authority. */
+  validateInstructionPromotion?: (routine: Readonly<Routine>, proposal: Readonly<RoutineInstructionPromotion>) => boolean;
+  validateInstructionEvidence?: (context: Pick<Routine, "botId" | "groupId" | "target">, evidence: NonNullable<RoutineInstructionRevision["evidence"]>) => boolean;
   /** New channel adapters must prove their exact binding/Chief at admission and dispatch. */
   isChannelCurrent?: (origin: ChannelOrigin, botId: string) => boolean;
   validateWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource) => void;
@@ -211,7 +240,7 @@ export interface RoutineManagerOptions {
   goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
   /** Telegram messages continue the bot's current conversation. */
-  channelThread?: (botId: string) => { threadId: string } | null;
+  channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
   startTurn: (
     botId: string,
@@ -366,9 +395,23 @@ function loadGroupId(value: unknown, target: RoutineTarget): string | undefined 
   return value.trim() || undefined;
 }
 
+export function routineInstructionRevision(routine: Pick<Routine, "id" | "prompt" | "updatedAt" | "instructionRevision">): string {
+  return routine.instructionRevision ?? createHash("sha256").update(JSON.stringify([routine.id, routine.prompt, routine.updatedAt])).digest("hex");
+}
+
+function retainRoutineInstructions(routine: Routine): RoutineInstructionRevision[] {
+  const id = routineInstructionRevision(routine);
+  const history = structuredClone(routine.instructionHistory ?? []);
+  const current = history.find(item => item.id === id);
+  if (current && current.prompt !== routine.prompt) throw new Error("ROUTINE_INSTRUCTION_CORRUPT");
+  if (!current) history.push({ id, prompt: routine.prompt, author: "owner", createdAt: routine.updatedAt });
+  return history;
+}
+
 function cloneRoutine(routine: Routine): Routine {
   return {
     ...routine,
+    ...(routine.instructionHistory ? { instructionHistory: structuredClone(routine.instructionHistory) } : {}),
     ...(routine.watch ? { watch: structuredClone(routine.watch) } : {}),
     schedule: cloneSchedule(routine.schedule),
     attachments: cloneAttachments(routine.attachments),
@@ -378,6 +421,7 @@ function cloneRoutine(routine: Routine): Routine {
 function cloneRun(run: RoutineRun): RoutineRun {
   return {
     ...run,
+    ...(run.instructionEvidence ? { instructionEvidence: structuredClone(run.instructionEvidence) } : {}),
     ...(run.watch ? { watch: structuredClone(run.watch) } : {}),
     ...(run.event ? { event: structuredClone(run.event) } : {}),
     ...(run.eventBudget ? { eventBudget: structuredClone(run.eventBudget) } : {}),
@@ -747,6 +791,8 @@ export class RoutineManager {
       createdAt: at,
       updatedAt: at,
     };
+    routine.instructionRevision = routineInstructionRevision(routine);
+    routine.instructionHistory = retainRoutineInstructions(routine);
     if (watchInput && request) routine.watch = { ownerBotId: request.botId, state: createRoutineWatchState({ id: routine.id, ...watchInput }, at) };
     this.commitMutation(() => {
       this.routines.unshift(routine);
@@ -800,6 +846,16 @@ export class RoutineManager {
     const keepsCursor = clean.enabled && routine.enabled && sameSchedule(clean.schedule, routine.schedule);
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
+      if (clean.prompt !== routine.prompt) {
+        const history = retainRoutineInstructions(routine);
+        const revision = randomUUID();
+        history.push({ id: revision, parentId: routineInstructionRevision(routine), prompt: clean.prompt, author: "owner", createdAt: now });
+        routine.instructionHistory = history;
+        routine.instructionRevision = revision;
+      } else if (!routine.instructionRevision) {
+        routine.instructionRevision = routineInstructionRevision(routine);
+        routine.instructionHistory = retainRoutineInstructions(routine);
+      }
       Object.assign(routine, clean, {
         nextRunAt: !clean.enabled ? null : keepsCursor ? routine.nextRunAt : this.initialOccurrence(clean.schedule, now),
         // `updatedAt` doubles as the optimistic revision on durable routine
@@ -826,6 +882,50 @@ export class RoutineManager {
       if (request) this.rememberRoutineRequest(request, routine.id, now);
     });
     for (const run of cancelledRuns) this.emitRun(run);
+    this.emitRoutine(routine);
+    return cloneRoutine(routine);
+  }
+
+  /** Internal evaluated publication, deliberately narrower than update(). */
+  promoteInstructions(id: string, proposal: RoutineInstructionPromotion): Routine | null {
+    const routine = this.routines.find(item => item.id === id);
+    if (!routine) return null;
+    if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
+    const prompt = z.string().trim().min(1).max(20_000).parse(proposal.prompt);
+    if (!proposal.evaluationReceiptId || !proposal.evidence.length || !proposal.evidence.every(item => ["source", "record"].includes(item.kind) && typeof item.id === "string" && item.id.length > 0 && typeof item.scopeId === "string" && item.scopeId.length > 0 && Number.isSafeInteger(item.revision) && item.revision > 0)) throw new Error("ROUTINE_EVALUATION_REQUIRED");
+    if (!this.options.validateInstructionPromotion?.(cloneRoutine(routine), structuredClone({ ...proposal, prompt }))) throw new Error("ROUTINE_EVALUATION_REQUIRED");
+    if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
+    if (prompt === routine.prompt) return cloneRoutine(routine);
+    const at = this.now(), history = retainRoutineInstructions(routine), revision = randomUUID();
+    history.push({ id: revision, parentId: proposal.expectedRevision, prompt, author: "learned", createdAt: at, evaluationReceiptId: proposal.evaluationReceiptId, evidence: structuredClone(proposal.evidence) });
+    this.commitMutation(() => {
+      routine.prompt = prompt;
+      routine.instructionRevision = revision;
+      routine.instructionHistory = history;
+      routine.updatedAt = Math.max(at, routine.updatedAt + 1);
+    });
+    this.emitRoutine(routine);
+    return cloneRoutine(routine);
+  }
+
+  /** Caller is the owner management route; rollback never rewrites an existing run. */
+  rollbackInstructions(id: string, expectedRevision: string, expectedUpdatedAt: number, targetRevision: string): Routine | null {
+    const routine = this.routines.find(item => item.id === id);
+    if (!routine) return null;
+    if (routineInstructionRevision(routine) !== expectedRevision || routine.updatedAt !== expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
+    const history = retainRoutineInstructions(routine), target = history.find(item => item.id === targetRevision);
+    if (!target) throw new Error("ROUTINE_INSTRUCTION_UNAVAILABLE");
+    if (target.evidence?.length && !this.options.validateInstructionEvidence?.(cloneRoutine(routine), structuredClone(target.evidence))) throw new Error("ROUTINE_INSTRUCTION_EVIDENCE_REVOKED");
+    const prompt = z.string().trim().min(1).max(20_000).parse(target.prompt);
+    const at = this.now(), revision = randomUUID();
+    history.push({ id: revision, parentId: expectedRevision, prompt, author: "rollback", createdAt: at, rollbackOf: target.id,
+      ...(target.evidence ? { evidence: structuredClone(target.evidence), evaluationReceiptId: target.evaluationReceiptId } : {}) });
+    this.commitMutation(() => {
+      routine.prompt = prompt;
+      routine.instructionRevision = revision;
+      routine.instructionHistory = history;
+      routine.updatedAt = Math.max(at, routine.updatedAt + 1);
+    });
     this.emitRoutine(routine);
     return cloneRoutine(routine);
   }
@@ -959,7 +1059,9 @@ export class RoutineManager {
     receivedAt: number;
     telegramConnectionId?: string;
     channelOrigin?: ChannelOrigin;
+    humanPrincipal?: HumanPrincipal;
   }): RoutineRun {
+    if(input.telegramConnectionId || input.channelOrigin){if(!input.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(input.humanPrincipal);}
     const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
     if (existing) return existing;
     if (input.channelOrigin !== undefined && (!channelOriginSchema.safeParse(input.channelOrigin).success || input.telegramConnectionId || this.options.isChannelCurrent?.(input.channelOrigin, input.botId) !== true)) throw new Error("Channel binding is not current");
@@ -981,6 +1083,7 @@ export class RoutineManager {
       triggerSource: input.telegramConnectionId || input.channelOrigin ? "channel" : "webhook",
       ...(input.telegramConnectionId ? { telegramConnectionId: input.telegramConnectionId } : {}),
       ...(input.channelOrigin ? { channelOrigin: { ...input.channelOrigin } } : {}),
+      ...(input.humanPrincipal?{humanPrincipal:{...input.humanPrincipal}}:{}),
       webhookId: input.webhookId,
       deliveryId: input.deliveryId,
       attachments: [],
@@ -1210,9 +1313,14 @@ export class RoutineManager {
 
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
+        if (run.instructionEvidence?.length && !this.options.validateInstructionEvidence?.(run, structuredClone(run.instructionEvidence))) {
+          this.failRun(run, "The evidence supporting these learned instructions is no longer available to this routine. Review its instructions before running it again.");
+          continue;
+        }
         if (run.channelOrigin !== undefined && (!channelOriginSchema.safeParse(run.channelOrigin).success || run.telegramConnectionId || this.options.isChannelCurrent?.(run.channelOrigin, run.botId) !== true)) {
           this.failRun(run, "Channel binding changed; review it in Murage."); continue;
         }
+        if(run.triggerSource==="channel"){try{if(!run.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(run.humanPrincipal);}catch(error){this.failRun(run,error instanceof Error?error.message:String(error));continue;}}
         const sharedChannel = run.triggerSource === "channel" && run.target === "bot" && !!this.options.channelThread;
         // Channel messages share history: dispatch the oldest queued message
         // first, even though detached routine jobs retain their existing order.
@@ -1251,7 +1359,7 @@ export class RoutineManager {
             ? this.options.createGoalTask?.(run.groupId, run.routineName) ?? null
             : null
           : sharedChannel
-            ? this.options.channelThread!(run.botId)
+            ? this.options.channelThread!(run.botId,run.humanPrincipal)
             : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
         if (!task) {
           this.failRun(run, run.target === "room-goal"
@@ -1458,11 +1566,14 @@ export class RoutineManager {
   }
 
   private newRun(routine: Routine, scheduledFor: number, manual: boolean): RoutineRun {
+    const instruction = routine.instructionHistory?.find(item => item.id === routineInstructionRevision(routine));
     const run: RoutineRun = {
       id: randomUUID(),
       routineId: routine.id,
       routineName: routine.name,
       prompt: routine.prompt,
+      instructionRevision: routineInstructionRevision(routine),
+      ...(instruction?.evidence ? { instructionEvidence: structuredClone(instruction.evidence), instructionEvaluationReceiptId: instruction.evaluationReceiptId } : {}),
       durationMinutes: routine.durationMinutes,
       ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       attachments: cloneAttachments(routine.attachments),

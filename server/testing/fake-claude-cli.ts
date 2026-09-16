@@ -366,9 +366,15 @@ const playTurn = (prompt: JsonValue) => {
         /* leave null — the test will see it */
       }
     }
+    let procedureProbe: {cwd:string;explicit:string|null;native:string|null}|undefined;
+    if (JSON.stringify(prompt).includes("__fixture_procedure_probe__")) {
+      const encoded = /^- pinned-fixture: .* Read (".*")\.$/m.exec(systemPrompt ?? "")?.[1];
+      const read = (path:string) => { try { return readFileSync(path,"utf8"); } catch { return null; } };
+      procedureProbe = {cwd:process.cwd(),explicit:encoded?read(JSON.parse(encoded)):null,native:read(join(process.cwd(),".agents","skills","pinned-fixture","SKILL.md"))};
+    }
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, systemPrompt, mcpConfig }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, systemPrompt, mcpConfig, ...(procedureProbe?{procedureProbe}:{}) }, null, 2),
     );
   }
 

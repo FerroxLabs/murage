@@ -1,3 +1,4 @@
+import { RoutineVersionHistory } from "./ProcedureVersionHistory";
 import {
   useCallback,
   useEffect,
@@ -357,6 +358,7 @@ function EventEditor({
   const [kind, setKind] = useState<EventKind>(seed.kind);
   const [name, setName] = useState(existingRoutine?.name ?? existingCall?.name ?? seed.name ?? "");
   const [description, setDescription] = useState(existingRoutine?.prompt ?? existingCall?.description ?? seed.description ?? "");
+  const [instructionBase,setInstructionBase]=useState(existingRoutine?.prompt??"");
   const initialAt = existingRoutine?.schedule.type === "once"
     ? existingRoutine.schedule.at
     : existingRoutine?.schedule.type === "daily"
@@ -745,6 +747,10 @@ function EventEditor({
               </div>
             </div>
           )}
+
+          {kind==="routine"&&existingRoutine&&<div className="sm:ml-10"><RoutineVersionHistory routine={existingRoutine}
+            disabledReason={description!==instructionBase?"Save or discard your instruction edits before restoring a version.":undefined}
+            onRestored={routine=>{dispatch({type:"routinePatched",routine});setDescription(routine.prompt);setInstructionBase(routine.prompt);}}/></div>}
 
           {error && <div className="ml-10 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger"><CircleAlert size={15} className="mt-0.5 shrink-0" />{error}</div>}
         </div>

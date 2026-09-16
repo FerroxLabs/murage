@@ -90,3 +90,12 @@ describe("sidebar more-menu panel", () => {
     expect(markup).toContain("right-0");
   });
 });
+
+
+it("keeps the canonical approval count visible while Tools is collapsed and labels stale state", () => {
+  const html = renderToStaticMarkup(createElement(SidebarMoreMenu, { items: [], approvalCount: 37, approvalsStale: true }));
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain('data-pending-approval-count');
+  expect(html).toContain('37 ?');
+  expect(html).toContain('Tools, 37 pending approvals, approvals may be stale');
+});

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import {
   nextOccurrence,
+  routineInstructionRevision,
   RoutineManager,
   type RoutineManagerOptions,
   type RoutineRun,
@@ -104,6 +105,66 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("versioned routine instructions", () => {
+  const create = (h: ReturnType<typeof harness>) => h.manager.create({
+    name: "Versioned routine", prompt: "Original verified method", botId: "bot-a", target: "bot",
+    runOn: "ember", enabled: false, schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() },
+    durationMinutes: 15, timeoutMinutes: 5,
+    attachments: [{ id: "procedure-context", kind: "file", name: "Context", path: "/synthetic/context.txt", size: 12 }],
+  });
+  it("pins queued execution while a validated instruction-only promotion changes the next invocation", async () => {
+    const h = harness(); h.setBot("busy");
+    h.options.validateInstructionPromotion = vi.fn(() => true);
+    h.options.validateInstructionEvidence = () => true;
+    const routine = create(h), queued = h.manager.runNow(routine.id)!;
+    const proposal = { expectedRevision: routineInstructionRevision(routine), expectedUpdatedAt: routine.updatedAt, prompt: "Improved verified method", evaluationReceiptId: "synthetic-evaluated-1", evidence: [{ kind: "source" as const, id: "verified-trajectory", revision: 1, scopeId: "private" }] };
+    const promoted = h.manager.promoteInstructions(routine.id, proposal)!;
+    const fixed = ({ prompt: _prompt, instructionRevision: _revision, instructionHistory: _history, updatedAt: _updated, ...rest }: typeof routine) => rest;
+    expect(fixed(promoted)).toEqual(fixed(routine));
+    expect(h.manager.listRuns().find(run => run.id === queued.id)).toMatchObject({ prompt: routine.prompt, instructionRevision: routine.instructionRevision });
+    h.setBot("ready"); await h.manager.tick();
+    expect(h.started[0].prompt).toContain(routine.prompt);
+    const next = h.manager.runNow(routine.id)!;
+    expect(next).toMatchObject({ prompt: promoted.prompt, instructionRevision: promoted.instructionRevision });
+    await h.manager.tick();
+    expect(h.started.at(-1)?.prompt).toContain(promoted.prompt);
+    expect(h.options.validateInstructionPromotion).toHaveBeenCalledOnce();
+  });
+  it("requires a host-validated evaluation and rejects stale proposals after owner edits", () => {
+    const h = harness(), routine = create(h);
+    const proposal = { expectedRevision: routineInstructionRevision(routine), expectedUpdatedAt: routine.updatedAt, prompt: "Candidate", evaluationReceiptId: "not-proof-by-itself", evidence: [{ kind: "source" as const, id: "source", revision: 1, scopeId: "private" }] };
+    expect(() => h.manager.promoteInstructions(routine.id, proposal)).toThrow("ROUTINE_EVALUATION_REQUIRED");
+    h.options.validateInstructionPromotion = () => true;
+    h.manager.update(routine.id, { prompt: "Owner correction wins" });
+    expect(() => h.manager.promoteInstructions(routine.id, proposal)).toThrow("ROUTINE_INSTRUCTION_CONFLICT");
+    expect(h.manager.listRoutines()[0].prompt).toBe("Owner correction wins");
+  });
+  it("retains rollback history across restart without changing old run receipts", () => {
+    const h = harness(); h.setBot("busy"); h.options.validateInstructionPromotion = () => true;
+    const routine = create(h), original = routineInstructionRevision(routine), queued = h.manager.runNow(routine.id)!;
+    const promoted = h.manager.promoteInstructions(routine.id, { expectedRevision: original, expectedUpdatedAt: routine.updatedAt, prompt: "Evaluated replacement", evaluationReceiptId: "synthetic-evaluated-2", evidence: [{ kind: "source", id: "source", revision: 1, scopeId: "private" }] })!;
+    const restored = new RoutineManager(h.options);
+    const rollback = restored.rollbackInstructions(routine.id, routineInstructionRevision(promoted), promoted.updatedAt, original)!;
+    expect(rollback.prompt).toBe(routine.prompt);
+    expect(rollback.instructionHistory?.map(item => item.author)).toEqual(["owner", "learned", "rollback"]);
+    expect(restored.listRuns().find(run => run.id === queued.id)).toMatchObject({ prompt: routine.prompt, instructionRevision: original });
+    rollback.instructionHistory![0].prompt = "external mutation";
+    expect(restored.listRoutines()[0].instructionHistory![0].prompt).toBe(routine.prompt);
+    expect(() => restored.rollbackInstructions(routine.id, original, routine.updatedAt, original)).toThrow("ROUTINE_INSTRUCTION_CONFLICT");
+  });
+  it("refuses a queued learned instruction after its supporting evidence is revoked", async () => {
+    const h = harness(); h.setBot("busy"); h.options.validateInstructionPromotion = () => true;
+    let current = true; h.options.validateInstructionEvidence = () => current;
+    const routine = create(h);
+    const promoted = h.manager.promoteInstructions(routine.id, { expectedRevision: routineInstructionRevision(routine), expectedUpdatedAt: routine.updatedAt, prompt: "Learned method", evaluationReceiptId: "scoped-proof", evidence: [{ kind: "source", id: "source", revision: 1, scopeId: "private" }] })!;
+    const queued = h.manager.runNow(routine.id)!;
+    expect(queued.instructionEvidence).toEqual(promoted.instructionHistory?.at(-1)?.evidence);
+    current = false; h.setBot("ready"); await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    expect(h.manager.listRuns().find(run => run.id === queued.id)).toMatchObject({ status: "failed", error: expect.stringContaining("evidence supporting") });
+  });
 });
 
 describe("nextOccurrence", () => {
@@ -1466,6 +1527,8 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]!.attention).not.toContain(secret);
     h.manager.handleRuntimeEvent({ ...base, type: "request.resolved", behavior: "answer", source: "user" });
     expect(h.manager.listRuns()[0]!.attention).toBeUndefined();
+    h.manager.handleRuntimeEvent({ ...base, type: "content.delta", streamKind: "reasoning_text", delta: "HTTP 503. Retrying model request." });
+    expect(h.manager.listRuns()[0]!.output).toBeUndefined();
     h.manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", text: "Report shipped." });
     h.manager.handleRuntimeEvent({ ...base, type: "turn.completed", ok: true, cost: 0.02 });
 

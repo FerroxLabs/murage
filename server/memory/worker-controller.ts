@@ -44,6 +44,15 @@ export class MemoryWorkerController {
     return {running:this.child!==null,ready:this.ready,indexing:this.indexing,queryCount:this.queries.size,error:this.error};
   }
 
+  /** Notify the same derived-work hook after either capture publication path. */
+  completedSource(jobId:string){
+    if(this.stopping||!this.options.onCompletedSource)return;
+    const task=this.options.onCompletedSource(jobId,this.consolidationAbort.signal)
+      .then(()=>{}).catch(()=>{if(!this.stopping)this.error="MEMORY_CONSOLIDATION_FAILED";})
+      .finally(()=>this.consolidationTasks.delete(task));
+    this.consolidationTasks.add(task);
+  }
+
   start() {
     if(this.timer) return;
     this.stopping=false;
@@ -130,12 +139,7 @@ export class MemoryWorkerController {
           // recast that committed source job as a failed capture.
           try { refreshMemoryCheckpoint(this.work.id); }
           catch { this.error="MEMORY_CHECKPOINT_FAILED"; }
-          if(this.options.onCompletedSource){
-            const task=this.options.onCompletedSource(this.work.id,this.consolidationAbort.signal)
-              .then(()=>{}).catch(()=>{if(!this.stopping)this.error="MEMORY_CONSOLIDATION_FAILED";})
-              .finally(()=>this.consolidationTasks.delete(task));
-            this.consolidationTasks.add(task);
-          }
+          this.completedSource(this.work.id);
         }
       } catch {this.failWork("MEMORY_RESULT_REJECTED");}
       this.work=null;

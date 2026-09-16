@@ -32,11 +32,23 @@ function fixture() {
   return { dir, options, service, pair, raw, emit, callbacks, health, enqueue, sendText, verifyBot, stop, revokeRuns, retained,
     invalidate: () => { chief = false; } };
 }
+it.each(["pair ", "/pair ", " /pair "])("accepts Slack composer pairing form %s only for the exact owner and challenge", async prefix => {
+  const f = fixture(), p = await f.service.pair();
+  const stranger = f.raw(prefix + p.code); stranger.body.event.user = "UOTHER";
+  await f.emit(stranger); expect(f.service.status().paired).toBe(false);
+  await f.emit(f.raw(prefix + "0".repeat(64))); expect(f.service.status().paired).toBe(false);
+  await f.emit(f.raw(prefix + p.code + " extra")); expect(f.service.status().paired).toBe(false);
+  await f.emit(f.raw(prefix + p.code)); expect(f.service.status().paired).toBe(true);
+  expect(f.enqueue).not.toHaveBeenCalled();
+  expect(f.sendText).toHaveBeenCalledTimes(1);
+});
 it("requires the named owner challenge and durably accepts before ACK, not model completion", async () => {
   const f = fixture(), p = await f.service.pair();
   const bad = f.raw("/pair " + p.code); bad.body.event.user = "UOTHER"; await f.emit(bad);
   expect(f.service.status().paired).toBe(false); expect(f.enqueue).not.toHaveBeenCalled();
-  await f.emit(f.raw("/pair " + p.code)); expect(f.service.status().paired).toBe(true); f.sendText.mockClear();
+  await f.emit(f.raw("/pair " + p.code)); expect(f.service.status().paired).toBe(true);
+  expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "Slack is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." }));
+  f.sendText.mockClear();
   const ack = vi.fn(async () => {
     const file = readdirSync(join(f.dir, "channels/slack")).find(n => n !== "connection.json")!;
     expect(readFileSync(join(f.dir, "channels/slack", file), "utf8")).toContain("EvREQUEST");

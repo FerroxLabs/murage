@@ -48,11 +48,17 @@ export function TelegramSettings() {
     return () => { active = false; window.clearInterval(interval); };
   }, [status]);
   const linked = status?.requiresRevoke || status?.paired || status?.pending || status?.enabled || status?.connecting;
+  // B17: Telegram rejected the saved token; a token for the SAME bot may replace it without revoking.
+  const replaceable = Boolean(status?.canReplaceToken);
+  const tokenLocked = Boolean(linked) && !replaceable;
   const save = () => run("save", async version => {
-    if (linked) throw new Error("Revoke first");
-    if (window.muragebox?.setCredential) await window.muragebox.setCredential("telegramBotToken", token.trim());
-    else await api("/api/config", { method: "PUT", body: JSON.stringify({ telegram: { botToken: token.trim() } }) });
-    setToken(""); await refresh(version); if (version === actionVersion.current) setNotice("Token saved. Pairing has not started.");
+    if (tokenLocked) throw new Error("Revoke first");
+    try {
+      if (window.muragebox?.setCredential) await window.muragebox.setCredential("telegramBotToken", token.trim());
+      else await api("/api/config", { method: "PUT", body: JSON.stringify({ telegram: { botToken: token.trim() } }) });
+    } catch (error) { if (replaceable) await refresh(version).catch(() => {}); throw error; } // the server puts the refusal reason in resumeMessage
+    setToken(""); await refresh(version);
+    if (version === actionVersion.current) setNotice(replaceable ? "Token replaced. Reconnecting with your saved pairing." : "Token saved. Pairing has not started.");
   });
   const startPair = () => run("pair", async version => {
     if (expired) { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); setPair(null); }
@@ -71,12 +77,13 @@ export function TelegramSettings() {
     <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">{status?.configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
-      <input type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || Boolean(linked)} onChange={event => setToken(event.target.value)}
+      <input type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
         className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50" />
     </label>
-    {linked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>}
+    {tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>}
+    {replaceable && <p className="mt-1 text-[12px] text-ink-secondary">Paste a new token for the same bot from BotFather. Your pairing and owner link are kept. A token for a different bot is refused.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
-      <button type="button" disabled={Boolean(busy) || Boolean(linked) || !status || !token.trim()} onClick={() => void save()} className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50">{busy === "save" ? "Saving…" : "Save token"}</button>
+      <button type="button" disabled={Boolean(busy) || tokenLocked || !status || !token.trim()} onClick={() => void save()} className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50">{busy === "save" ? "Saving…" : replaceable ? "Replace token" : "Save token"}</button>
     </div>
     <h4 className="mt-4 text-[13px] font-medium text-ink">3. Pair with your Chief</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send the command below to your new bot in a private Telegram chat.</p>

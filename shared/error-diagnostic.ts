@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { ENGINE_ERROR_CATEGORIES } from "./provider-error.ts";
 
 /** Display/support facts only; never input to retry, routing or auth policy. */
-export const DIAGNOSTIC_FAILURE_KINDS = ["auth","http","api","serialization","idle_timeout","rate_limited","empty_response","max_tokens_truncation","doom_loop_detected","context_length"] as const;
+// Fuigo 1.0.18's 17 canonical tags plus the existing legacy diagnostic value.
+export const DIAGNOSTIC_FAILURE_KINDS = [...ENGINE_ERROR_CATEGORIES, "context_length"] as const;
 export type DiagnosticFailureKind = (typeof DIAGNOSTIC_FAILURE_KINDS)[number];
 export const DIAGNOSTIC_RPC_METHODS = ["initialize","authenticate","session/new","session/load","session/prompt","session/set_mode","session/set_model","session/set_config_option"] as const;
 export const RUNTIME_ERROR_DIAGNOSTIC_MAX_BYTES = 1024;

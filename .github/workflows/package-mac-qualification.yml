@@ -1,0 +1,173 @@
+# Artifact-only preparation. Dispatch/signing requires separate explicit authority.
+name: Mac artifact qualification
+on:
+  # Bootstrap this qualification without modifying the default/release branch.
+  # Pushing this exact task branch is an explicitly approved signing/CI action.
+  push:
+    branches: [qualification/mac-artifact-20260914]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full reviewed commit SHA; must equal the workflow commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: mac-artifact-qualification-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+    steps:
+      - name: Admit only the exact reviewed workflow commit
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$SOURCE_SHA" = "$WORKFLOW_SHA"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Record exact source and runner capabilities
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = arm64
+          for tool in security codesign xcrun ditto lipo shasum; do command -v "$tool"; done
+          xcrun --find notarytool
+          xcrun --find stapler
+          mkdir qualification-evidence
+          git rev-parse HEAD > qualification-evidence/source-sha.txt
+          sw_vers > qualification-evidence/macos.txt
+          xcodebuild -version > qualification-evidence/xcode.txt
+          printf '%s\n' "${GITHUB_WORKFLOW_REF}" "${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}" > qualification-evidence/run.txt
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare using the existing Mac package chain
+        run: |
+          set -euo pipefail
+          rm -rf dist dist-server dist-native release
+          node --version > qualification-evidence/node.txt
+          pnpm --version > qualification-evidence/pnpm.txt
+          pnpm package:prepare
+          pnpm build:speech
+          pnpm build:recorder
+          pnpm build:cua
+      - name: Import the existing Developer ID into a throwaway keychain
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/mac-qualification.keychain-db"
+          security list-keychains -d user > "$RUNNER_TEMP/mac-qualification-keychains.txt"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          printf '%s' "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/mac-qualification-cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/mac-qualification-cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          rm "$RUNNER_TEMP/mac-qualification-cert.p12"
+      - name: Build pinned GEPA worker and freeze signed resource metadata
+        run: |
+          set -euo pipefail
+          python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-mac-build" "$RUNNER_TEMP/mac-qualification.keychain-db"
+      - name: Package arm64 with unchanged signing and afterPack guards
+        env:
+          CSC_KEYCHAIN: ${{ runner.temp }}/mac-qualification.keychain-db
+        run: pnpm exec electron-builder --mac dmg:arm64 zip:arm64 --publish never --config.extraMetadata.murageGepaManifests.darwin-arm64="$(node -p 'require("./qualification-evidence/gepa-package-metadata.json").extraMetadata.murageGepaManifests["darwin-arm64"]')"
+      - name: Strict packaged app, helper, resource and server gates
+        run: |
+          set -euo pipefail
+          node scripts/mac-artifact-qualification.mjs | tee qualification-evidence/package-gates.json
+          MURAGE_SMOKE_DIST="$PWD/release/mac-arm64/Murage.app/Contents/Resources/server" node scripts/smoke-packaged-server.mjs > qualification-evidence/packaged-server.txt 2>&1
+      - name: Notarize only the two exact arm64 artifacts
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/mac-qualification-notary.p8"
+          v=$(node -p "require('./package.json').version")
+          for extension in dmg zip; do
+            f="release/Murage-$v-arm64.$extension"
+            test -f "$f"
+            xcrun notarytool submit "$f" --key "$RUNNER_TEMP/mac-qualification-notary.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 30m --output-format json > "qualification-evidence/notary-$extension.json"
+            node -e 'const fs=require("fs"); if(JSON.parse(fs.readFileSync(process.argv[1])).status!=="Accepted") process.exit(1)' "qualification-evidence/notary-$extension.json"
+          done
+          rm "$RUNNER_TEMP/mac-qualification-notary.p8"
+      - name: Staple and hash final bytes without generating a public feed
+        run: |
+          set -euo pipefail
+          v=$(node -p "require('./package.json').version")
+          app=release/mac-arm64/Murage.app
+          xcrun stapler staple "release/Murage-$v-arm64.dmg"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "release/Murage-$v-arm64.dmg"
+          xcrun stapler validate "$app"
+          node scripts/mac-artifact-qualification.mjs > qualification-evidence/final-package-gates.json
+          rm "release/Murage-$v-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release/Murage-$v-arm64.zip"
+          shasum -a 256 "release/Murage-$v-arm64.dmg" "release/Murage-$v-arm64.zip" > qualification-evidence/SHA256SUMS
+      - name: Preserve sanitized GEPA stage evidence
+        if: always()
+        run: node scripts/collect-gepa-build-evidence.mjs "$RUNNER_TEMP/gepa-mac-build" "$PWD/qualification-evidence"
+      - name: Remove task-owned signing material and restore keychain search list
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import os, pathlib, shlex, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          prior = root / 'mac-qualification-keychains.txt'
+          failed = False
+          try:
+              if prior.exists():
+                  subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', *shlex.split(prior.read_text())], check=True)
+          except Exception as error:
+              print(type(error).__name__)
+              failed = True
+          keychain = root / 'mac-qualification.keychain-db'
+          if keychain.exists():
+              failed |= subprocess.run(['security', 'delete-keychain', str(keychain)]).returncode != 0
+          for name in ['mac-qualification-cert.p12', 'mac-qualification-notary.p8', 'mac-qualification-keychains.txt']:
+              (root / name).unlink(missing_ok=True)
+          evidence = pathlib.Path('qualification-evidence')
+          if evidence.exists():
+              (evidence / 'cleanup.txt').write_text('FAILED\n' if failed else 'PASS\n')
+          raise SystemExit(1 if failed else 0)
+          PYTHON
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mac-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success()
+        with:
+          name: mac-qualification-arm64-${{ env.SOURCE_SHA }}
+          path: |
+            release/*-arm64.dmg
+            release/*-arm64.zip
+          if-no-files-found: error
+          retention-days: 7

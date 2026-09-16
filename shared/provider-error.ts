@@ -75,3 +75,54 @@ export function providerErrorPresentation(info: ProviderErrorInfo): { title: str
     default: return { title: "Provider request failed", summary: "Detailed provider information is unavailable for this saved error.", resolution: "Review the selected engine's configuration before retrying." };
   }
 }
+
+/** A failed turn is stored in the transcript as `error: <message>` with the
+ * message cut at this many characters (server/index.ts), and the card shows
+ * exactly that. Anything a driver writes longer than this is cut there
+ * mid-word with no ellipsis, so engine text is ended cleanly inside the same
+ * budget instead. */
+export const ERROR_MESSAGE_MAX = 160;
+
+/** Technical-details line the ACP driver writes for a typed engine failure:
+ * Fuigo's `error.data.error_kind` (server/drivers/acp/core.ts). */
+export const ENGINE_ERROR_KIND_PREFIX = "Engine error kind: ";
+
+/** Engine failure kinds Murage has reviewed copy for, one catalog string each
+ * (`runtimeError.engineKind.<kind>`). Fuigo 1.0.18 is the source of the
+ * spellings; the older ones stay as aliases below so an engine mid upgrade
+ * still gets its copy. A kind that is not one of these gets no explanation. */
+export const ENGINE_ERROR_CATEGORIES = [
+  // Model-request kinds (fuigo-sampler `SamplingErrorKind::as_str`).
+  "empty_response", "idle_timeout", "cancelled", "rate_limited",
+  "auth", "http", "api", "max_tokens_truncation", "doom_loop_detected", "serialization",
+  // Agent-side kinds (fuigo-shell `AcpErrorKind::as_str`). `internal` is the
+  // one a request with no more specific kind is stamped with, so it is the
+  // kind Murage sees most often.
+  "session_unavailable", "internal", "invalid_request", "not_found", "session_storage",
+  "compaction", "execution_incomplete",
+] as const;
+export type EngineErrorCategory = (typeof ENGINE_ERROR_CATEGORIES)[number];
+
+/** Older or alternate spellings that resolve to a canonical kind. The
+ * canonical side is always the token Fuigo puts on the wire
+ * (`fuigo-sampler/src/events.rs` `SamplingErrorKind::as_str`). */
+const ENGINE_ERROR_ALIASES: ReadonlyMap<string, EngineErrorCategory> = new Map([
+  ["rate_limit", "rate_limited"],
+  ["doom_loop", "doom_loop_detected"],
+]);
+
+/** The kind the ACP driver read out of `error.data.error_kind` and carried as
+ * its own event field (`runtime.error.errorKind`).
+ *
+ * It is deliberately NOT parsed back out of the error text: the transcript's
+ * technical details begin with the engine's own message, so an engine whose
+ * one-line message reads "Engine error kind: auth" would otherwise choose the
+ * explanation shown to the user. Text an engine wrote describes the engine;
+ * it is never evidence about it. */
+export function engineErrorCategory(kind: unknown): EngineErrorCategory | undefined {
+  if (typeof kind !== "string") return undefined;
+  const canonical = ENGINE_ERROR_ALIASES.get(kind) ?? kind;
+  return (ENGINE_ERROR_CATEGORIES as readonly string[]).includes(canonical)
+    ? canonical as EngineErrorCategory
+    : undefined;
+}

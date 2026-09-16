@@ -311,7 +311,7 @@ function handle(cmd: any) {
       // record receipt so a test can prove a prompt was (or was never) sent
       if (process.env.FAKE_PI_DUMP) {
         try {
-          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true, action: true, pid: process.pid }) + "\n");
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true, action: true, pid: process.pid, message: cmd.message }) + "\n");
         } catch {
           /* never let dumping break a run */
         }

@@ -59,5 +59,24 @@ it("keeps existing task settings and cursors when the owner changes new-thread d
   store.setResumeCursor(bot.id,"engine-one","keep-session",first);
   store.patchBot(bot.id,{modelSelection:{instanceId:"engine-two",model:"two",connectionId:"account-two"},autoApprove:true},{preserveTaskSettings:true});
   expect(store.projectBotForTask(bot.id,first)).toMatchObject({modelSelection:{instanceId:"engine-one",connectionId:"account-one"},autoApprove:false,resumeCursors:{"engine-one":"keep-session"}});
-  const next=store.createTask(bot.id)!;expect(next).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:true});
+  // Active creation preserves the currently visible model; detached routine
+  // work uses the owner's updated defaults. Both retain existing task cursors.
+  const next=store.createTask(bot.id)!;expect(next).toMatchObject({modelSelection:{instanceId:"engine-one",connectionId:"account-one"},autoApprove:true});
+  const detached=store.createTask(bot.id,"Detached defaults",false)!;
+  expect(detached).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:true});
+  expect(store.projectBotForTask(bot.id,first)?.resumeCursors).toEqual({"engine-one":"keep-session"});
+});
+
+it("persists write-once procedure pins per direct task and room responder",()=>{
+  const store=fresh(),first=store.createBot(),second=store.createBot(),firstThread=first.threadId;
+  const pin={schema:1 as const,bundleId:"a".repeat(64)},other={schema:1 as const,bundleId:"b".repeat(64)};
+  store.pinTaskProcedures(first.id,firstThread,pin);
+  expect(store.pinTaskProcedures(first.id,firstThread,other)).toEqual(pin);
+  const next=store.createTask(first.id)!;expect(next.procedurePin).toBeUndefined();
+  const room=store.createGroup("Procedure room",[first.id,second.id]);
+  store.pinGroupProcedures(room.id,room.threadId,first.id,pin);
+  store.pinGroupProcedures(room.id,room.threadId,second.id,other);
+  const restored=fresh();
+  expect(restored.taskByThread(first.id,firstThread)?.procedurePin).toEqual(pin);
+  expect(restored.groupTaskByThread(room.id,room.threadId)?.procedurePins).toEqual({[first.id]:pin,[second.id]:other});
 });

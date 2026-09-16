@@ -31,13 +31,14 @@ import {
   startRecorder,
   stopRecorder,
 } from "./skill-recorder.mjs";
-import { harnessResourceEnvironment } from "./harness-resources.mjs";
+import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import {
   buildDiagnosticsReport,
+  collectChannelDiagnostics,
   diagnosticsFileName,
   formatDesktopCrashRecord,
   installDesktopCrashListeners,
@@ -307,7 +308,7 @@ for(const action of ["status","stage","install","disable"]){
     return Promise.resolve().then(()=>closedBackupController[action]()).catch(()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");});
   });
 }
-for(const [action,arity] of [["status",0],["save",2],["selectRepositoryPassword",2],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3]]){
+for(const [action,arity] of [["status",0],["save",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
   ipcMain.handle(`backup-remote:${action}`,(_event,...args)=>{
     if(args.length!==arity)throw Error("BACKUP_REMOTE_INPUT_INVALID");
     if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
@@ -1219,6 +1220,14 @@ function ensureCompanionAccountService() {
 // file is safe to paste into a public issue even if a future log line ever
 // carried a secret.
 async function gatherDiagnostics() {
+  const channelSummary = await collectChannelDiagnostics(async channel => {
+    if (!serverReady || !desktopSurfaceSecret) return null;
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/${channel}/status`, {
+      headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+      signal: AbortSignal.timeout(3_000), redirect: "error",
+    });
+    return response.ok ? response.json() : null;
+  });
   const serverStatus = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config`, {
     signal: AbortSignal.timeout(3_000),
   })
@@ -1238,6 +1247,7 @@ async function gatherDiagnostics() {
       uptimeSeconds: Math.round(process.uptime()),
     },
     configSummary: serverStatus ?? {},
+    channelSummary,
     desktopLogTail: desktopLog?.tail ?? "",
     logTail: log?.tail ?? "",
   });
@@ -1370,6 +1380,7 @@ async function startServerOn(port) {
     ...workspaceCredentialEnv(secureCredentials),
     MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
+  Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
   slog(`fork ${entry} port=${port}`);
   const proc = utilityProcess.fork(entry, [], {
@@ -3104,7 +3115,7 @@ async function initializeBackupRemoteHost(){
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
     exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
-    createAdapter:binding=>new BackupRestic({executable:tool,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials}),
+    createAdapter:binding=>new BackupRestic({executable:tool,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})}),
   });
 }
 async function initializeBackupScheduleHost(){
