@@ -9,13 +9,13 @@
   "zipSha256": "91cc768bad731d978f44fa378c2aeaac5f9dcbda5e818e79c05f9ee381baae79",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-23T19:41:47Z",
-  "nativeRoundsUsed": 21,
+  "nativeRoundsUsed": 22,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One High-supported diagnostic confirmation: owned Electron notification lifecycle flags and passive metadata-only original notify-frame observer, same signedc889 artifact, original trigger/20secondwait/acceptance unchanged. Prior21runs retained;60minutes.",
-  "ownership": "new private candidate files only; existingbackupcycle/main unchanged",
+  "admission": "One R23 confirmation under standing corrective authority: conditionally repair only the exact Apple NotificationCenter launch-agent prerequisite on the disposable hosted runner, persist before-state and restore it in always-cleanup. Same signed c889 artifact; original triggers,20second banner wait and acceptance unchanged. Prior22 native runs retained; one60minute push-triggered run.",
+  "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
     "server/testing/fake-claude-cli.ts": "897f12b1430d5c031f7ae90acf39cc991dcb15b30f4475d3661a592a91550eb2",
@@ -39,5 +39,16 @@
     "actualaudioaudibility NOT established by resourcehash/nativecall/banner; identifiedhumanlistener or supportedaudio capture is required",
     "macOS only; Windows/Linux native gates unchanged",
     "actualOSpermission denial configuration is not silently substituted by appmute; reportunmeasured ifnotobserved"
-  ]
+  ],
+  "notificationCenterPrerequisite": {
+    "label": "com.apple.notificationcenterui",
+    "domain": "gui/current-runner-uid",
+    "appleIdentityRequired": true,
+    "enableOnlyKnownDisabled": true,
+    "bootstrapOnlyOriginallyUnloaded": true,
+    "kickstartMayNotKill": true,
+    "beforeStatePersisted": true,
+    "alwaysRestoreLoadedAndDisabledState": true,
+    "otherServicesUnchanged": true
+  }
 }

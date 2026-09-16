@@ -1,5 +1,6 @@
 // B35 packaged attention consumer only. Source checks do not run this journey.
 import {spawn} from 'node:child_process';
+import {prepareNotificationCenter,restoreNotificationCenter,notificationServiceState} from './mac-notification-center-prerequisite.mjs';
 import {startNotificationObserver,notificationLifecycleMetadata} from './mac-attention-notification-observer.mjs';
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,writeFileSync,openSync,closeSync,readSync,realpathSync,rmSync,readdirSync,lstatSync} from 'node:fs';
@@ -104,7 +105,8 @@ async function admit(){
  const wav=path.join(s.app,'Contents/Resources/murage-approval.wav');check(hash(readFileSync(wav))===C.attentionInputHashes['electron/resources/murage-approval.wav'],'PACKAGED_SOUND_RESOURCE');
  check(must(run('/bin/launchctl',['managername']),'MANAGER').trim()==='Aqua','AQUA');
  // Fail before the long app journey when OS observation/control is unavailable.
- for(const name of ['NotificationCenter','ControlCenter'])tree(await admitSystemApplication(name),'prerequisite-'+name);
+ s.notificationCenterPrerequisite=await prepareNotificationCenter({run,uid:process.getuid(),prior:s.notificationCenterPrerequisite,persist:value=>{s.notificationCenterPrerequisite=value;save(s);},record});
+ for(const name of ['NotificationCenter','ControlCenter']){const pid=await admitSystemApplication(name);if(name==='NotificationCenter')check(pid===s.notificationCenterPrerequisite.readyPid,'NOTIFICATION_REGISTERED_PID');tree(pid,'prerequisite-'+name);}
  await dnd(s,undefined);
  const isolated=setupKeychain({runner:run,exists:existsSync,persist:value=>{s.keychainIsolation=value;save(s);},keychain:path.join(s.private,'b35.keychain-db'),password:randomBytes(32).toString('hex')});check(isolated.ok,'KEYCHAIN_ISOLATION');
  record('admitted',{source:C.artifactSource,zipSha256:zipHash,exeSha256:exe.sha256,team:C.team,aqua:true,systemProcesses:true,originalDnd:s.originalDnd,soundResourceSha256:hash(readFileSync(wav)),audibility:'NOT_ESTABLISHED'});s.admitted=true;save(s);
@@ -217,6 +219,7 @@ async function journey(){
  const s=load();check(s.prepared&&!s.journeyStarted,'JOURNEY_ONCE');s.journeyStarted=true;save(s);const timer=setTimeout(()=>{stopping=true;},C.scriptMinutes*60000);
  try{
   // Prerequisites are repeated immediately before launch, not replaced by prior source checks.
+  const notificationJob=notificationServiceState(run,process.getuid());check(notificationJob.loaded&&notificationJob.disabled!==true&&notificationJob.pid===systemPid('NotificationCenter'),'NOTIFICATION_REGISTERED_JOB');record('notification-service-pretrigger',notificationJob);
   for(const name of ['NotificationCenter','ControlCenter'])tree(systemPid(name),'ready-'+name);await dnd(s,false);
   const fd=openSync(path.join(s.private,'app.log'),'wx',0o600);active=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:s.tmp,MURAGE_DATA_DIR:s.data,MURAGE_USER_DATA:s.userData,ELECTRON_DEBUG_NOTIFICATIONS:'1',ELECTRON_ENABLE_LOGGING:'1'},stdio:['ignore',fd,fd]});closeSync(fd);active.unref();s.pid=active.pid;save(s);
   await until(()=>{const r=ax(s.pid,{op:'manual'});return r.ok;},15000,'MANUAL_AX');
@@ -259,7 +262,8 @@ async function cleanup(){
  const keychain=s.keychainIsolation?cleanupKeychain({runner:run,state:s.keychainIsolation,exists:existsSync}):{ok:true};
  try{const nativeTail=readSafeLogTail(path.join(s.private,'app.log'),1024*1024);if(nativeTail)writeFileSync(path.join(E,'notification-lifecycle.json'),JSON.stringify({tailLimitBytes:1024*1024,sourceBytes:nativeTail.bytes,entries:notificationLifecycleMetadata(redactSecretsInLine(nativeTail.tail))},null,2)+'\n',{mode:0o600});}catch{record('notification-lifecycle-unavailable',{error:'NATIVE_LOG_READ_UNAVAILABLE'});}
  if(existsSync(path.join(s.private,'app.log')))writeFileSync(path.join(E,'app-redacted.log'),redactSecretsInLine(readFileSync(path.join(s.private,'app.log'),'utf8')).slice(-20000),{mode:0o600});
- const result={ownedProcessesGone,dndRestored,keychain,machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok,'CLEANUP_POSTCONDITIONS');
+ let notificationCenter={ok:false};try{notificationCenter=await restoreNotificationCenter({run,uid:process.getuid(),state:s.notificationCenterPrerequisite,persist:value=>{s.notificationCenterPrerequisite=value;save(s);},record});}catch(error){record('notification-service-restore-failed',{code:/^NC_[A-Z_]+$/.test(error.message)?error.message:'NC_RESTORE_FAILED'});}
+ const result={ownedProcessesGone,dndRestored,keychain,notificationCenter,machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok&&notificationCenter.ok,'CLEANUP_POSTCONDITIONS');
  for(const dir of [s.private,s.appDir,s.data,s.userData,s.tmp]){check(dir.startsWith(ROOT+path.sep),'CLEANUP_PATH');rmSync(dir,{recursive:true,force:true});}save({...s,cleanupComplete:true});
 }
 try{await({admit,prepare,run:journey,cleanup})[phase]();record('phase-complete');}catch(error){record('phase-failed',{gate:error.gate??null,error:redactSecretsInLine(error.message)});try{shot('failed-'+phase);}catch{}process.exitCode=1;}
