@@ -9,12 +9,12 @@
   "zipSha256": "91cc768bad731d978f44fa378c2aeaac5f9dcbda5e818e79c05f9ee381baae79",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-23T19:41:47Z",
-  "nativeRoundsUsed": 22,
+  "nativeRoundsUsed": 23,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R23 confirmation under standing corrective authority: conditionally repair only the exact Apple NotificationCenter launch-agent prerequisite on the disposable hosted runner, persist before-state and restore it in always-cleanup. Same signed c889 artifact; original triggers,20second banner wait and acceptance unchanged. Prior22 native runs retained; one60minute push-triggered run.",
+  "admission": "One R24 confirmation under standing corrective authority: derive exact launchd Label from the verified root-owned Apple NotificationCenter plist, distinct from its filename and bundle ID; conditionally restore only that service prerequisite and always restore its preimage. Same c889 artifact, original triggers/20second wait/acceptance unchanged. Prior23 native runs retained; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -41,7 +41,7 @@
     "actualOSpermission denial configuration is not silently substituted by appmute; reportunmeasured ifnotobserved"
   ],
   "notificationCenterPrerequisite": {
-    "label": "com.apple.notificationcenterui",
+    "label": "derived from verified exact Apple plist; constrained NotificationCenter namespace",
     "domain": "gui/current-runner-uid",
     "appleIdentityRequired": true,
     "enableOnlyKnownDisabled": true,
@@ -49,6 +49,8 @@
     "kickstartMayNotKill": true,
     "beforeStatePersisted": true,
     "alwaysRestoreLoadedAndDisabledState": true,
-    "otherServicesUnchanged": true
+    "otherServicesUnchanged": true,
+    "bundleId": "com.apple.notificationcenterui",
+    "plist": "/System/Library/LaunchAgents/com.apple.notificationcenterui.plist"
   }
 }

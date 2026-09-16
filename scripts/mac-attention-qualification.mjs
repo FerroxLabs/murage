@@ -219,7 +219,7 @@ async function journey(){
  const s=load();check(s.prepared&&!s.journeyStarted,'JOURNEY_ONCE');s.journeyStarted=true;save(s);const timer=setTimeout(()=>{stopping=true;},C.scriptMinutes*60000);
  try{
   // Prerequisites are repeated immediately before launch, not replaced by prior source checks.
-  const notificationJob=notificationServiceState(run,process.getuid());check(notificationJob.loaded&&notificationJob.disabled!==true&&notificationJob.pid===systemPid('NotificationCenter'),'NOTIFICATION_REGISTERED_JOB');record('notification-service-pretrigger',notificationJob);
+  const notificationJob=notificationServiceState(run,process.getuid(),s.notificationCenterPrerequisite.identity);check(notificationJob.loaded&&notificationJob.disabled!==true&&notificationJob.pid===systemPid('NotificationCenter'),'NOTIFICATION_REGISTERED_JOB');record('notification-service-pretrigger',notificationJob);
   for(const name of ['NotificationCenter','ControlCenter'])tree(systemPid(name),'ready-'+name);await dnd(s,false);
   const fd=openSync(path.join(s.private,'app.log'),'wx',0o600);active=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:s.tmp,MURAGE_DATA_DIR:s.data,MURAGE_USER_DATA:s.userData,ELECTRON_DEBUG_NOTIFICATIONS:'1',ELECTRON_ENABLE_LOGGING:'1'},stdio:['ignore',fd,fd]});closeSync(fd);active.unref();s.pid=active.pid;save(s);
   await until(()=>{const r=ax(s.pid,{op:'manual'});return r.ok;},15000,'MANUAL_AX');
