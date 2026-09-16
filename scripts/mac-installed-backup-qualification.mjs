@@ -151,6 +151,11 @@ const bundleProcesses=s=>s.app?listing().filter(p=>p.command.includes(s.app+"/")
 function launchdJob(s){const r=run("/bin/launchctl",["print",`gui/${s.uid}/${s.label}`]);if(r.code!==0)return null;const field=name=>new RegExp(`^\\s*${name} = (.*)$`,"m").exec(r.stdout)?.[1]??null;return{state:field("state"),runs:Number(field("runs")),lastExit:field("last exit code"),pid:field("pid")};}
 const coordinatorState=s=>{try{return JSON.parse(readFileSync(path.join(s.control,"backup-coordinator.json"),"utf8"));}catch(error){if(error.code==="ENOENT")return null;throw error;}};
 const archives=s=>readdirSync(s.destination).filter(name=>name.endsWith(".age"));
+function scheduledFailureDiagnostic(s,seen,runsBefore){
+ const closed=listing().filter(p=>p.command.startsWith(s.exe+" --murage-backup-due")).map(p=>({pid:p.pid,command:redactSecretsInLine(p.command)})),launch=run("/bin/launchctl",["print",`gui/${s.uid}/${s.label}`]),archiveRows=archives(s).map(name=>{const file=path.join(s.destination,name),stat=lstatSync(file);return{name,bytes:stat.size,sha256:stat.isFile()?sha(readFileSync(file)):null};}),coordinatorFile=path.join(s.control,"backup-coordinator.json");
+ const tails=[];for(const file of [path.join(s.private,"app.log"),path.join(s.userData,"logs","server.log")])try{if(exists(file)){const text=readFileSync(file,"utf8");tails.push({name:path.basename(file),tail:redactSecretsInLine(text.slice(-12000))});}}catch(error){tails.push({name:path.basename(file),error:error?.code??"read-failed"});}
+ return{runsBefore,runsCurrent:launchdJob(s)?.runs??null,sampledDuePids:[...seen],aliveClosed:closed,archives:archiveRows,coordinator:{present:exists(coordinatorFile),bytes:exists(coordinatorFile)?lstatSync(coordinatorFile).size:null,sha256:exists(coordinatorFile)?sha(readFileSync(coordinatorFile)):null,state:coordinatorState(s)},launchctl:{code:launch.code,stdout:redactSecretsInLine(launch.stdout).slice(-12000),stderr:redactSecretsInLine(launch.stderr).slice(-12000)},tails};
+}
 async function quietSnapshot(s,label){
   await until(()=>bundleProcesses(s).length===0,60000,`quiet-${label}`,1000);
   return digestTree(s.requestedRoot);
@@ -504,12 +509,12 @@ async function launchConfigure(){
 }
 async function awaitScheduled(){
   const s=loadState();check(s.installed&&!s.scheduled,"installed-not-scheduled");const seen=new Set(),runsBefore=launchdJob(s)?.runs;check(Number.isSafeInteger(runsBefore),"launchd-runs-before");
-  const result=await until(()=>{
+  let result;try{result=await until(()=>{
     const processes=listing();for(const p of processes)if(p.command.startsWith(s.exe+" --murage-backup-due"))seen.add(p.pid);
     const alive=new Set(processes.map(p=>p.pid)),state=coordinatorState(s),list=archives(s),runs=launchdJob(s)?.runs;
     const done=state?.lastClosedResult?.status==="verified"&&state.lastVerified&&list.length===1&&runs>=runsBefore+1&&[...seen].every(pid=>!alive.has(pid));
     return done?{state,list,runs}:null;
-  },s.dueAt-Date.now()+8*60000,"scheduled-verified",1000);
+  },s.dueAt-Date.now()+8*60000,"scheduled-verified",1000);}catch(error){try{record({step:"scheduled-failure-diagnostic",diagnostic:scheduledFailureDiagnostic(s,seen,runsBefore)});}catch{}throw error;}
   const bytes=readFileSync(path.join(s.destination,result.list[0])),rule=await operationEnd(s,"preScheduled","scheduled"),job=launchdJob(s);
   record({step:"scheduled-capture",runsBefore,runsAfter:result.runs,sampledDueSpawns:[...seen],spawnSampling:SPAWN_SAMPLING,job,lastClosedResult:result.state.lastClosedResult,lastVerified:result.state.lastVerified,archiveSha256:sha(bytes),archiveBytes:bytes.length,sidecars:rule});
   check(result.state.lastVerified.sha256===sha(bytes)&&result.state.lastVerified.bytes===bytes.length,"receipt-matches-archive");check(rule.ok,"original-sidecar-rule");
