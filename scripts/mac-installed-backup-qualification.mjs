@@ -244,14 +244,33 @@ try{
  if(timeoutCode!==0)throw{error:'AX-timeout-setup',code:timeoutCode};
  if(cmd.op==='pickPath'){
   if(typeof cmd.path!=='string'||cmd.path.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.path))throw{error:'picker-path'};
-  var pickerApp=$.AXUIElementCreateApplication(cmd.pid),observed={requestedPath:cmd.path};
-  function snapshot(){visited=0;return all();}
+  var pickerApp=$.AXUIElementCreateApplication(cmd.pid),observed={requestedPath:cmd.path,requestedPid:cmd.pid,processPresent:ps.length===1,axTrusted:Boolean($.AXIsProcessTrusted()),observations:0,retryableAXReads:0};
+  function snapshot(){visited=0;queryWindows=0;return all();}
   function sameElement(a,b){return Boolean(a&&b&&$.CFEqual(a,b));}
   function inTree(element){return snapshot().some(function(e){return sameElement(e,element);});}
   function focus(){return readAX(pickerApp,'AXFocusedUIElement',false);}
-  function awaitState(fn,label){observed.waitingFor=label;for(;;){bounded();var result=fn();if(result)return result;delay(.1);}}
-  function openButtons(){return snapshot().filter(function(e){return role(e)==='AXButton'&&names(e).indexOf('Open')>=0;});}
+  function awaitState(fn,label){
+   observed.waitingFor=label;
+   for(;;){
+    bounded();observed.observations++;
+    try{var result=fn();if(result)return result;}
+    catch(error){
+     observed.lastFailure={error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted};
+     // The first AXWindows query can meet a busy app while its native dialog
+     // is opening. Reobserve only this messaging failure within the original
+     // query deadline; never replay the click/Go-to action or hide other errors.
+     if(label!=='picker-open'||error.error!=='AX-read'||error.code!==-25204)throw error;
+     observed.axTrusted=Boolean($.AXIsProcessTrusted());observed.processPresent=se.processes.whose({unixId:cmd.pid}).length===1;
+     if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
+     if(!observed.processPresent)throw{error:'picker-process-exited'};
+     observed.retryableAXReads++;
+    }
+    delay(.1);
+   }
+  }
+  function openButtons(){var buttons=snapshot().filter(function(e){return role(e)==='AXButton'&&names(e).indexOf('Open')>=0;});observed.windowCount=queryWindows;observed.openButtonCount=buttons.length;return buttons;}
   try{
+   if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
    p.frontmost=true;
    var initialButtons=awaitState(function(){var buttons=openButtons();return buttons.length===1?buttons:false;},'picker-open');
    var initialOpen=initialButtons[0],panel=readAX(initialOpen,'AXParent',true),depth=0;
@@ -272,13 +291,13 @@ try{
    // A successful AXPress alone does not prove the dialog accepted its selection.
    awaitState(function(){return !inTree(panel);},'picker-dismissed');
    return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed,goToDismissed:true,pickerDismissed:true,elapsedMs:Date.now()-queryStarted});
-  }catch(error){return JSON.stringify({ok:false,error:error.error||'picker-exception',code:error.code===undefined?null:error.code,observed:observed,visited:visited,elapsedMs:Date.now()-queryStarted});}
+  }catch(error){return JSON.stringify({ok:false,error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed,visited:visited,elapsedMs:Date.now()-queryStarted});}
  }
  if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
  if(cmd.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
  if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return JSON.stringify({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
  if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length,visited:visited});
-  if(cmd.op==='press'){var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement'});}
+  if(cmd.op==='press'){var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
   p.frontmost=true;var focused=$.AXUIElementSetAttributeValue(m[0],$('AXFocused'),$(true));if(focused!==0)return JSON.stringify({ok:false,error:'AX-focus',code:focused});delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true,backend:'AXUIElement'});
  }
  if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
@@ -297,7 +316,7 @@ const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{
   const {roles,label,sheet}=selector(key,s);let lastResult=null,queries=0;
   try{await until(()=>{lastResult=ax(s,{op:"count",pid,roles,label,sheet});queries++;return lastResult.ok&&lastResult.count===1;},ms,`present-${key}`);}
   catch(error){record({step:`selector-query-failed-${key}`,pid,roles,label,sheet:Boolean(sheet),queries,result:lastResult});throw error;}
-  const result=ax(s,{op:"press",pid,roles,label,sheet});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
+  const result=ax(s,{op:"press",pid,roles,label,sheet,...(key==="chooseRefs"?{observeControl:true}:{})});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
 });
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});check(before.ok,`value-${key}`);if(Number(before.value)!==1)check(ax(s,{op:"press",pid,roles,label}).ok,`press-${key}`);const after=ax(s,{op:"value",pid,roles,label});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
