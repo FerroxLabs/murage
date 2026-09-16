@@ -160,11 +160,17 @@ posixOnly("mid-turn steering e2e", () => {
 
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to start");
-      // the fake pauses after its tool result; this lands inside that gap
-      await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.kind === "activity"), "the tool chip");
+      // Only the fake's completed Bash chip proves its live turn reached the
+      // reply gate. Setup/runtime errors are activity messages too.
+      await waitFor(async () => {
+        const bot = await getBot(created.id);
+        const failure = bot.messages.find((m: any) => m.kind === "activity" && m.tool?.ok === false);
+        if (failure) throw new Error(`fake turn failed before steering: ${JSON.stringify(failure)}; stderr: ${stderr}`);
+        return bot.busy === true && bot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Bash" && m.tool.ok === true);
+      }, "the fake's completed Bash tool");
       const second = await api("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
       expect(second.status).toBe(202);
-      expect(second.body.steered).toBe(true);
+      expect(second.body.steered, JSON.stringify({ second, bot: await getBot(created.id), stderr })).toBe(true);
 
       // the steer is in; let the fake produce its closing reply
       writeFileSync(replyGate, "reply");
