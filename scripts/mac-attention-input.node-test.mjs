@@ -75,3 +75,14 @@ test('exact request card requires synthetic marker and both enabled decision con
  const fn=/async function exactRequestCard\(s,kind\)\{[\s\S]*?\n\}/.exec(source)[0];
  for(const enabled of [true,false]){const controls=[];const exact=runInNewContext('('+fn+')',{until:async(cb)=>check(cb(),'marker'),texts:()=>['B35_SYNTHETIC_NO_EXECUTION_banner_run'],tree:()=>({}),state:(_pid,label)=>{controls.push(label);return{enabled};},check});if(enabled){await exact({pid:123,runId:'run'},'banner');assert.deepEqual(controls,['Deny','Allow once']);}else await assert.rejects(exact({pid:123,runId:'run'},'banner'),/REQUEST_DECISION_ENABLED/);}
 });
+
+test('recorded B35 R15 Tools popup keeps exact native role through selector and press',async()=>{
+ const fn=/async function openPendingInbox\(s\)\{[\s\S]*?\n\}/.exec(source)[0];
+ // Exact tools-selector.ax.json row 70 from native run B35 R15.
+ const recorded={index:70,parent:69,role:'AXPopUpButton',names:['Tools, 0 pending approvals'],value:''};
+ const calls=[];
+ const run=elements=>runInNewContext('('+fn+')',{tree:()=>({elements}),check,press:async(pid,label,roles=['AXButton'],extra={})=>calls.push({pid,label,roles:Array.from(roles),extra:JSON.parse(JSON.stringify(extra))})});
+ await run([recorded])({pid:123});
+ assert.deepEqual(calls,[{pid:123,label:'Tools, 0 pending approvals',roles:['AXPopUpButton'],extra:{}},{pid:123,label:'Pending approvals',roles:['AXMenuItem'],extra:{prefix:true}}]);
+ for(const elements of [[],[recorded,{...recorded,index:71}],[{...recorded,role:'AXButton'}],[{...recorded,names:['Other tools']}],[{...recorded,names:['Toolshed']}]]){const before=calls.length;await assert.rejects(run(elements)({pid:123}),/TOOLS_UNIQUE/);assert.equal(calls.length,before);}
+});

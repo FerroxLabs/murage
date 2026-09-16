@@ -142,8 +142,8 @@ function inboxObservation(t,sourceLabel){
 }
 const inboxSource=(s,kind)=>[s.bots[kind].name,s.bots[kind].tasks.find(t=>t.threadId===s.bots[kind].threadId)?.title].filter(Boolean).join(' · ');
 async function openPendingInbox(s){
- const buttons=tree(s.pid,'tools-selector').elements.filter(n=>n.role==='AXButton'&&n.names.some(x=>/^Tools(?:,|$)/.test(x)));check(buttons.length===1,'TOOLS_UNIQUE');
- await press(s.pid,buttons[0].names.find(x=>/^Tools(?:,|$)/.test(x)));await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
+ const buttons=tree(s.pid,'tools-selector').elements.filter(n=>n.role==='AXPopUpButton'&&n.names.some(x=>/^Tools(?:,|$)/.test(x)));check(buttons.length===1,'TOOLS_UNIQUE');
+ await press(s.pid,buttons[0].names.find(x=>/^Tools(?:,|$)/.test(x)),['AXPopUpButton']);await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
 }
 async function readPendingInbox(s,kind){return inboxObservation(tree(s.pid,'pending-'+kind),inboxSource(s,kind));}
 async function pending(s,kind,ms=10000){
