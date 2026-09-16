@@ -205,15 +205,19 @@ if(cmd.op==='time'){
  var hour=named('Hours'),minute=named('Minutes'),period=named('AM/PM');
  if(overflow||hour.length!==1||minute.length!==1||period.length>1||segments.length!==2+period.length)return JSON.stringify({ok:false,error:'time-segments',observed:observed});
  var low=read(hour[0],'AXMinValue'),high=read(hour[0],'AXMaxValue'),twelve=period.length===1;
- if((twelve?low!==1||high!==12:low!==0||high!==23)||read(minute[0],'AXMinValue')!==0||read(minute[0],'AXMaxValue')!==59||(twelve&&(read(period[0],'AXMinValue')!==0||read(period[0],'AXMaxValue')!==1)))return JSON.stringify({ok:false,error:'time-ranges',observed:observed});
+ // Chromium exposes symbolic AM/PM indices as 1-based AX values; retain the
+ // existing 0-based encoding too, but never infer a base from arbitrary ranges.
+ var periodLow=twelve?read(period[0],'AXMinValue'):null,periodHigh=twelve?read(period[0],'AXMaxValue'):null;
+ var periodBase=periodLow===0&&periodHigh===1?0:periodLow===1&&periodHigh===2?1:null;
+ if((twelve?low!==1||high!==12:low!==0||high!==23)||read(minute[0],'AXMinValue')!==0||read(minute[0],'AXMaxValue')!==59||(twelve&&periodBase===null))return JSON.stringify({ok:false,error:'time-ranges',observed:observed});
  var h=Number(cmd.text.slice(0,2)),m=Number(cmd.text.slice(3)),expectedHour=twelve?(h%12||12):h;
- var parts=[{e:hour[0],text:String(expectedHour),value:expectedHour},{e:minute[0],text:String(m),value:m}];if(twelve)parts.push({e:period[0],text:h<12?'A':'P',value:h<12?0:1});
+ var parts=[{e:hour[0],text:String(expectedHour),value:expectedHour},{e:minute[0],text:String(m),value:m}];if(twelve)parts.push({e:period[0],text:h<12?'A':'P',value:periodBase+(h<12?0:1)});
  p.frontmost=true;
  for(var j=0;j<parts.length;j++){var focus=$.AXUIElementSetAttributeValue(parts[j].e,$('AXFocused'),$(true));if(focus!==0)return JSON.stringify({ok:false,error:'time-focus',code:focus,observed:observed});delay(0.2);se.keystroke(parts[j].text);delay(0.2);}
  se.keyCode(48);delay(0.2);
  var values=parts.map(function(part){return{title:read(part.e,'AXTitle'),value:read(part.e,'AXValue'),description:read(part.e,'AXValueDescription'),expected:part.value};});
  var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
- return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values});
+ return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
 }
 // Query the owned PID through public AX APIs. System Events remains keyboard-only.
 ObjC.import('ApplicationServices');

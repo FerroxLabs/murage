@@ -363,20 +363,26 @@ test("native time segments preserve 12/24-hour values and refuse uncertain contr
   const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
   const jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)[1];
   const field=(role,title,more={})=>({AXRole:role,AXTitle:title,AXChildren:[],...more});
-  for(const sample of [{text:"16:37"},{text:"00:05"},{text:"23:59"},{text:"16:37",twelve:true},{text:"00:05",twelve:true},{text:"12:00",twelve:true},...['missing','duplicate','range','focus','stuck','unreadable'].map(error=>({text:"16:37",error}))]){
+  const samples=[{text:"16:37"},{text:"00:05"},{text:"23:59"},
+    ...[0,1].flatMap(periodBase=>["00:05","11:59","12:00","16:37","23:59"].map(text=>({text,twelve:true,periodBase}))),
+    ...['missing','duplicate','range','focus','stuck','unreadable'].map(error=>({text:"16:37",error})),
+    ...[[-1,0],[0,2],[1,1],[2,3],["1","2"],[null,2]].map(periodRange=>({text:"16:37",twelve:true,error:"period-range",periodRange})),
+    ...[0,1].flatMap(periodBase=>["00:05","12:00"].map(text=>({text,twelve:true,periodBase,error:"period-reversed"})))];
+  for(const sample of samples){
     const hour=field('AXIncrementor','Hours Daily time',{AXMinValue:sample.twelve?1:0,AXMaxValue:sample.error==='range'?24:sample.twelve?12:23,AXValue:0,AXValueDescription:''});
     const minute=field('AXIncrementor','Minutes Daily time',{AXMinValue:0,AXMaxValue:59,AXValue:0,AXValueDescription:''});
-    const period=field('AXIncrementor','AM/PM Daily time',{AXMinValue:0,AXMaxValue:1,AXValue:0,AXValueDescription:''});
+    const periodBase=sample.periodBase??0,periodRange=sample.periodRange??[periodBase,periodBase+1];
+    const period=field('AXIncrementor','AM/PM Daily time',{AXMinValue:periodRange[0],AXMaxValue:periodRange[1],AXValue:periodBase,AXValueDescription:''});
     const input=field('AXTimeField','Daily time',{AXChildren:sample.twelve?[hour,minute,period]:[hour,minute]});
     const window=field('AXWindow','Owned',{AXChildren:sample.error==='missing'?[]:sample.error==='duplicate'?[input,input]:[input]});
     const app={AXWindows:[window]},events=[];let focused;
     const dollar=value=>value;Object.assign(dollar,{AXUIElementCreateApplication:pid=>{assert.equal(pid,123);return app;},AXUIElementCopyAttributeValue:(element,name,ref)=>{if(!Object.hasOwn(element,name))return -1;ref[0]=element[name];return 0;},AXUIElementSetAttributeValue:(element,name,value)=>{assert.equal(name,'AXFocused');assert.equal(value,true);if(sample.error==='focus')return -25200;focused=element;return 0;}});
-    const se={processes:{whose:()=>[{}]},keystroke:text=>{events.push(text);if(sample.error==='stuck')return;focused.AXValue=focused===period?(text==='P'?1:0):Number(text);focused.AXValueDescription=sample.error==='unreadable'?'':text;},keyCode:key=>assert.equal(key,48)};
+    const se={processes:{whose:()=>[{}]},keystroke:text=>{events.push(text);if(sample.error==='stuck')return;focused.AXValue=focused===period?periodBase+(sample.error==='period-reversed'?(text==='P'?0:1):(text==='P'?1:0)):Number(text);focused.AXValueDescription=sample.error==='unreadable'?'':text;},keyCode:key=>assert.equal(key,48)};
     const run=runInNewContext(jxa+';run',{Application:()=>se,ObjC:{import:()=>{},bindFunction:()=>{},deepUnwrap:value=>value},$:dollar,Ref:()=>[],delay:()=>{}});
     const result=JSON.parse(run([JSON.stringify({op:'time',pid:123,label:'Daily time',text:sample.text})]));
     assert.equal(result.ok,!sample.error,JSON.stringify(sample));
-    if(!sample.error){assert.equal(result.requested,sample.text);assert.equal(result.format,sample.twelve?'12-hour':'24-hour');assert.ok(result.values.every(value=>value.value===value.expected));}
-    if(['missing','duplicate','range'].includes(sample.error))assert.equal(events.length,0);
+    if(!sample.error){assert.equal(result.requested,sample.text);assert.equal(result.format,sample.twelve?'12-hour':'24-hour');assert.ok(result.values.every(value=>value.value===value.expected));if(sample.twelve){assert.deepEqual(result.periodEncoding,{min:periodBase,max:periodBase+1,am:periodBase,pm:periodBase+1});assert.equal(result.values[2].value,periodBase+(Number(sample.text.slice(0,2))<12?0:1));assert.equal(events[2],Number(sample.text.slice(0,2))<12?'A':'P');}else assert.equal(result.periodEncoding,null);}
+    if(['missing','duplicate','range','period-range'].includes(sample.error))assert.equal(events.length,0);
   }
 });
 
