@@ -229,6 +229,8 @@ jobs:
         with:
           ref: ${{ env.FIXTURE_SOURCE_SHA }}
           persist-credentials: false
+      - name: Record resource baseline before setup
+        run: node scripts/q12/resources.mjs before-setup
       - name: Require exact successful artifact producer
         env:
           GH_TOKEN: ${{ github.token }}
@@ -253,8 +255,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.20.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Install only lock-bound Q12 host tooling
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          node scripts/q12/hostdeps.mjs stage
+          pnpm --dir "$RUNNER_TEMP/murage-q12/hostdeps" install --frozen-lockfile --ignore-scripts
+          node scripts/q12/hostdeps.mjs verify
+          node scripts/q12/resources.mjs after-hostdeps
       - name: Prepare the pinned independent key generator
         run: |
           set -euo pipefail
@@ -276,6 +284,8 @@ jobs:
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-q12/artifact/evidence
+      - name: Record resources after artifact download
+        run: node scripts/q12/resources.mjs after-artifact-download
       - name: Admit exact signed bytes and portable manifest
         run: node scripts/q12/ci.mjs prepare
       - name: Q12 actual packaged encrypted backup and paused restore

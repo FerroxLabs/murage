@@ -6,7 +6,9 @@ import {dirname,join,basename,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {userInfo} from 'node:os';
 import {sha} from './run-q12.mjs';
-import {executionProfile,memoryReading,assertPrestart,privateDirectory,sourceSeams} from './runtime.mjs';
+import {verifyHostdeps} from './hostdeps.mjs';
+import {saveResourceSnapshot} from './resources.mjs';
+import {executionProfile,assertPrestart,privateDirectory,sourceSeams} from './runtime.mjs';
 const packet=dirname(fileURLToPath(import.meta.url)),json=p=>JSON.parse(readFileSync(p,'utf8'));
 const run=(command,args)=>{const r=spawnSync(command,args,{encoding:'utf8',timeout:120000,maxBuffer:1024*1024});return {code:r.status,stdout:r.stdout??'',stderr:r.stderr??''};};
 const must=(command,args)=>{const r=run(command,args);assert.equal(r.code,0,basename(command)+' failed');return r;};
@@ -28,7 +30,8 @@ function context(){
 export async function prepare(){
  const {root,profile,e}=context(),evidence=join(root,'evidence'),artifact=join(root,'artifact'),producerEvidence=join(artifact,'evidence'),repo=realpathSync(e.GITHUB_WORKSPACE),sourceRoot=join(repo,'.q12-source');
  assert.equal(repo,realpathSync(resolve(packet,'../..')));assert(!existsSync(join(root,'MANIFEST.json')),'Admission is one-shot');
- const reading=memoryReading(must('/usr/bin/vm_stat',[]).stdout,must('/usr/sbin/sysctl',['-n','hw.memsize']).stdout.trim());
+ verifyHostdeps(join(root,'hostdeps'));
+ const reading=saveResourceSnapshot(root,'before-artifact-extraction').reading;
  writeFileSync(join(evidence,'resource-admission.json'),JSON.stringify({profile,reading},null,2)+'\n',{mode:0o600});assertPrestart(profile,reading);
  assert.equal(must('/usr/bin/git',['-C',repo,'rev-parse','HEAD']).stdout.trim(),e.FIXTURE_SOURCE_SHA);
  assert.equal(must('/usr/bin/git',['-C',sourceRoot,'rev-parse','HEAD']).stdout.trim(),e.ARTIFACT_SOURCE_SHA);
