@@ -18,16 +18,16 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: b62e85d08adef6f6adfd234bdbf0d66cfd8cdd38
+      ARTIFACT_SOURCE_SHA: 97844f8e95ab8f38afd5d615c930ae482816d1de
       FIXTURE_SOURCE_SHA: ${{ github.sha }}
-      ARTIFACT_RUN_ID: "35148628069"
+      ARTIFACT_RUN_ID: "35161748195"
       ARTIFACT_RUN_ATTEMPT: "1"
-      ARTIFACT_ID: "10468758179"
-      ARTIFACT_DIGEST: sha256:5167ca9c6fbeaf35184c066506f827ce0972161ac405ee90785f8b93c3a2f78b
-      EVIDENCE_ARTIFACT_ID: "10469230814"
-      EVIDENCE_ARTIFACT_DIGEST: sha256:df6f78c55daaf4ded7469716f063c75edb90b5ab321e860b6e9a4d8e037bc8ee
-      # R22: twenty-one prior Mac rounds retained; finite capture failure code readout only.
-      MURAGE_MAC_QUALIFICATION_ROUND: "22"
+      ARTIFACT_ID: "10473532997"
+      ARTIFACT_DIGEST: sha256:7d09ff5de721898b89fe259937b25b78273fef71486571f4d4886b88b7413a1a
+      EVIDENCE_ARTIFACT_ID: "10472969210"
+      EVIDENCE_ARTIFACT_DIGEST: sha256:bc8162e4f4d5c1440c3bef989a5ef9925c48d10d9cacc813279f92d10c2b1326
+      # R23: twenty-two prior Mac rounds retained; finite worker attestation reason readout only.
+      MURAGE_MAC_QUALIFICATION_ROUND: "23"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +72,7 @@ jobs:
               assert artifact['workflow_run']['id'] == int(os.environ['ARTIFACT_RUN_ID'])
               assert artifact['workflow_run']['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
           (p.parent / 'round-contract.json').write_text(json.dumps({
-              'round': 22, 'priorMacRounds': 21, 'maximumJobMinutes': 60,
+              'round': 23, 'priorMacRounds': 22, 'maximumJobMinutes': 60,
               'diagnosticInvocationsPerFailedProfile': 0,
               'scheduledFailureAlwaysRethrown': True, 'manualResultIsScheduledPass': False,
               'artifactSource': os.environ['ARTIFACT_SOURCE_SHA'],
