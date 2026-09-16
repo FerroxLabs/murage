@@ -215,17 +215,37 @@ if(cmd.op==='time'){
  var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
  return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values});
 }
-function names(e){var v=[];['name','title','description'].forEach(function(k){try{var x=e[k]();if(typeof x==='string'&&x)v.push(x);}catch(_){}});return v;}
-function role(e){try{return e.role();}catch(_){return '';}}
-function all(){var out=[],ws=p.windows();for(var i=0;i<ws.length;i++){var roots=cmd.sheet?ws[i].sheets():[ws[i]];for(var r=0;r<roots.length;r++){out.push(roots[r]);var c=roots[r].entireContents();for(var j=0;j<c.length;j++)out.push(c[j]);}}return out;}
+// Query the owned PID through public AX APIs. System Events remains keyboard-only.
+ObjC.import('ApplicationServices');
+ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
+ObjC.bindFunction('AXUIElementCreateSystemWide',['id',[]]);
+ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
+ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
+ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
+var queryStarted=Date.now(),visited=0,queryWindows=0;
+function bounded(){if(Date.now()-queryStarted>12000)throw{error:'AX-query-deadline',visited:visited};}
+function readAX(e,k,required){bounded();var value=Ref(),code=$.AXUIElementCopyAttributeValue(e,$(k),value);if(code===0)return ObjC.deepUnwrap(value[0]);if(!required&&(code===-25205||code===-25212))return null;throw{error:'AX-read',attribute:k,code:code,visited:visited};}
+function names(e){return ['AXTitle','AXDescription'].map(function(k){return readAX(e,k,false);}).filter(function(v){return typeof v==='string'&&v.length;});}
+function role(e){return readAX(e,'AXRole',true);}
+function all(){
+ var out=[],app=$.AXUIElementCreateApplication(cmd.pid),ws=readAX(app,'AXWindows',true)||[];queryWindows=ws.length;
+ function walk(e,depth){bounded();if(depth>64||++visited>4000)throw{error:'AX-tree-limit',visited:visited,depth:depth};out.push(e);var children=readAX(e,'AXChildren',false)||[];for(var n=0;n<children.length;n++)walk(children[n],depth+1);}
+ for(var i=0;i<ws.length;i++){var roots=cmd.sheet?(readAX(ws[i],'AXSheets',false)||[]):[ws[i]];for(var j=0;j<roots.length;j++)walk(roots[j],0);}return out;
+}
 function matches(){return all().filter(function(e){return cmd.roles.indexOf(role(e))>=0&&names(e).indexOf(cmd.label)>=0;});}
-if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out});}
-if(cmd.op==='count')return JSON.stringify({ok:true,count:matches().length,windows:p.windows().length});
-if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length});var x=null;try{x=v[0].value();}catch(_){}if(cmd.op==='state'){var enabled=null;try{enabled=v[0].enabled();}catch(_){}return JSON.stringify({ok:true,value:x,enabled:enabled});}return JSON.stringify({ok:true,value:x});}
-if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length});
- if(cmd.op==='press'){m[0].actions.byName('AXPress').perform();return JSON.stringify({ok:true});}
- p.frontmost=true;m[0].focused=true;delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true});}
-if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var v='';try{v=String(e.value());}catch(_){}return [v].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);})});}
+try{
+ var timeoutCode=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);
+ if(timeoutCode!==0)throw{error:'AX-timeout-setup',code:timeoutCode};
+ if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return JSON.stringify({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
+ if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length,visited:visited});
+  if(cmd.op==='press'){var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement'});}
+  p.frontmost=true;var focused=$.AXUIElementSetAttributeValue(m[0],$('AXFocused'),$(true));if(focused!==0)return JSON.stringify({ok:false,error:'AX-focus',code:focused});delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true,backend:'AXUIElement'});
+ }
+ if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted,backend:'AXUIElement'});}
 if(cmd.op==='goto'){p.frontmost=true;delay(0.3);se.keystroke('g',{using:['command down','shift down']});delay(1);se.keystroke(cmd.path);delay(0.3);se.keyCode(36);delay(1);return JSON.stringify({ok:true});}
 if(cmd.op==='quit'){p.frontmost=true;delay(0.3);se.keystroke('q',{using:'command down'});return JSON.stringify({ok:true});}
 return JSON.stringify({ok:false,error:'op'});}`;
@@ -237,7 +257,12 @@ async function step(label,fn){
 async function until(test,ms,label,interval=2000){const end=Date.now()+ms;for(;;){const value=await test();if(value)return value;if(Date.now()>end)check(false,label);await sleep(interval);}}
 // settingsEntry label comes only from the probe admission persisted in state.
 const selector=(key,s)=>{const entry=key==="settingsEntry"&&s?.settingsEntry?{...UI.settingsEntry,...s.settingsEntry}:UI[key];check(entry.label,`PROBE_REQUIRED_${key}`);return entry;};
-const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{const {roles,label,sheet}=selector(key,s);await until(()=>ax(s,{op:"count",pid,roles,label,sheet}).count===1,ms,`present-${key}`);const r=ax(s,{op:"press",pid,roles,label,sheet});check(r.ok,`press-${key}`);});
+const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{
+  const {roles,label,sheet}=selector(key,s);let lastResult=null,queries=0;
+  try{await until(()=>{lastResult=ax(s,{op:"count",pid,roles,label,sheet});queries++;return lastResult.ok&&lastResult.count===1;},ms,`present-${key}`);}
+  catch(error){record({step:`selector-query-failed-${key}`,pid,roles,label,sheet:Boolean(sheet),queries,result:lastResult});throw error;}
+  const result=ax(s,{op:"press",pid,roles,label,sheet});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
+});
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});check(before.ok,`value-${key}`);if(Number(before.value)!==1)check(ax(s,{op:"press",pid,roles,label}).ok,`press-${key}`);const after=ax(s,{op:"value",pid,roles,label});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
 const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:key==="dailyTime"?"time":"focusType",pid,roles,label,text});record({step:`type-observation-${key}`,result:r});check(r.ok,`type-${key}`);});

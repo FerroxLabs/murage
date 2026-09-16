@@ -259,20 +259,37 @@ test("manual AX argument retains CFBoolean through the actual JXA bridge",{skip:
   assert.equal(observed.value,true);
 });
 
-// Actual embedded JXA with System Events mocked: no OS/app/UI call.
-test("status query retains bounded nonmatching backup states without admitting them",()=>{
+// Actual embedded JXA with public AX bindings mocked: no OS/app/UI call.
+function nativeAxRun(window,options={}){
   const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
   const jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)?.[1];assert.ok(jxa);
-  const element=text=>({name:()=>text,title:()=>"",description:()=>"",value:()=>text});
-  const window={...element("Settings"),entireContents:()=>[element("Registration is not confirmed. Refresh status before enabling closed-app backups."),element("Closed-app scheduling unavailable"),element("Unrelated profile text")]};
-  const se={processes:{whose:()=>[{windows:()=>[window]}]}};
-  const run=runInNewContext(jxa+";run",{Application:()=>se});
-  const result=JSON.parse(run([JSON.stringify({op:"texts",pid:123,pattern:"Job registration confirmed"})]));
+  const dollar=value=>value,app={AXWindows:[window]},actions=[];
+  Object.assign(dollar,{AXUIElementCreateApplication:pid=>{assert.equal(pid,123);return app;},AXUIElementCreateSystemWide:()=>({}),AXUIElementSetMessagingTimeout:()=>0,
+    AXUIElementCopyAttributeValue:(element,name,ref)=>{if(options.readError&&element===window&&name==='AXChildren')return -25204;if(!Object.hasOwn(element,name))return -25205;ref[0]=element[name];return 0;},
+    AXUIElementPerformAction:(element,name)=>{actions.push({element,name});return 0;},AXUIElementSetAttributeValue:()=>0});
+  const se={processes:{whose:()=>[{}]}};
+  const run=runInNewContext(jxa+';run',{Application:()=>se,ObjC:{import:()=>{},bindFunction:()=>{},deepUnwrap:value=>value},$:dollar,Ref:()=>[],Date,delay:()=>{}});
+  return{query:cmd=>JSON.parse(run([JSON.stringify({pid:123,...cmd})])),actions};
+}
+const nativeAxElement=(role,title,children=[])=>({AXRole:role,AXTitle:title,AXDescription:'',AXValue:title,AXChildren:children,AXEnabled:true});
+test("status query retains bounded nonmatching backup states without admitting them",()=>{
+  const element=text=>nativeAxElement('AXStaticText',text);
+  const window=nativeAxElement('AXWindow','Settings',[element('Registration is not confirmed. Refresh status before enabling closed-app backups.'),element('Closed-app scheduling unavailable'),element('Unrelated profile text')]);
+  const helper=nativeAxRun(window),result=helper.query({op:'texts',pattern:'Job registration confirmed'});
   assert.equal(result.ok,true);assert.deepEqual(result.texts,[]);assert.equal(result.count,4);
   assert.equal(result.diagnostics.length,2);assert.match(result.diagnostics[0],/Registration is not confirmed/);
-  window.entireContents=()=>[element("Job registration confirmed"),...Array.from({length:40},()=>element("backup "+"x".repeat(500)))];
-  const success=JSON.parse(run([JSON.stringify({op:"texts",pid:123,pattern:"Job registration confirmed"})]));
+  window.AXChildren=[element('Job registration confirmed'),...Array.from({length:40},()=>element('backup '+'x'.repeat(500)))];
+  const success=helper.query({op:'texts',pattern:'Job registration confirmed'});
   assert.equal(success.texts.length,1);assert.equal(success.diagnostics.length,30);assert.ok(success.diagnostics.every(value=>value.length<=300));
+});
+test('native AX exact General selector rejects duplicates and preserves traversal errors',()=>{
+  const button=nativeAxElement('AXButton','General'),window=nativeAxElement('AXWindow','Murage',[button]),helper=nativeAxRun(window);
+  assert.equal(helper.query({op:'count',roles:['AXButton'],label:'General'}).count,1);
+  assert.equal(helper.query({op:'press',roles:['AXButton'],label:'General'}).ok,true);assert.equal(helper.actions.length,1);
+  window.AXChildren.push(nativeAxElement('AXButton','General'));
+  const duplicate=helper.query({op:'press',roles:['AXButton'],label:'General'});assert.equal(duplicate.ok,false);assert.equal(duplicate.count,2);assert.equal(helper.actions.length,1);
+  const failure=nativeAxRun(window,{readError:true}).query({op:'count',roles:['AXButton'],label:'General'});
+  assert.equal(failure.ok,false);assert.equal(failure.error,'AX-read');assert.equal(failure.attribute,'AXChildren');assert.equal(failure.code,-25204);
 });
 
 test("status wait preserves query failure versus readable missing status and rethrows the original gate",async()=>{
@@ -305,11 +322,10 @@ test("registration UI gate accepts only exact unique unchecked enabled AX consen
   const fn=/async function waitInstalled\(s,pid\)\{[\s\S]*?\n\}/.exec(source)?.[0];assert.ok(jxa);assert.ok(fn);
   const label="Allow scheduled backups while Murage is closed, while I am signed in.",roles=["AXCheckBox"];
   for(const sample of [{value:0,enabled:true,pass:true},{value:"0",enabled:true,pass:true},{value:false,enabled:true,pass:true},{value:1,enabled:true},{value:0,enabled:false},{value:null,enabled:true},{value:"",enabled:true},{value:0,enabled:null},{value:0,enabled:true,count:2},{value:0,enabled:true,count:0},{value:0,enabled:true,wrongLabel:true}]){
-    const element={role:()=>"AXCheckBox",name:()=>sample.wrongLabel?"Other consent":label,title:()=>"",description:()=>"",value:()=>sample.value,enabled:()=>sample.enabled};
-    const window={role:()=>"AXWindow",name:()=>"Murage",title:()=>"",description:()=>"",entireContents:()=>Array.from({length:sample.count??1},()=>element)};
-    const se={processes:{whose:query=>{assert.equal(query.unixId,123);return[{windows:()=>[window]}];}}};
-    const run=runInNewContext(jxa+";run",{Application:()=>se}),records=[],failure=new Error("registration required");
-    const wait=runInNewContext(`(${fn})`,{selector:key=>{assert.equal(key,"closedConsent");return{roles,label};},step:(_label,callback)=>callback(),ax:(_s,cmd)=>JSON.parse(run([JSON.stringify(cmd)])),until:async(callback,ms)=>{assert.equal(ms,60000);if(!callback())throw failure;},record:value=>records.push(value)});
+    const element={...nativeAxElement("AXCheckBox",sample.wrongLabel?"Other consent":label),AXValue:sample.value,AXEnabled:sample.enabled};
+    const window=nativeAxElement("AXWindow","Murage",Array.from({length:sample.count??1},()=>element));
+    const helper=nativeAxRun(window),records=[],failure=new Error("registration required");
+    const wait=runInNewContext(`(${fn})`,{selector:key=>{assert.equal(key,"closedConsent");return{roles,label};},step:(_label,callback)=>callback(),ax:(_s,cmd)=>helper.query(cmd),until:async(callback,ms)=>{assert.equal(ms,60000);if(!callback())throw failure;},record:value=>records.push(value)});
     if(sample.pass){const result=await wait({},123);assert.equal(result.result.enabled,true);assert.equal(records.length,0);}
     else{await assert.rejects(wait({},123),error=>error===failure);assert.equal(records.length,1);}
   }

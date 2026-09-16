@@ -14,14 +14,14 @@ vi.mock("node:fs",async original=>{const fs=await original<typeof import("node:f
 const roots:string[]=[];
 afterEach(()=>{replacement.target="";replacement.seen=0;for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture(){const parent=mkdtempSync(join(tmpdir(),"murage-closed-wal-"));roots.push(parent);const data=join(parent,"installation");mkdirSync(data);writeFileSync(join(data,"config.json"),"{}\n");const db=new DatabaseSync(join(data,"messages.db"));db.exec("PRAGMA journal_mode=WAL");initializeMessageTables(db);db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread","message",1,"user","text","fixture",JSON.stringify({id:"message",at:1,role:"user",kind:"text",text:"fixture"}));db.exec("INSERT INTO thread_state VALUES('thread','message')");db.close();return{parent,data,target:join(parent,"snapshot.db")};}
-it("captures a genuinely closed WAL database without mistaking SQLite auxiliary creation for external change",async()=>{
- const f=fixture();expect(existsSync(join(f.data,"messages.db-wal"))).toBe(false);const before=readFileSync(join(f.data,"messages.db"));const stage=await stageInstallationState(f.data,f.parent);expect(stage.manifest.database).toMatchObject({status:"copied",messages:1,threads:1});expect(readFileSync(join(f.data,"messages.db"))).toEqual(before);expect(stage.manifest.files.some(file=>file.path.endsWith("-wal")||file.path.endsWith("-shm"))).toBe(false);
+it("captures a genuinely closed WAL database without creating or changing source sidecars",async()=>{
+ const f=fixture();expect(existsSync(join(f.data,"messages.db-wal"))).toBe(false);const before=readFileSync(join(f.data,"messages.db"));const stage=await stageInstallationState(f.data,f.parent);expect(stage.manifest.database).toMatchObject({status:"copied",messages:1,threads:1});expect(readFileSync(join(f.data,"messages.db"))).toEqual(before);expect(stage.manifest.files.some(file=>file.path.endsWith("-wal")||file.path.endsWith("-shm"))).toBe(false);expect(existsSync(join(f.data,"messages.db-wal"))).toBe(false);expect(existsSync(join(f.data,"messages.db-shm"))).toBe(false);
 });
 it("still refuses an unrelated root file added after the database snapshot",async()=>{
  const f=fixture();await expect(withOfflineInstallation(f.data,installation=>stageInstallationStateWhileOwned({...installation,snapshotDatabase:async destination=>{const result=await installation.snapshotDatabase(destination);writeFileSync(join(f.data,"unexpected.json"),"{}\n");return result;}},f.parent))).rejects.toMatchObject({code:"SOURCE_CHANGED"});expect(readFileSync(join(f.data,"unexpected.json"),"utf8")).toBe("{}\n");
 });
-it.each(["symlink","hardlink","directory"])("refuses a %s auxiliary replacement after SQLite backup before publishing",async kind=>{
- const f=fixture();const sentinel=join(f.parent,"sentinel");writeFileSync(sentinel,"untouched-fixture");Object.assign(replacement,{target:join(realpathSync(f.data),"messages.db-shm"),sentinel,kind,seen:0});
+it.each(["symlink","hardlink","directory"])("refuses a %s auxiliary replacement during source capture before publishing",async kind=>{
+ const f=fixture();const sentinel=join(f.parent,"sentinel");writeFileSync(sentinel,"untouched-fixture");const originalShm=join(realpathSync(f.data),"messages.db-shm");writeFileSync(originalShm,Buffer.alloc(32768));Object.assign(replacement,{target:originalShm,sentinel,kind,seen:0});
  let failure:unknown;try{await snapshotInstallationDatabase(f.data,f.target);}catch(error){failure=error;}
  expect(replacement.seen).toBe(2);expect(failure).toMatchObject({code:"UNSAFE_DATABASE_FILE"});expect(existsSync(f.target)).toBe(false);expect(readFileSync(sentinel,"utf8")).toBe("untouched-fixture");
 });
