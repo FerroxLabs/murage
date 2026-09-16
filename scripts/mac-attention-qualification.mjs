@@ -113,6 +113,7 @@ async function admit(){
  for(const f of ['electron/main.mjs','electron/preload.cjs','electron/approval-notification.mjs'])check(hash(asarRead(path.join(s.app,'Contents/Resources/app.asar'),f))===C.attentionInputHashes[f],'PACKAGED_SOURCE_'+f);
  const wav=path.join(s.app,'Contents/Resources/murage-approval.wav');check(hash(readFileSync(wav))===C.attentionInputHashes['electron/resources/murage-approval.wav'],'PACKAGED_SOUND_RESOURCE');
  check(must(run('/bin/launchctl',['managername']),'MANAGER').trim()==='Aqua','AQUA');
+ s.consentHover=path.join(s.private,'notification-consent-hover');must(run('/usr/bin/xcrun',['swiftc','-O',path.join(DIR,'mac-notification-consent-hover.swift'),'-o',s.consentHover],{timeout:60000}),'CONSENT_HOVER_BUILD');save(s);
  // Fail before the long app journey when OS observation/control is unavailable.
  s.notificationCenterPrerequisite=await prepareNotificationCenter({run,uid:process.getuid(),prior:s.notificationCenterPrerequisite,persist:value=>{s.notificationCenterPrerequisite=value;save(s);},record});
  for(const name of ['NotificationCenter','ControlCenter']){const pid=await admitSystemApplication(name);if(name==='NotificationCenter')check(pid===s.notificationCenterPrerequisite.readyPid,'NOTIFICATION_REGISTERED_PID');tree(pid,'prerequisite-'+name);}
@@ -224,6 +225,21 @@ async function trigger(s,kind){
  }catch(error){try{await triggerFailureEvidence(s,kind);}catch{}throw error;}
 }
 
+async function nativeConsent(s,state,deadline){
+ if(state.phase==='done'||state.phase==='failed'||Date.now()>=deadline)return;
+ const pid=systemPid('NotificationCenter'),remaining=()=>Math.max(1,deadline-Date.now());
+ const result=ax(pid,{op:'allowNotificationPermission',consentPhase:state.phase,deadline},{timeout:Math.min(3000,remaining())});
+ if(result.error==='consent-notice-not-unique'&&result.count===0)return;
+ record('OS-notification-consent-observation',{phase:state.phase,result});
+ if(result.ok&&result.consentPhase==='hover'){
+  state.phase='revealed'; // Only one hover attempt; never replay it on failure.
+  const move=run(s.consentHover,[String(pid),String(deadline)],{timeout:Math.min(3000,remaining())});let value;try{value=JSON.parse(move.stdout);}catch{value={ok:false,error:'CONSENT_HOVER_OUTPUT'};}
+  record('OS-notification-consent-hover',value);if(move.code!==0||!value.ok)state.phase='failed';return;
+ }
+ if(result.ok){state.phase=result.consentPhase;if(state.phase==='done'){record('OS-notification-consent',{action:result.action,scope:'exact Murage initial OS notice only'});s.osConsentChanged=true;save(s);}return;}
+ // A mutation or unknown subprocess outcome cannot be safely repeated.
+ if(result.actionAttempted!==false||result.error!=='consent-controls-not-observed')state.phase='failed';
+}
 async function journey(){
  const s=load();check(s.prepared&&!s.journeyStarted,'JOURNEY_ONCE');s.journeyStarted=true;save(s);const timer=setTimeout(()=>{stopping=true;},C.scriptMinutes*60000);
  try{
@@ -253,7 +269,7 @@ async function journey(){
    check(!stopping,'SCRIPT_DEADLINE');if(kind==='private')await settings(s,{'Show notification previews':false});if(kind==='mute')await settings(s,{'Show notification previews':true,'Needs your attention':false});if(kind==='quiet')await settings(s,{'Needs your attention':true,'Quiet hours':true});if(kind==='dnd'){await settings(s,{'Quiet hours':false});await dnd(s,true);}
    const {marker,item}=await trigger(s,kind);
    if(['banner','private'].includes(kind)){
-    const observed=await until(()=>{const n=notice(s,'waiting-'+kind);if(n.text.includes(marker))return n;const permission=ax(systemPid('NotificationCenter'),{op:'allowNotificationPermission'});if(permission.ok)record('OS-notification-consent',permission);return false;},20000,'NATIVE_BANNER_'+kind);shot('visible-'+kind);
+    const consent={phase:'initial'},bannerDeadline=Date.now()+20000;const observed=await until(async()=>{const n=notice(s,'waiting-'+kind);if(n.text.includes(marker))return n;await nativeConsent(s,consent,bannerDeadline);return false;},20000,'NATIVE_BANNER_'+kind);shot('visible-'+kind);
     if(kind==='private')check(!observed.text.includes(s.bots[kind].name)&&!observed.text.includes('B35_SYNTHETIC_NO_EXECUTION_private_'),'PRIVATE_PREVIEW');
     if(kind==='banner'){const clicked=ax(systemPid('NotificationCenter'),{op:'pressNotification',marker});record('native-click',clicked);check(clicked.ok,'NATIVE_CLICK');await until(()=>{const n=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+s.bots[kind].name});return n.ok&&n.count===1;},10000,'CLICK_EXACT_THREAD');await exactRequestCard(s,kind);shot('native-click-exact-thread');const current=await pending(s,kind,5000);check(current.pending&&current.sourceLabel===item.sourceLabel&&!existsSync(path.join(s.control,'decision-'+kind+'.json')),'CLICK_NOT_APPROVAL');}
     record('native-banner',{kind,marker,sourceLabel:item.sourceLabel,requestId:null,visible:true});
@@ -272,7 +288,7 @@ async function cleanup(){
  try{const nativeTail=readSafeLogTail(path.join(s.private,'app.log'),1024*1024);if(nativeTail)writeFileSync(path.join(E,'notification-lifecycle.json'),JSON.stringify({tailLimitBytes:1024*1024,sourceBytes:nativeTail.bytes,entries:notificationLifecycleMetadata(redactSecretsInLine(nativeTail.tail))},null,2)+'\n',{mode:0o600});}catch{record('notification-lifecycle-unavailable',{error:'NATIVE_LOG_READ_UNAVAILABLE'});}
  if(existsSync(path.join(s.private,'app.log')))writeFileSync(path.join(E,'app-redacted.log'),redactSecretsInLine(readFileSync(path.join(s.private,'app.log'),'utf8')).slice(-20000),{mode:0o600});
  let notificationCenter={ok:false};try{notificationCenter=await restoreNotificationCenter({run,uid:process.getuid(),state:s.notificationCenterPrerequisite,persist:value=>{s.notificationCenterPrerequisite=value;save(s);},record});}catch(error){record('notification-service-restore-failed',{code:/^NC_[A-Z_]+$/.test(error.message)?error.message:'NC_RESTORE_FAILED'});}
- const result={ownedProcessesGone,dndRestored,keychain,notificationCenter,machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok&&notificationCenter.ok,'CLEANUP_POSTCONDITIONS');
+ const result={ownedProcessesGone,dndRestored,keychain,notificationCenter,osNotificationConsent:{changed:s.osConsentChanged===true,restoration:'disposable runner profile teardown; no notification database mutation'},machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok&&notificationCenter.ok,'CLEANUP_POSTCONDITIONS');
  for(const dir of [s.private,s.appDir,s.data,s.userData,s.tmp]){check(dir.startsWith(ROOT+path.sep),'CLEANUP_PATH');rmSync(dir,{recursive:true,force:true});}save({...s,cleanupComplete:true});
 }
 try{await({admit,prepare,run:journey,cleanup})[phase]();record('phase-complete');}catch(error){record('phase-failed',{gate:error.gate??null,error:redactSecretsInLine(error.message)});try{shot('failed-'+phase);}catch{}process.exitCode=1;}
