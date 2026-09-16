@@ -1,5 +1,6 @@
 // B35 packaged attention consumer only. Source checks do not run this journey.
 import {spawn} from 'node:child_process';
+import {startNotificationObserver,notificationLifecycleMetadata} from './mac-attention-notification-observer.mjs';
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,writeFileSync,openSync,closeSync,readSync,realpathSync,rmSync,readdirSync,lstatSync} from 'node:fs';
 import path from 'node:path';
@@ -192,6 +193,7 @@ async function triggerFailureEvidence(s,kind){
  try{keep(path.join(s.userData,'logs/server.log'),'trigger-'+kind+'-server.log');const native=path.join(s.data,'native');if(existsSync(native)&&!lstatSync(native).isSymbolicLink()&&realpathSync(native).startsWith(realpathSync(s.data)+path.sep)){for(const name of readdirSync(native).filter(n=>n.endsWith('.ndjson')).sort().slice(-4))keep(path.join(native,name),'trigger-'+kind+'-'+name);}else evidence.nativeUnavailable=true;}catch(error){evidence.logsUnavailable=error.code??error.name;}
  record('trigger-failure-evidence',evidence);
 }
+let notificationObserver=null;
 async function trigger(s,kind){
  const b=s.bots[kind],marker=kind==='private'?'Your attention is needed.':b.name;
  try{
@@ -203,6 +205,7 @@ async function trigger(s,kind){
   await until(()=>existsSync(path.join(s.control,'started-'+kind+'.json')),Math.max(0,startedDeadline-Date.now()),'SYNTHETIC_STARTED_'+kind);await selectBot(s,'observer');
   // Open while the peer is held, before the post-release notification window.
   await openPendingInbox(s);const beforeRelease=await until(()=>readPendingInbox(s,kind),10000,'INBOX_BEFORE_RELEASE_'+kind);check(!beforeRelease.pending,'PENDING_PREEXISTS_'+kind);
+  if(kind==='banner')notificationObserver=await startNotificationObserver({port:s.port,botId:b.id,threadId:b.threadId,record});
   writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});
   const pendingDeadline=Date.now()+15000;
   const item=await until(async()=>{await press(s.pid,'Refresh');const observed=await until(()=>readPendingInbox(s,kind),Math.max(0,pendingDeadline-Date.now()),'INBOX_REFRESHED_'+kind);return observed.pending?observed:null;},Math.max(0,pendingDeadline-Date.now()),'CANONICAL_PENDING_'+kind);
@@ -215,7 +218,7 @@ async function journey(){
  try{
   // Prerequisites are repeated immediately before launch, not replaced by prior source checks.
   for(const name of ['NotificationCenter','ControlCenter'])tree(systemPid(name),'ready-'+name);await dnd(s,false);
-  const fd=openSync(path.join(s.private,'app.log'),'wx',0o600);active=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:s.tmp,MURAGE_DATA_DIR:s.data,MURAGE_USER_DATA:s.userData},stdio:['ignore',fd,fd]});closeSync(fd);active.unref();s.pid=active.pid;save(s);
+  const fd=openSync(path.join(s.private,'app.log'),'wx',0o600);active=spawn(s.exe,[],{env:{HOME:process.env.HOME,PATH:path.dirname(process.execPath)+':/usr/bin:/bin',TMPDIR:s.tmp,MURAGE_DATA_DIR:s.data,MURAGE_USER_DATA:s.userData,ELECTRON_DEBUG_NOTIFICATIONS:'1',ELECTRON_ENABLE_LOGGING:'1'},stdio:['ignore',fd,fd]});closeSync(fd);active.unref();s.pid=active.pid;save(s);
   await until(()=>{const r=ax(s.pid,{op:'manual'});return r.ok;},15000,'MANUAL_AX');
   await until(async()=>{
    const log=path.join(s.userData,'logs/server.log');if(!existsSync(log))return false;
@@ -246,7 +249,7 @@ async function journey(){
    await resolveDeny(s,kind);if(kind==='dnd')await dnd(s,false);
   }
   s.machineChecksComplete=true;save(s);record('machine-complete',{sound:{resourceVerified:true,requestedNativeSound:'murage-approval.wav',audibility:'NOT_ESTABLISHED',reason:'No identified human listener or supported system-audio capture receipt'},permissionDeniedOS:'NOT_EXERCISED',otherOperatingSystems:'NOT_EXERCISED',fullB35Acceptance:false});
- }finally{clearTimeout(timer);}
+ }finally{clearTimeout(timer);if(notificationObserver){try{record('notification-observer-stop',await notificationObserver.stop());}catch{try{record('notification-observer-stop',{closed:false,error:'OBSERVER_EVIDENCE_UNAVAILABLE'});}catch{}}}}
 }
 async function cleanup(){
  if(!existsSync(STATE)){record('cleanup',{status:'NOT_STARTED'});return;}const s=load();let dndRestored=s.originalDnd===undefined&&!s.dndMutationStarted;try{if(s.originalDnd!==undefined)dndRestored=(await dnd(s,s.originalDnd))===s.originalDnd;}catch(e){record('DND-restore-failed',{error:e.message});}
@@ -254,6 +257,7 @@ async function cleanup(){
  await pause(1000);const owned=ps().filter(p=>p.command.includes(s.app+'/')||p.command.includes(s.private+path.sep));for(const p of owned)if(p.pid!==process.pid)try{process.kill(p.pid,'SIGTERM');}catch{}
  let ownedProcessesGone=false;try{await until(()=>ps().filter(p=>p.pid!==process.pid&&(p.command.includes(s.app+'/')||p.command.includes(s.private+path.sep))).length===0,15000,'OWNED_PROCESSES_EXIT');ownedProcessesGone=true;}catch(error){record('process-cleanup-failed',{error:error.message});}
  const keychain=s.keychainIsolation?cleanupKeychain({runner:run,state:s.keychainIsolation,exists:existsSync}):{ok:true};
+ try{const nativeTail=readSafeLogTail(path.join(s.private,'app.log'),1024*1024);if(nativeTail)writeFileSync(path.join(E,'notification-lifecycle.json'),JSON.stringify({tailLimitBytes:1024*1024,sourceBytes:nativeTail.bytes,entries:notificationLifecycleMetadata(redactSecretsInLine(nativeTail.tail))},null,2)+'\n',{mode:0o600});}catch{record('notification-lifecycle-unavailable',{error:'NATIVE_LOG_READ_UNAVAILABLE'});}
  if(existsSync(path.join(s.private,'app.log')))writeFileSync(path.join(E,'app-redacted.log'),redactSecretsInLine(readFileSync(path.join(s.private,'app.log'),'utf8')).slice(-20000),{mode:0o600});
  const result={ownedProcessesGone,dndRestored,keychain,machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok,'CLEANUP_POSTCONDITIONS');
  for(const dir of [s.private,s.appDir,s.data,s.userData,s.tmp]){check(dir.startsWith(ROOT+path.sep),'CLEANUP_PATH');rmSync(dir,{recursive:true,force:true});}save({...s,cleanupComplete:true});
