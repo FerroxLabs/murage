@@ -126,10 +126,46 @@ function ownedServerGeneration(log,entry){
 }
 async function selectBot(s,kind){const b=s.bots[kind];await press(s.pid,b.name,['AXButton','AXCheckBox'],{prefix:true,scopeName:'Bots and navigation'});await until(()=>{const t=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+b.name});return t.ok&&t.count===1;},10000,'SELECTED_'+kind);}
 async function settings(s,changes){await press(s.pid,'App settings');await press(s.pid,'General',['AXButton'],{windowSelector:true});for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
-const pending=async(s,kind)=>{const list=await api(s,'/api/inbox?view=approvals&pageSize=25');const items=list.items.filter(x=>x.link?.threadId===s.bots[kind].threadId);return items.length===1?items[0]:null;};
+// Read the owner-authorized desktop projection. AX does not expose request IDs.
+function inboxObservation(t,sourceLabel){
+ const nodes=t.elements,all=texts(t),under=(node,index)=>{let parent=node.parent,steps=0;while(parent>=0){check(++steps<=64,'INBOX_AX_ANCESTRY');if(parent===index)return true;const p=nodes.find(n=>n.index===parent);check(p,'INBOX_AX_PARENT');parent=p.parent;}return false;};
+ check(!all.some(x=>/Displayed items may be stale|could not load|Use Refresh to check|Inbox is unavailable/i.test(x)),'INBOX_ERROR_OR_STALE');
+ if(all.some(x=>x.includes('Updating Inbox')))return null;
+ if(!all.some(x=>/^While you were away: .* matching items\.$/.test(x)))return null;
+ check(all.includes('Page 1 of 1'),'INBOX_COMPLETE_PAGE');
+ const lists=nodes.filter(n=>n.role==='AXList'&&n.names.includes('Inbox items'));check(lists.length===1,'INBOX_UNIQUE_LIST');
+ const rows=nodes.filter(n=>n.parent===lists[0].index).map(row=>texts({elements:[row,...nodes.filter(n=>under(n,row.index))]}));
+ const matches=rows.filter(row=>row.includes(sourceLabel));check(matches.length<=1,'INBOX_AMBIGUOUS_REQUEST');
+ if(!matches.length)return{settled:true,pending:false,sourceLabel};
+ check(matches[0].includes('Approval requested')&&matches[0].includes('Pending')&&matches[0].includes('Open request'),'INBOX_EXACT_PENDING_ROW');
+ return{settled:true,pending:true,sourceLabel,row:matches[0]};
+}
+const inboxSource=(s,kind)=>[s.bots[kind].name,s.bots[kind].tasks.find(t=>t.threadId===s.bots[kind].threadId)?.title].filter(Boolean).join(' · ');
+async function openPendingInbox(s){
+ const buttons=tree(s.pid,'tools-selector').elements.filter(n=>n.role==='AXButton'&&n.names.some(x=>/^Tools(?:,|$)/.test(x)));check(buttons.length===1,'TOOLS_UNIQUE');
+ await press(s.pid,buttons[0].names.find(x=>/^Tools(?:,|$)/.test(x)));await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
+}
+async function readPendingInbox(s,kind){return inboxObservation(tree(s.pid,'pending-'+kind),inboxSource(s,kind));}
+async function pending(s,kind,ms=10000){
+ // A new dialog mount clears the previous result; a settled page is a fresh read.
+ await openPendingInbox(s);
+ try{return await until(()=>readPendingInbox(s,kind),ms,'INBOX_SETTLED_'+kind);}
+ finally{await press(s.pid,'Close Inbox');}
+}
+async function exactRequestCard(s,kind){
+ const action='B35_SYNTHETIC_NO_EXECUTION_'+kind+'_'+s.runId;
+ await until(()=>texts(tree(s.pid,'exact-card-'+kind)).some(x=>x.includes(action)),10000,'EXACT_CARD_'+kind);
+ for(const label of ['Deny','Allow once']){const control=state(s.pid,label,['AXButton']);check(control.enabled===true,'REQUEST_DECISION_ENABLED_'+label);}
+}
+
 const notice=(s,label)=>{const t=tree(systemPid('NotificationCenter'),label);return{tree:t,text:texts(t).join('\n')};};
-async function sampleNoBanner(s,marker,kind){const samples=[];for(let i=0;i<4;i++){check(!stopping,'STOPPED');const n=notice(s,kind+'-'+i);samples.push({at:new Date().toISOString(),present:n.text.includes(marker),screenshot:shot(kind+'-'+i)});await pause(3000);}record(kind+'-absence',{marker,samples,windowMs:12000});check(samples.every(x=>!x.present),kind.toUpperCase()+'_BANNER_PRESENT');check(await pending(s,kind),'PENDING_PRESERVED_'+kind);}
-async function resolveDeny(s,kind){await selectBot(s,kind);const action='B35_SYNTHETIC_NO_EXECUTION_'+kind+'_'+s.runId;await until(()=>texts(tree(s.pid,'card-'+kind)).some(x=>x.includes(action)),10000,'EXACT_CARD_'+kind);check(await pending(s,kind),'PENDING_BEFORE_DENY_'+kind);await press(s.pid,'Deny');await until(()=>existsSync(path.join(s.control,'decision-'+kind+'.json')),10000,'DECISION_'+kind);const decision=JSON.parse(readFileSync(path.join(s.control,'decision-'+kind+'.json'),'utf8'));check(decision.decision?.behavior==='deny','DENY_ONLY_'+kind);await until(async()=>!(await pending(s,kind)),10000,'RESOLVED_'+kind);record('denied',{kind,decision});}
+async function sampleNoBanner(s,marker,kind){const samples=[];for(let i=0;i<4;i++){check(!stopping,'STOPPED');const n=notice(s,kind+'-'+i);samples.push({at:new Date().toISOString(),present:n.text.includes(marker),screenshot:shot(kind+'-'+i)});await pause(3000);}record(kind+'-absence',{marker,samples,windowMs:12000});check(samples.every(x=>!x.present),kind.toUpperCase()+'_BANNER_PRESENT');check((await pending(s,kind)).pending,'PENDING_PRESERVED_'+kind);}
+async function resolveDeny(s,kind){
+ await selectBot(s,kind);await exactRequestCard(s,kind);check((await pending(s,kind)).pending,'PENDING_BEFORE_DENY_'+kind);
+ await press(s.pid,'Deny');await until(()=>existsSync(path.join(s.control,'decision-'+kind+'.json')),10000,'DECISION_'+kind);
+ const decision=JSON.parse(readFileSync(path.join(s.control,'decision-'+kind+'.json'),'utf8'));check(decision.decision?.behavior==='deny','DENY_ONLY_'+kind);
+ await until(async()=>!(await pending(s,kind)).pending,10000,'RESOLVED_'+kind);record('denied',{kind,decision});
+}
 function triggerMessages(value){const rows=Array.isArray(value)?value:value?.messages;check(Array.isArray(rows),'THREAD_MESSAGES_SHAPE');return rows;}
 function receivedTrigger(before,after,expected){
  const known=new Set(before.map(m=>m.id)),fresh=after.filter(m=>m.role==='user'&&m.kind==='text'&&!known.has(m.id));
@@ -151,7 +187,12 @@ async function trigger(s,kind){
   const startedDeadline=Date.now()+15000;
   const received=await until(async()=>receivedTrigger(before,triggerMessages(await api(s,'/api/threads/'+b.threadId+'/messages')),expected),Math.max(0,startedDeadline-Date.now()),'RECEIVED_TRIGGER_'+kind);record('received-trigger',{kind,threadId:b.threadId,message:received});
   await until(()=>existsSync(path.join(s.control,'started-'+kind+'.json')),Math.max(0,startedDeadline-Date.now()),'SYNTHETIC_STARTED_'+kind);await selectBot(s,'observer');
-  writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});const item=await until(()=>pending(s,kind),15000,'CANONICAL_PENDING_'+kind);record('canonical-request',{kind,item});return{marker,item};
+  // Open while the peer is held, before the post-release notification window.
+  await openPendingInbox(s);const beforeRelease=await until(()=>readPendingInbox(s,kind),10000,'INBOX_BEFORE_RELEASE_'+kind);check(!beforeRelease.pending,'PENDING_PREEXISTS_'+kind);
+  writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});
+  const pendingDeadline=Date.now()+15000;
+  const item=await until(async()=>{await press(s.pid,'Refresh');const observed=await until(()=>readPendingInbox(s,kind),Math.max(0,pendingDeadline-Date.now()),'INBOX_REFRESHED_'+kind);return observed.pending?observed:null;},Math.max(0,pendingDeadline-Date.now()),'CANONICAL_PENDING_'+kind);
+  await press(s.pid,'Close Inbox');record('canonical-request',{kind,botId:b.id,threadId:b.threadId,item,identity:'unique source row; exact action is checked on the conversation card'});return{marker,item};
  }catch(error){try{await triggerFailureEvidence(s,kind);}catch{}throw error;}
 }
 
@@ -185,8 +226,8 @@ async function journey(){
    if(['banner','private'].includes(kind)){
     const observed=await until(()=>{const n=notice(s,'waiting-'+kind);if(n.text.includes(marker))return n;const permission=ax(systemPid('NotificationCenter'),{op:'allowNotificationPermission'});if(permission.ok)record('OS-notification-consent',permission);return false;},20000,'NATIVE_BANNER_'+kind);shot('visible-'+kind);
     if(kind==='private')check(!observed.text.includes(s.bots[kind].name)&&!observed.text.includes('B35_SYNTHETIC_NO_EXECUTION_private_'),'PRIVATE_PREVIEW');
-    if(kind==='banner'){const clicked=ax(systemPid('NotificationCenter'),{op:'pressNotification',marker});record('native-click',clicked);check(clicked.ok,'NATIVE_CLICK');const current=await until(()=>pending(s,kind),5000,'CLICK_PRESERVES_PENDING');check(current.link?.threadId===item.link?.threadId&&!existsSync(path.join(s.control,'decision-'+kind+'.json')),'CLICK_NOT_APPROVAL');await until(()=>{const n=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+s.bots[kind].name});return n.ok&&n.count===1;},10000,'CLICK_EXACT_THREAD');await until(()=>texts(tree(s.pid,'native-click-card')).some(x=>x.includes('B35_SYNTHETIC_NO_EXECUTION_banner_'+s.runId)),10000,'CLICK_EXACT_REQUEST_CARD');shot('native-click-exact-thread');}
-    record('native-banner',{kind,marker,requestId:item.link?.requestId??null,visible:true});
+    if(kind==='banner'){const clicked=ax(systemPid('NotificationCenter'),{op:'pressNotification',marker});record('native-click',clicked);check(clicked.ok,'NATIVE_CLICK');await until(()=>{const n=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+s.bots[kind].name});return n.ok&&n.count===1;},10000,'CLICK_EXACT_THREAD');await exactRequestCard(s,kind);shot('native-click-exact-thread');const current=await pending(s,kind,5000);check(current.pending&&current.sourceLabel===item.sourceLabel&&!existsSync(path.join(s.control,'decision-'+kind+'.json')),'CLICK_NOT_APPROVAL');}
+    record('native-banner',{kind,marker,sourceLabel:item.sourceLabel,requestId:null,visible:true});
    }else await sampleNoBanner(s,marker,kind);
    await resolveDeny(s,kind);if(kind==='dnd')await dnd(s,false);
   }
