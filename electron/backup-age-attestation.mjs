@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { constants,closeSync,fstatSync,lstatSync,openSync,readFileSync,realpathSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
+import {open} from "node:fs/promises";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 export const AGE_ORIGINAL_SHA256="4012dfc2725883beafb710894af4f599b7a94f8c8e0f51f02cc96ab8df33915e";
 export const AGE_PAYLOAD_SHA256="2dfd0580ed271820d1efb369fdff2d700df863493d41662da9b1b0780589118b";
@@ -89,5 +90,69 @@ export function trustedBackupAgeExecutable(file){
     try{const opened=fstatSync(fd);if(opened.dev!==before.dev||opened.ino!==before.ino)return false;bytes=readFileSync(fd);}finally{closeSync(fd);}
     if(digest(bytes)===pin.executableSha256)return true;
     return process.platform==="darwin"&&process.arch==="arm64"&&signedAgeOwnedByCurrentApp(file,bytes);
+  }catch{return false;}
+}
+
+/** Cheap identity only: no payload reads and no subprocesses on status paths. */
+export function backupToolIdentity(file,currentExecutable=process.execPath){
+  try{
+    const resolved=realpathSync(file),executable=realpathSync(currentExecutable);
+    if(resolved!==path.resolve(file))return null;
+    const paths=[file,currentExecutable],resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents);
+    if(path.basename(resources)==="Resources"&&path.basename(contents)==="Contents"&&app.endsWith(".app"))paths.push(resources,contents,app);
+    const entries=paths.map(name=>{const stat=lstatSync(name,{bigint:true});if(stat.isSymbolicLink())throw Error();return {path:realpathSync(name),identity:["dev","ino","mode","size","nlink","mtimeNs","ctimeNs"].map(key=>String(stat[key]))};});
+    return JSON.stringify({resolved,executable,entries});
+  }catch{return null;}
+}
+/** Bounded shared runner; cancellation never settles ahead of observed child close. */
+export function asyncBackupCodesign(args,{signal,spawnCommand=spawn}={}){
+  return new Promise(resolve=>{
+    if(signal?.aborted){resolve({status:null,error:Error("Attestation aborted")});return;}
+    let child;try{child=spawnCommand("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"]});}catch(error){resolve({status:null,error});return;}
+    let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),error;
+    const stop=reason=>{error??=reason;child.kill("SIGKILL");};
+    const abort=()=>stop(Error("Attestation aborted"));
+    const timer=setTimeout(()=>stop(Error("Attestation timeout")),10000);
+    signal?.addEventListener("abort",abort,{once:true});
+    if(signal?.aborted)abort();
+    child.stdout.on("data",chunk=>{if(stdout.length+chunk.length>65536)stop(Error("Attestation output limit"));else stdout=Buffer.concat([stdout,chunk]);});
+    child.stderr.on("data",chunk=>{if(stderr.length+chunk.length>65536)stop(Error("Attestation output limit"));else stderr=Buffer.concat([stderr,chunk]);});
+    child.once("error",failure=>{error??=failure;});
+    child.once("close",status=>{clearTimeout(timer);signal?.removeEventListener("abort",abort);resolve({status,error,stdout:stdout.toString("utf8"),stderr:stderr.toString("utf8")});});
+  });
+}
+export async function readBackupToolBytes(file,{strictMode=false}={}){
+  let handle;
+  try{
+    const before=lstatSync(file,{bigint:true});
+    if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1n||before.size<1n||before.size>64n*1024n*1024n||(strictMode&&(before.mode&0o022n)))return null;
+    const same=stat=>["dev","ino","mode","size","nlink","mtimeNs","ctimeNs"].every(key=>stat[key]===before[key]);
+    handle=await open(file,constants.O_RDONLY|constants.O_NOFOLLOW);
+    if(!same(await handle.stat({bigint:true})))return null;
+    const bytes=await handle.readFile();
+    return same(await handle.stat({bigint:true}))&&same(lstatSync(file,{bigint:true}))?bytes:null;
+  }catch{return null;}finally{await handle?.close();}
+}
+export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+  if(normalizedAgePayloadHash(bytes)!==AGE_PAYLOAD_SHA256)return false;
+  try{
+    const identity=backupToolIdentity(file,currentExecutable),unchanged=()=>identity!==null&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity;
+    if(!unchanged())return false;
+    const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
+    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","age")||!executable.startsWith(app+path.sep))return false;
+    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
+    await checked(["--verify","--strict","-R","=anchor apple generic",app]);
+    const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
+    const toolInfo=await checked(["--display","--verbose=4",resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
+    await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return unchanged();
+  }catch{return false;}
+}
+export async function trustedBackupAgeExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+  if(process.platform!=="darwin")return trustedBackupAgeExecutable(file);
+  try{
+    const pin=backupAgePinForTarget(process.platform,process.arch),identity=backupToolIdentity(file,currentExecutable);if(!pin||!identity||signal?.aborted)return false;
+    const bytes=await readBackupToolBytes(file);if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
+    const trusted=digest(bytes)===pin.executableSha256||process.arch==="arm64"&&await signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
+    return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
   }catch{return false;}
 }

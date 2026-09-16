@@ -10,7 +10,7 @@ import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
 import { remoteWorkDirectory,ensureRemoteControlDirectory } from "./backup-remote-runtime.mjs";
-import { trustedBackupResticExecutable } from "./backup-restic-attestation.mjs";
+import { trustedBackupResticExecutableAsync } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
@@ -3091,6 +3091,8 @@ setCuaStateListener((connection) => {
   });
 });
 
+let desktopResticTool = null;
+const remoteBackupAttestation = new AbortController();
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
   const installation=ownedDesktopDataDir(),control=closedControlDirectory(installation);
@@ -3108,14 +3110,20 @@ async function initializeBackupRemoteHost(){
     },
   });
   const tool=path.join(process.resourcesPath,"backup-tools",process.arch,"restic");
+  const owner=desktopDataOwner;
+  desktopResticTool=createBackupToolCapability({resourcesPath:process.resourcesPath,currentExecutable:process.execPath,macToolName:"restic",verifyMacTool:trustedBackupResticExecutableAsync,
+    isUsable:()=>Boolean(process.platform==="darwin"&&!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner===owner&&ownedDesktopDataDir()===installation&&!credentialStoreUnavailable)});
+  try{await desktopResticTool.requireTool();}catch{ /* Observational availability remains false; actions still attest afresh. */ }
+  assertDesktopStartupActive();
+  if(desktopDataOwner!==owner||ownedDesktopDataDir()!==installation)return;
   backupRemoteHost=createBackupRemoteHost({
-    supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&trustedBackupResticExecutable(tool)),
+    supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&desktopResticTool.currentTool()),
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
     exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
-    createAdapter:binding=>new BackupRestic({executable:tool,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})}),
+    createAdapter:binding=>new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})}),
   });
 }
 async function initializeBackupScheduleHost(){
@@ -3493,6 +3501,8 @@ function cleanupDesktopForExit() {
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
   desktopBackupTool.invalidate();
+  desktopResticTool?.invalidate();
+  remoteBackupAttestation.abort();
   // Optional hosted registration must not hold the credential queue open for
   // its network timeout. Cancel the request, then drain actual writes below.
   managedComposioShutdown.abort();
@@ -3525,6 +3535,7 @@ function cleanupDesktopForExit() {
     desktopCleanupStage = "desktop startup";
     await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
     await awaitOwnedWork(desktopBackupTool.settled(), "Backup resource verification has not settled");
+    await awaitOwnedWork(desktopResticTool?.settled() ?? Promise.resolve(), "Remote backup resource verification has not settled");
     desktopCleanupStage = "credential writes";
     await awaitOwnedWork(Promise.allSettled([...backupRemoteOperations]), "Remote backup operations have not settled");
     await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");

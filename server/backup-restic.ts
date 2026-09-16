@@ -7,7 +7,7 @@ import { backupReceiptSchema, backupReferenceSchema, type BackupReceipt } from "
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { resticChildEnvironment,resticS3CredentialsSchema,resticS3Repository,resticS3TargetSchema,type ResticS3Credentials,type ResticS3Run,type ResticS3Target } from "./backup-restic-target.ts";
-import {trustedBackupResticExecutable} from "../electron/backup-restic-attestation.mjs";
+import {trustedBackupResticExecutableAsync} from "../electron/backup-restic-attestation.mjs";
 export type { ResticS3Credentials,ResticS3Target } from "./backup-restic-target.ts";
 
 export {RESTIC_ORIGINAL_SHA256} from "../shared/backup-restic-pin.mjs";
@@ -49,7 +49,7 @@ const installationTag=(reference:string)=>`murage-installation:${backupReference
 export interface ResticRun { args:string[]; cwd:string; password:Uint8Array; timeoutMs:number;s3?:ResticS3Run }
 export interface ResticResult { code:number|null; stdout:string; uncertain?:boolean; lockReleaseUnconfirmed?:boolean; removalUnconfirmed?:boolean }
 export type ResticRunner=(input:ResticRun)=>Promise<ResticResult>;
-export interface BackupResticOptions { executable:string; repository:string|ResticS3Target; workDirectory:string; password:()=>Promise<Uint8Array>; runner?:ResticRunner; timeoutMs?:number; maxBytes?:number;credentials?:(target:Readonly<ResticS3Target>)=>Promise<ResticS3Credentials>;authorizeInitialization?:(input:{target:Readonly<ResticS3Target>;credentials:Readonly<ResticS3Credentials>})=>Promise<void>;maintenanceCredentials?:(target:Readonly<ResticS3Target>)=>Promise<ResticS3Credentials> }
+export interface BackupResticOptions { executable:string; attestationSignal?:AbortSignal; repository:string|ResticS3Target; workDirectory:string; password:()=>Promise<Uint8Array>; runner?:ResticRunner; timeoutMs?:number; maxBytes?:number;credentials?:(target:Readonly<ResticS3Target>)=>Promise<ResticS3Credentials>;authorizeInitialization?:(input:{target:Readonly<ResticS3Target>;credentials:Readonly<ResticS3Credentials>})=>Promise<void>;maintenanceCredentials?:(target:Readonly<ResticS3Target>)=>Promise<ResticS3Credentials> }
 
 // Pinned restic 0.19.1 unlock-failure text. Raw stderr never leaves the runner;
 // only this boolean does, so exit 0 is never reported as confirmed lock cleanup.
@@ -57,11 +57,12 @@ const UNLOCK_FAILURE=/error while unlocking/;
 // Pinned text for an object deletion restic reported yet still exited 0 (observed for prune).
 const REMOVAL_FAILURE=/unable to remove .{1,300} from the repository/;
 /** Password uses restic's documented-source non-TTY stdin branch. */
-export function resticRunner(executable:string):ResticRunner {
-  return input=>new Promise((resolveResult,reject)=>{
+export function resticRunner(executable:string,signal?:AbortSignal):ResticRunner {
+  return async input=>{
     try {
-      if(!trustedBackupResticExecutable(executable))throw Error();
-    }catch{reject(new Error("RESTIC_TOOL_UNVERIFIED"));return;}
+      if(signal?.aborted||!await trustedBackupResticExecutableAsync(executable,{signal})||signal?.aborted)throw Error();
+    }catch{throw new Error("RESTIC_TOOL_UNVERIFIED");}
+    return new Promise((resolveResult,reject)=>{
     let env:Record<string,string>;try{env=resticChildEnvironment(input.cwd,input.s3);}catch{reject(Error("RESTIC_S3_CREDENTIALS_INVALID"));return;}
     const child=spawn(executable,input.args,{cwd:input.cwd,env,stdio:["pipe","pipe","pipe"],windowsHide:true});
     let stdout="",overflow=false,timedOut=false,closed=false;let escalation:ReturnType<typeof setTimeout>|undefined;
@@ -72,7 +73,8 @@ export function resticRunner(executable:string):ResticRunner {
     child.once("error",()=>{closed=true;clearTimeout(timer);if(escalation)clearTimeout(escalation);reject(new Error("RESTIC_PROCESS_FAILED"));});
     child.once("close",code=>{closed=true;clearTimeout(timer);if(escalation)clearTimeout(escalation);resolveResult({code,stdout:overflow?"":stdout,uncertain:timedOut||overflow,...(unlockFailed?{lockReleaseUnconfirmed:true}:{}),...(removalFailed?{removalUnconfirmed:true}:{})});});
     child.stdin.end(Buffer.concat([input.password,Buffer.from("\n")]));
-  });
+    });
+  };
 }
 
 /** Verified ciphertext storage; S3 requires explicit host-owned connection. */
@@ -88,7 +90,7 @@ export class BackupRestic {
       if(!isAbsolute(options.repository)||options.repository.startsWith("\\\\"))throw new Error("RESTIC_LOCAL_PATH_REQUIRED");
       if(resolve(options.repository)===resolve(options.workDirectory))throw new Error("RESTIC_SEPARATE_DIRECTORIES_REQUIRED");
     }else{try{this.target=Object.freeze(resticS3TargetSchema.parse(options.repository));}catch{throw Error("RESTIC_S3_TARGET_INVALID");}}
-    this.options={...options,repository:this.target??options.repository};this.run=options.runner??resticRunner(options.executable);
+    this.options={...options,repository:this.target??options.repository};this.run=options.runner??resticRunner(options.executable,options.attestationSignal);
   }
   private async resolveCredentials(){try{if(!this.target||typeof this.options.credentials!=="function")throw Error();return Object.freeze(resticS3CredentialsSchema.parse(await this.options.credentials(this.target)));}catch{throw Error("RESTIC_S3_CREDENTIALS_UNAVAILABLE");}}
   private async readPassword(){try{return Buffer.from(await this.options.password());}catch(error){if(this.target)throw Error("RESTIC_PASSWORD_UNAVAILABLE");throw error;}}

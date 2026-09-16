@@ -1,3 +1,4 @@
+import {fileURLToPath} from "node:url";
 import { constants,copyFileSync,fstatSync,mkdtempSync,openSync,readFileSync,readdirSync,readSync,realpathSync,renameSync,truncateSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ vi.mock("node:fs",async importOriginal=>{const actual=await importOriginal<typeo
 const actualFs=await vi.importActual<typeof import("node:fs")>("node:fs");
 const roots:string[]=[];afterEach(()=>{vi.mocked(openSync).mockImplementation(actualFs.openSync);vi.mocked(readSync).mockImplementation(actualFs.readSync);vi.mocked(readFileSync).mockImplementation(actualFs.readFileSync);vi.clearAllMocks();for(const root of roots.splice(0))safeWipeSync(root);});
 function fixture(runner?:ResticRunner,bytes=Buffer.from("age-encryption.org/v1\nSynthetic opaque storage fixture, not new crypto proof.\n")){const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-local-")));roots.push(root);const input=join(root,"synthetic.age");writeFileSync(input,bytes,{mode:0o600});const password=randomBytes(32).toString("hex");const receipt={jobId:"b".repeat(64),installationRef:"installation",destinationRef:"destination",selectionHash:"c".repeat(64),snapshotId:randomUUID(),artifactRef:"artifact",sha256:createHash("sha256").update(bytes).digest("hex"),bytes:bytes.length,verifiedAt:1};
- const options={executable:"/private/tmp/murage-restic-tool-evidence-4zOHAV/restic",repository:join(root,"repository"),workDirectory:join(root,"work"),password:async()=>Buffer.from(password),runner};return {root,input,bytes,password,receipt,options,adapter:new BackupRestic(options)};}
+ const options={executable:fileURLToPath(new URL("../dist-native/backup-restic/arm64/restic",import.meta.url)),repository:join(root,"repository"),workDirectory:join(root,"work"),password:async()=>Buffer.from(password),runner};return {root,input,bytes,password,receipt,options,adapter:new BackupRestic(options)};}
 it.each([3,11,12,1])("non-success exit %s preserves input and never automatically uploads again",async code=>{
  const run=vi.fn<ResticRunner>(async()=>({code,stdout:JSON.stringify({message_type:"summary",snapshot_id:"d".repeat(64)})}));const f=fixture(run);
  expect((await f.adapter.store(f.input,f.receipt)).state).toBe("needs-review");await f.adapter.store(f.input,f.receipt);expect(run).toHaveBeenCalledTimes(1);expect(readFileSync(f.input)).toEqual(f.bytes);

@@ -4,13 +4,15 @@ import { join } from "node:path";
 import { createHash,randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import * as attestation from "../electron/backup-restic-attestation.mjs";
+import {fileURLToPath} from "node:url";
 import { spawn } from "node:child_process";
 import { afterEach,expect,it,vi } from "vitest";
 import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { BackupRestic,resticRunner,type BackupResticOptions,type ResticRun,type ResticRunner,type ResticS3Credentials,type ResticS3Target } from "./backup-restic.ts";
 import { resticChildEnvironment,resticS3Repository,resticS3TargetSchema } from "./backup-restic-target.ts";
 vi.mock("node:child_process",()=>({spawn:vi.fn()}));
-const roots:string[]=[];afterEach(()=>{vi.clearAllMocks();for(const root of roots.splice(0))safeWipeSync(root);});
+const roots:string[]=[];afterEach(()=>{vi.restoreAllMocks();vi.clearAllMocks();for(const root of roots.splice(0))safeWipeSync(root);});
 const target:ResticS3Target={kind:"s3",remoteRef:"remote-one",revision:1,credentialRef:"credential-one",endpoint:"https://s3.example.invalid",bucket:"fixture-bucket",prefix:"murage/installation-one",region:"us-east-1",bucketLookup:"path"};
 const credentials:ResticS3Credentials={accessKeyId:"FAKE-ACCESS-CANARY",secretAccessKey:"FAKE-SECRET-CANARY",sessionToken:"FAKE-SESSION-CANARY"};
 const repositoryId="a".repeat(64),id="d".repeat(64);
@@ -126,6 +128,16 @@ it("remote downloads reject wrong identity oversized metadata and corrupt bytes"
 });
 it.skipIf(process.platform!=="darwin"||process.arch!=="arm64")("actual runner creates only the admitted AWS environment and private stdin using mocked spawn",async()=>{
  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn()});let stdin="";child.stdin.on("data",chunk=>{stdin+=chunk;});vi.mocked(spawn).mockImplementation(()=>{queueMicrotask(()=>child.emit("close",0));return child as never;});
- const password=Buffer.from("FAKE-STDIN-PASSWORD");expect(await resticRunner("/private/tmp/murage-restic-tool-evidence-4zOHAV/restic")({args:["--json","--no-cache","--no-lock","cat","config"],cwd:"/synthetic",password,timeoutMs:1000,s3:{repository:resticS3Repository(target),region:target.region,bucketLookup:target.bucketLookup,credentials}})).toMatchObject({code:0});
+ const password=Buffer.from("FAKE-STDIN-PASSWORD");expect(await resticRunner(fileURLToPath(new URL("../dist-native/backup-restic/arm64/restic",import.meta.url)))({args:["--json","--no-cache","--no-lock","cat","config"],cwd:"/synthetic",password,timeoutMs:1000,s3:{repository:resticS3Repository(target),region:target.region,bucketLookup:target.bucketLookup,credentials}})).toMatchObject({code:0});
  const [_executable,args,options]=vi.mocked(spawn).mock.calls[0];expect(JSON.stringify(args)).not.toMatch(/FAKE-/);expect(options?.env).toEqual(resticChildEnvironment("/synthetic",{repository:resticS3Repository(target),region:target.region,bucketLookup:target.bucketLookup,credentials}));expect(stdin).toBe("FAKE-STDIN-PASSWORD\n");
+});
+
+it("pending or failed attestation cannot construct credentials environment, spawn or transmit password",async()=>{
+ let release!:(value:boolean)=>void;const verifier=vi.spyOn(attestation,"trustedBackupResticExecutableAsync").mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+ const input:ResticRun={args:[],cwd:"/synthetic",password:Buffer.from("FAKE-PASSWORD"),timeoutMs:1000};let credentialReads=0;Object.defineProperty(input,"s3",{get(){credentialReads++;throw Error("Environment accessed before trust");}});
+ const result=resticRunner("/synthetic/restic")(input);const rejected=expect(result).rejects.toThrow("RESTIC_TOOL_UNVERIFIED");await new Promise(resolve=>setTimeout(resolve,5));expect(verifier).toHaveBeenCalledTimes(1);expect(spawn).not.toHaveBeenCalled();expect(credentialReads).toBe(0);release(false);await rejected;expect(spawn).not.toHaveBeenCalled();expect(credentialReads).toBe(0);
+});
+it("shutdown during fresh action attestation refuses dispatch and adapter zeroizes password on failure",async()=>{
+ const controller=new AbortController();vi.spyOn(attestation,"trustedBackupResticExecutableAsync").mockImplementation(async()=>{controller.abort();return true;});
+ const password=Buffer.from("FAKE-PASSWORD");let operationPassword:Uint8Array|undefined;const real=resticRunner("/synthetic/restic",controller.signal);const f=fixture({runner:input=>{operationPassword=input.password;return real(input);},password:async()=>password});await expect(f.adapter.connect()).rejects.toThrow();expect(operationPassword).toBeDefined();expect(operationPassword!.every(byte=>byte===0)).toBe(true);expect(spawn).not.toHaveBeenCalled();
 });

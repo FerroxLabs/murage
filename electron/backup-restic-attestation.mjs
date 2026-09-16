@@ -2,7 +2,7 @@ import {createHash} from "node:crypto";
 import {constants,openSync,closeSync,fstatSync,lstatSync,readSync,realpathSync} from "node:fs";
 import {spawnSync} from "node:child_process";
 import path from "node:path";
-import {normalizedAgePayloadHash} from "./backup-age-attestation.mjs";
+import {normalizedAgePayloadHash,backupToolIdentity,asyncBackupCodesign,readBackupToolBytes} from "./backup-age-attestation.mjs";
 import {RESTIC_ORIGINAL_SHA256,RESTIC_PAYLOAD_SHA256} from "../shared/backup-restic-pin.mjs";
 const runCodesign=args=>spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
 export function signedResticOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=runCodesign}={}){
@@ -27,4 +27,28 @@ export function trustedBackupResticExecutable(file){
   if(!same(fstatSync(fd,{bigint:true}))||!same(lstatSync(file,{bigint:true})))return false;
   return createHash("sha256").update(bytes).digest("hex")===RESTIC_ORIGINAL_SHA256||signedResticOwnedByCurrentApp(file,bytes);
  }catch{return false;}finally{if(fd!==undefined)closeSync(fd);}
+}
+
+export async function signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+  if(normalizedAgePayloadHash(bytes)!==RESTIC_PAYLOAD_SHA256)return false;
+  try{
+    const identity=backupToolIdentity(file,currentExecutable),unchanged=()=>identity!==null&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity;
+    if(!unchanged())return false;
+    const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
+    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","restic")||!executable.startsWith(app+path.sep))return false;
+    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
+    await checked(["--verify","--strict","-R","=anchor apple generic",app]);
+    const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
+    const toolInfo=await checked(["--display","--verbose=4",resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
+    await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return unchanged();
+  }catch{return false;}
+}
+export async function trustedBackupResticExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+ if(process.platform!=="darwin"||process.arch!=="arm64")return false;
+ try{
+  const identity=backupToolIdentity(file,currentExecutable);if(!identity||signal?.aborted)return false;
+  const bytes=await readBackupToolBytes(file,{strictMode:true});if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
+  const trusted=createHash("sha256").update(bytes).digest("hex")===RESTIC_ORIGINAL_SHA256||await signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
+  return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
+ }catch{return false;}
 }

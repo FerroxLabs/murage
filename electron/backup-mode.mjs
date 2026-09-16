@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable } from "./backup-age-attestation.mjs";
+import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable,trustedBackupAgeExecutableAsync,backupToolIdentity } from "./backup-age-attestation.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 export const BACKUP_MODE_ARGUMENT = "--murage-backup-mode";
 // Same verified binary as shared/backup-age-pin.ts; a test pins this boundary.
@@ -16,25 +16,39 @@ export function verifiedBackupTool(resources) {
 
 /** Desktop-owned availability, not a renderer grant. Windows actions reverify
  * the fixed packaged resources before reading a recovery identity. */
-export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable }) {
-  const windows = process.platform === "win32";
+export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync }) {
+  const windows = process.platform === "win32", mac = process.platform === "darwin";
+  let identity = null, controller = null;
   let state = "pending", tool = null, pending = null, generation = 0;
   const unavailable = () => Object.assign(new Error("Encrypted backup unavailable"), { code: "BACKUP_UNAVAILABLE" });
   const currentTool = () => {
     if (!isUsable()) return null;
+    if (mac) {
+      if (state !== "ready") return null;
+      if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "failed"; tool = null; identity = null; return null; }
+      return tool;
+    }
     return windows ? state === "ready" ? tool : null : verifiedBackupTool(resourcesPath);
   };
   const requireTool = async () => {
     if (!isUsable()) throw unavailable();
-    if (!windows) {
+    if (!windows && !mac) {
       const file = verifiedBackupTool(resourcesPath);
       if (!file || !isUsable()) throw unavailable();
       return file;
     }
     if (pending) return pending;
     const epoch = ++generation;
-    state = "pending"; tool = null;
+    state = "pending"; tool = null; identity = null;
+    controller = new AbortController();
     const work = (async () => {
+      if (mac) {
+        if (!["age", "restic"].includes(macToolName)) throw unavailable();
+        const file = path.join(resourcesPath, "backup-tools", process.arch, macToolName);
+        const before = backupToolIdentity(file, currentExecutable);
+        if (!before || !await verifyMacTool(file, { currentExecutable, signal: controller.signal }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
+        identity = before; tool = file; state = "ready"; return tool;
+      }
       const { createWindowsBackupResourceResolver } = await import(pathToFileURL(path.join(resourcesPath, "server", "windows-backup-resources.js")).href);
       if (!isUsable() || epoch !== generation) throw unavailable();
       const verified = await createWindowsBackupResourceResolver({ resourcesPath, currentExecutable })();
@@ -51,9 +65,9 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
   };
   return {
     currentTool,
-    status: () => ({ state: windows ? state : currentTool() ? "ready" : "failed" }),
+    status: () => { if (mac) currentTool(); return { state: windows || mac ? state : currentTool() ? "ready" : "failed" }; },
     requireTool,
-    invalidate() { generation += 1; state = "failed"; tool = null; },
+    invalidate() { generation += 1; state = "failed"; tool = null; identity = null; controller?.abort(); },
     async settled() { await pending?.catch(() => {}); },
   };
 }
