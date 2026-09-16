@@ -4,6 +4,17 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { purgeForgottenEvolutionCopies } from "./evolution-forgetting.ts";
+import { RESTORE_REVIEW_FILE, readRestoreReview } from "../../electron/restore-review.mjs";
+import { writeFileAtomic } from "../atomic.ts";
+
+/** Main holds both stopped installations' leases until selection publication. */
+export function mergeOriginalMemoryDeletions(original: string, candidate: string) {
+  const review=readRestoreReview(candidate);
+  if(review?.version!==1||review.status!=="review-required"||!Array.isArray(review.modifications))throw new Error("INVALID_RESTORE_MEMORY_REVIEW");
+  const result=mergeDestinationMemoryDeletions(original,candidate);
+  writeFileAtomic(join(candidate,RESTORE_REVIEW_FILE),JSON.stringify({...review,modifications:[...review.modifications,{component:"messages.db",action:`Current original memory ledger: ${result.history}; ${result.merged} tombstones retained before selection`}]})+"\n",{mode:0o600});
+  return result;
+}
 
 export function applyMemoryTombstones(db: DatabaseSync) {
   db.exec(`UPDATE memory_sources SET state='deleted' WHERE EXISTS (

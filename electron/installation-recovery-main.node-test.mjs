@@ -12,6 +12,54 @@ const between = (start, end) => source.slice(source.indexOf(start), source.index
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const pause = () => new Promise(resolve => setImmediate(resolve));
 
+function encryptedSeparateFixture(change = () => {}) {
+  const events = [], root = "/owned/original";
+  const original = { utilityServerLeaseEnvironment: () => { if(state.originalLeaseFailed)throw Error("lost-original");events.push("check-original"); } };
+  const target = { utilityServerLeaseEnvironment: () => { if(state.targetLeaseFailed)throw Error("lost-target");events.push("check-target"); }, release: () => events.push("release-target") };
+  const state = { owner: original, root, shutdown: false, inode: 1 };
+  const scope = {
+    desktopRecoveryMode: true, desktopDataOwner: original, desktopDataDir: root, desktopShutdownStarted: false,
+    fs: { lstatSync: () => ({ dev: 1, ino: state.inode, isDirectory: () => true, isSymbolicLink: () => false }), realpathSync: () => root },
+    requireDesktopBackupTool: async () => {},
+    allocateSeparateInstallation: plan => ({ ...plan, dataDirectory: "/owned/new" }),
+    acquireDataDirLease: () => target,
+    runDesktopRecovery: async () => { await change(state); events.push("worker-exited"); return { ok: true, archiveSha256: "a".repeat(64) }; },
+    loadMemoryRestore: async () => ({ mergeOriginalMemoryDeletions: (from, to) => {
+      assert.equal(from, root); assert.equal(to, "/owned/new"); events.push("merge");
+      if (state.mergeError) throw new Error("merge-failed");
+    } }),
+    publishInstallationSelection: () => events.push("publish"),
+  };
+  const loader='await import(pathToFileURL(path.join(process.resourcesPath,"server","memory","restore.js")).href)';
+  let body=between("async function runEncryptedSeparateDesktopRecovery(", "async function runDesktopRecovery(");
+  assert.equal(body.split(loader).length,2);
+  body=body.replace(loader,"await loadMemoryRestore()");
+  const keys=Object.keys(scope).filter(k=>!["desktopDataOwner","desktopDataDir","desktopShutdownStarted"].includes(k));
+  body=body.replaceAll("desktopDataOwner","state.owner").replaceAll("desktopDataDir","state.root").replaceAll("desktopShutdownStarted","state.shutdown");
+  const run=new Function(...keys,"state","let retainedSeparateDirectory=null;"+body+";return runEncryptedSeparateDesktopRecovery;")(...keys.map(k=>scope[k]),state);
+  return { events, run: (originalRoot=root) => run({}, {originalRoot}) };
+}
+test("encrypted separate restore merges current deletions after worker exit and before selection",async()=>{
+  const f=encryptedSeparateFixture();await f.run();
+  assert.ok(f.events.indexOf("worker-exited")<f.events.indexOf("merge"));
+  assert.ok(f.events.indexOf("merge")<f.events.indexOf("publish"));
+  assert.equal(f.events.at(-1),"release-target");
+  assert.equal(f.events.filter(x=>x==="check-target").length,2);
+});
+test("encrypted separate restore cannot publish after failed merge or changed original ownership",async()=>{
+  for(const change of [s=>{s.mergeError=true;},s=>{s.owner={};},s=>{s.root="/foreign";},s=>{s.shutdown=true;},s=>{s.inode=2;},s=>{s.originalLeaseFailed=true;},s=>{s.targetLeaseFailed=true;}]){
+    const f=encryptedSeparateFixture(change);await assert.rejects(f.run());
+    assert.equal(f.events.includes("publish"),false);assert.equal(f.events.at(-1),"release-target");
+  }
+  const f=encryptedSeparateFixture();await assert.rejects(f.run("/foreign"));
+  assert.equal(f.events.includes("worker-exited"),false);
+});
+test("encrypted separate restore waits for actual worker completion before touching the ledger",async()=>{
+  const stopped=deferred(),f=encryptedSeparateFixture(()=>stopped.promise),pending=f.run();
+  await pause();assert.equal(f.events.includes("merge"),false);assert.equal(f.events.includes("publish"),false);
+  stopped.resolve();await pending;assert.equal(f.events.filter(x=>x==="merge").length,1);
+});
+
 function fixture({ writes = [], stop = async () => {}, mode = true, owned = true, separateAvailable = false } = {}) {
   let forks = 0, releases = 0, captured;
   const scope = {
@@ -95,7 +143,7 @@ test("actual packaged early startup rejection opens recovery without exposing pr
   const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');
   const calls = [];
   const startup = Promise.reject(new Error("PRIVATE_CREDENTIAL_CANARY"));
-  const scope = { desktopStartup: startup, desktopShutdownStarted: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
+  const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
   await new Function(...Object.keys(scope), body + "; return desktopStartup.catch(()=>{});")(...Object.values(scope));
   assert.equal(calls.includes("STARTUP_FAILED"), true);
   assert.equal(calls.includes("quit"), false);
@@ -105,7 +153,7 @@ test("actual startup catch forwards foreign ownership code without private error
   const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');
   const calls = [];
   const startup = Promise.reject(Object.assign(new Error("PRIVATE_ERROR_CANARY"), { name: "DataDirLeaseError", code: "LEASE_FOREIGN_HOST" }));
-  const scope = { desktopStartup: startup, desktopShutdownStarted: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
+  const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
   await new Function(...Object.keys(scope), body + "; return desktopStartup.catch(()=>{});")(...Object.values(scope));
   assert.equal(calls.includes("LEASE_FOREIGN_HOST"), true);
   assert.equal(calls.includes("STARTUP_FAILED"), false);

@@ -2130,15 +2130,31 @@ async function runSeparateDesktopRecovery(parameters, plan, signal = null) {
 
 async function runEncryptedSeparateDesktopRecovery(parameters, plan) {
   if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
+  const originalOwner=desktopDataOwner, originalRoot=desktopDataDir;
+  const originalIdentity=fs.lstatSync(originalRoot);
+  const assertOriginalOwner=()=>{
+    if(!desktopRecoveryMode||desktopShutdownStarted||desktopDataOwner!==originalOwner||desktopDataDir!==originalRoot||plan.originalRoot!==originalRoot)throw Object.assign(new Error("Recovery ownership changed"),{code:"RECOVERY_OWNERSHIP_REQUIRED"});
+    const current=fs.lstatSync(originalRoot);
+    if(!current.isDirectory()||current.isSymbolicLink()||current.dev!==originalIdentity.dev||current.ino!==originalIdentity.ino||fs.realpathSync(originalRoot)!==originalRoot)throw Object.assign(new Error("Recovery ownership changed"),{code:"RECOVERY_OWNERSHIP_REQUIRED"});
+    originalOwner.utilityServerLeaseEnvironment();
+  };
+  assertOriginalOwner();
   await requireDesktopBackupTool();
-  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
+  assertOriginalOwner();
   // This allocates only the exclusive container, not its data target.
   const allocated=allocateSeparateInstallation(plan);
   retainedSeparateDirectory=allocated.dataDirectory;
   const owner=acquireDataDirLease(allocated.dataDirectory);
   try {
     const result=await runDesktopRecovery("restore-encrypted-new",parameters,{owner,dataDirectory:allocated.dataDirectory});
-    if(desktopShutdownStarted)throw Object.assign(new Error("Recovery stopped"),{code:"RECOVERY_OWNERSHIP_REQUIRED"});
+    const {mergeOriginalMemoryDeletions}=await import(pathToFileURL(path.join(process.resourcesPath,"server","memory","restore.js")).href);
+    assertOriginalOwner();
+    owner.utilityServerLeaseEnvironment();
+    // Both installations remain leased and their writers have exited. Carry
+    // post-backup deletions into the paused target before selecting it.
+    mergeOriginalMemoryDeletions(originalRoot,allocated.dataDirectory);
+    assertOriginalOwner();
+    owner.utilityServerLeaseEnvironment();
     // Selection binds to the validated paused projection's receipt, not to raw data.
     publishInstallationSelection(allocated,{...result,operation:"restore",sha256:result.archiveSha256});
     return{...result,separateDataDirectory:allocated.dataDirectory,retainedOriginal:desktopDataDir};

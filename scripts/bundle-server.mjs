@@ -47,6 +47,7 @@ const ENTRY_POINTS = [
   "windows-backup-resources.ts",
   "installation-windows-backup-transport.ts",
   "memory/worker.ts",
+  "memory/restore.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
