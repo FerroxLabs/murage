@@ -2,6 +2,19 @@
 // Real key events/actions only; no DOM, AppleScript coordinates, or notification IPC.
 function run(argv){
  var c=JSON.parse(argv[0]),started=Date.now(),nodes=[],windows=[],visited=0;
+ if(c.op==='systemApplication'){
+  try{
+   if(['NotificationCenter','ControlCenter'].indexOf(c.name)<0)throw Error('system-name');
+   ObjC.import('AppKit');
+   var expected='/System/Library/CoreServices/'+c.name+'.app',bundle=$.NSBundle.bundleWithPath($(expected));
+   if(!bundle)throw Error('system-bundle-missing');
+   var bundleId=ObjC.unwrap(bundle.bundleIdentifier),executable=ObjC.unwrap(bundle.executablePath);
+   if(!bundleId||executable!==expected+'/Contents/MacOS/'+c.name)throw Error('system-bundle-identity');
+   var apps=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($(bundleId)),running=[];
+   for(var n=0;n<apps.count;n++){var app=apps.objectAtIndex(n);running.push({pid:Number(app.processIdentifier),bundlePath:ObjC.unwrap(app.bundleURL.path),executablePath:ObjC.unwrap(app.executableURL.path)});}
+   return JSON.stringify({ok:true,name:c.name,bundleId:bundleId,bundlePath:expected,executablePath:executable,running:running});
+  }catch(e){return JSON.stringify({ok:false,error:String(e)});}
+ }
  ObjC.import('ApplicationServices');
  ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
  ObjC.bindFunction('AXUIElementCreateSystemWide',['id',[]]);

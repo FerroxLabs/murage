@@ -23,7 +23,17 @@ const must=(result,label)=>{check(result.code===0,label);return result.stdout;};
 const pause=ms=>new Promise(r=>setTimeout(r,ms));let stopping=false;process.on('SIGTERM',()=>{stopping=true;});process.on('SIGINT',()=>{stopping=true;});
 const until=async(fn,ms,label)=>{const end=Date.now()+ms;let last;while(!stopping&&Date.now()<end){last=await fn();if(last)return last;await pause(250);}record('wait-failed',{label,last});check(false,label);};
 const ps=()=>must(run('/bin/ps',['-axo','pid=,command=']),'PROCESS_INVENTORY').split('\n').flatMap(line=>{const m=/^\s*(\d+)\s+(.*)$/.exec(line);return m?[{pid:Number(m[1]),command:m[2]}]:[];});
-const systemPid=name=>{const target=`/System/Library/CoreServices/${name}.app/Contents/MacOS/${name}`,rows=ps().filter(row=>row.command===target||row.command.startsWith(target+' '));check(rows.length===1,'SYSTEM_PROCESS_'+name);return rows[0].pid;};
+const systemIdentity=name=>{const result=ax(0,{op:'systemApplication',name});record('system-application-identity',{name,result});check(result.ok,'SYSTEM_BUNDLE_'+name);check(result.running.every(row=>row.bundlePath===result.bundlePath&&row.executablePath===result.executablePath&&Number.isInteger(row.pid)&&row.pid>0),'SYSTEM_IDENTITY_'+name);check(result.running.length<=1,'SYSTEM_PROCESS_AMBIGUOUS_'+name);return result;};
+const systemPid=name=>{const result=systemIdentity(name);check(result.running.length===1,'SYSTEM_PROCESS_'+name);return result.running[0].pid;};
+async function admitSystemApplication(name){
+ const before=systemIdentity(name);
+ if(before.running.length===0){
+  // Launch the installed Apple session service once through LaunchServices, only on the gated disposable runner.
+  const opened=run('/usr/bin/open',['-g','-a',before.bundlePath]);record('system-application-open',{name,code:opened.code});check(opened.code===0,'SYSTEM_OPEN_'+name);
+  await until(()=>systemIdentity(name).running.length===1,15000,'SYSTEM_PROCESS_'+name);
+ }
+ return systemPid(name);
+}
 const ax=(pid,command)=>{const result=run('/usr/bin/osascript',['-l','JavaScript',path.join(DIR,'mac-attention-ax.jxa'),JSON.stringify({pid,...command})],{timeout:20000});let value;try{value=JSON.parse(result.stdout.trim());}catch{value={ok:false,error:'osascript',code:result.code,stderr:redactSecretsInLine(result.stderr).slice(-800)};}return value;};
 const tree=(pid,label)=>{const result=ax(pid,{op:'tree'});writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});check(result.ok,'AX_TREE_'+label);return result;};
 const texts=t=>t.elements.flatMap(n=>[...n.names,typeof n.value==='string'?n.value:'']).filter(Boolean);
@@ -53,7 +63,7 @@ async function admit(){
  const wav=path.join(s.app,'Contents/Resources/murage-approval.wav');check(hash(readFileSync(wav))===C.attentionInputHashes['electron/resources/murage-approval.wav'],'PACKAGED_SOUND_RESOURCE');
  check(must(run('/bin/launchctl',['managername']),'MANAGER').trim()==='Aqua','AQUA');
  // Fail before the long app journey when OS observation/control is unavailable.
- for(const name of ['NotificationCenter','ControlCenter'])tree(systemPid(name),'prerequisite-'+name);
+ for(const name of ['NotificationCenter','ControlCenter'])tree(await admitSystemApplication(name),'prerequisite-'+name);
  await dnd(s,undefined);
  const isolated=setupKeychain({runner:run,exists:existsSync,persist:value=>{s.keychainIsolation=value;save(s);},keychain:path.join(s.private,'b35.keychain-db'),password:randomBytes(32).toString('hex')});check(isolated.ok,'KEYCHAIN_ISOLATION');
  record('admitted',{source:C.artifactSource,zipSha256:zipHash,exeSha256:exe.sha256,team:C.team,aqua:true,systemProcesses:true,originalDnd:s.originalDnd,soundResourceSha256:hash(readFileSync(wav)),audibility:'NOT_ESTABLISHED'});s.admitted=true;save(s);
