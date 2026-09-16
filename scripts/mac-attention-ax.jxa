@@ -1,5 +1,16 @@
 // B35-only bounded adaptation of the accepted public AX query primitive.
 // Real key events/actions only; no DOM, AppleScript coordinates, or notification IPC.
+// Pure selector: the observed tile changes from Focus to Do Not Disturb.
+// A binary AXValue is required; a selected menu/navigation button is not DND state.
+function dndToggleSelection(elements){
+ var candidates=elements.filter(function(n){return ['AXCheckBox','AXButton'].indexOf(n.role)>=0&&n.names.some(function(name){return name==='Focus'||name==='Do Not Disturb';});});
+ if(candidates.length!==1)return {ok:false,error:'AX-dnd-match',count:candidates.length};
+ var n=candidates[0],value=[true,1,'1'].indexOf(n.value)>=0?true:[false,0,'0'].indexOf(n.value)>=0?false:null;
+ if(value===null)return {ok:false,error:'AX-dnd-value',count:1,role:n.role,names:n.names,value:n.value};
+ // A generic active Focus could be another mode; never infer DND from it.
+ if(value&&n.names.indexOf('Do Not Disturb')<0)return {ok:false,error:'AX-dnd-mode-ambiguous',count:1,role:n.role,names:n.names,value:value};
+ return {ok:true,count:1,index:elements.indexOf(n),role:n.role,names:n.names,value:value};
+}
 function run(argv){
  var c=JSON.parse(argv[0]),started=Date.now(),nodes=[],windows=[],visited=0;
  if(c.op==='systemApplication'){
@@ -43,6 +54,16 @@ function run(argv){
   if(c.op==='key'){var allowed={escape:53,return:36,reload:15,quit:12},se=Application('System Events'),ps=se.processes.whose({unixId:c.pid});if(ps.length!==1||!(c.key in allowed))fail('AX-key');ps[0].frontmost=true;se.keyCode(allowed[c.key],{using:c.key==='reload'||c.key==='quit'?['command down']:[]});return JSON.stringify({ok:true});}
   walk(app,-1,0);
   if(c.op==='tree'||c.op==='probe')return JSON.stringify({ok:true,backend:'AXUIElement',visited:visited,elapsedMs:Date.now()-started,elements:nodes.map(function(n,i){return{index:i,parent:n.parent,role:n.role,names:n.names,value:n.value};})});
+  if(c.op==='dndState'||c.op==='pressDnd'){
+   var chosen=dndToggleSelection(nodes);
+   if(!chosen.ok)return JSON.stringify(chosen);
+   var control=nodes[chosen.index];chosen.enabled=read(control.e,'AXEnabled',false);chosen.actions=actions(control.e);
+   if(c.op==='pressDnd'){
+    if(typeof c.expectedValue!=='boolean'||chosen.value!==c.expectedValue)return JSON.stringify({ok:false,error:'AX-dnd-state-changed',observed:chosen});
+    press(control);return JSON.stringify({ok:true,before:chosen});
+   }
+   return JSON.stringify(chosen);
+  }
   if(c.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,visited:visited});}
   if(c.op==='state'){var n=one();return JSON.stringify({ok:true,value:n.value,selected:read(n.e,'AXSelected',false),enabled:read(n.e,'AXEnabled',false),role:n.role,names:n.names});}
   if(c.op==='press'){press(one());return JSON.stringify({ok:true});}

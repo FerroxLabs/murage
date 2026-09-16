@@ -44,13 +44,33 @@ function state(pid,label,roles=['AXCheckBox'],extra={}){const value=ax(pid,{op:'
 const bool=value=>[true,1,'1'].includes(value)?true:[false,0,'0'].includes(value)?false:null;
 async function checkbox(pid,label,target){let before=state(pid,label,['AXCheckBox'],{prefix:true}),current=bool(before.value);check(current!==null,'CHECKBOX_VALUE_'+label);if(current!==target)await press(pid,label,['AXCheckBox'],{prefix:true});const after=state(pid,label,['AXCheckBox'],{prefix:true});check(bool(after.value)===target,'CHECKBOX_READBACK_'+label);}
 async function dnd(s,target){
- const pid=systemPid('ControlCenter');await press(pid,'Control Center',['AXMenuBarItem']);await press(pid,'Focus',['AXButton','AXCheckBox'],{prefix:true});
- const first=state(pid,'Do Not Disturb',['AXCheckBox','AXButton'],{prefix:true}),before=bool(first.value)??bool(first.selected);check(before!==null,'DND_STATE_UNREADABLE');
- if(s.originalDnd===undefined){s.originalDnd=before;save(s);}
- if(target!==undefined&&before!==target){s.dndMutationStarted=true;save(s);await press(pid,'Do Not Disturb',['AXCheckBox','AXButton'],{prefix:true});key(pid,'escape');await press(pid,'Control Center',['AXMenuBarItem']);await press(pid,'Focus',['AXButton','AXCheckBox'],{prefix:true});}
- const observed=state(pid,'Do Not Disturb',['AXCheckBox','AXButton'],{prefix:true}),actual=bool(observed.value)??bool(observed.selected);shot('dnd-'+String(actual));key(pid,'escape');key(pid,'escape');
- check(actual!==null&&(target===undefined||actual===target),'DND_READBACK');record('dnd',{before,actual,target:target??null});return actual;
+ const pid=systemPid('ControlCenter');let observed=ax(pid,{op:'dndState'});
+ record('dnd-control',{stage:'before-open',observed});
+ try{
+  // Read an already-open panel rather than toggling its menubar item closed.
+  // Opening Control Center is navigation; pressing its Focus tile changes DND.
+  if(!observed.ok&&observed.error==='AX-dnd-match'&&observed.count===0){
+   await press(pid,'Control Center',['AXMenuBarItem']);
+   await until(()=>{observed=ax(pid,{op:'dndState'});if(!observed.ok&&observed.count!==0)check(false,'DND_CONTROL_AMBIGUOUS');return observed.ok;},15000,'DND_CONTROL_AVAILABLE');
+  }
+  record('dnd-control',{stage:'before-toggle',observed});
+  check(observed.ok&&typeof observed.value==='boolean','DND_STATE_UNREADABLE');
+  const before=observed.value;
+  if(s.originalDnd===undefined){s.originalDnd=before;s.originalDndEvidence=observed;save(s);}
+  if(target!==undefined&&before!==target){
+   s.dndMutationStarted=true;save(s);
+   const pressed=ax(pid,{op:'pressDnd',expectedValue:before});record('dnd-toggle',{before,target,result:pressed});check(pressed.ok,'DND_PRESS');
+   await until(()=>{observed=ax(pid,{op:'dndState'});if(!observed.ok&&observed.count!==0)check(false,'DND_CONTROL_AMBIGUOUS');return observed.ok&&observed.value===target;},15000,'DND_READBACK');
+  }else observed=ax(pid,{op:'dndState'});
+  check(observed.ok&&typeof observed.value==='boolean'&&(target===undefined||observed.value===target),'DND_READBACK');
+  const actual=observed.value;record('dnd',{before,actual,target:target??null,observed});shot('dnd-'+String(actual));return actual;
+ }catch(error){
+  record('dnd-control-failed',{observed,error:error.message});
+  // Preserve the actual panel/roles/values on an unfamiliar OS surface.
+  writeFileSync(path.join(E,'dnd-'+phase+'-failed.ax.json'),JSON.stringify(ax(pid,{op:'tree'}),null,2)+'\n',{mode:0o600});throw error;
+ }finally{key(pid,'escape');key(pid,'escape');}
 }
+
 function asarRead(file,name){const fd=openSync(file,'r');try{const head=Buffer.alloc(16);readSync(fd,head,0,16,0);const headerSize=head.readUInt32LE(4),length=head.readUInt32LE(12);check(head.readUInt32LE(0)===4&&length>0&&length+8<=headerSize,'ASAR_HEADER');const bytes=Buffer.alloc(length);readSync(fd,bytes,0,length,16);let entry={files:JSON.parse(bytes.toString()).files};for(const part of name.split('/'))entry=entry.files?.[part];check(entry&&!entry.unpacked&&/^\d+$/.test(entry.offset),'ASAR_ENTRY_'+name);const out=Buffer.alloc(entry.size);readSync(fd,out,0,out.length,8+headerSize+Number(entry.offset));return out;}finally{closeSync(fd);}}
 async function admit(){
  check(args.length===3&&args.every(path.isAbsolute),'ARTIFACT_ARGUMENTS');check(!existsSync(STATE),'STATE_ALREADY_EXISTS');const [zip,gatesPath,sumsPath]=args;
