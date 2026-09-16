@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let child: ChildProcess;
@@ -26,8 +27,34 @@ function closeConnections() {
   for (const socket of sockets.splice(0)) socket.destroy();
 }
 
+function failureMessageMetadata(message: Record<string, any>) {
+  const tool = message.tool && typeof message.tool === "object" ? message.tool : null;
+  const name = typeof tool?.name === "string" ? tool.name : null;
+  const runtimeError = message.kind === "activity" && tool?.ok === false && name?.startsWith("error: ");
+  const providerKind = tool?.providerError?.kind;
+  const exit = runtimeError ? name.match(/^error: claude exited (-?\d+|null) before result(?::|$)/) : null;
+  return {
+    role: ["bot", "user", "assistant", "system"].includes(message.role) ? message.role : "other",
+    kind: ["text", "options", "activity", "screen", "connector", "secret", "routine.run", "goal.run"].includes(message.kind) ? message.kind : "other",
+    textLength: typeof message.text === "string" ? message.text.length : 0,
+    tool: tool ? {
+      ok: typeof tool.ok === "boolean" ? tool.ok : null,
+      // Redact the complete name before shortening it; never include errorDetails.
+      name: name === null ? null : redactSecretsInText(name).replaceAll(secret, "<fixture-secret>").slice(0, 160),
+      setup: typeof tool.setup === "boolean" ? tool.setup : null,
+    } : null,
+    runtimeErrorCategory: !runtimeError ? null
+      : ["credits", "authentication", "permission", "rate-limit", "unavailable"].includes(providerKind) ? providerKind
+        : tool?.setup === true ? "setup" : "unclassified",
+    // Claude's existing runtime.error title carries this fact on early exit.
+    // It is not the server child's exit code and is absent for other errors.
+    cliExitBeforeResult: exit ? { code: exit[1] === "null" ? null : Number(exit[1]) } : null,
+  };
+}
+
 async function failureDiagnostics() {
-  // Never print environment, credentials, message contents or raw stderr.
+  // Never print environment, credentials, message text or raw stderr.
+  // Activity/error names below are allowlisted, redacted and bounded.
   const read = async (path: string): Promise<Record<string, any>> => {
     try {
       const response = await fetch(`${base}${path}`, { headers: desktop, signal: AbortSignal.timeout(2000) });
@@ -41,10 +68,7 @@ async function failureDiagnostics() {
     const messages = await read(`/api/threads/${bot.threadId}/messages`);
     return {
       id: bot.id, busy: current?.busy,
-      messages: messages.messages?.slice(-8).map((message: { text?: string; role?: string }) => ({
-        role: ["user", "assistant", "system"].includes(message.role ?? "") ? message.role : "other",
-        textLength: typeof message.text === "string" ? message.text.length : 0,
-      })),
+      messages: messages.messages?.slice(-8).map(failureMessageMetadata),
     };
   }));
   return {

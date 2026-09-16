@@ -38,7 +38,8 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
+        # Qualification branch only; never merge this routing into PR9.
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
@@ -111,10 +112,18 @@ jobs:
           echo "Scoped Vitest confirmation only: $VITEST_FILE"
           test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
           pnpm check:contrast
-          pnpm exec vitest run "${test_paths[@]}"
+          pnpm exec vitest run "${test_paths[@]}" --reporter=verbose --reporter=json --outputFile.json="$RUNNER_TEMP/murage-sse-result.json"
           pnpm broker:test
           pnpm test:electron
           pnpm test:packaged-server
+      - name: Retain scoped SSE results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: murage-mac-sse-confirmation
+          path: ${{ runner.temp }}/murage-sse-result.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true
@@ -209,7 +218,7 @@ jobs:
           retention-days: 7
 
   control-plane:
-    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    if: ${{ false }} # Qualification branch: reuse accepted Ubuntu evidence.
     name: control-plane check + workerd tests + dry run
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -228,7 +237,7 @@ jobs:
       - run: pnpm control-plane:dry-run
 
   package-linux:
-    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    if: ${{ false }} # Qualification branch: reuse accepted Ubuntu evidence.
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
