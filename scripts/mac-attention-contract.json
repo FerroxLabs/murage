@@ -9,12 +9,12 @@
   "zipSha256": "91cc768bad731d978f44fa378c2aeaac5f9dcbda5e818e79c05f9ee381baae79",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-23T19:41:47Z",
-  "nativeRoundsUsed": 23,
+  "nativeRoundsUsed": 24,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R24 confirmation under standing corrective authority: derive exact launchd Label from the verified root-owned Apple NotificationCenter plist, distinct from its filename and bundle ID; conditionally restore only that service prerequisite and always restore its preimage. Same c889 artifact, original triggers/20second wait/acceptance unchanged. Prior23 native runs retained; one60minute push-triggered run.",
+  "admission": "One R25 confirmation under standing corrective authority: parse exact true/false/enabled/disabled launchctl override values, reject unknown matching entries, and retain target state before unchanged policy refusal. Derive the exact service label from verified Apple plist, preserve before-state and restore only that service. Same c889 artifact; original triggers,20second wait and all acceptance unchanged. Prior24 native runs retained; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -51,6 +51,13 @@
     "alwaysRestoreLoadedAndDisabledState": true,
     "otherServicesUnchanged": true,
     "bundleId": "com.apple.notificationcenterui",
-    "plist": "/System/Library/LaunchAgents/com.apple.notificationcenterui.plist"
+    "plist": "/System/Library/LaunchAgents/com.apple.notificationcenterui.plist",
+    "disabledValueForms": [
+      "true",
+      "false",
+      "enabled",
+      "disabled"
+    ],
+    "unrecognizedMatchingValueRefused": true
   }
 }

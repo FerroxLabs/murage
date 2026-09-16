@@ -7,12 +7,24 @@ export const NC_APP='/System/Library/CoreServices/NotificationCenter.app';
 const NC_EXE=NC_APP+'/Contents/MacOS/NotificationCenter';
 const requireValue=(ok,code)=>{if(!ok)throw Error(code);};
 const validServiceIdentity=id=>id&&/^com\.apple\.notificationcenterui(?:\.agent)?$/.test(id.label)&&id.plist===NC_PLIST&&id.executable===NC_EXE&&id.bundleId===NC_BUNDLE_ID&&id.appleSignatureVerified===true;
+export function notificationDisabledOverride(output,label){
+ requireValue(typeof output==='string'&&output.includes('disabled services = {'),'NC_DISABLED_UNREADABLE');
+ const matches=[];
+ for(const line of output.split(/\r?\n/)){
+  const entry=/^\s*"([^"\r\n]+)"\s*=>\s*(.*?)\s*$/.exec(line);
+  if(entry&&entry[1]===label)matches.push(entry[2]);
+  else if(line.includes(JSON.stringify(label)))throw Error('NC_DISABLED_ENTRY_UNRECOGNIZED');
+ }
+ requireValue(matches.length<=1,'NC_DISABLED_AMBIGUOUS');
+ if(!matches.length)return null;
+ requireValue(['true','false','enabled','disabled'].includes(matches[0]),'NC_DISABLED_VALUE_UNRECOGNIZED');
+ return matches[0]==='true'||matches[0]==='disabled';
+}
 export function notificationServiceState(run,uid,identity){
  requireValue(validServiceIdentity(identity),'NC_SERVICE_IDENTITY_REQUIRED');const label=identity.label;
  const domain='gui/'+uid,target=domain+'/'+label;
- const disabled=run('/bin/launchctl',['print-disabled',domain],{timeout:5000});requireValue(disabled.code===0&&disabled.stdout.includes('disabled services = {'),'NC_DISABLED_UNREADABLE');
- const matches=disabled.stdout.split(/\r?\n/).flatMap(line=>{const m=/^\s*"([^"\r\n]+)"\s*=>\s*(true|false)\s*$/.exec(line);return m&&m[1]===label?[m]:[];});requireValue(matches.length<=1,'NC_DISABLED_AMBIGUOUS');
- const value=matches.length?matches[0][2]==='true':null;
+ const disabled=run('/bin/launchctl',['print-disabled',domain],{timeout:5000});requireValue(disabled.code===0,'NC_DISABLED_UNREADABLE');
+ const value=notificationDisabledOverride(disabled.stdout,label);
  const printed=run('/bin/launchctl',['print',target],{timeout:5000});
  if(printed.code!==0){requireValue(printed.code===113&&printed.stderr.includes('Could not find service "'+label+'"')&&printed.stderr.includes(String(uid)),'NC_JOB_UNREADABLE');return{disabled:value,loaded:false,pid:null};}
  const text=printed.stdout;requireValue(text.startsWith(target+' = {')&&/^\s*path = \/System\/Library\/LaunchAgents\/com\.apple\.notificationcenterui\.plist\s*$/m.test(text)&&/^\s*program = \/System\/Library\/CoreServices\/NotificationCenter\.app\/Contents\/MacOS\/NotificationCenter\s*$/m.test(text),'NC_JOB_IDENTITY');
@@ -31,10 +43,10 @@ function hostGuard(run,uid){
  requireValue(run('/bin/launchctl',['managername'],{timeout:5000}).stdout.trim()==='Aqua','NC_AQUA_REQUIRED');
 }
 export async function prepareNotificationCenter({run,uid,persist,record,prior,guard=hostGuard,identity=verifyNotificationServiceIdentity,pause=ms=>new Promise(r=>setTimeout(r,ms))}){
- guard(run,uid);requireValue(!prior,'NC_PRIOR_ADMISSION_EXISTS');const id=identity(run);record('notification-service-identity',{identity:id});const before=notificationServiceState(run,uid,id);
+ guard(run,uid);requireValue(!prior,'NC_PRIOR_ADMISSION_EXISTS');const id=identity(run);record('notification-service-identity',{identity:id});const before=notificationServiceState(run,uid,id);record('notification-service-before',{identity:id,before});
  requireValue(!(before.loaded&&!before.pid),'NC_PREEXISTING_STOPPED_JOB');
  requireValue(before.loaded||before.disabled===true,'NC_UNLOADED_STATE_UNEXPECTED');
- const state={version:1,uid,identity:id,before,enableAttempted:false,bootstrapAttempted:false,ready:false,restored:false};persist(state);record('notification-service-before',{identity:id,before});
+ const state={version:1,uid,identity:id,before,enableAttempted:false,bootstrapAttempted:false,ready:false,restored:false};persist(state);
  const mutate=(flag,args)=>{state[flag]=true;persist(state);const result=run('/bin/launchctl',args,{timeout:10000});record('notification-service-command',{action:args[0],code:result.code});requireValue(result.code===0,'NC_'+args[0].toUpperCase()+'_FAILED');};
  const target='gui/'+uid+'/'+id.label;
  if(before.disabled===true)mutate('enableAttempted',['enable',target]);
