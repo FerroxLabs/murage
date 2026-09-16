@@ -8,30 +8,25 @@ const fn=/async function settingsTree\(pid,label\)\{[\s\S]*?\n\}/.exec(source)[0
 const failure={ok:false,error:'AX-read',code:-25204,attribute:'AXRole',visited:1,elapsedMs:1083};
 const complete={ok:true,elements:[{role:'AXCheckBox',names:['Needs your attention'],value:1}],visited:2};
 function fixture(results,{elapsed=1083,stopping=false}={}){
- let clock=0;const calls=[],records=[],writes=[],samples=[];
+ let clock=0;const calls=[],records=[],writes=[];
  const read=runInNewContext('('+fn+')',{
   Date:{now:()=>clock},stopping,
-  load:()=>({exe:'/owned/Murage',private:'/owned/private'}),
-  run:()=>{throw Error('No native execution in fixture');},redactSecretsInLine:x=>x,
-  captureMainSample:input=>{samples.push(input);return {ok:true,diagnosticOnly:true};},
   ax:(pid,command,options)=>{calls.push({pid,command:JSON.parse(JSON.stringify(command)),options});clock+=Math.min(elapsed,options.timeout);return results[Math.min(calls.length-1,results.length-1)];},
   writeFileSync:(_path,text)=>writes.push(JSON.parse(text)),path:{join:(...x)=>x.join('/')},E:'/evidence',
   record:(step,value)=>records.push({step,...value}),pause:async ms=>{clock+=ms;},
   check:(ok,label)=>{if(!ok)throw Error(label);},
  });
- return {read,calls,records,writes,samples,time:()=>clock};
+ return {read,calls,records,writes,time:()=>clock};
 }
 test('Settings retries only the recorded read failure and returns the complete tree',async()=>{
  const f=fixture([failure,complete]);assert.equal(await f.read(123,'settings'),complete);
- assert.equal(f.calls.length,2);assert.equal(f.records.filter(r=>r.step==='settings-tree-read').length,2);assert.equal(f.writes[0].attribute,'AXRole');
- assert.equal(f.samples.length,1);assert.equal(f.samples[0].pid,123);assert.equal(f.samples[0].deadline,15000);
+ assert.equal(f.calls.length,2);assert.equal(f.records.length,2);assert.equal(f.writes[0].attribute,'AXRole');
  assert(f.calls.every(c=>c.pid===123&&c.command.op==='tree'&&c.command.settingsReadiness===true));
  assert(f.calls[1].options.timeout<f.calls[0].options.timeout);
 });
 test('persistent read failure shares one 15 second deadline and retains each attempt',async()=>{
  const f=fixture([failure],{elapsed:3000});await assert.rejects(f.read(123,'settings'),/AX_TREE_settings/);
- assert.equal(f.time(),15000);assert.equal(f.calls.length,f.records.filter(r=>r.step==='settings-tree-read').length);assert.equal(f.calls.length,f.writes.length);
- assert.equal(f.samples.length,1);
+ assert.equal(f.time(),15000);assert.equal(f.calls.length,f.records.length);assert.equal(f.calls.length,f.writes.length);
  assert(f.calls.length>1);assert(f.calls.every(c=>c.command.op==='tree'));
 });
 test('permission, structural, malformed and other errors fail immediately',async()=>{

@@ -1,6 +1,5 @@
 // B35 packaged attention consumer only. Source checks do not run this journey.
 import {spawn} from 'node:child_process';
-import {captureMainSample} from './mac-attention-main-sample.mjs';
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,writeFileSync,openSync,closeSync,readSync,realpathSync,rmSync,readdirSync,lstatSync} from 'node:fs';
 import path from 'node:path';
@@ -39,7 +38,7 @@ const ax=(pid,command,options={})=>{const result=run('/usr/bin/osascript',['-l',
 const tree=(pid,label)=>{const result=ax(pid,{op:'tree'});writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});check(result.ok,'AX_TREE_'+label);return result;};
 // A Settings transition may temporarily refuse AX messaging. Read only; never repeat a mutation.
 async function settingsTree(pid,label){
- const deadline=Date.now()+15000;let result=null,attempt=0,sampled=false;
+ const deadline=Date.now()+15000;let result=null,attempt=0;
  while(!stopping&&Date.now()<deadline){
   const remaining=deadline-Date.now();if(remaining<=0)break;
   result=ax(pid,{op:'tree',settingsReadiness:true},{timeout:remaining});
@@ -47,11 +46,6 @@ async function settingsTree(pid,label){
   record('settings-tree-read',{pid,label,attempt:++attempt,result:{ok:result.ok,error:result.error??null,code:result.code??null,attribute:result.attribute??null,visited:result.visited??null,elapsedMs:result.elapsedMs??null}});
   if(result.ok===true)return result;
   if(result.error!=='AX-read'||result.code!==-25204)break;
-  if(!sampled&&result.attribute==='AXRole'&&result.visited===1){
-   sampled=true;const s=load();
-   const diagnostic=captureMainSample({pid,expectedExecutable:s.exe,privateDir:s.private,deadline,run,redact:redactSecretsInLine});
-   record('settings-main-thread-diagnostic',{label,attempt,diagnostic});
-  }
   const wait=Math.min(250,deadline-Date.now());if(wait>0)await pause(wait);
  }
  check(false,'AX_TREE_'+label);
