@@ -60,7 +60,7 @@ const UI={
   backupMode:{roles:["AXButton"],label:"Restart into Backup mode",src:"src/components/BackupSettings.tsx:11"},
   backupModeConfirm:{roles:["AXButton"],label:"Restart into Backup mode",sheet:true,src:"electron/main.mjs:288",probe:"PROBE-REQUIRED: parented message box exposed as AXSheet"},
   diagnosticBackup:{roles:["AXButton"],label:"Create encrypted backup",src:"electron/recovery/index.html backup-encrypted"},
-  diagnosticConfirm:{roles:["AXButton"],label:"Create encrypted backup",sheet:true,src:"electron/installation-recovery-window.mjs:52"},
+  diagnosticConfirm:{roles:["AXButton"],label:"Create encrypted backup",src:"electron/installation-recovery-window.mjs:52-54; native message + exact destination/detail; excludes AXWebArea"},
   inspectEncrypted:{roles:["AXButton"],label:"Inspect encrypted backup",src:"electron/recovery/index.html:23"},
   inspected:{pattern:"Backup inspected\\. No installation data has been changed\\.",src:"electron/recovery/renderer.js:75"},
   restoreEncrypted:{roles:["AXButton"],label:"Restore encrypted backup separately for review",src:"electron/recovery/index.html:56"},
@@ -251,6 +251,42 @@ function matches(){return all().filter(function(e){return cmd.roles.indexOf(role
 try{
  var timeoutCode=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);
  if(timeoutCode!==0)throw{error:'AX-timeout-setup',code:timeoutCode};
+ if(cmd.op==='confirmEncryptedBackup'){
+  if(typeof cmd.output!=='string'||cmd.output.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.output)||!cmd.output.endsWith('/murage-application-backup.age')||['observe','press'].indexOf(cmd.action)<0)throw{error:'confirmation-input'};
+  var confirmLabel='Create encrypted backup',confirmMessage='Preserve application data in an encrypted backup?';
+  var confirmDetail='Destination: '+cmd.output+'\n\nOriginal settings may include credentials. They are preserved only inside encrypted fidelity data. Native sessions, VM homes and external folders are excluded. Channel history is retained, but re-pairing is required after restore. Keep an independent recovery key copy; losing it prevents recovery.';
+  var normalize=function(value){return String(value).replace(/\s+/g,' ').trim();};
+  var nativeRows=[],nativeApp=$.AXUIElementCreateApplication(cmd.pid),nativeWindows=readAX(nativeApp,'AXWindows',true)||[];queryWindows=nativeWindows.length;
+  function nativeWalk(element,parent,depth){
+   bounded();if(depth>64||++visited>4000)throw{error:'AX-tree-limit',visited:visited,depth:depth};
+   var currentRole=role(element);if(currentRole==='AXWebArea')return;
+   var row={element:element,parent:parent,role:currentRole,children:[],names:[],texts:[]},index=nativeRows.length;nativeRows.push(row);if(parent!==null)nativeRows[parent].children.push(index);
+   if(currentRole==='AXButton')row.names=names(element);
+   if(currentRole==='AXStaticText')row.texts=['AXValue','AXTitle','AXDescription'].map(function(k){return readAX(element,k,false);}).filter(function(v){return typeof v==='string'&&v.length;}).map(normalize);
+   var children=readAX(element,'AXChildren',false)||[];
+   if(currentRole==='AXWindow'){var sheets=readAX(element,'AXSheets',false)||[];sheets.forEach(function(sheet){if(!children.some(function(child){return $.CFEqual(child,sheet);}))children.push(sheet);});}
+   for(var c=0;c<children.length;c++)nativeWalk(children[c],index,depth+1);
+  }
+  for(var w=0;w<nativeWindows.length;w++)nativeWalk(nativeWindows[w],null,0);
+  function subtree(index){var found=[index];nativeRows[index].children.forEach(function(child){found=found.concat(subtree(child));});return found;}
+  var confirmations=[];
+  nativeRows.forEach(function(row,index){
+   if(row.role!=='AXButton'||row.names.indexOf(confirmLabel)<0)return;
+   for(var ancestor=row.parent;ancestor!==null;ancestor=nativeRows[ancestor].parent){
+    bounded();var group=subtree(ancestor).map(function(i){return nativeRows[i];}),text=[];
+    group.forEach(function(item){text=text.concat(item.texts);});
+    var buttons=group.filter(function(item){return item.role==='AXButton';}),confirm=buttons.filter(function(item){return item.names.indexOf(confirmLabel)>=0;}),cancel=buttons.filter(function(item){return item.names.indexOf('Cancel')>=0;});
+    if(text.indexOf(normalize(confirmMessage))<0||text.indexOf(normalize(confirmDetail))<0||confirm.length!==1||cancel.length!==1)continue;
+    if(!confirmations.some(function(item){return $.CFEqual(item.element,row.element);}))confirmations.push({element:row.element,containerRole:nativeRows[ancestor].role});break;
+   }
+  });
+  var observed={count:confirmations.length,windows:queryWindows,visited:visited,backend:'AXUIElement',context:'exact-native-backup-message-destination-detail',webAreasExcluded:true};
+  if(confirmations.length!==1)return JSON.stringify({ok:cmd.action==='observe',error:cmd.action==='press'?'confirmation-not-unique':null,count:confirmations.length,observed:observed});
+  var selected=confirmations[0];observed.containerRole=selected.containerRole;observed.enabled=readAX(selected.element,'AXEnabled',true)===true;
+  if(cmd.action==='observe')return JSON.stringify({ok:true,count:1,enabled:observed.enabled,observed:observed});
+  if(!observed.enabled)return JSON.stringify({ok:false,error:'confirmation-disabled',observed:observed});
+  var confirmationCode=$.AXUIElementPerformAction(selected.element,$('AXPress'));return JSON.stringify({ok:confirmationCode===0,code:confirmationCode,observed:observed});
+ }
  if(cmd.op==='pickPath'){
   if(typeof cmd.path!=='string'||cmd.path.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.path))throw{error:'picker-path'};
   var actionButton=cmd.actionButton===undefined?'Open':cmd.actionButton;
@@ -353,6 +389,15 @@ const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{
   if(key==="enable"){const enabled=ax(s,{op:"state",pid,roles,label,sheet});record({step:"enable-state",result:enabled});check(enabled.ok&&enabled.enabled===true,"enable-enabled");}
   const result=ax(s,{op:"press",pid,roles,label,sheet,...(key==="enable"?{requireEnabled:true}:{}),...(key==="chooseRefs"?{observeControl:true}:{})});record({step:`press-observation-${key}`,pid,result});check(result.ok,`press-${key}`);
 });
+async function pressDiagnosticConfirmation(s,pid,output){
+  return step("press-diagnosticConfirm",async()=>{
+    let lastResult=null,queries=0;
+    try{await until(()=>{lastResult=ax(s,{op:"confirmEncryptedBackup",pid,output,action:"observe"});queries++;return lastResult.ok&&lastResult.count===1&&lastResult.enabled===true;},30000,"present-diagnosticConfirm");}
+    catch(error){record({step:"selector-query-failed-diagnosticConfirm",pid,queries,result:lastResult});throw error;}
+    // Fresh context and uniqueness are checked again in the same AX invocation as AXPress.
+    const result=ax(s,{op:"confirmEncryptedBackup",pid,output,action:"press"});record({step:"press-observation-diagnosticConfirm",pid,result});check(result.ok,"press-diagnosticConfirm");
+  });
+}
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});record({step:`checkbox-before-${key}`,pid,roles,label,result:before});check(before.ok,`value-${key}`);if(Number(before.value)!==1){const pressed=ax(s,{op:"press",pid,roles,label});record({step:`checkbox-press-${key}`,pid,result:pressed});check(pressed.ok,`press-${key}`);}const after=ax(s,{op:"value",pid,roles,label});record({step:`checkbox-after-${key}`,pid,result:after});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
 const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:key==="dailyTime"?"time":"focusType",pid,roles,label,text,numeric:["catchup","sizeBudget","durationBudget"].includes(key)});record({step:`type-observation-${key}`,result:r});check(r.ok,`type-${key}`);});
@@ -576,7 +621,7 @@ async function diagnoseScheduledCapture(){
     // bounded/read back. Save support is a new native prerequisite, not a pass.
     await choosePath(s,app.pid,admission.outputDir,"diagnostic-destination",{actionButton:"Save",expectedName:"murage-application-backup.age"});
     await choosePath(s,app.pid,s.keyFile,"diagnostic-independent-key");
-    await press(s,app.pid,"diagnosticConfirm",30000);
+    await pressDiagnosticConfirmation(s,app.pid,admission.output);
     const outcome=await until(()=>{const value=ax(s,{op:"texts",pid:app.pid,pattern:"Working on the selected operation\\.|Encrypted application-data backup saved and verified:|\\([A-Z][A-Z0-9_]{0,100}\\)$"});return value.ok?recoveryDiagnosticResult(value.texts,admission.output):null;},90000,"diagnostic-recovery-result",1000);
     let archive=null;
     if(outcome.kind==="manual-saved-verified"){
