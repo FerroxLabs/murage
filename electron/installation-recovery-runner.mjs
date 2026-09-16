@@ -1,3 +1,4 @@
+import { normalizeBackupAgeDiagnostic } from "./backup-age-attestation.mjs";
 import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { recoveryDesktopSummary } from "./installation-recovery-protocol.mjs";
 
@@ -65,7 +66,8 @@ export async function runInstallationRecoveryWorker({ fork, entry, args, env, tr
   try { result = JSON.parse(output); } catch { throw fail("INVALID_RECOVERY_RESULT"); }
   if (exitCode !== 0 || result?.ok !== true) {
     const code = typeof result?.error === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(result.error) ? result.error : "RECOVERY_OPERATION_FAILED";
-    throw Object.assign(fail(code),(process.platform==="win32"||code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&typeof result.retainedDirectory==="string"&&result.retainedDirectory.length<=8192?{retainedDirectory:result.retainedDirectory}:{});
+    const backupAgeAttestation=code==="AGE_TOOL_UNVERIFIED"?normalizeBackupAgeDiagnostic(result.backupAgeAttestation):null;
+    throw Object.assign(fail(code),(process.platform==="win32"||code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&typeof result.retainedDirectory==="string"&&result.retainedDirectory.length<=8192?{retainedDirectory:result.retainedDirectory}:{},backupAgeAttestation?{backupAgeAttestation}:{});
   }
   if (result.operation !== args[0]) throw fail("INVALID_RECOVERY_RESULT");
   try { return recoveryDesktopSummary(result); } catch { throw fail("INVALID_RECOVERY_RESULT"); }

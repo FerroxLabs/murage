@@ -1,3 +1,4 @@
+import { normalizeBackupAgeDiagnostic } from "./backup-age-attestation.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -39,7 +40,8 @@ const ownedCaptureWaits=new Map([
 /** Local diagnostic only: never retain arbitrary error fields, messages or paths. */
 export function captureFailureDiagnostic(stage,error){
   const candidate=captureFailureCodes.has(error?.code)?error.code:captureFailureCodes.has(error?.message)?error.message:null;
-  return{stage:captureFailureStages.has(stage)?stage:"unknown",code:candidate??ownedCaptureWaits.get(error?.message)??"UNKNOWN_CAPTURE_FAILURE"};
+  let backupAgeAttestation=null;try{if(candidate==="AGE_TOOL_UNVERIFIED")backupAgeAttestation=normalizeBackupAgeDiagnostic(error?.backupAgeAttestation);}catch{/* Diagnostic properties are not trusted. */}
+  return{stage:captureFailureStages.has(stage)?stage:"unknown",code:candidate??ownedCaptureWaits.get(error?.message)??"UNKNOWN_CAPTURE_FAILURE",...(backupAgeAttestation?{backupAgeAttestation}:{})};
 }
 
 /** Existing coordinator and native ownership/worker are injected, never duplicated. */

@@ -4,13 +4,17 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { win32 } from "node:path";
 import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
-import { trustedBackupAgeExecutable } from "../electron/backup-age-attestation.mjs";
+import { trustedBackupAgeExecutable, normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { createWindowsBackupResourceResolver } from "./windows-backup-resources.ts";
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
-export function assertBackupAgeTool(executable: string) {
+export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
   if (!backupAgePinForTarget(process.platform, process.arch)) fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
-  if(!trustedBackupAgeExecutable(executable))fail("AGE_TOOL_UNVERIFIED");
+  let observed:Record<string,unknown>|undefined;
+  if(!trustedBackupAgeExecutable(executable,{report:(facts:Record<string,unknown>)=>{observed??=facts;}})){
+    const diagnostic=normalizeBackupAgeDiagnostic({...observed,operation});
+    throw Object.assign(new InstallationSnapshotError("AGE_TOOL_UNVERIFIED"),diagnostic?{backupAgeAttestation:diagnostic}:{});
+  }
 }
 /** Private host policy: derived only from the actual installed process, never
  * a renderer resource root, trust flag, or injected verification callback. */
@@ -81,11 +85,11 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
 }
 export async function encryptBackupStream(executable: string,recipient: string,input: Readable,output: string,options: BackupAgeLimits) {
   if(process.platform==="win32")await resolveWindowsBackupRuntime(executable);
-  else assertBackupAgeTool(executable);
+  else assertBackupAgeTool(executable,"encrypt");
   return runAge(executable,["--encrypt","--recipient",backupRecipient(recipient),"--output","-"],input,output,options);
 }
 export async function decryptBackupFile(executable: string,identity: string,input: string,output: string,options: BackupAgeLimits) {
-  assertBackupAgeTool(executable); // Windows decrypt must use the native transport, never fd3.
+  assertBackupAgeTool(executable,"decrypt"); // Windows decrypt must use the native transport, never fd3.
   const key=backupIdentity(identity);
   const fd=openSync(input,constants.O_RDONLY|constants.O_NOFOLLOW);
   try {

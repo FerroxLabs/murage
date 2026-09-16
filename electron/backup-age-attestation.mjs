@@ -66,33 +66,62 @@ export function normalizedAgePayloadHash(bytes){
   }catch{return null;}
 }
 
-const nativeCodesign=args=>spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
+const agePredicates=new Set(["platform-pin","file-stat","file-type","file-symlink","file-links","file-size","file-open","file-identity","file-read","file-close","raw-pin","payload","bundle-path","tool-location","executable-binding","app-verify","app-info","app-team","tool-info","tool-team","tool-verify"]);
+const ageErrorCodes=new Set(["ETIMEDOUT","ENOENT","EACCES","EPERM","EIO","OTHER"]);
+/** Private failure facts only. Unknown fields/values never cross the worker boundary. */
+export function normalizeBackupAgeDiagnostic(value){
+  try{
+    if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join()!=="elapsedMs,errorCode,exitCode,operation,predicate,signal,timedOut")return null;
+    if(!["encrypt","decrypt"].includes(value.operation)||!agePredicates.has(value.predicate)||typeof value.timedOut!=="boolean")return null;
+    if(value.exitCode!==null&&(!Number.isSafeInteger(value.exitCode)||value.exitCode<0||value.exitCode>255))return null;
+    if(value.elapsedMs!==null&&(!Number.isSafeInteger(value.elapsedMs)||value.elapsedMs<0||value.elapsedMs>1800000))return null;
+    if(value.signal!==null&&!["SIGTERM","SIGKILL","SIGABRT","SIGSEGV"].includes(value.signal))return null;
+    if(value.errorCode!==null&&!ageErrorCodes.has(value.errorCode))return null;
+    return {operation:value.operation,predicate:value.predicate,exitCode:value.exitCode,timedOut:value.timedOut,signal:value.signal,errorCode:value.errorCode,elapsedMs:value.elapsedMs};
+  }catch{return null;}
+}
+function ageFailure(report,predicate,result){
+  try{
+    const error=result?.error,code=error?(ageErrorCodes.has(error.code)?error.code:"OTHER"):null;
+    report?.({predicate,exitCode:Number.isSafeInteger(result?.status)&&result.status>=0&&result.status<=255?result.status:null,
+      timedOut:code==="ETIMEDOUT",signal:["SIGTERM","SIGKILL","SIGABRT","SIGSEGV"].includes(result?.signal)?result.signal:null,
+      errorCode:code,elapsedMs:Number.isSafeInteger(result?.attestationElapsedMs)&&result.attestationElapsedMs>=0&&result.attestationElapsedMs<=1800000?result.attestationElapsedMs:null});
+  }catch{/* Diagnostic collection never changes the trust result. */}
+  return false;
+}
+const nativeCodesign=args=>{const started=Date.now(),result=spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});result.attestationElapsedMs=Date.now()-started;return result;};
 /** Injectable command runner is a test seam; production always uses codesign. */
-export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=nativeCodesign}={}){
-  if(normalizedAgePayloadHash(bytes)!==AGE_PAYLOAD_SHA256)return false;
+export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=nativeCodesign,report}={}){
+  if(normalizedAgePayloadHash(bytes)!==AGE_PAYLOAD_SHA256)return ageFailure(report,"payload");
+  let predicate="bundle-path";
   try{
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents);
     const executable=realpathSync(currentExecutable);
-    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","age")||!executable.startsWith(app+path.sep))return false;
-    const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return false;
-    const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return false;
-    const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
-    const toolInfo=run(["--display","--verbose=4",resolved]);if(toolInfo.status!==0||toolInfo.error||/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
-    const toolVerified=run(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);
-    return toolVerified.status===0&&!toolVerified.error;
-  }catch{return false;}
+    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app"))return ageFailure(report,"bundle-path");
+    if(resolved!==path.join(resources,"backup-tools","arm64","age"))return ageFailure(report,"tool-location");
+    if(!executable.startsWith(app+path.sep))return ageFailure(report,"executable-binding");
+    predicate="app-verify";const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return ageFailure(report,predicate,verified);
+    predicate="app-info";const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return ageFailure(report,predicate,info);
+    const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return ageFailure(report,"app-team");
+    predicate="tool-info";const toolInfo=run(["--display","--verbose=4",resolved]);if(toolInfo.status!==0||toolInfo.error)return ageFailure(report,predicate,toolInfo);
+    if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return ageFailure(report,"tool-team");
+    predicate="tool-verify";const toolVerified=run(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);
+    return toolVerified.status===0&&!toolVerified.error||ageFailure(report,predicate,toolVerified);
+  }catch(error){return ageFailure(report,predicate,{error});}
 }
-export function trustedBackupAgeExecutable(file){
+export function trustedBackupAgeExecutable(file,{report}={}){
+  let predicate="file-stat";
   try{
-    const pin=backupAgePinForTarget(process.platform,process.arch);if(!pin)return false;
-    const before=lstatSync(file);if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1||before.size>64*1024**2)return false;
-    const fd=openSync(file,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW));let bytes;
-    try{const opened=fstatSync(fd);if(opened.dev!==before.dev||opened.ino!==before.ino)return false;bytes=readFileSync(fd);}finally{closeSync(fd);}
+    const pin=backupAgePinForTarget(process.platform,process.arch);if(!pin)return ageFailure(report,"platform-pin");
+    const before=lstatSync(file);
+    if(!before.isFile())return ageFailure(report,"file-type");if(before.isSymbolicLink())return ageFailure(report,"file-symlink");if(before.nlink!==1)return ageFailure(report,"file-links");if(before.size>64*1024**2)return ageFailure(report,"file-size");
+    predicate="file-open";const fd=openSync(file,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW));let bytes;
+    try{predicate="file-identity";const opened=fstatSync(fd);if(opened.dev!==before.dev||opened.ino!==before.ino)return ageFailure(report,predicate);predicate="file-read";bytes=readFileSync(fd);}finally{try{closeSync(fd);}catch(error){predicate="file-close";throw error;}}
     if(digest(bytes)===pin.executableSha256)return true;
-    return process.platform==="darwin"&&process.arch==="arm64"&&signedAgeOwnedByCurrentApp(file,bytes);
-  }catch{return false;}
+    if(process.platform!=="darwin"||process.arch!=="arm64")return ageFailure(report,"raw-pin");
+    return signedAgeOwnedByCurrentApp(file,bytes,{report});
+  }catch(error){return ageFailure(report,predicate,{error});}
 }
-
 /** Cheap identity only: no payload reads and no subprocesses on status paths. */
 export function backupToolIdentity(file,currentExecutable=process.execPath){
   try{

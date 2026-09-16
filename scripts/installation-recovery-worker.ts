@@ -1,3 +1,4 @@
+import { normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation.mjs";
 import { installationRecoveryCommand } from "../server/installation-recovery-command.ts";
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
 import { randomUUID } from "node:crypto";
@@ -28,7 +29,8 @@ try {
   const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const code = typeof candidate === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(candidate) ? candidate : "RECOVERY_OPERATION_FAILED";
   const retainedDirectory=(process.platform==="win32"||code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&error&&typeof error==="object"&&"retainedDirectory"in error&&typeof error.retainedDirectory==="string"&&error.retainedDirectory.length<=8192?error.retainedDirectory:undefined;
-  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}) };
+  let backupAgeAttestation;try{if(code==="AGE_TOOL_UNVERIFIED"&&error&&typeof error==="object"&&"backupAgeAttestation" in error)backupAgeAttestation=normalizeBackupAgeDiagnostic(error.backupAgeAttestation);}catch{/* Keep the original failure. */}
+  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}) };
   exitCode = 1;
 }
 if (parentPort) {
