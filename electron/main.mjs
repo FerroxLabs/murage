@@ -3178,6 +3178,12 @@ async function initializeBackupScheduleHost(){
     confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Save references"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent recovery-key copy",detail:"The key must remain outside this installation and available for scheduled backups. Keep a separate safe recovery copy. Saving these references does not enable backups or authorize a restart."});return answer.response===1;},
     prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
     cleanupIdle:cleanupDesktopForExit,
+    // Closed main has no harness logger and exits immediately after cleanup.
+    // The host supplies only its finite stage/code record; synchronously retain
+    // that tiny line in this profile's existing log before generic refusal.
+    reportCaptureFailure:failure=>{
+      try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
+    },
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
     relaunch:async mode=>{
       if(mode==="normal")await cleanupDesktopForExit();

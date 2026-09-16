@@ -22,6 +22,26 @@ function verifiedArtifact(output,maxBytes){
   }finally{closeSync(fd);}
 }
 
+const captureFailureStages=new Set(["precondition","references","claim","capture","artifact-readback","receipt-commit","return"]);
+const captureFailureCodes=new Set([
+  "BACKUP_HANDOFF_REJECTED","BACKUP_UNAVAILABLE","BACKUP_REFERENCE_CHANGED","BACKUP_BINDINGS_INVALID","BACKUP_BINDINGS_UNAVAILABLE","BACKUP_RECEIPT_MISMATCH",
+  "RECOVERY_WORKER_TIMEOUT","INVALID_RECOVERY_INPUT","INVALID_RECOVERY_RESULT","RECOVERY_INPUT_TIMEOUT","RECOVERY_OPERATION_FAILED","RECOVERY_OWNERSHIP_REQUIRED","INVALID_BACKUP_BUDGET",
+  "BACKUP_LIMIT_EXCEEDED","ARCHIVE_LIMIT_EXCEEDED","INVALID_BACKUP_LIMITS","INVALID_ARCHIVE_LIMITS","SNAPSHOT_CANCELLED","AGE_TOOL_TIMEOUT","AGE_PROCESS_FAILED","AGE_PROCESS_CLOSE_UNCONFIRMED","AGE_TOOL_UNVERIFIED",
+  "ENCRYPTED_BACKUP_FAILED","FIDELITY_READBACK_MISMATCH","FIDELITY_RECOVERY_MISMATCH","INVALID_FIDELITY_MANIFEST","ARCHIVE_CHANGED","UNSAFE_ARCHIVE_FILE","INVALID_DESTINATION","DESTINATION_EXISTS","DESTINATION_INSIDE_INSTALLATION",
+]);
+const ownedCaptureWaits=new Map([
+  ["Desktop startup has not settled","OWNED_STARTUP_UNSETTLED"],["Owned writers have not exited","OWNED_WRITERS_UNSETTLED"],
+  ["Credential writes have not settled","OWNED_CREDENTIALS_UNSETTLED"],["Companion startup has not settled","OWNED_COMPANION_START_UNSETTLED"],
+  ["Companion has not stopped","OWNED_COMPANION_STOP_UNSETTLED"],["Browser cleanup has not settled","OWNED_BROWSER_CLEANUP_UNSETTLED"],
+  ["Browser host has not stopped","OWNED_BROWSER_STOP_UNSETTLED"],["Computer-use startup has not settled","OWNED_CUA_START_UNSETTLED"],
+  ["Computer-use cleanup has not completed","OWNED_CUA_STOP_UNSETTLED"],
+].map(([label,code])=>[label+"; Murage kept installation ownership. Wait and retry Quit.",code]));
+/** Local diagnostic only: never retain arbitrary error fields, messages or paths. */
+export function captureFailureDiagnostic(stage,error){
+  const candidate=captureFailureCodes.has(error?.code)?error.code:captureFailureCodes.has(error?.message)?error.message:null;
+  return{stage:captureFailureStages.has(stage)?stage:"unknown",code:candidate??ownedCaptureWaits.get(error?.message)??"UNKNOWN_CAPTURE_FAILURE"};
+}
+
 /** Existing coordinator and native ownership/worker are injected, never duplicated. */
 export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
@@ -112,25 +132,27 @@ export function createBackupScheduleHost(host) {
     }finally{running=false;}
   }
   async function captureArmed(closed=false){
-    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false;
+    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
-      const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
-      coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
+      captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      captureStage="claim";coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
       claimed=true;
       const output=path.join(b.destination,s.job.id+".age");
       const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
       coordinator.beginHandoffCapture(intent.id);
-      const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
+      captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
+      captureStage="artifact-readback";
       if(result?.ok!==true||result.operation!=="backup-encrypted"||result.path!==output||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
-      coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      captureStage="receipt-commit";coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
-      if(closed)coordinator.completeReturn(intent.id);
+      captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
       return {verified:true};
-    }catch{
+    }catch(error){
+      try{host.reportCaptureFailure?.(captureFailureDiagnostic(captureStage,error));}catch{/* Diagnostic failure never changes the handoff result. */}
       if(intent&&coordinator.status().phase!=="return-pending"&&(claimed||(s.phase==="handoff-armed"&&coordinator.status().phase==="handoff-armed")))try{coordinator.failHandoff(intent.id);}catch{/* Preserve evidence. */}
       lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";throw Error(lastError);
     }
