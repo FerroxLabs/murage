@@ -53,19 +53,6 @@ function run(argv){
   var app=$.AXUIElementCreateApplication(c.pid),code=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);if(code!==0)fail('AX-timeout',{code:code});
   if(c.op==='manual'){code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),$(true));return JSON.stringify({ok:code===0,code:code});}
   if(c.op==='key'){var allowed={escape:53,return:36,reload:15,quit:12},se=Application('System Events'),ps=se.processes.whose({unixId:c.pid});if(ps.length!==1||!(c.key in allowed))fail('AX-key');ps[0].frontmost=true;se.keyCode(allowed[c.key],{using:c.key==='reload'||c.key==='quit'?['command down']:[]});return JSON.stringify({ok:true});}
-  // General uses the B20 window query: traverse children completely, then
-  // read names only for the requested role. Unrelated AXValue reads are
-  // not part of a button selector. Keep OS/system queries on their own path.
-  if(c.windowSelector===true){
-   if(['count','press'].indexOf(c.op)<0||c.label!=='General'||!c.roles||c.roles.length!==1||c.roles[0]!=='AXButton'||c.prefix||c.scopeName)fail('AX-window-selector-contract');
-   var elements=[],roots=read(app,'AXWindows',true)||[];
-   function walkWindow(e,depth){bound();if(depth>64||++visited>4000)fail('AX-limit',{visited:visited,depth:depth});elements.push(e);var kids=read(e,'AXChildren',false)||[];for(var i=0;i<kids.length;i++)walkWindow(kids[i],depth+1);}
-   for(var i=0;i<roots.length;i++)walkWindow(roots[i],0);
-   var found=elements.filter(function(e){return c.roles.indexOf(read(e,'AXRole',true))>=0&&names(e).indexOf(c.label)>=0;});
-   if(c.op==='count')return JSON.stringify({ok:true,count:found.length,visited:visited,windows:roots.length,elapsedMs:Date.now()-started,query:'windows-role-name'});
-   if(found.length!==1)fail('AX-match',{count:found.length,label:c.label});
-   press({e:found[0]});return JSON.stringify({ok:true,query:'windows-role-name'});
-  }
   walk(app,-1,0);
   if(c.op==='tree'||c.op==='probe')return JSON.stringify({ok:true,backend:'AXUIElement',visited:visited,elapsedMs:Date.now()-started,elements:nodes.map(function(n,i){return{index:i,parent:n.parent,role:n.role,names:n.names,value:n.value};})});
   if(c.op==='dndState'||c.op==='pressDnd'){
