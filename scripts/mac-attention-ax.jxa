@@ -1,0 +1,48 @@
+// B35-only bounded adaptation of the accepted public AX query primitive.
+// Real key events/actions only; no DOM, AppleScript coordinates, or notification IPC.
+function run(argv){
+ var c=JSON.parse(argv[0]),started=Date.now(),nodes=[],windows=[],visited=0;
+ ObjC.import('ApplicationServices');
+ ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
+ ObjC.bindFunction('AXUIElementCreateSystemWide',['id',[]]);
+ ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
+ ObjC.bindFunction('AXUIElementCopyActionNames',['int',['id','id *']]);
+ ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
+ ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
+ function fail(name,more){throw Object.assign({error:name},more||{});}
+ function bound(){if(Date.now()-started>12000)fail('AX-deadline',{visited:visited});}
+ function read(e,k,required){bound();var r=Ref(),code=$.AXUIElementCopyAttributeValue(e,$(k),r);if(code===0)return ObjC.deepUnwrap(r[0]);if(!required&&(code===-25205||code===-25212))return null;fail('AX-read',{attribute:k,code:code});}
+ function names(e){return ['AXTitle','AXDescription'].map(function(k){return read(e,k,false);}).filter(function(x){return typeof x==='string'&&x;});}
+ function actions(e){var r=Ref(),code=$.AXUIElementCopyActionNames(e,r);if(code===0)return ObjC.deepUnwrap(r[0])||[];if(code===-25205||code===-25212)return[];fail('AX-actions',{code:code});}
+ function walk(e,parent,depth){bound();if(depth>64||++visited>4000)fail('AX-limit',{visited:visited,depth:depth});var role=read(e,'AXRole',true),ns=names(e),value=read(e,'AXValue',false),id=nodes.length;nodes.push({e:e,parent:parent,role:role,names:ns,value:typeof value==='string'?value.slice(0,1200):typeof value==='number'||typeof value==='boolean'?value:null});if(role==='AXWindow'||role==='AXSheet')windows.push(id);var kids=read(e,'AXChildren',false)||[];for(var i=0;i<kids.length;i++)walk(kids[i],id,depth+1);}
+ function text(n){return n.names.concat(typeof n.value==='string'?[n.value]:[]).join(' ');}
+ function within(id,ancestor){while(id>=0){if(id===ancestor)return true;id=nodes[id].parent;}return false;}
+ function scope(){if(!c.scopeName)return null;var s=nodes.map(function(n,i){return {n:n,i:i};}).filter(function(x){return x.n.names.indexOf(c.scopeName)>=0;});if(s.length!==1)fail('AX-scope',{count:s.length});return s[0].i;}
+ function matches(){var sc=scope();return nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return (sc===null||within(x.i,sc))&&(!c.roles||c.roles.indexOf(x.n.role)>=0)&&x.n.names.some(function(name){return c.prefix?name===c.label||name.indexOf(c.label+' ')===0:name===c.label;});});}
+ function one(){var found=matches();if(found.length!==1)fail('AX-match',{count:found.length,label:c.label});return found[0].n;}
+ function press(n){if(read(n.e,'AXEnabled',false)===false)fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
+ try{
+  if(!Number.isInteger(c.pid)||c.pid<=0)fail('AX-pid');
+  if(!$.AXIsProcessTrusted())fail('AX-client-not-trusted');
+  var app=$.AXUIElementCreateApplication(c.pid),code=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);if(code!==0)fail('AX-timeout',{code:code});
+  if(c.op==='manual'){code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),$(true));return JSON.stringify({ok:code===0,code:code});}
+  if(c.op==='key'){var allowed={escape:53,return:36,reload:15,quit:12},se=Application('System Events'),ps=se.processes.whose({unixId:c.pid});if(ps.length!==1||!(c.key in allowed))fail('AX-key');ps[0].frontmost=true;se.keyCode(allowed[c.key],{using:c.key==='reload'||c.key==='quit'?['command down']:[]});return JSON.stringify({ok:true});}
+  walk(app,-1,0);
+  if(c.op==='tree'||c.op==='probe')return JSON.stringify({ok:true,backend:'AXUIElement',visited:visited,elapsedMs:Date.now()-started,elements:nodes.map(function(n,i){return{index:i,parent:n.parent,role:n.role,names:n.names,value:n.value};})});
+  if(c.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,visited:visited});}
+  if(c.op==='state'){var n=one();return JSON.stringify({ok:true,value:n.value,selected:read(n.e,'AXSelected',false),enabled:read(n.e,'AXEnabled',false),role:n.role,names:n.names});}
+  if(c.op==='press'){press(one());return JSON.stringify({ok:true});}
+  if(c.op==='type'){var n=one(),ps=Application('System Events').processes.whose({unixId:c.pid});if(ps.length!==1||typeof c.text!=='string')fail('AX-type');ps[0].frontmost=true;code=$.AXUIElementSetAttributeValue(n.e,$('AXFocused'),$(true));if(code!==0)fail('AX-focus',{code:code});delay(.2);var se=Application('System Events');se.keystroke('a',{using:'command down'});se.keystroke(c.text);return JSON.stringify({ok:true});}
+  if(c.op==='pressNotification'){
+   if(typeof c.marker!=='string'||c.marker.length<8)fail('notification-marker');var candidates=[];
+   nodes.forEach(function(n,i){if(text(n).indexOf(c.marker)<0)return;var at=i;while(at>=0){var candidate=nodes[at];if(['AXButton','AXGroup'].indexOf(candidate.role)>=0&&actions(candidate.e).indexOf('AXPress')>=0){if(candidates.indexOf(at)<0)candidates.push(at);break;}at=candidate.parent;}});
+   if(candidates.length!==1)fail('notification-action-ambiguous',{count:candidates.length});press(nodes[candidates[0]]);return JSON.stringify({ok:true,marker:c.marker,targetRole:nodes[candidates[0]].role});
+  }
+  if(c.op==='allowNotificationPermission'){
+   var candidates=[];windows.forEach(function(w){var members=nodes.filter(function(_,i){return within(i,w);}),content=members.map(text).join(' ');if(!/Murage/i.test(content)||!/notifications/i.test(content))return;members.forEach(function(n){if(n.role==='AXButton'&&n.names.indexOf('Allow')>=0&&candidates.indexOf(n)<0)candidates.push(n);});});
+   if(candidates.length!==1)fail('notification-permission-not-observed',{count:candidates.length});press(candidates[0]);return JSON.stringify({ok:true,scope:'Murage OS notification permission only'});
+  }
+  fail('AX-op');
+ }catch(e){return JSON.stringify({ok:false,error:e.error||String(e),code:e.code===undefined?null:e.code,attribute:e.attribute||null,count:e.count===undefined?null:e.count,label:e.label||null,visited:visited,elapsedMs:Date.now()-started});}
+}

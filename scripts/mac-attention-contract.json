@@ -1,0 +1,43 @@
+{
+  "scope": "B35 packaged macOS native attention: canonical synthetic approval -> actual signed application -> OS banner/click/DND and app mute/quiet/privatepreview; no model/provider",
+  "base": "31749c53e0ca7552c974e56f94a81a1232ad11a1",
+  "artifactSource": "c30c741c1cebe718fd64736c498158c89bcc81e9",
+  "artifactRun": 35049388628,
+  "artifactAttempt": 1,
+  "artifactId": 10428731478,
+  "artifactApiDigest": "e4ccdf5390d3046e4046d1fb50873ac758d2266227b8c257e25b3ae5eac8f483",
+  "zipSha256": "7a1f0a497852e471c9a06fcc7948cb5cf36bd7210e81455280f61e70fecbb58f",
+  "team": "PX6SP9GPWJ",
+  "expiresAt": "2026-09-23T03:04:51Z",
+  "nativeRoundsUsed": 7,
+  "maximumAdditionalNativeRuns": 1,
+  "proposedJobMinutes": 60,
+  "scriptMinutes": 35,
+  "retentionDays": 7,
+  "admission": "root review required; no CI/native run during source implementation",
+  "ownership": "new private candidate files only; existingbackupcycle/main unchanged",
+  "reusedSourcePins": {
+    "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
+    "server/testing/fake-claude-cli.ts": "897f12b1430d5c031f7ae90acf39cc991dcb15b30f4475d3661a592a91550eb2",
+    "electron/diagnostics.mjs": "ab5966096e56ecc28d3a0d5b675d7f5fc80b07120c822dc9ca8590cca24e4b46"
+  },
+  "attentionInputHashes": {
+    "electron/approval-notification.mjs": "aaf69d4d439f22ccfc6b1d3e419011db8dbe0ef6902533ff00f2fb559f64045b",
+    "electron/preload.cjs": "befe112b0905b4a6432ff9c9b23c575ec72b41e58e4213c6a5854fb77b5c4df9",
+    "electron/main.mjs": "8a1dc5a66695d88f14f9ccc2e6376a062287c337943b77fd84791dff787b66ff",
+    "src/lib/notify.ts": "a078c3aa4fb1a35b6086ad9c6cf40775ff2e07b8eaad460badf81f3331638911",
+    "shared/notification-preferences.ts": "12cf1900262ade7a85670197645293aa68bb4ca3442c86c0cfeb39a7f41ec61d",
+    "src/components/NotificationSettings.tsx": "38abac94e338ef70b5124e0e4db9a8946bcc83ad24405604d64be3550e7443e6",
+    "src/state/store.tsx": "692167e7f084e49b399750a6a3a20de063755e5a961f39dff2d2dfef04895568",
+    "src/lib/sidebar-attention.ts": "75a08ec047d191b5e15fea53770c9180ad980fc4ed5b967277cb86e8367a2e5f",
+    "src/components/Sidebar.tsx": "f08a41a1c71047628c5425950c72ef5b0328f2cd44a6a59e484a073ecc7f1fcd",
+    "electron/resources/murage-approval.wav": "6fb6c2e12f5adc8cda30dcc02940a1c05b13b7eb60afd2006b2053e8d2919285",
+    "electron-builder.yml": "cec091037304aab631906666554e29b3c6f348ac6541adf390688e9b5c4bd00c"
+  },
+  "acceptanceLimits": [
+    "machine positivebanner/exactnativeclick/noautogrant +canonicalpendingpersistence +suppression/privatepreview readbacks",
+    "actualaudioaudibility NOT established by resourcehash/nativecall/banner; identifiedhumanlistener or supportedaudio capture is required",
+    "macOS only; Windows/Linux native gates unchanged",
+    "actualOSpermission denial configuration is not silently substituted by appmute; reportunmeasured ifnotobserved"
+  ]
+}

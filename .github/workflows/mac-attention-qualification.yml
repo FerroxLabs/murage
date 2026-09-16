@@ -1,0 +1,90 @@
+# B35 round8 candidate. Push ONLY after root admits this exact reviewed source.
+name: Mac packaged attention machine checks
+on:
+  push:
+    branches: [qualification/mac-attention-20260916]
+  workflow_dispatch: {}
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: mac-b35-native-attention
+  cancel-in-progress: false
+jobs:
+  attention:
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      ARTIFACT_SOURCE_SHA: c30c741c1cebe718fd64736c498158c89bcc81e9
+      ARTIFACT_RUN_ID: "35049388628"
+      ARTIFACT_RUN_ATTEMPT: "1"
+      MURAGE_B35_NATIVE_CONFIRM: disposable-packaged-attention
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+      - name: Admit exact source, producer and disposable runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = arm64
+          test "$(id -un)" = runner
+          ROOT="$RUNNER_TEMP/murage-b35-native"
+          mkdir -m 700 "$ROOT" "$ROOT/evidence" "$ROOT/artifact"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$ROOT/evidence/producer.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID/artifacts" > "$ROOT/evidence/artifacts.json"
+          python3 - <<'PYTHON'
+          import json, os, pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'murage-b35-native/evidence'
+          run=json.loads((root/'producer.json').read_text())
+          assert run['status']=='completed' and run['conclusion']=='success'
+          assert run['head_sha']==os.environ['ARTIFACT_SOURCE_SHA'] and run['run_attempt']==1
+          artifacts=json.loads((root/'artifacts.json').read_text())['artifacts']
+          expected={10428731478:'sha256:e4ccdf5390d3046e4046d1fb50873ac758d2266227b8c257e25b3ae5eac8f483',10427809452:'sha256:1283d1f9d538eeda8f9d3c8eb75d5f1ed3637b4e66f9b3069e8be4c4b238318e'}
+          for identifier,digest in expected.items():
+              row=next(a for a in artifacts if a['id']==identifier)
+              assert row['expired'] is False and row['digest']==digest
+          PYTHON
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: "10428731478"
+          run-id: ${{ env.ARTIFACT_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/murage-b35-native/artifact
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: "10427809452"
+          run-id: ${{ env.ARTIFACT_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/murage-b35-native/artifact/evidence
+          merge-multiple: true
+      - name: Native-session and signed-artifact prerequisite gate
+        run: |
+          set -euo pipefail
+          A="$RUNNER_TEMP/murage-b35-native/artifact"
+          test "$(cat "$A/evidence/source-sha.txt")" = "$ARTIFACT_SOURCE_SHA"
+          test "$(cat "$A/evidence/cleanup.txt")" = PASS
+          node scripts/mac-attention-qualification.mjs admit "$A/Murage-0.1.53-arm64.zip" "$A/evidence/final-package-gates.json" "$A/evidence/SHA256SUMS"
+      - name: Prepare canonical synthetic permission peer
+        run: node scripts/mac-attention-qualification.mjs prepare
+      - name: Native banner, click, mute, quiet-hours and DND journey
+        run: node scripts/mac-attention-qualification.mjs run
+      - name: Restore DND and Keychain, close exact owned processes
+        if: always()
+        run: node scripts/mac-attention-qualification.mjs cleanup
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: b35-mac-attention-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/murage-b35-native/evidence/
+          if-no-files-found: warn
+          retention-days: 7
