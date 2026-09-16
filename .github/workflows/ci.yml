@@ -42,9 +42,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
-    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-latest' && 30 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reject private operational records in Git
+        run: node scripts/check-repository-custody.mjs
       - name: Validate scoped CI confirmation input
         shell: bash
         env:

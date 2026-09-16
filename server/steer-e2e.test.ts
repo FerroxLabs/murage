@@ -57,6 +57,7 @@ posixOnly("mid-turn steering e2e", () => {
   let home: string;
   let stderr = "";
   let steerGate: string;
+  let replyGate: string;
   let base: string;
   let desktopHeaders: Record<string, string>;
 
@@ -96,11 +97,16 @@ posixOnly("mid-turn steering e2e", () => {
     home = mkdtempSync(join(tmpdir(), "murage-steer-"));
     mkdirSync(join(home, ".murage"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
+    replyGate = join(home, "steer-reply.gate");
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
-          claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
+          // The gap after the tool result stays open until the test releases
+          // it and the fake has read the one steer: a fixed pause races the
+          // poll-and-send under suite load, and a gate alone can be observed
+          // before the steer's stdin line.
+          claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_REPLY_GATE: replyGate, FAKE_CLAUDE_REPLY_GATE_STEERS: "1" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
           claudeRace: {
             driver: "claudeAgent",
             environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate },
@@ -154,12 +160,20 @@ posixOnly("mid-turn steering e2e", () => {
 
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to start");
-      // the fake pauses after its tool result; this lands inside that gap
-      await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.kind === "activity"), "the tool chip");
+      // Only the fake's completed Bash chip proves its live turn reached the
+      // reply gate. Setup/runtime errors are activity messages too.
+      await waitFor(async () => {
+        const bot = await getBot(created.id);
+        const failure = bot.messages.find((m: any) => m.kind === "activity" && m.tool?.ok === false);
+        if (failure) throw new Error(`fake turn failed before steering: ${JSON.stringify(failure)}; stderr: ${stderr}`);
+        return bot.busy === true && bot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Bash" && m.tool.ok === true);
+      }, "the fake's completed Bash tool");
       const second = await api("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
       expect(second.status).toBe(202);
-      expect(second.body.steered).toBe(true);
+      expect(second.body.steered, JSON.stringify({ second, bot: await getBot(created.id), stderr })).toBe(true);
 
+      // the steer is in; let the fake produce its closing reply
+      writeFileSync(replyGate, "reply");
       await waitFor(async () => (await getBot(created.id)).busy === false, "the turn to settle");
       const bot = await getBot(created.id);
       const texts = bot.messages.filter((m: any) => m.kind === "text").map((m: any) => `${m.role}:${m.text}`);
