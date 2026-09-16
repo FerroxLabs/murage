@@ -39,3 +39,14 @@ playwright-report
 blob-report
 playwright/.cache
 companion/.ijfw/
+
+# Private agent planning, handoffs and session state stay outside public Git.
+.planning/
+.ijfw/
+**/.ijfw/
+ijfw/memory/
+ijfw/sessions/
+HANDOFF*.md
+*-EXECUTION.md
+docs/plans/**
+!docs/plans/0153-RELEASE-NOTES.md
