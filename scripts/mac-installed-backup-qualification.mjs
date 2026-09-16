@@ -15,13 +15,14 @@ import {admitSettingsEntry,cleanupKeychain,guiBackupFixtureBot,guiBackupFixtureR
 const CONFIRM="packaged-backup-ephemeral-runner";
 // remove precedes restore: a published restored selection changes the selected
 // installation bound into the closed descriptor (electron/backup-closed-profile.mjs:74).
-const PHASES=["plan","admit","prepare","probe","launch-configure","await-scheduled","no-replay","busy","remove","restore","cleanup-verify"];
+const PHASES=["plan","admit","prepare","probe","launch-configure","await-scheduled","diagnose-scheduled-capture","no-replay","busy","remove","restore","cleanup-verify"];
 const ASSERTIONS={
   admit:"zip sha in SHA256SUMS; ditto extract, no quarantine, no AppTranslocation; codesign strict, spctl exec accepted, stapler valid, TeamIdentifier and Murage/age sha equal final-package-gates; app.asar package.json name; fuse RunAsNode enabled; codesign/spctl evidence read from real stderr; task keychain (original default+search list persisted before first mutation, each step persisted) default+sole search list; '<name> Safe Storage' absent; launchctl managername Aqua",
   prepare:"synthetic installation + authority files, independent pinned-keygen key outside installation, GUI seed (complete fixture bot/task, enabled idle routine, terminal history) with no source-cited startup/render findings before the freeze, digest map, expected label/plist/control dir, manifest frozen (wx) before launch",
   probe:"owned app PID; AXManualAccessibility diagnostic; actual bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence, never a baseline)",
   "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→unique unchecked closed-app consent enabled (requires installed/current controller + host registration)→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit; setup drift vs frozen original recorded after quit (non-gating evidence)",
   "await-scheduled":"exact-label launchd runs delta >=1 (durable trigger invocation); coordinator lastClosedResult verified written by packaged main; lastVerified sha/bytes = single archive; immutable pre-operation originals under unchanged sidecar rule; initial setup drift separately gated and retained; closed spawns sampled at 1 s and reported, not required",
+  "diagnose-scheduled-capture":"one admitted failure-only packaged Recovery UI capture on the same task profile; separate output; finite UI code/message or verified manual result; unchanged coordinator/data; never a scheduled pass",
   "no-replay":"≥2 further launchd runs; no due spawn; archive count and lastVerified unchanged",
   busy:"app configured then CLOSED; separate owned process holds the real installation lease across the due window: launchd runs delta >=1, no new archive/lastVerified change, holder uninterrupted; after release the retained due occurrence captures exactly once (second verified receipt, sidecar rule)",
   remove:"UI 'Disable all scheduled backups and remove job' → Closed-app job removed; exact label absent; plist absent; staged trigger via packaged exe → unavailable; app exits",
@@ -58,6 +59,8 @@ const UI={
   removed:{pattern:"Closed-app job removed",src:"src/components/backup-schedule-ui.ts:63"},
   backupMode:{roles:["AXButton"],label:"Restart into Backup mode",src:"src/components/BackupSettings.tsx:11"},
   backupModeConfirm:{roles:["AXButton"],label:"Restart into Backup mode",sheet:true,src:"electron/main.mjs:288",probe:"PROBE-REQUIRED: parented message box exposed as AXSheet"},
+  diagnosticBackup:{roles:["AXButton"],label:"Create encrypted backup",src:"electron/recovery/index.html backup-encrypted"},
+  diagnosticConfirm:{roles:["AXButton"],label:"Create encrypted backup",sheet:true,src:"electron/installation-recovery-window.mjs:52"},
   inspectEncrypted:{roles:["AXButton"],label:"Inspect encrypted backup",src:"electron/recovery/index.html:23"},
   inspected:{pattern:"Backup inspected\\. No installation data has been changed\\.",src:"electron/recovery/renderer.js:75"},
   restoreEncrypted:{roles:["AXButton"],label:"Restore encrypted backup separately for review",src:"electron/recovery/index.html:56"},
@@ -250,6 +253,9 @@ try{
  if(timeoutCode!==0)throw{error:'AX-timeout-setup',code:timeoutCode};
  if(cmd.op==='pickPath'){
   if(typeof cmd.path!=='string'||cmd.path.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.path))throw{error:'picker-path'};
+  var actionButton=cmd.actionButton===undefined?'Open':cmd.actionButton;
+  if(['Open','Save'].indexOf(actionButton)<0)throw{error:'picker-action'};
+  if(actionButton==='Save'&&cmd.expectedName!=='murage-application-backup.age')throw{error:'picker-save-name'};
   var pickerApp=$.AXUIElementCreateApplication(cmd.pid),observed={requestedPath:cmd.path,requestedPid:cmd.pid,processPresent:ps.length===1,axTrusted:Boolean($.AXIsProcessTrusted()),observations:0,retryableAXReads:0};
   function snapshot(){visited=0;queryWindows=0;return all();}
   function sameElement(a,b){return Boolean(a&&b&&$.CFEqual(a,b));}
@@ -278,14 +284,16 @@ try{
     delay(.1);
    }
   }
-  function openButtons(){var buttons=snapshot().filter(function(e){return role(e)==='AXButton'&&names(e).indexOf('Open')>=0;});observed.windowCount=queryWindows;observed.openButtonCount=buttons.length;return buttons;}
+  function openButtons(){var buttons=snapshot().filter(function(e){return role(e)==='AXButton'&&names(e).indexOf(actionButton)>=0;});observed.windowCount=queryWindows;observed.openButtonCount=buttons.length;return buttons;}
   try{
    if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
    p.frontmost=true;
    var initialButtons=awaitState(function(){var buttons=openButtons();return buttons.length===1?buttons:false;},'picker-open');
    var initialOpen=initialButtons[0],panel=readAX(initialOpen,'AXParent',true),depth=0;
    while(['AXSheet','AXWindow'].indexOf(role(panel))<0){if(++depth>32)throw{error:'picker-ancestor'};panel=readAX(panel,'AXParent',true);}
-   observed.panelRole=role(panel);observed.panelNames=names(panel);
+   observed.panelRole=role(panel);observed.panelNames=names(panel);observed.actionButton=actionButton;
+   function verifySaveName(){if(actionButton!=='Save')return;var fields=snapshot().filter(function(e){return role(e)==='AXTextField'&&readAX(e,'AXValue',false)===cmd.expectedName;});if(fields.length!==1)throw{error:'picker-save-name-readback',count:fields.length};observed.filenameReadback=cmd.expectedName;}
+   verifySaveName();
    var before=snapshot();
    se.keystroke('g',{using:['command down','shift down']});
    // The shortcut starts an asynchronous native Go-to dialog. Never type into the underlying picker.
@@ -301,6 +309,7 @@ try{
    se.keyCode(36);
    awaitState(function(){return !inTree(pathField);},'picker-go-to-dismissed');
    var ready=awaitState(function(){var buttons=openButtons();return buttons.length===1&&readAX(buttons[0],'AXEnabled',true)===true?buttons[0]:false;},'picker-open-enabled');
+   verifySaveName();
    var pressed=$.AXUIElementPerformAction(ready,$('AXPress'));observed.pressCode=pressed;
    if(pressed!==0)throw{error:'picker-open-press',code:pressed};
    // A successful AXPress alone does not prove the dialog accepted its selection.
@@ -369,7 +378,7 @@ async function waitInstalled(s,pid){
     }catch(error){record({step:"registration-ui-query-failed",pid,roles,label,result:lastResult});throw error;}
   });
 }
-const choosePath=(s,pid,file,name)=>step(`panel-${name}`,async()=>{const result=ax(s,{op:"pickPath",pid,path:file});record({step:`panel-observation-${name}`,result});check(result.ok,`picker-${name}`);return result;});
+const choosePath=(s,pid,file,name,options={})=>step(`panel-${name}`,async()=>{const result=ax(s,{op:"pickPath",pid,path:file,...options});record({step:`panel-observation-${name}`,result});check(result.ok,`picker-${name}`);return result;});
 
 async function launch(s,label,args=[]){
   const log=openSync(path.join(s.private,`${label}-${Date.now()}.log`),"wx",0o600);
@@ -507,6 +516,83 @@ async function launchConfigure(){
   await finishSetup(s,"configure","preScheduled",()=>Date.now()<s.dueAt-60000&&!coordinatorState(s)?.lastClosedResult&&archives(s).length===0);
   s.installed=true;saveState(s);record({step:"configured",label:s.label,plistSha256:s.plistSha256,dueAt:new Date(s.dueAt).toISOString(),job});
 }
+// Failure-only diagnostic: the parent freezes the failed receipt and supervises
+// this phase in a separate Node process, so synchronous native AX reads cannot
+// extend its three-minute bound. The original scheduled error is always rethrown.
+const SCHEDULED_DIAGNOSTIC_MS=180000;
+const diagnosticAdmission=path.join(E,"scheduled-recovery-diagnostic-admission.json");
+function recoveryDiagnosticResult(values,expectedOutput){
+  const lines=values.filter(value=>typeof value==="string").map(value=>redactSecretsInLine(value).trim());
+  if(lines.some(value=>value.includes("Working on the selected operation.")))return null;
+  const failures=lines.map(value=>/^(.*?)\s*\(([A-Z][A-Z0-9_]{0,100})\)$/.exec(value)).filter(Boolean);
+  const codes=[...new Set(failures.map(match=>match[2]))];
+  const saved=lines.some(value=>value===`Encrypted application-data backup saved and verified: ${expectedOutput}`);
+  check(codes.length<=1&&!(codes.length&&saved),"diagnostic-result-unambiguous");
+  if(codes.length)return{kind:"error",error:{code:codes[0],message:failures[0][1].replace(/\s+/g," ").slice(0,400)}};
+  return saved?{kind:"manual-saved-verified",error:null}:null;
+}
+async function admitScheduledRecoveryDiagnostic(s,originalError){
+  const state=coordinatorState(s),job=launchdJob(s);
+  if(state?.lastClosedResult?.status!=="needs-review"||state.lastClosedResult.reason!=="capture-unconfirmed"||archives(s).length!==0||bundleProcesses(s).length!==0||job?.pid){
+    record({step:"manual-recovery-diagnostic-skipped",reason:"failed-capture-or-quiet-precondition-not-established"});return;
+  }
+  for(const dir of [s.parent,s.userData])check(dir.startsWith(ROOT+"/")&&privateDir(dir),"diagnostic-owned-profile");
+  const data=lstatSync(s.requestedRoot);check(data.isDirectory()&&!data.isSymbolicLink()&&data.uid===s.uid&&!(data.mode&0o022)&&path.dirname(s.requestedRoot)===s.parent&&realpathSync.native(s.requestedRoot)===s.requestedRoot,"diagnostic-original-under-private-parent");
+  const key=lstatSync(s.keyFile);check(key.isFile()&&!key.isSymbolicLink()&&key.nlink===1&&key.uid===s.uid&&s.keyFile.startsWith(s.parent+"/")&&!s.keyFile.startsWith(s.requestedRoot+"/"),"diagnostic-same-independent-key");
+  const outputDir=path.join(s.parent,"scheduled-recovery-diagnostic"),output=path.join(outputDir,"murage-application-backup.age");
+  check(!exists(outputDir)&&!exists(diagnosticAdmission),"diagnostic-once");mkdirSync(outputDir,{mode:0o700});
+  const admission={version:1,requestedRoot:s.requestedRoot,userData:s.userData,exe:s.exe,keyFile:s.keyFile,outputDir,output,
+    coordinatorSha256:sha(readFileSync(path.join(s.control,"backup-coordinator.json"))),dataBefore:digestTree(s.requestedRoot),
+    originalFailure:{code:typeof originalError?.code==="string"?originalError.code:null,label:typeof originalError?.label==="string"?originalError.label:null},
+    budgets:{scheduled:GUI_SCHEDULE_BUDGETS,manual:"product defaults; not scheduler-budget equivalence"},maximumMs:SCHEDULED_DIAGNOSTIC_MS};
+  writeFileSync(diagnosticAdmission,JSON.stringify(admission,null,1)+"\n",{flag:"wx",mode:0o600});
+  const env={...BASE_ENV};for(const name of ["GITHUB_ACTIONS","RUNNER_ENVIRONMENT","RUNNER_TEMP","MURAGE_MAC_INSTALLED_CONFIRM","MURAGE_QUAL_EVIDENCE_DIR"])env[name]=process.env[name];
+  const result=await new Promise(resolve=>{
+    // One owned process group includes the diagnostic Node process and its AX
+    // helpers. Existing cleanup still verifies every signed-app child afterward.
+    const child=spawn(process.execPath,[process.argv[1],"diagnose-scheduled-capture"],{env,detached:true,stdio:"ignore"});
+    let timedOut=false,finished=false,grace;
+    const signalGroup=signal=>{if(!child.pid)return;try{process.kill(-child.pid,signal);}catch(error){if(error.code!=="ESRCH")try{record({step:"manual-recovery-diagnostic-signal-failed",code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error.code??"")?error.code:"SIGNAL_FAILED"});}catch{}}};
+    const timer=setTimeout(()=>{timedOut=true;signalGroup("SIGTERM");grace=setTimeout(()=>{if(child.exitCode===null&&child.signalCode===null)signalGroup("SIGKILL");},5000);},SCHEDULED_DIAGNOSTIC_MS);
+    const finish=value=>{if(finished)return;finished=true;clearTimeout(timer);clearTimeout(grace);resolve({...value,timedOut});};
+    child.once("error",error=>finish({code:null,signal:null,error:/^[A-Z][A-Z0-9_]{0,100}$/.test(error.code??"")?error.code:"DIAGNOSTIC_SPAWN_FAILED"}));
+    child.once("close",(code,signal)=>finish({code,signal,error:null}));
+  });
+  record({step:"manual-recovery-diagnostic-process",code:result.code,signal:result.signal,timedOut:result.timedOut,error:result.error,
+    originalScheduledFailureRetained:true,manualResultIsNotScheduledPass:true,remainingOwnedPids:bundleProcesses(s).map(item=>item.pid)});
+}
+async function diagnoseScheduledCapture(){
+  check(exists(diagnosticAdmission),"diagnostic-admission-required");
+  const s=loadState(),admission=JSON.parse(readFileSync(diagnosticAdmission,"utf8"));
+  check(admission.version===1&&admission.requestedRoot===s.requestedRoot&&admission.userData===s.userData&&admission.exe===s.exe&&admission.keyFile===s.keyFile&&admission.outputDir===path.join(s.parent,"scheduled-recovery-diagnostic")&&admission.output===path.join(admission.outputDir,"murage-application-backup.age"),"diagnostic-exact-admission");
+  check(privateDir(admission.outputDir)&&!exists(admission.output)&&bundleProcesses(s).length===0,"diagnostic-quiet-new-output");
+  check(sha(readFileSync(path.join(s.control,"backup-coordinator.json")))===admission.coordinatorSha256,"diagnostic-scheduler-state-frozen");
+  writeFileSync(path.join(E,"scheduled-recovery-diagnostic-started.json"),JSON.stringify({at:new Date().toISOString(),maximumMs:SCHEDULED_DIAGNOSTIC_MS})+"\n",{flag:"wx",mode:0o600});
+  const app=await launch(s,"scheduled-recovery-diagnostic",["--murage-backup-mode"]);
+  try{
+    check(sha(readFileSync(path.join(s.control,"backup-coordinator.json")))===admission.coordinatorSha256,"diagnostic-scheduler-state-before-action");
+    await press(s,app.pid,"diagnosticBackup",30000);
+    // The native Save panel's existing directory and default filename are both
+    // bounded/read back. Save support is a new native prerequisite, not a pass.
+    await choosePath(s,app.pid,admission.outputDir,"diagnostic-destination",{actionButton:"Save",expectedName:"murage-application-backup.age"});
+    await choosePath(s,app.pid,s.keyFile,"diagnostic-independent-key");
+    await press(s,app.pid,"diagnosticConfirm",30000);
+    const outcome=await until(()=>{const value=ax(s,{op:"texts",pid:app.pid,pattern:"Working on the selected operation\\.|Encrypted application-data backup saved and verified:|\\([A-Z][A-Z0-9_]{0,100}\\)$"});return value.ok?recoveryDiagnosticResult(value.texts,admission.output):null;},90000,"diagnostic-recovery-result",1000);
+    let archive=null;
+    if(outcome.kind==="manual-saved-verified"){
+      const stat=lstatSync(admission.output);check(stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1&&stat.size>0,"diagnostic-encrypted-output");
+      const fd=openSync(admission.output,"r"),header=Buffer.alloc(22);try{check(readSync(fd,header,0,22,0)===22&&header.toString()==="age-encryption.org/v1\n","diagnostic-age-header");}finally{closeSync(fd);}
+      archive={bytes:stat.size,sha256:stat.size<=GUI_SCHEDULE_BUDGETS.maxBytes?sha(readFileSync(admission.output)):null,hashReadCapBytes:GUI_SCHEDULE_BUDGETS.maxBytes};
+    }
+    record({step:"manual-recovery-diagnostic-result",outcome,archive,manualResultIsNotScheduledPass:true,budgets:admission.budgets});
+  }finally{
+    await quit(s,app,"scheduled-recovery-diagnostic");
+    const coordinatorUnchanged=sha(readFileSync(path.join(s.control,"backup-coordinator.json")))===admission.coordinatorSha256,rule=sidecarRule(admission.dataBefore,digestTree(s.requestedRoot));
+    record({step:"manual-recovery-diagnostic-preservation",coordinatorUnchanged,sidecars:rule,originalScheduledFailureRetained:true});
+    check(coordinatorUnchanged&&rule.ok,"diagnostic-originals-unchanged");
+  }
+}
+
 async function awaitScheduled(){
   const s=loadState();check(s.installed&&!s.scheduled,"installed-not-scheduled");const seen=new Set(),runsBefore=launchdJob(s)?.runs;check(Number.isSafeInteger(runsBefore),"launchd-runs-before");
   let result;try{result=await until(()=>{
@@ -514,7 +600,7 @@ async function awaitScheduled(){
     const alive=new Set(processes.map(p=>p.pid)),state=coordinatorState(s),list=archives(s),runs=launchdJob(s)?.runs;
     const done=state?.lastClosedResult?.status==="verified"&&state.lastVerified&&list.length===1&&runs>=runsBefore+1&&[...seen].every(pid=>!alive.has(pid));
     return done?{state,list,runs}:null;
-  },s.dueAt-Date.now()+8*60000,"scheduled-verified",1000);}catch(error){try{record({step:"scheduled-failure-diagnostic",diagnostic:scheduledFailureDiagnostic(s,seen,runsBefore)});}catch{}throw error;}
+  },s.dueAt-Date.now()+8*60000,"scheduled-verified",1000);}catch(error){try{record({step:"scheduled-failure-diagnostic",diagnostic:scheduledFailureDiagnostic(s,seen,runsBefore),originalFailure:{code:error?.code??null,label:error?.label??null}});await admitScheduledRecoveryDiagnostic(s,error);}catch(diagnosticError){try{record({step:"manual-recovery-diagnostic-unavailable",code:/^[A-Z][A-Z0-9_]{0,100}$/.test(diagnosticError?.code??"")?diagnosticError.code:"DIAGNOSTIC_PREPARATION_FAILED",originalScheduledFailureRetained:true});}catch{/* never replace the scheduled error with a diagnostic write error */}}throw error;}
   const bytes=readFileSync(path.join(s.destination,result.list[0])),rule=await operationEnd(s,"preScheduled","scheduled"),job=launchdJob(s);
   record({step:"scheduled-capture",runsBefore,runsAfter:result.runs,sampledDueSpawns:[...seen],spawnSampling:SPAWN_SAMPLING,job,lastClosedResult:result.state.lastClosedResult,lastVerified:result.state.lastVerified,archiveSha256:sha(bytes),archiveBytes:bytes.length,sidecars:rule});
   check(result.state.lastVerified.sha256===sha(bytes)&&result.state.lastVerified.bytes===bytes.length,"receipt-matches-archive");check(rule.ok,"original-sidecar-rule");
@@ -632,7 +718,7 @@ async function cleanupVerify(){
   record({step:"cleanup",terminated:remaining.map(p=>p.pid),left,registrationBeforeCleanup:job,registrationAfterCleanup,plistPresent,plistAfterCleanup,manualRemovalNotAPass:manual,keychainItemBeforeDelete:item,keychainCompleted:s.keychainIsolation?.completed??null,keychainCleanup:keychain,appLogs,productRemovalPassed:Boolean(s.removed)});
   check(left.length===0,"no-owned-processes-left");check(keychain.ok,"keychain-restored-task-keychain-absent");check(registrationAfterCleanup===null&&!plistAfterCleanup&&!manual?.error,"task-label-and-plist-absent");
 }
-const phases={admit,prepare,probe,"launch-configure":launchConfigure,"await-scheduled":awaitScheduled,"no-replay":noReplay,busy,remove,restore,"cleanup-verify":cleanupVerify};
+const phases={admit,prepare,probe,"launch-configure":launchConfigure,"await-scheduled":awaitScheduled,"diagnose-scheduled-capture":diagnoseScheduledCapture,"no-replay":noReplay,busy,remove,restore,"cleanup-verify":cleanupVerify};
 try{await phases[phase]();record({step:"phase-complete"});}
 catch(error){try{record({step:"phase-failed",label:typeof error?.label==="string"?error.label:null,code:typeof error?.code==="string"?error.code:null,screenshot:error?.screenshot??null});}catch{/* evidence write failed */}process.exitCode=1;}
 process.exit(process.exitCode??0);

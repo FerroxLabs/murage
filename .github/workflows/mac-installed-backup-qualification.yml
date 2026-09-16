@@ -18,10 +18,16 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: e4c1c049252b5b4f4d36609ef2c3f4b09e0b8740
+      ARTIFACT_SOURCE_SHA: 4c174a7883aa0bd6b62a86f1007492834b1b514a
       FIXTURE_SOURCE_SHA: ${{ github.sha }}
-      ARTIFACT_RUN_ID: "35114568618"
+      ARTIFACT_RUN_ID: "35134195338"
       ARTIFACT_RUN_ATTEMPT: "1"
+      ARTIFACT_ID: "10462179147"
+      ARTIFACT_DIGEST: sha256:e22ace952d47130b9af801449b336b10c0c4f90919fa498d3329917f527aa8e5
+      EVIDENCE_ARTIFACT_ID: "10462159188"
+      EVIDENCE_ARTIFACT_DIGEST: sha256:d6935cb4175448e2e20cd56fd438761933ec1158d12acf13cca0173fb286e57a
+      # R20: nineteen prior Mac rounds retained; one failure-only diagnostic.
+      MURAGE_MAC_QUALIFICATION_ROUND: "20"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,6 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$MURAGE_QUAL_EVIDENCE_DIR/producer-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > "$MURAGE_QUAL_EVIDENCE_DIR/producer-artifact.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EVIDENCE_ARTIFACT_ID" > "$MURAGE_QUAL_EVIDENCE_DIR/producer-evidence-artifact.json"
           python3 - <<'PYTHON'
           import json, os, pathlib
           p = pathlib.Path(os.environ['MURAGE_QUAL_EVIDENCE_DIR']) / 'producer-run.json'
@@ -54,6 +62,23 @@ jobs:
           assert run['status'] == 'completed' and run['conclusion'] == 'success'
           assert run['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
           assert run['run_attempt'] == int(os.environ['ARTIFACT_RUN_ATTEMPT'])
+          for filename, id_var, digest_var, expected_name in [
+              ('producer-artifact.json', 'ARTIFACT_ID', 'ARTIFACT_DIGEST', 'mac-qualification-arm64-' + os.environ['ARTIFACT_SOURCE_SHA']),
+              ('producer-evidence-artifact.json', 'EVIDENCE_ARTIFACT_ID', 'EVIDENCE_ARTIFACT_DIGEST', 'mac-qualification-evidence-' + os.environ['ARTIFACT_RUN_ID'] + '-' + os.environ['ARTIFACT_RUN_ATTEMPT']),
+          ]:
+              artifact = json.loads((p.parent / filename).read_text())
+              assert artifact['id'] == int(os.environ[id_var]) and artifact['name'] == expected_name
+              assert artifact['digest'] == os.environ[digest_var] and artifact['expired'] is False
+              assert artifact['workflow_run']['id'] == int(os.environ['ARTIFACT_RUN_ID'])
+              assert artifact['workflow_run']['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
+          (p.parent / 'round-contract.json').write_text(json.dumps({
+              'round': 20, 'priorMacRounds': 19, 'maximumJobMinutes': 60,
+              'diagnosticInvocationsPerFailedProfile': 1,
+              'scheduledFailureAlwaysRethrown': True, 'manualResultIsScheduledPass': False,
+              'artifactSource': os.environ['ARTIFACT_SOURCE_SHA'],
+              'fixtureSource': os.environ['FIXTURE_SOURCE_SHA'],
+              'producerRun': int(os.environ['ARTIFACT_RUN_ID']), 'producerAttempt': int(os.environ['ARTIFACT_RUN_ATTEMPT']),
+          }, indent=2) + '\n')
           PYTHON
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
