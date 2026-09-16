@@ -55,11 +55,20 @@ async function settingsTree(pid,label){
 const texts=t=>t.elements.flatMap(n=>[...n.names,typeof n.value==='string'?n.value:'']).filter(Boolean);
 const shot=label=>{const file=path.join(E,label+'.png');must(run('/usr/sbin/screencapture',['-x',file]),'SCREENSHOT_'+label);return path.basename(file);};
 async function press(pid,label,roles=['AXButton'],extra={}){
+ const deadline=Date.now()+15000,remaining=()=>{const ms=deadline-Date.now();check(ms>0,'PRESS_'+label);return ms;};
  let last,queries=0;
- try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra});queries++;return last.ok&&last.count===1;},15000,'UNIQUE_'+label);}
+ try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra},{timeout:remaining()});queries++;return last.ok&&last.count===1;},remaining(),'UNIQUE_'+label);}
  catch(error){record('selector-query-failed',{pid,label,roles,queries,result:last??null});throw error;}
- if(label==='Send message'){const enabled=ax(pid,{op:'state',label,roles,...extra});record('send-enabled',{pid,result:enabled});check(enabled.ok&&enabled.enabled===true,'SEND_ENABLED');}
- const result=ax(pid,{op:'press',label,roles,...extra,...(label==='Send message'?{requireEnabled:true}:{})});record('press',{pid,label,result});check(result.ok,'PRESS_'+label);
+ if(label==='Send message'){const enabled=ax(pid,{op:'state',label,roles,...extra},{timeout:remaining()});record('send-enabled',{pid,result:enabled});check(enabled.ok&&enabled.enabled===true,'SEND_ENABLED');}
+ for(let readAttempt=1;readAttempt<=3;readAttempt++){
+  const result=ax(pid,{op:'press',label,roles,...extra,...(label==='Send message'?{requireEnabled:true}:{})},{timeout:remaining()});record('press',{pid,label,readAttempt,result});
+  if(result.ok)return;
+  // Re-enter only a provably read-only stale snapshot. AXPress and uncertain
+  // subprocess outcomes are never retried; each fresh tree repeats uniqueness
+  // and enabled checks before the one allowed action.
+  if(result.error==='AX-read'&&result.code===-25202&&result.actionAttempted===false&&readAttempt<3&&Date.now()<deadline){record('press-preaction-refresh',{pid,label,readAttempt,attribute:result.attribute??null,code:result.code});continue;}
+  check(false,'PRESS_'+label);
+ }
 }
 function key(pid,value){const result=ax(pid,{op:'key',key:value});check(result.ok,'KEY_'+value);}
 function state(pid,label,roles=['AXCheckBox'],extra={}){const value=ax(pid,{op:'state',label,roles,...extra});check(value.ok,'STATE_'+label);return value;}

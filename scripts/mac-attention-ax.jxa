@@ -12,7 +12,7 @@ function dndToggleSelection(elements){
  return {ok:true,count:1,index:elements.indexOf(n),role:n.role,names:n.names,value:value};
 }
 function run(argv){
- var c=JSON.parse(argv[0]),started=Date.now(),nodes=[],windows=[],visited=0;
+ var c=JSON.parse(argv[0]),started=Date.now(),nodes=[],windows=[],visited=0,actionAttempted=false;
  if(c.op==='systemApplication'){
   try{
    if(['NotificationCenter','ControlCenter'].indexOf(c.name)<0)throw Error('system-name');
@@ -46,7 +46,7 @@ function run(argv){
  function scope(){if(!c.scopeName)return null;var s=nodes.map(function(n,i){return {n:n,i:i};}).filter(function(x){return x.n.names.indexOf(c.scopeName)>=0;});if(s.length!==1)fail('AX-scope',{count:s.length});return s[0].i;}
  function matches(){var sc=scope();return nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return (sc===null||within(x.i,sc))&&(!c.roles||c.roles.indexOf(x.n.role)>=0)&&x.n.names.some(function(name){return c.prefix?name===c.label||name.indexOf(c.label+' ')===0:name===c.label;});});}
  function one(){var found=matches();if(found.length!==1)fail('AX-match',{count:found.length,label:c.label});return found[0].n;}
- function press(n){if((c.requireEnabled?read(n.e,'AXEnabled',true)!==true:read(n.e,'AXEnabled',false)===false))fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
+ function press(n){if((c.requireEnabled?read(n.e,'AXEnabled',true)!==true:read(n.e,'AXEnabled',false)===false))fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');actionAttempted=true;var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
  try{
   if(!Number.isInteger(c.pid)||c.pid<=0)fail('AX-pid');
   if(!$.AXIsProcessTrusted())fail('AX-client-not-trusted');
@@ -87,5 +87,5 @@ function run(argv){
    if(candidates.length!==1)fail('notification-permission-not-observed',{count:candidates.length});press(candidates[0]);return JSON.stringify({ok:true,scope:'Murage OS notification permission only'});
   }
   fail('AX-op');
- }catch(e){return JSON.stringify({ok:false,error:e.error||String(e),code:e.code===undefined?null:e.code,attribute:e.attribute||null,count:e.count===undefined?null:e.count,label:e.label||null,observed:e.observed||null,visited:visited,elapsedMs:Date.now()-started});}
+ }catch(e){return JSON.stringify({ok:false,actionAttempted:actionAttempted,error:e.error||String(e),code:e.code===undefined?null:e.code,attribute:e.attribute||null,count:e.count===undefined?null:e.count,label:e.label||null,observed:e.observed||null,visited:visited,elapsedMs:Date.now()-started});}
 }

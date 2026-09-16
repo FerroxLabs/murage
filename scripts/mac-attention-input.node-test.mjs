@@ -11,9 +11,9 @@ function helper(options={}){
  const field=node('AXTextArea','Message B35'),button=node('AXButton','Send message'),app=node('AXApplication','Murage',[field,button]);button.AXEnabled=options.buttonEnabled??true;
  let clock=0,set=false,reads=0;const events=[],dollar=x=>x;
  Object.assign(dollar,{AXIsProcessTrusted:()=>true,AXUIElementCreateApplication:()=>app,AXUIElementCreateSystemWide:()=>({}),AXUIElementSetMessagingTimeout:()=>0,
-  AXUIElementCopyAttributeValue:(e,k,r)=>{if(set&&e===field&&k==='AXValue'){if(options.readError)return -25204;r[0]=++reads<=(options.delayReads??0)?'':Object.hasOwn(options,'readback')?options.readback:field.AXValue;return 0;}if(!Object.hasOwn(e,k))return -25205;r[0]=e[k];return 0;},
+  AXUIElementCopyAttributeValue:(e,k,r)=>{if(options.roleError&&k==='AXRole')return -25202;if(set&&e===field&&k==='AXValue'){if(options.readError)return -25204;r[0]=++reads<=(options.delayReads??0)?'':Object.hasOwn(options,'readback')?options.readback:field.AXValue;return 0;}if(!Object.hasOwn(e,k))return -25205;r[0]=e[k];return 0;},
   AXUIElementCopyActionNames:(_e,r)=>{r[0]=['AXPress'];return 0;},AXUIElementIsAttributeSettable:(_e,_k,r)=>{r[0]=options.settable??true;return options.settableCode??0;},
-  AXUIElementSetAttributeValue:(e,k,v)=>{events.push({kind:'set',value:v});set=true;e[k]=v;return options.setCode??0;},AXUIElementPerformAction:()=>{events.push({kind:'press'});return 0;}});
+  AXUIElementSetAttributeValue:(e,k,v)=>{events.push({kind:'set',value:v});set=true;e[k]=v;return options.setCode??0;},AXUIElementPerformAction:()=>{events.push({kind:'press'});return options.pressCode??0;}});
  const run=runInNewContext(jxa+';run',{Application:()=>({processes:{whose:()=>[{}]},keystroke:()=>assert.fail('no keyboard fallback')}),ObjC:{import(){},bindFunction(){},deepUnwrap:x=>x},$:dollar,Ref:()=>[],Date:{now:()=>clock},delay:()=>{clock+=1000;}});
  return{events,query:c=>JSON.parse(run([JSON.stringify({pid:123,roles:['AXTextArea','AXTextField'],label:'Message B35',...c})]))};
 }
@@ -106,4 +106,28 @@ test('recorded B35 R15 Tools popup keeps exact native role through selector and 
  await run([recorded])({pid:123});
  assert.deepEqual(calls,[{pid:123,label:'Tools, 0 pending approvals',roles:['AXPopUpButton'],extra:{}},{pid:123,label:'Pending approvals',roles:['AXMenuItem'],extra:{prefix:true}}]);
  for(const elements of [[],[recorded,{...recorded,index:71}],[{...recorded,role:'AXButton'}],[{...recorded,names:['Other tools']}],[{...recorded,names:['Toolshed']}]]){const before=calls.length;await assert.rejects(run(elements)({pid:123}),/TOOLS_UNIQUE/);assert.equal(calls.length,before);}
+});
+
+function stalePressFixture(results,{readCost=100}={}){
+ const fn=source.slice(source.indexOf('async function press(pid,label,roles='),source.indexOf('\nfunction key('));let clock=0,reads=0,actions=0;const calls=[],records=[];
+ const press=runInNewContext('('+fn+')',{Date:{now:()=>clock},check,record:(step,value)=>records.push({step,...value}),until:async fn=>{const v=await fn();check(v,'UNIQUE');return v;},ax:(pid,cmd,options)=>{
+  calls.push({pid,cmd,options});if(cmd.op==='count')return{ok:true,count:1};if(cmd.op==='state')return{ok:true,enabled:true};
+  const result=results[Math.min(reads++,results.length-1)];clock+=Math.min(readCost,options.timeout);if(result.ok||result.actionAttempted===true)actions++;return result;
+ }});return{press,calls,records,reads:()=>reads,actions:()=>actions,time:()=>clock};
+}
+test('AX helper reports whether the native press was attempted',()=>{
+ const stale=helper({roleError:true}),a=stale.query({op:'press',roles:['AXButton'],label:'Send message',requireEnabled:true});assert.equal(a.error,'AX-read');assert.equal(a.code,-25202);assert.equal(a.actionAttempted,false);assert.equal(stale.events.length,0);
+ const failed=helper({pressCode:-25202}),b=failed.query({op:'press',roles:['AXButton'],label:'Send message',requireEnabled:true});assert.equal(b.error,'AX-press');assert.equal(b.actionAttempted,true);assert.equal(failed.events.filter(e=>e.kind==='press').length,1);
+});
+test('pre-action stale read refreshes a fresh exact selector then performs only one action',async()=>{
+ const f=stalePressFixture([{ok:false,error:'AX-read',code:-25202,attribute:'AXRole',actionAttempted:false},{ok:true}]);await f.press(123,'Observer');assert.equal(f.reads(),2);assert.equal(f.actions(),1);assert.equal(f.records.filter(x=>x.step==='press-preaction-refresh').length,1);assert(f.calls.every(x=>x.pid===123&&x.cmd.label==='Observer'));assert(f.calls[2].options.timeout<f.calls[1].options.timeout);
+});
+test('action failures or ambiguous responses are never retried',async()=>{
+ for(const result of [{ok:false,error:'AX-press',code:-25202,actionAttempted:true},{ok:false,error:'AX-read',code:-25202,actionAttempted:true},{ok:false,error:'AX-read',code:-25202},{ok:false,error:'osascript',timedOut:true},{ok:false,error:'AX-read',code:-25204,actionAttempted:false}]){
+  const f=stalePressFixture([result,{ok:true}]);await assert.rejects(f.press(123,'Observer'),/PRESS_Observer/);assert.equal(f.reads(),1);assert.equal(f.records.filter(x=>x.step==='press-preaction-refresh').length,0);
+ }
+});
+test('stale-read attempt cap and original shared deadline fail without an action',async()=>{
+ const stale={ok:false,error:'AX-read',code:-25202,attribute:'AXRole',actionAttempted:false};const attempts=stalePressFixture([stale]);await assert.rejects(attempts.press(123,'Observer'),/PRESS_Observer/);assert.equal(attempts.reads(),3);assert.equal(attempts.actions(),0);
+ const deadline=stalePressFixture([stale],{readCost:9000});await assert.rejects(deadline.press(123,'Observer'),/PRESS_Observer/);assert.equal(deadline.time(),15000);assert.equal(deadline.reads(),2);assert.equal(deadline.actions(),0);
 });

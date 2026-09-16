@@ -9,12 +9,12 @@
   "zipSha256": "91cc768bad731d978f44fa378c2aeaac5f9dcbda5e818e79c05f9ee381baae79",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-23T19:41:47Z",
-  "nativeRoundsUsed": 24,
+  "nativeRoundsUsed": 25,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R25 confirmation under standing corrective authority: parse exact true/false/enabled/disabled launchctl override values, reject unknown matching entries, and retain target state before unchanged policy refusal. Derive the exact service label from verified Apple plist, preserve before-state and restore only that service. Same c889 artifact; original triggers,20second wait and all acceptance unchanged. Prior24 native runs retained; one60minute push-triggered run.",
+  "admission": "One R26 confirmation under standing corrective authority: allow at most3 fresh AX read attempts only for explicit AX-read/-25202 with actionAttempted=false, sharing the existing15second press deadline. Never retry AXPress or uncertain results. Same signed c889 artifact, verified NotificationCenter repair/restoration, original20second banner wait and acceptance unchanged. Prior25 native runs retained; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -59,5 +59,13 @@
       "disabled"
     ],
     "unrecognizedMatchingValueRefused": true
+  },
+  "preActionReadRefresh": {
+    "maximumReadAttempts": 3,
+    "overallPressDeadlineMs": 15000,
+    "retryableError": "AX-read",
+    "retryableCode": -25202,
+    "requiresActionAttemptedFalse": true,
+    "retryAction": false
   }
 }
