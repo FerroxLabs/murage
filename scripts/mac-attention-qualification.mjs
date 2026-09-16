@@ -107,6 +107,17 @@ async function prepare(){
 }
 let active;
 const api=async(s,route)=>{check(route.startsWith('/api/'),'READ_PATH');const res=await fetch('http://127.0.0.1:'+s.port+route,{signal:AbortSignal.timeout(5000),redirect:'error'});check(res.ok,'READ_API_'+res.status);return res.json();};
+function ownedServerGeneration(log,entry){
+ let current=null;
+ for(const line of log.split(/\r?\n/)){
+  const fork=/^\[[^\]]+\] fork (.+) port=(\d+)$/.exec(line);
+  if(fork){const port=Number(fork[2]);current=fork[1]===entry&&port>0&&port<=65535?{generation:line,port,pid:null}:null;continue;}
+  if(/^\[[^\]]+\] exited /.test(line)){current=null;continue;}
+  const spawn=/^\[[^\]]+\] spawned pid=(\d+)$/.exec(line);
+  if(current&&spawn)current.pid=Number(spawn[1]);
+ }
+ return current&&Number.isInteger(current.pid)&&current.pid>0?current:null;
+}
 async function selectBot(s,kind){const b=s.bots[kind];await press(s.pid,b.name,['AXButton','AXCheckBox'],{prefix:true,scopeName:'Bots and navigation'});await until(()=>{const t=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+b.name});return t.ok&&t.count===1;},10000,'SELECTED_'+kind);}
 async function settings(s,changes){await press(s.pid,'App settings');await press(s.pid,'General');for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
 const pending=async(s,kind)=>{const list=await api(s,'/api/inbox?view=approvals&pageSize=25');const items=list.items.filter(x=>x.link?.threadId===s.bots[kind].threadId);return items.length===1?items[0]:null;};
@@ -127,11 +138,15 @@ async function journey(){
   await until(()=>{const r=ax(s.pid,{op:'manual'});return r.ok;},15000,'MANUAL_AX');
   await until(async()=>{
    const log=path.join(s.userData,'logs/server.log');if(!existsSync(log))return false;
-   const found=[...readFileSync(log,'utf8').matchAll(/fork .*\/server\/index\.js port=(\d+)/g)].at(-1);if(!found)return false;s.port=Number(found[1]);
+   const expectedEntry=s.app+'/Contents/Resources/server/index.js';
+   const found=ownedServerGeneration(readFileSync(log,'utf8'),expectedEntry);if(!found)return false;s.port=found.port;
    let health;
    try{health=await api(s,'/api/health');}catch(error){record('server-not-ready',{port:s.port,error:error.name,code:error.cause?.code??null});return false;}
-   const owned=ps().find(row=>row.pid===health.pid&&row.command.includes(s.app+'/Contents/Resources/server/index.js'));
-   check(health.app==='murage'&&Boolean(owned),'OWNED_SERVER_HEALTH_IDENTITY');
+   const after=ownedServerGeneration(readFileSync(log,'utf8'),expectedEntry);if(JSON.stringify(after)!==JSON.stringify(found))return false;
+   const processes=ps(),owned=processes.find(row=>row.pid===found.pid&&row.command.startsWith(s.app+'/Contents/'));
+   const main=processes.find(row=>row.pid===s.pid&&row.command.startsWith(s.app+'/Contents/'));
+   record('server-health-identity',{port:s.port,loggedPid:found.pid,healthApp:health.app??null,healthPid:health.pid??null,ownedBundle:Boolean(owned),ownedMain:Boolean(main)});
+   check(health.app==='murage'&&health.pid===found.pid&&Boolean(owned)&&Boolean(main),'OWNED_SERVER_HEALTH_IDENTITY');
    record('server-ready',{port:s.port,pid:health.pid});return true;
   },30000,'OWNED_SERVER_READY');save(s);
   const instances=(await api(s,'/api/instances')).instances;check(instances.length===1&&instances[0].instanceId==='attention-fixture'&&instances[0].driverKind==='claudeAgent'&&instances[0].models.options.some(x=>x.id==='claude-sonnet-5'),'SYNTHETIC_INSTANCE_IDENTITY');
