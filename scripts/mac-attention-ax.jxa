@@ -1,5 +1,5 @@
 // B35-only bounded adaptation of the accepted public AX query primitive.
-// Real key events/actions only; no DOM, AppleScript coordinates, or notification IPC.
+// Public AX values and actions only; no DOM, AppleScript coordinates, or notification IPC.
 // Pure selector: the observed tile changes from Focus to Do Not Disturb.
 // A binary AXValue is required; a selected menu/navigation button is not DND state.
 function dndToggleSelection(elements){
@@ -31,6 +31,7 @@ function run(argv){
  ObjC.bindFunction('AXUIElementCreateSystemWide',['id',[]]);
  ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
  ObjC.bindFunction('AXUIElementCopyActionNames',['int',['id','id *']]);
+ ObjC.bindFunction('AXUIElementIsAttributeSettable',['int',['id','id','unsigned char *']]);
  ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
  ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
  ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
@@ -45,7 +46,7 @@ function run(argv){
  function scope(){if(!c.scopeName)return null;var s=nodes.map(function(n,i){return {n:n,i:i};}).filter(function(x){return x.n.names.indexOf(c.scopeName)>=0;});if(s.length!==1)fail('AX-scope',{count:s.length});return s[0].i;}
  function matches(){var sc=scope();return nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return (sc===null||within(x.i,sc))&&(!c.roles||c.roles.indexOf(x.n.role)>=0)&&x.n.names.some(function(name){return c.prefix?name===c.label||name.indexOf(c.label+' ')===0:name===c.label;});});}
  function one(){var found=matches();if(found.length!==1)fail('AX-match',{count:found.length,label:c.label});return found[0].n;}
- function press(n){if(read(n.e,'AXEnabled',false)===false)fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
+ function press(n){if((c.requireEnabled?read(n.e,'AXEnabled',true)!==true:read(n.e,'AXEnabled',false)===false))fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
  try{
   if(!Number.isInteger(c.pid)||c.pid<=0)fail('AX-pid');
   if(!$.AXIsProcessTrusted())fail('AX-client-not-trusted');
@@ -80,7 +81,14 @@ function run(argv){
   if(c.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,visited:visited});}
   if(c.op==='state'){var n=one();return JSON.stringify({ok:true,value:n.value,selected:read(n.e,'AXSelected',false),enabled:read(n.e,'AXEnabled',false),role:n.role,names:n.names});}
   if(c.op==='press'){press(one());return JSON.stringify({ok:true});}
-  if(c.op==='type'){var n=one(),ps=Application('System Events').processes.whose({unixId:c.pid});if(ps.length!==1||typeof c.text!=='string')fail('AX-type');ps[0].frontmost=true;code=$.AXUIElementSetAttributeValue(n.e,$('AXFocused'),$(true));if(code!==0)fail('AX-focus',{code:code});delay(.2);var se=Application('System Events');se.keystroke('a',{using:'command down'});se.keystroke(c.text);return JSON.stringify({ok:true});}
+  if(c.op==='type'){
+   var n=one(),ps=Application('System Events').processes.whose({unixId:c.pid}),observed={requested:c.text,role:n.role,enabled:read(n.e,'AXEnabled',true),readback:null};
+   if(ps.length!==1||typeof c.text!=='string'||!c.text.length||['AXTextArea','AXTextField'].indexOf(n.role)<0||observed.enabled!==true)fail('AX-type',{observed:observed});
+   var settable=Ref();observed.settableCode=$.AXUIElementIsAttributeSettable(n.e,$('AXValue'),settable);observed.settable=observed.settableCode===0&&Boolean(settable[0]);if(!observed.settable)fail('AX-type-not-settable',{observed:observed});
+   observed.setCode=$.AXUIElementSetAttributeValue(n.e,$('AXValue'),$(c.text));if(observed.setCode!==0)fail('AX-type-set',{observed:observed});
+   try{for(;;){bound();observed.readback=read(n.e,'AXValue',true);if(observed.readback===c.text)return JSON.stringify({ok:true,observed:observed});delay(.1);}}
+   catch(error){error.observed=observed;throw error;}
+  }
   if(c.op==='pressNotification'){
    if(typeof c.marker!=='string'||c.marker.length<8)fail('notification-marker');var candidates=[];
    nodes.forEach(function(n,i){if(text(n).indexOf(c.marker)<0)return;var at=i;while(at>=0){var candidate=nodes[at];if(['AXButton','AXGroup'].indexOf(candidate.role)>=0&&actions(candidate.e).indexOf('AXPress')>=0){if(candidates.indexOf(at)<0)candidates.push(at);break;}at=candidate.parent;}});
@@ -91,5 +99,5 @@ function run(argv){
    if(candidates.length!==1)fail('notification-permission-not-observed',{count:candidates.length});press(candidates[0]);return JSON.stringify({ok:true,scope:'Murage OS notification permission only'});
   }
   fail('AX-op');
- }catch(e){return JSON.stringify({ok:false,error:e.error||String(e),code:e.code===undefined?null:e.code,attribute:e.attribute||null,count:e.count===undefined?null:e.count,label:e.label||null,visited:visited,elapsedMs:Date.now()-started});}
+ }catch(e){return JSON.stringify({ok:false,error:e.error||String(e),code:e.code===undefined?null:e.code,attribute:e.attribute||null,count:e.count===undefined?null:e.count,label:e.label||null,observed:e.observed||null,visited:visited,elapsedMs:Date.now()-started});}
 }

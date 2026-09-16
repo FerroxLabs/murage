@@ -18,8 +18,8 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: c30c741c1cebe718fd64736c498158c89bcc81e9
-      ARTIFACT_RUN_ID: "35049388628"
+      ARTIFACT_SOURCE_SHA: 55afcb29198e4c265148e041c575d323e8f1735d
+      ARTIFACT_RUN_ID: "35107217901"
       ARTIFACT_RUN_ATTEMPT: "1"
       MURAGE_B35_NATIVE_CONFIRM: disposable-packaged-attention
     steps:
@@ -48,21 +48,21 @@ jobs:
           assert run['status']=='completed' and run['conclusion']=='success'
           assert run['head_sha']==os.environ['ARTIFACT_SOURCE_SHA'] and run['run_attempt']==1
           artifacts=json.loads((root/'artifacts.json').read_text())['artifacts']
-          expected={10428731478:'sha256:e4ccdf5390d3046e4046d1fb50873ac758d2266227b8c257e25b3ae5eac8f483',10427809452:'sha256:1283d1f9d538eeda8f9d3c8eb75d5f1ed3637b4e66f9b3069e8be4c4b238318e'}
+          expected={10451432986:'sha256:9b8551083ac86fa0291bdd19e42eeeba40d2ae334ea1ecfd19372562f1a399de',10451128721:'sha256:3a17ff1a99827120dcf177addad59ed4592ee8be5a765f67ce88a210488bb7b7'}
           for identifier,digest in expected.items():
               row=next(a for a in artifacts if a['id']==identifier)
               assert row['expired'] is False and row['digest']==digest
           PYTHON
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: "10428731478"
+          artifact-ids: "10451432986"
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-b35-native/artifact
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: "10427809452"
+          artifact-ids: "10451128721"
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-b35-native/artifact/evidence

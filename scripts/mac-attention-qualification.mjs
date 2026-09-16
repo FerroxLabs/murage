@@ -1,12 +1,12 @@
 // B35 packaged attention consumer only. Source checks do not run this journey.
 import {spawn} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
-import {existsSync,mkdirSync,readFileSync,writeFileSync,openSync,closeSync,readSync,realpathSync,rmSync} from 'node:fs';
+import {existsSync,mkdirSync,readFileSync,writeFileSync,openSync,closeSync,readSync,realpathSync,rmSync,readdirSync,lstatSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {userInfo} from 'node:os';
 import {runCommand,setupKeychain,cleanupKeychain,guiBackupFixtureBot} from './mac-installed-backup-qualification-lib.mjs';
-import {redactSecretsInLine} from '../electron/diagnostics.mjs';
+import {redactSecretsInLine,readSafeLogTail} from '../electron/diagnostics.mjs';
 const DIR=path.dirname(fileURLToPath(import.meta.url)),REPO=path.dirname(DIR),C=JSON.parse(readFileSync(path.join(DIR,'mac-attention-contract.json'),'utf8'));
 const phase=process.argv[2],args=process.argv.slice(3),hash=b=>createHash('sha256').update(b).digest('hex');
 if(phase==='plan'){console.log(JSON.stringify(C,null,2));process.exit(0);}
@@ -42,7 +42,8 @@ async function press(pid,label,roles=['AXButton'],extra={}){
  let last,queries=0;
  try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra});queries++;return last.ok&&last.count===1;},15000,'UNIQUE_'+label);}
  catch(error){record('selector-query-failed',{pid,label,roles,queries,result:last??null});throw error;}
- const result=ax(pid,{op:'press',label,roles,...extra});record('press',{pid,label,result});check(result.ok,'PRESS_'+label);
+ if(label==='Send message'){const enabled=ax(pid,{op:'state',label,roles,...extra});record('send-enabled',{pid,result:enabled});check(enabled.ok&&enabled.enabled===true,'SEND_ENABLED');}
+ const result=ax(pid,{op:'press',label,roles,...extra,...(label==='Send message'?{requireEnabled:true}:{})});record('press',{pid,label,result});check(result.ok,'PRESS_'+label);
 }
 function key(pid,value){const result=ax(pid,{op:'key',key:value});check(result.ok,'KEY_'+value);}
 function state(pid,label,roles=['AXCheckBox'],extra={}){const value=ax(pid,{op:'state',label,roles,...extra});check(value.ok,'STATE_'+label);return value;}
@@ -129,11 +130,31 @@ const pending=async(s,kind)=>{const list=await api(s,'/api/inbox?view=approvals&
 const notice=(s,label)=>{const t=tree(systemPid('NotificationCenter'),label);return{tree:t,text:texts(t).join('\n')};};
 async function sampleNoBanner(s,marker,kind){const samples=[];for(let i=0;i<4;i++){check(!stopping,'STOPPED');const n=notice(s,kind+'-'+i);samples.push({at:new Date().toISOString(),present:n.text.includes(marker),screenshot:shot(kind+'-'+i)});await pause(3000);}record(kind+'-absence',{marker,samples,windowMs:12000});check(samples.every(x=>!x.present),kind.toUpperCase()+'_BANNER_PRESENT');check(await pending(s,kind),'PENDING_PRESERVED_'+kind);}
 async function resolveDeny(s,kind){await selectBot(s,kind);const action='B35_SYNTHETIC_NO_EXECUTION_'+kind+'_'+s.runId;await until(()=>texts(tree(s.pid,'card-'+kind)).some(x=>x.includes(action)),10000,'EXACT_CARD_'+kind);check(await pending(s,kind),'PENDING_BEFORE_DENY_'+kind);await press(s.pid,'Deny');await until(()=>existsSync(path.join(s.control,'decision-'+kind+'.json')),10000,'DECISION_'+kind);const decision=JSON.parse(readFileSync(path.join(s.control,'decision-'+kind+'.json'),'utf8'));check(decision.decision?.behavior==='deny','DENY_ONLY_'+kind);await until(async()=>!(await pending(s,kind)),10000,'RESOLVED_'+kind);record('denied',{kind,decision});}
-async function trigger(s,kind){
- const b=s.bots[kind],marker=kind==='private'?'Your attention is needed.':b.name;check(!notice(s,'before-'+kind).text.includes(marker),'NATIVE_MARKER_PREEXISTS_'+kind);await selectBot(s,kind);
- const typed=ax(s.pid,{op:'type',roles:['AXTextArea','AXTextField'],label:'Message '+b.name,text:'B35_NATIVE_PHASE:'+kind+'-'+s.runId});check(typed.ok,'COMPOSER_'+kind);await press(s.pid,'Send message');await until(()=>existsSync(path.join(s.control,'started-'+kind+'.json')),15000,'SYNTHETIC_STARTED_'+kind);await selectBot(s,'observer');
- writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});const item=await until(()=>pending(s,kind),15000,'CANONICAL_PENDING_'+kind);record('canonical-request',{kind,item});return{marker,item};
+function triggerMessages(value){const rows=Array.isArray(value)?value:value?.messages;check(Array.isArray(rows),'THREAD_MESSAGES_SHAPE');return rows;}
+function receivedTrigger(before,after,expected){
+ const known=new Set(before.map(m=>m.id)),fresh=after.filter(m=>m.role==='user'&&m.kind==='text'&&!known.has(m.id));
+ if(!fresh.length)return null;check(fresh.length===1&&fresh[0].text===expected,'EXACT_RECEIVED_TRIGGER');return fresh[0];
 }
+async function triggerFailureEvidence(s,kind){
+ const evidence={kind,threadId:s.bots[kind].threadId,logs:[]};
+ try{const rows=triggerMessages(await api(s,'/api/threads/'+s.bots[kind].threadId+'/messages'));const name='trigger-'+kind+'-messages.txt';writeFileSync(path.join(E,name),redactSecretsInLine(JSON.stringify(rows.slice(-20))).slice(-20000),{mode:0o600});evidence.messages=name;}catch(error){evidence.messagesUnavailable=error.gate??error.code??error.name;}
+ const keep=(file,name)=>{const tail=readSafeLogTail(file,20000);if(!tail){evidence.logs.push({name,unavailable:true});return;}writeFileSync(path.join(E,name),redactSecretsInLine(tail.tail),{mode:0o600});evidence.logs.push({name,bytes:tail.bytes,redacted:true});};
+ try{keep(path.join(s.userData,'logs/server.log'),'trigger-'+kind+'-server.log');const native=path.join(s.data,'native');if(existsSync(native)&&!lstatSync(native).isSymbolicLink()&&realpathSync(native).startsWith(realpathSync(s.data)+path.sep)){for(const name of readdirSync(native).filter(n=>n.endsWith('.ndjson')).sort().slice(-4))keep(path.join(native,name),'trigger-'+kind+'-'+name);}else evidence.nativeUnavailable=true;}catch(error){evidence.logsUnavailable=error.code??error.name;}
+ record('trigger-failure-evidence',evidence);
+}
+async function trigger(s,kind){
+ const b=s.bots[kind],marker=kind==='private'?'Your attention is needed.':b.name;
+ try{
+  check(!notice(s,'before-'+kind).text.includes(marker),'NATIVE_MARKER_PREEXISTS_'+kind);await selectBot(s,kind);
+  const expected='B35_NATIVE_PHASE:'+kind+'-'+s.runId,before=triggerMessages(await api(s,'/api/threads/'+b.threadId+'/messages'));
+  const typed=ax(s.pid,{op:'type',roles:['AXTextArea','AXTextField'],label:'Message '+b.name,text:expected});record('composer-entry',{kind,result:typed});check(typed.ok,'COMPOSER_'+kind);await press(s.pid,'Send message');
+  const startedDeadline=Date.now()+15000;
+  const received=await until(async()=>receivedTrigger(before,triggerMessages(await api(s,'/api/threads/'+b.threadId+'/messages')),expected),Math.max(0,startedDeadline-Date.now()),'RECEIVED_TRIGGER_'+kind);record('received-trigger',{kind,threadId:b.threadId,message:received});
+  await until(()=>existsSync(path.join(s.control,'started-'+kind+'.json')),Math.max(0,startedDeadline-Date.now()),'SYNTHETIC_STARTED_'+kind);await selectBot(s,'observer');
+  writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});const item=await until(()=>pending(s,kind),15000,'CANONICAL_PENDING_'+kind);record('canonical-request',{kind,item});return{marker,item};
+ }catch(error){try{await triggerFailureEvidence(s,kind);}catch{}throw error;}
+}
+
 async function journey(){
  const s=load();check(s.prepared&&!s.journeyStarted,'JOURNEY_ONCE');s.journeyStarted=true;save(s);const timer=setTimeout(()=>{stopping=true;},C.scriptMinutes*60000);
  try{
