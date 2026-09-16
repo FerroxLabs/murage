@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -176,7 +176,7 @@ function digestFile(path: string): string {
  * publishes without replacing any existing destination. No runtime Store,
  * migration, provider or scheduler is constructed. Other app-state components
  * must eventually share this offline epoch in the complete backup builder. */
-async function snapshotDatabaseWhileOwned(dataDir: string, destination: string) {
+async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db", inspect: (db: DatabaseSync) => T) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   if (!destination || /[\r\n\0]/.test(destination) || [".", "..", ""].includes(basename(destination))) throw new InstallationSnapshotError("INVALID_DESTINATION");
   // Canonicalize the parent, not the file: an existing destination must be
@@ -192,31 +192,59 @@ async function snapshotDatabaseWhileOwned(dataDir: string, destination: string) 
   }
   let scratch: string | undefined;
   let source: DatabaseSync | undefined;
+  const originals:Array<{path:string;suffix:string;identity:Stats;fd:number;sha256?:string}>=[];
+  const equalIdentity=(a:Stats,b:Stats)=>a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs&&b.nlink===1;
+  const digestDescriptor=(fd:number)=>{const hash=createHash("sha256"),buffer=Buffer.alloc(64*1024);let offset=0;for(;;){const size=readSync(fd,buffer,0,buffer.length,offset);if(!size)return hash.digest("hex");hash.update(buffer.subarray(0,size));offset+=size;}};
   try {
-    const file = join(root, "messages.db");
+    const file = join(root, component);
     const identity = regularFile(file, true);
     if (!identity) return { status: "absent" as const };
-    for (const suffix of ["-wal", "-shm"]) regularFile(file + suffix, true);
-    // Private fresh staging is owned exclusively by this operation. linkSync
-    // below refuses any preexisting destination, including dangling symlinks.
+    // Read-only SQLite can update the original SHM read marks. Capture DB+WAL
+    // through held regular-file descriptors under the offline lease, then let
+    // SQLite reconstruct SHM only in private staging. Never open original SQLite.
+    for(const suffix of ["","-wal","-shm"]){
+      const before=suffix?regularFile(file+suffix,true):identity;if(!before)continue;
+      const fd=openSync(file+suffix,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW));
+      originals.push({path:file+suffix,suffix,identity:before,fd});
+      if(!equalIdentity(before,fstatSync(fd)))throw new InstallationSnapshotError("SOURCE_CHANGED");
+    }
+    const assertOriginals=()=>{
+      for(const suffix of ["","-wal","-shm"]){
+        const held=originals.find(entry=>entry.suffix===suffix),current=regularFile(file+suffix,true);
+        if(!held){if(current)throw new InstallationSnapshotError("SOURCE_CHANGED");continue;}
+        if(!current||!equalIdentity(held.identity,current)||!equalIdentity(held.identity,fstatSync(held.fd))||(held.sha256!==undefined&&digestDescriptor(held.fd)!==held.sha256))throw new InstallationSnapshotError("SOURCE_CHANGED");
+      }
+    };
     scratch = mkdtempSync(join(dirname(target), ".murage-database-snapshot-"));
-    const staged = join(scratch, "messages.db");
-    const fd = openSync(staged, "wx", 0o600);
-    closeSync(fd);
-    source = new DatabaseSync(file, { readOnly: true, timeout: 1000 });
-    const current = regularFile(file)!;
-    if (current.ino !== identity.ino || current.dev !== identity.dev) throw new InstallationSnapshotError("SOURCE_CHANGED");
-    inspectInstallationDatabase(source);
+    const inputDirectory=join(scratch,"source");mkdirSync(inputDirectory,{mode:0o700});
+    for(const held of originals){
+      const output=held.suffix==="-shm"?undefined:openSync(join(inputDirectory,component+held.suffix),"wx",0o600);
+      try{
+        const hash=createHash("sha256"),buffer=Buffer.alloc(64*1024);let offset=0;
+        for(;;){
+          const size=readSync(held.fd,buffer,0,buffer.length,offset);if(!size)break;
+          hash.update(buffer.subarray(0,size));
+          if(output!==undefined){let written=0;while(written<size)written+=writeSync(output,buffer,written,size-written);}
+          offset+=size;
+        }
+        held.sha256=hash.digest("hex");
+        if(offset!==held.identity.size)throw new InstallationSnapshotError("SOURCE_CHANGED");
+        if(output!==undefined)fsyncSync(output);
+      }finally{if(output!==undefined)closeSync(output);}
+    }
+    assertOriginals();
+    const staged = join(scratch, component);
+    const fd = openSync(staged, "wx", 0o600);closeSync(fd);
+    source = new DatabaseSync(join(inputDirectory,component), { readOnly: true, timeout: 1000 });
+    inspect(source);
     await backup(source, staged, { rate: 128 });
     source.close();
     source = undefined;
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
-    try { counts = inspectInstallationDatabase(copied); }
+    try { counts = inspect(copied); }
     finally { copied.close(); }
-    const after = regularFile(file)!;
-    if (after.ino !== identity.ino || after.dev !== identity.dev) throw new InstallationSnapshotError("SOURCE_CHANGED");
-    for (const suffix of ["-wal", "-shm"]) regularFile(file + suffix, true);
+    assertOriginals();
     const sha256 = digestFile(staged);
     const bytes = statSync(staged).size;
     const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.
@@ -230,14 +258,29 @@ async function snapshotDatabaseWhileOwned(dataDir: string, destination: string) 
   } finally {
     try { source?.close(); }
     finally {
+      for(const held of originals)closeSync(held.fd);
       if (scratch) rmSync(scratch, { recursive: true, force: true });
     }
   }
 }
 
+function snapshotDatabaseWhileOwned(dataDir: string, destination: string) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "messages.db", inspectInstallationDatabase);
+}
+// Preserve the projection in encrypted fidelity only. It is never activated or
+// migrated during restore; durable memory authority is already in messages.db.
+function snapshotMemoryIndexWhileOwned(dataDir: string, destination: string) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "memory-index.db", db => {
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
+    return {};
+  });
+}
+
 export interface OfflineInstallation {
   readonly dataDir: string;
   snapshotDatabase(destination: string): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
+  snapshotMemoryIndex(destination: string): Promise<Awaited<ReturnType<typeof snapshotMemoryIndexWhileOwned>>>;
 }
 
 /** Keep one ownership epoch around every component of an installation copy.
@@ -257,6 +300,13 @@ export async function withOfflineInstallation<T>(dataDir: string, operation: (in
         pending.add(result);
         // Attach a rejection handler without manufacturing an unhandled
         // finally() branch if an operation abandons its copy promise.
+        void result.then(() => pending.delete(result), () => pending.delete(result));
+        return result;
+      },
+      snapshotMemoryIndex(destination: string) {
+        if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
+        const result = snapshotMemoryIndexWhileOwned(root, destination);
+        pending.add(result);
         void result.then(() => pending.delete(result), () => pending.delete(result));
         return result;
       },

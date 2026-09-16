@@ -56,10 +56,11 @@ function parseFidelity(value:unknown,options:ArchiveLimits):FidelityManifest{
   const recovery=validateInstallationArchiveManifest(manifest.recovery,options);
   const expected=new Set(recovery.files.flatMap(file=>[`raw/${file.path}`,`recovery/${file.path}`]));
   const rawChannel=(path:string)=>path.startsWith("raw/channels/");
-  const rawOnly=(path:string)=>rawChannel(path)||path==="raw/startup-background.json";
+  const rawOnly=(path:string)=>rawChannel(path)||path==="raw/startup-background.json"||path==="raw/memory-index.db";
   const declared=new Set(manifest.files.map(file=>file.path));
   if([...expected].some(path=>!declared.has(path))||manifest.files.some(file=>!expected.has(file.path)&&!rawOnly(file.path)))fail("FIDELITY_RECOVERY_MISMATCH");
   if(manifest.files.some(file=>rawChannel(file.path))&&!manifest.coverage.components.some(component=>component.path==="channels"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
+  if(declared.has("raw/memory-index.db")&&!manifest.coverage.components.some(component=>component.path==="memory-index.db"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
   for(const file of recovery.files){const copy=manifest.files.find(candidate=>candidate.path===`recovery/${file.path}`);if(copy?.bytes!==file.bytes||copy.sha256!==file.sha256)fail("FIDELITY_RECOVERY_MISMATCH");}
   return manifest;
 }
@@ -124,7 +125,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       const streams=new Set<Readable>();let writer:ZipFile|undefined;
       try{
         stage.assertSourceUnchanged();
-        const fidelity=await inventoryFidelity(installation.dataDir,stage,options.selection,options);
+        const fidelity=await inventoryFidelity(installation,stage,options.selection,options);
         const recovery=validateInstallationArchiveManifest({...stage.manifest,format:"murage.installation",files:stage.manifest.files.map(file=>({...file,path:file.path.replaceAll("\\","/")}))},options);
         const files=[...fidelity.sources.map(file=>({path:`raw/${file.path}`,bytes:file.bytes,sha256:file.sha256})),...recovery.files.map(file=>({...file,path:`recovery/${file.path}`}))];
         const manifest=parseFidelity({format:"murage.installation-fidelity",version:1,snapshotId:recovery.snapshotId,createdAt:recovery.createdAt,sourceInstallation:installation.dataDir,restorePolicy:"paused-review-required",database:{status:"absent"},files,coverage:fidelity.coverage,recovery},options);
