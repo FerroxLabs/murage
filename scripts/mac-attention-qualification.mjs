@@ -34,8 +34,22 @@ async function admitSystemApplication(name){
  }
  return systemPid(name);
 }
-const ax=(pid,command)=>{const result=run('/usr/bin/osascript',['-l','JavaScript',path.join(DIR,'mac-attention-ax.jxa'),JSON.stringify({pid,...command})],{timeout:20000});let value;try{value=JSON.parse(result.stdout.trim());}catch{value={ok:false,error:'osascript',code:result.code,stderr:redactSecretsInLine(result.stderr).slice(-800)};}return value;};
+const ax=(pid,command,options={})=>{const result=run('/usr/bin/osascript',['-l','JavaScript',path.join(DIR,'mac-attention-ax.jxa'),JSON.stringify({pid,...command})],{timeout:options.timeout??20000});let value;try{value=JSON.parse(result.stdout.trim());}catch{value={ok:false,error:'osascript',code:result.code,stderr:redactSecretsInLine(result.stderr).slice(-800)};}return value;};
 const tree=(pid,label)=>{const result=ax(pid,{op:'tree'});writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});check(result.ok,'AX_TREE_'+label);return result;};
+// A Settings transition may temporarily refuse AX messaging. Read only; never repeat a mutation.
+async function settingsTree(pid,label){
+ const deadline=Date.now()+15000;let result=null,attempt=0;
+ while(!stopping&&Date.now()<deadline){
+  const remaining=deadline-Date.now();if(remaining<=0)break;
+  result=ax(pid,{op:'tree',settingsReadiness:true},{timeout:remaining});
+  writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
+  record('settings-tree-read',{pid,label,attempt:++attempt,result:{ok:result.ok,error:result.error??null,code:result.code??null,attribute:result.attribute??null,visited:result.visited??null,elapsedMs:result.elapsedMs??null}});
+  if(result.ok===true)return result;
+  if(result.error!=='AX-read'||result.code!==-25204)break;
+  const wait=Math.min(250,deadline-Date.now());if(wait>0)await pause(wait);
+ }
+ check(false,'AX_TREE_'+label);
+}
 const texts=t=>t.elements.flatMap(n=>[...n.names,typeof n.value==='string'?n.value:'']).filter(Boolean);
 const shot=label=>{const file=path.join(E,label+'.png');must(run('/usr/sbin/screencapture',['-x',file]),'SCREENSHOT_'+label);return path.basename(file);};
 async function press(pid,label,roles=['AXButton'],extra={}){
@@ -125,7 +139,7 @@ function ownedServerGeneration(log,entry){
  return current&&Number.isInteger(current.pid)&&current.pid>0?current:null;
 }
 async function selectBot(s,kind){const b=s.bots[kind];await press(s.pid,b.name,['AXButton','AXCheckBox'],{prefix:true,scopeName:'Bots and navigation'});await until(()=>{const t=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+b.name});return t.ok&&t.count===1;},10000,'SELECTED_'+kind);}
-async function settings(s,changes){await press(s.pid,'App settings');for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
+async function settings(s,changes){await press(s.pid,'App settings');await settingsTree(s.pid,'notification-settings-ready');for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
 // Read the owner-authorized desktop projection. AX does not expose request IDs.
 function inboxObservation(t,sourceLabel){
  const nodes=t.elements,logicalText=elements=>{const out=[];let parent=null,value='';const flush=()=>{if(parent!==null){const finished=value.trim();if(finished)out.push(finished);}parent=null;value='';};for(const node of elements){if(node.role==='AXStaticText'&&typeof node.value==='string'){if(parent===node.parent)value+=node.value;else{flush();parent=node.parent;value=node.value;}}else flush();}flush();return out;},all=[...texts(t),...logicalText(nodes)],under=(node,index)=>{let parent=node.parent,steps=0;while(parent>=0){check(++steps<=64,'INBOX_AX_ANCESTRY');if(parent===index)return true;const p=nodes.find(n=>n.index===parent);check(p,'INBOX_AX_PARENT');parent=p.parent;}return false;};
@@ -218,7 +232,7 @@ async function journey(){
   },30000,'OWNED_SERVER_READY');save(s);
   const instances=(await api(s,'/api/instances')).instances;check(instances.length===1&&instances[0].instanceId==='attention-fixture'&&instances[0].driverKind==='claudeAgent'&&instances[0].models.options.some(x=>x.id==='claude-sonnet-5'),'SYNTHETIC_INSTANCE_IDENTITY');
   const roster=(await api(s,'/api/bots?messages=0')).bots;check(Object.values(s.bots).every(b=>roster.some(x=>x.id===b.id&&x.threadId===b.threadId)),'OWNED_DATA_DIR');
-  await press(s.pid,'App settings');const t=tree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
+  await press(s.pid,'App settings');const t=await settingsTree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
   await until(()=>{const rendered=texts(tree(s.pid,'notification-permission-requested'));check(!rendered.some(x=>x.includes('Notification permission is blocked.')),'RENDERER_NOTIFICATION_PERMISSION_DENIED');check(!rendered.some(x=>x.includes('Notification permission controls are unavailable')),'RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE');return rendered.some(x=>x.includes('Notification permission is granted.'));},10000,'RENDERER_NOTIFICATION_PERMISSION');await press(s.pid,'Close settings');
   for(const kind of ['banner','private','mute','quiet','dnd']){
    check(!stopping,'SCRIPT_DEADLINE');if(kind==='private')await settings(s,{'Show notification previews':false});if(kind==='mute')await settings(s,{'Show notification previews':true,'Needs your attention':false});if(kind==='quiet')await settings(s,{'Needs your attention':true,'Quiet hours':true});if(kind==='dnd'){await settings(s,{'Quiet hours':false});await dnd(s,true);}

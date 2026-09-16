@@ -50,7 +50,8 @@ function run(argv){
  try{
   if(!Number.isInteger(c.pid)||c.pid<=0)fail('AX-pid');
   if(!$.AXIsProcessTrusted())fail('AX-client-not-trusted');
-  var app=$.AXUIElementCreateApplication(c.pid),code=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),1);if(code!==0)fail('AX-timeout',{code:code});
+  if(c.settingsReadiness!==undefined&&(c.settingsReadiness!==true||c.op!=='tree'))fail('AX-settings-read-contract');
+  var app=$.AXUIElementCreateApplication(c.pid),code=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),c.settingsReadiness===true?3:1);if(code!==0)fail('AX-timeout',{code:code});
   if(c.op==='manual'){code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),$(true));return JSON.stringify({ok:code===0,code:code});}
   if(c.op==='key'){var allowed={escape:53,return:36,reload:15,quit:12},se=Application('System Events'),ps=se.processes.whose({unixId:c.pid});if(ps.length!==1||!(c.key in allowed))fail('AX-key');ps[0].frontmost=true;se.keyCode(allowed[c.key],{using:c.key==='reload'||c.key==='quit'?['command down']:[]});return JSON.stringify({ok:true});}
   walk(app,-1,0);
