@@ -38,7 +38,12 @@ const ax=(pid,command)=>{const result=run('/usr/bin/osascript',['-l','JavaScript
 const tree=(pid,label)=>{const result=ax(pid,{op:'tree'});writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});check(result.ok,'AX_TREE_'+label);return result;};
 const texts=t=>t.elements.flatMap(n=>[...n.names,typeof n.value==='string'?n.value:'']).filter(Boolean);
 const shot=label=>{const file=path.join(E,label+'.png');must(run('/usr/sbin/screencapture',['-x',file]),'SCREENSHOT_'+label);return path.basename(file);};
-async function press(pid,label,roles=['AXButton'],extra={}){let last;await until(()=>{last=ax(pid,{op:'count',label,roles,...extra});return last.ok&&last.count===1;},15000,'UNIQUE_'+label);const result=ax(pid,{op:'press',label,roles,...extra});record('press',{pid,label,result});check(result.ok,'PRESS_'+label);}
+async function press(pid,label,roles=['AXButton'],extra={}){
+ let last,queries=0;
+ try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra});queries++;return last.ok&&last.count===1;},15000,'UNIQUE_'+label);}
+ catch(error){record('selector-query-failed',{pid,label,roles,queries,result:last??null});throw error;}
+ const result=ax(pid,{op:'press',label,roles,...extra});record('press',{pid,label,result});check(result.ok,'PRESS_'+label);
+}
 function key(pid,value){const result=ax(pid,{op:'key',key:value});check(result.ok,'KEY_'+value);}
 function state(pid,label,roles=['AXCheckBox'],extra={}){const value=ax(pid,{op:'state',label,roles,...extra});check(value.ok,'STATE_'+label);return value;}
 const bool=value=>[true,1,'1'].includes(value)?true:[false,0,'0'].includes(value)?false:null;
@@ -119,7 +124,7 @@ function ownedServerGeneration(log,entry){
  return current&&Number.isInteger(current.pid)&&current.pid>0?current:null;
 }
 async function selectBot(s,kind){const b=s.bots[kind];await press(s.pid,b.name,['AXButton','AXCheckBox'],{prefix:true,scopeName:'Bots and navigation'});await until(()=>{const t=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+b.name});return t.ok&&t.count===1;},10000,'SELECTED_'+kind);}
-async function settings(s,changes){await press(s.pid,'App settings');await press(s.pid,'General');for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
+async function settings(s,changes){await press(s.pid,'App settings');await press(s.pid,'General',['AXButton'],{windowSelector:true});for(const [label,on] of Object.entries(changes))await checkbox(s.pid,label,on);await press(s.pid,'Save notifications');const prefs=await until(async()=>{const observed=(await api(s,'/api/config')).notifications;return Object.entries(changes).every(([label,on])=>(label==='Needs your attention'?observed.attention:label==='Show notification previews'?observed.previewContent:observed.quietHours?.enabled)===on)?observed:false;},10000,'PREFERENCES_CONFIRMED');record('preferences',{prefs});await press(s.pid,'Close settings');}
 const pending=async(s,kind)=>{const list=await api(s,'/api/inbox?view=approvals&pageSize=25');const items=list.items.filter(x=>x.link?.threadId===s.bots[kind].threadId);return items.length===1?items[0]:null;};
 const notice=(s,label)=>{const t=tree(systemPid('NotificationCenter'),label);return{tree:t,text:texts(t).join('\n')};};
 async function sampleNoBanner(s,marker,kind){const samples=[];for(let i=0;i<4;i++){check(!stopping,'STOPPED');const n=notice(s,kind+'-'+i);samples.push({at:new Date().toISOString(),present:n.text.includes(marker),screenshot:shot(kind+'-'+i)});await pause(3000);}record(kind+'-absence',{marker,samples,windowMs:12000});check(samples.every(x=>!x.present),kind.toUpperCase()+'_BANNER_PRESENT');check(await pending(s,kind),'PENDING_PRESERVED_'+kind);}
@@ -151,7 +156,7 @@ async function journey(){
   },30000,'OWNED_SERVER_READY');save(s);
   const instances=(await api(s,'/api/instances')).instances;check(instances.length===1&&instances[0].instanceId==='attention-fixture'&&instances[0].driverKind==='claudeAgent'&&instances[0].models.options.some(x=>x.id==='claude-sonnet-5'),'SYNTHETIC_INSTANCE_IDENTITY');
   const roster=(await api(s,'/api/bots?messages=0')).bots;check(Object.values(s.bots).every(b=>roster.some(x=>x.id===b.id&&x.threadId===b.threadId)),'OWNED_DATA_DIR');
-  await press(s.pid,'App settings');await press(s.pid,'General');const t=tree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
+  await press(s.pid,'App settings');await press(s.pid,'General',['AXButton'],{windowSelector:true});const t=tree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
   await until(()=>{const rendered=texts(tree(s.pid,'notification-permission-requested'));check(!rendered.some(x=>x.includes('Notification permission is blocked.')),'RENDERER_NOTIFICATION_PERMISSION_DENIED');check(!rendered.some(x=>x.includes('Notification permission controls are unavailable')),'RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE');return rendered.some(x=>x.includes('Notification permission is granted.'));},10000,'RENDERER_NOTIFICATION_PERMISSION');await press(s.pid,'Close settings');
   for(const kind of ['banner','private','mute','quiet','dnd']){
    check(!stopping,'SCRIPT_DEADLINE');if(kind==='private')await settings(s,{'Show notification previews':false});if(kind==='mute')await settings(s,{'Show notification previews':true,'Needs your attention':false});if(kind==='quiet')await settings(s,{'Needs your attention':true,'Quiet hours':true});if(kind==='dnd'){await settings(s,{'Quiet hours':false});await dnd(s,true);}
