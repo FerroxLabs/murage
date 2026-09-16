@@ -258,12 +258,13 @@ try{
     catch(error){
      observed.lastFailure={error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted};
      // The first AXWindows query can meet a busy app while its native dialog
-     // is opening, or a child may become stale while Go To disappears.
+     // is opening or closing, or a child may become stale while Go To disappears.
      // Reobserve a complete snapshot within the original deadline; never
      // equate a failed traversal with absence or replay a UI action.
      var opening=label==='picker-open'&&error.error==='AX-read'&&error.code===-25204;
      var dismissing=label==='picker-go-to-dismissed'&&error.error==='AX-read'&&error.attribute==='AXChildren'&&error.code===-25202;
-     if(!opening&&!dismissing)throw error;
+     var closing=label==='picker-dismissed'&&error.error==='AX-read'&&error.attribute==='AXWindows'&&error.code===-25204;
+     if(!opening&&!dismissing&&!closing)throw error;
      observed.axTrusted=Boolean($.AXIsProcessTrusted());observed.processPresent=se.processes.whose({unixId:cmd.pid}).length===1;
      if(!observed.axTrusted)throw{error:'AX-client-not-trusted'};
      if(!observed.processPresent)throw{error:'picker-process-exited'};
