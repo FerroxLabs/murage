@@ -383,7 +383,7 @@ async function quit(s,handle,label){
   await until(()=>bundleProcesses(s).filter(p=>!p.command.includes("closed-trigger-")).length===0,60000,`bundle-processes-exit-${label}`,1000);
   record({step:`exited-${label}`,pid:handle.pid,...result});
 }
-async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry",120000);await press(s,pid,"general");}
+async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry",120000);}
 function ordinaryValueMatches(value,expected,numeric){
   return numeric?(typeof value==="string"||typeof value==="number")&&String(value).trim().length>0&&Number.isFinite(Number(value))&&Number.isFinite(Number(expected))&&Number(value)===Number(expected):value===expected;
 }
