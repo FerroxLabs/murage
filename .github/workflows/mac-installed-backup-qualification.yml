@@ -18,16 +18,16 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: c889d523bc5f25e6205fa76903c0af6a457141df
+      ARTIFACT_SOURCE_SHA: b62e85d08adef6f6adfd234bdbf0d66cfd8cdd38
       FIXTURE_SOURCE_SHA: ${{ github.sha }}
-      ARTIFACT_RUN_ID: "35140352790"
+      ARTIFACT_RUN_ID: "35148628069"
       ARTIFACT_RUN_ATTEMPT: "1"
-      ARTIFACT_ID: "10465875957"
-      ARTIFACT_DIGEST: sha256:276e09def895daeb06ade831e53afd288ea1a7e39829aeaa992751b2ee77370c
-      EVIDENCE_ARTIFACT_ID: "10465492068"
-      EVIDENCE_ARTIFACT_DIGEST: sha256:bb8626093527717fb3b9972a751e2ee64122d2b911cc7d8034f2b69318428428
-      # R21: twenty prior Mac rounds retained; async product correction and exact confirmation selector.
-      MURAGE_MAC_QUALIFICATION_ROUND: "21"
+      ARTIFACT_ID: "10468758179"
+      ARTIFACT_DIGEST: sha256:5167ca9c6fbeaf35184c066506f827ce0972161ac405ee90785f8b93c3a2f78b
+      EVIDENCE_ARTIFACT_ID: "10469230814"
+      EVIDENCE_ARTIFACT_DIGEST: sha256:df6f78c55daaf4ded7469716f063c75edb90b5ab321e860b6e9a4d8e037bc8ee
+      # R22: twenty-one prior Mac rounds retained; finite capture failure code readout only.
+      MURAGE_MAC_QUALIFICATION_ROUND: "22"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,8 +72,8 @@ jobs:
               assert artifact['workflow_run']['id'] == int(os.environ['ARTIFACT_RUN_ID'])
               assert artifact['workflow_run']['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
           (p.parent / 'round-contract.json').write_text(json.dumps({
-              'round': 21, 'priorMacRounds': 20, 'maximumJobMinutes': 60,
-              'diagnosticInvocationsPerFailedProfile': 1,
+              'round': 22, 'priorMacRounds': 21, 'maximumJobMinutes': 60,
+              'diagnosticInvocationsPerFailedProfile': 0,
               'scheduledFailureAlwaysRethrown': True, 'manualResultIsScheduledPass': False,
               'artifactSource': os.environ['ARTIFACT_SOURCE_SHA'],
               'fixtureSource': os.environ['FIXTURE_SOURCE_SHA'],
