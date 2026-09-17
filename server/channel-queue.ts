@@ -62,6 +62,14 @@ export function queuedChannelMessage(
   return entry.items.find((item) => item.sendId === sendId) ?? null;
 }
 
+/** Whether a queued message is still waiting (not yet started or cancelled). */
+export function channelMessageQueued(groupId: string, queueId: string): boolean {
+  for (const entry of queues.values()) {
+    if (entry.groupId === groupId && entry.items.some((item) => item.id === queueId)) return true;
+  }
+  return false;
+}
+
 /** Remove one queued message before it starts. */
 export function cancelChannelMessage(groupId: string, queueId: string): boolean {
   for (const [threadId, entry] of queues) {

@@ -457,6 +457,12 @@ export function Composer({
     if (group) dispatch({ type: "interruptGroup", groupId: group.id });
     else if (bot) dispatch({ type: "interrupt", botId: bot.id,threadId });
   };
+  // Inject names the queued sends it is for, so a repeated click that lands
+  // after they started cannot stop the turn now answering them.
+  const injectQueued = () => {
+    if (group) dispatch({ type: "interruptGroup", groupId: group.id, queueIds: queuedMessages.map((entry) => entry.queueId) });
+    else interruptTurn();
+  };
   const fileInput = useRef<HTMLInputElement>(null);
   const [autoWarn, setAutoWarn] = useState(false);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -1057,7 +1063,7 @@ export function Composer({
           {/* Inject is stop-then-steer made visible. The square stop would
               drain the same queue, so it yields while a send is waiting.
               Cancelling the queued composer card brings Stop back. */}
-          {canInject && <ComposerInjectNow onInject={interruptTurn} />}
+          {canInject && <ComposerInjectNow onInject={injectQueued} />}
           {busy && !locked && !canInject && (
           <button
             onClick={interruptTurn}

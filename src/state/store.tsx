@@ -688,7 +688,8 @@ export type Action =
   | { type: "switchGroupTask"; groupId: string; threadId: string }
   | { type: "renameGroupTask"; groupId: string; threadId: string; title: string }
   | { type: "deleteGroupTask"; groupId: string; threadId: string }
-  | { type: "interruptGroup"; groupId: string }
+  /** queueIds: an inject for these queued sends; a no-op once they started. */
+  | { type: "interruptGroup"; groupId: string; queueIds?: string[] }
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "select"; id: string; threadId?: string }
@@ -2290,7 +2291,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch(showError);
           break;
         case "interruptGroup":
-          api(`/api/groups/${action.groupId}/interrupt`, { method: "POST" }).catch(showError);
+          api(`/api/groups/${action.groupId}/interrupt`, action.queueIds?.length
+            ? { method: "POST", body: JSON.stringify({ queueIds: action.queueIds }) }
+            : { method: "POST" }).catch(showError);
           break;
         case "updateTask":
           void saveThread(action.botId,action.threadId,action.patch).catch(showError);

@@ -253,6 +253,7 @@ import {
   drainChannelMessages,
   queuedChannelMessage,
   queueChannelMessage,
+  channelMessageQueued,
 } from "./channel-queue.ts";
 import {
   acceptedSendMatch,
@@ -6224,6 +6225,17 @@ async function runGroupMemberTurn(
         clearCancelledProviderHandshake(threadId, retirementOwner);
         if (abandoned) return;
         recordMemorySettlement(threadId, `room-setup:${store.activeLeaf(threadId)}`, "setup-failed");
+        // Stopped, or this attempt's generation revoked, while setting up and
+        // before anything reached the provider: the revoked capability's
+        // refusal (MEMORY_UNAUTHORIZED, "turn stopped before …") is not an
+        // engine error. A Stop ends quietly, as a Stop before the claim does;
+        // any other revocation says why (STOP2). Released as a refused dispatch.
+        if (submissionBoundary.canRetry && (isCancelled?.() || internalCapabilities.activeGeneration(threadId) !== internalGeneration)) {
+          if (!isCancelled?.()) noteHostStoppedTurn(threadId, bot.id, ROOM_TURN_REVOKED_BEFORE_DISPATCH);
+          watchdog.settle(threadId);
+          finish("dispatch_failed");
+          return;
+        }
         // As in direct dispatch, only a trusted pre-submit refusal may replay.
         // An unknown boundary remains unsafe even after successful teardown.
         if (isMemoryContextRevoked(err) && submissionBoundary.canRetry && !memoryRedispatch) {
@@ -11387,6 +11399,16 @@ const server = createServer(async (req, res) => {
         if (!ownsThread) {
           return json(res, 409, { error: "the channel switched tasks before it could be interrupted" });
         }
+      }
+      if (body.queueIds !== undefined && (!Array.isArray(body.queueIds) || body.queueIds.length === 0 || body.queueIds.length > 100
+        || !body.queueIds.every((id: unknown) => typeof id === "string" && /^[\w-]+$/.test(id)))) {
+        return json(res, 400, { error: "queueIds must be queued message ids" });
+      }
+      // "Inject now" stops the turn ahead of these queued messages. Once none
+      // of them is still waiting, they have started (or were cancelled): a
+      // repeated inject must not stop the very turn it asked for.
+      if (body.queueIds !== undefined && !body.queueIds.some((id: string) => channelMessageQueued(group.id, id))) {
+        return json(res, 200, { ok: true, stopped: false });
       }
       const activeOperations = [...(groupTurnOperations.get(group.id) ?? [])]
         .filter((operation) => !operation.cancelled);
