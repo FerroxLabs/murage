@@ -39,6 +39,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { SectionContextDialog } from "./SectionContextDialog";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 
@@ -1397,6 +1398,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const botDragRef = useRef<Bot | null>(null);
   const [botDropSectionId, setBotDropSectionId] = useState<string | null>(null);
   const botMoveInFlight = useRef(false);
+  const [instructionsEditor, setInstructionsEditor] = useState<{ section: string; label: string } | null>(null);
   const sectionDragRef = useRef<{
     from: string | null;
     over: { id: string; place: SectionDropPlace } | null;
@@ -2043,6 +2045,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     }}
                     onDragEnd={resetSectionDrag}
                     onMove={(direction) => moveSidebarSection(id, direction)}
+                    onEditInstructions={
+                      sectionName ? () => setInstructionsEditor({ section: sectionName, label: sectionName }) : undefined
+                    }
                   />
                 )}
                 {!collapsed && (
@@ -2266,6 +2271,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
+      {instructionsEditor && (
+        <SectionContextDialog
+          section={instructionsEditor.section}
+          label={instructionsEditor.label}
+          onClose={() => setInstructionsEditor(null)}
+        />
+      )}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}

@@ -7403,6 +7403,27 @@ describe("section context API", () => {
     expect(oversized.status).toBe(400);
     expect(oversized.body.error).toContain("24KB");
   });
+
+  it("edits a team's instructions after the team was created and keeps the saved copy on reload", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await api("POST", "/api/sidebar-sections", { name: "Creator Studio", botIds: [bot.id] })).status).toBe(200);
+      const created = await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "Draft scripts first." });
+      expect(created.status).toBe(200);
+
+      const edited = await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "Publish on Tuesdays." });
+      expect(edited.body).toMatchObject({ section: "Creator Studio", text: "Publish on Tuesdays." });
+      expect((await api("GET", "/api/section-context?section=Creator%20Studio")).body.text).toBe("Publish on Tuesdays.");
+
+      // A failed edit leaves the saved instructions alone.
+      expect((await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", {})).status).toBe(400);
+      expect((await desktopApi("PUT", `/api/section-context?section=${"S".repeat(61)}`, { text: "x" })).status).toBe(400);
+      expect((await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "x".repeat(24_001) })).status).toBe(400);
+      expect((await api("GET", "/api/section-context?section=Creator%20Studio")).body.text).toBe("Publish on Tuesdays.");
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
 });
 
 // The memory routes expose plain files in the bot's workspace. The
