@@ -306,10 +306,17 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       // Pair Telegram with this bot: the owner answers the pairing code from
       // their private chat, and the channel polls it up.
       expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: TELEGRAM_TOKEN } })).status).toBe(200);
+      // Telegram pairs only with the current workspace Chief.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
       const pair = await desktopApi("POST", "/api/telegram/pair", { targetBotId: bot.id });
       expect(pair.status).toBe(200);
       telegramArrives(telegramMessage(1, `/pair ${pair.body.code}`));
       await expect.poll(async () => (await desktopApi("GET", "/api/telegram/status")).body.paired, { timeout: 15_000, interval: 100 }).toBe(true);
+      // Channel messages run only for a linked person: link the verified
+      // pairing sender as the workspace owner, as the owner does in settings.
+      const bindings = (await desktopApi("POST", "/api/memory/action", { action: "humans" })).body.bindings as Array<{ id: string; revision: number }>;
+      expect(bindings).toHaveLength(1);
+      expect((await desktopApi("POST", "/api/memory/action", { action: "human-link", bindingId: bindings[0]!.id, expectedRevision: bindings[0]!.revision, as: "owner" })).status).toBe(200);
 
       // The retried turn: its first launch dies before reading its prompt,
       // the relaunch reads it and holds until the finish gate.
@@ -347,9 +354,15 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       // reaches the owner's chat.
       await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 30_000, interval: 100 }).toEqual(["completed"]);
       const [delivered] = await channelRuns();
-      expect(delivered).toMatchObject({ threadId: bot.threadId, output: "hello from fake claude" });
-      await expect.poll(() => telegramSent(), { timeout: 15_000, interval: 100 }).toEqual([{ chatId: String(TELEGRAM_OWNER), text: "hello from fake claude" }]);
-      const messages = await messagesOf(bot.threadId);
+      expect(delivered).toMatchObject({ output: "hello from fake claude" });
+      // A linked channel sender converses in its own principal-bound task of the
+      // same bot (human-principals.ts humanTask), not in the desktop thread.
+      expect(delivered.threadId).not.toBe(bot.threadId);
+      expect(((await botView(bot.id))?.tasks as Array<{ threadId?: string }> | undefined)?.some((task) => task.threadId === delivered.threadId)).toBe(true);
+      // The pairing reply asked the owner to link the account first (done above).
+      await expect.poll(() => telegramSent().at(-1), { timeout: 15_000, interval: 100 }).toEqual({ chatId: String(TELEGRAM_OWNER), text: "hello from fake claude" });
+      expect(telegramSent().map((sent) => sent.text)).toEqual([expect.stringContaining("link this channel account in Murage Settings"), "hello from fake claude"]);
+      const messages = await messagesOf(delivered.threadId!);
       expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
       expect(messages.some((message) => message.role === "user" && message.text?.includes("status please"))).toBe(true);
     } finally {

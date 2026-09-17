@@ -1650,6 +1650,10 @@ describe("harness HTTP API", () => {
   it("gates Telegram pairing and token changes behind desktop authority and explicit revocation", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
+      // Telegram pairs only with the current workspace Chief; a fresh bot is not one.
+      expect((await desktopApi("POST", "/api/telegram/pair", { targetBotId: bot.id })).status).toBe(409);
+      const promoted = await desktopApi("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+      expect(promoted.status, JSON.stringify(promoted.body)).toBe(200);
       expect((await api("GET", "/api/telegram/status")).status).toBe(404);
       expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: "123:abcdefghijklmnopqrstuvwxyz123456" } })).status).toBe(200);
       const pair = await desktopApi("POST", "/api/telegram/pair", { targetBotId: bot.id });
