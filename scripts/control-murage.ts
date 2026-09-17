@@ -264,9 +264,9 @@ export interface VerificationServer {
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
-  options: { instrumentationSource?: string } = {},
+  options: { instrumentationSource?: string; portRange?: { from: number; span: number } } = {},
 ): Promise<VerificationServer> {
-  const port = await freePortBlock([0, 1]);
+  const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "murage-verify-data-"));

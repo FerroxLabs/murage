@@ -6747,7 +6747,8 @@ function startGroupTurn(
       },
     });
   }
-  let responders = roomResponders(text, members, group.defaultResponder);
+  // Replying to a member's message addresses that member (mentions still win).
+  let responders = roomResponders(text, members, group.defaultResponder, replyTo?.from?.botId);
   const explicitlyMentionedLead = roomResponders(text, availableMembers, { kind: "mentions" })[0];
   const goalCoordinator = channelMode === "goal"
     ? requestedGoalCoordinator ?? explicitlyMentionedLead ?? selectGroupGoalCoordinator(availableMembers, group.defaultResponder)

@@ -334,7 +334,7 @@ export function Composer({
     if (mode === "goal") {
       return botSupportsImages(goalCoordinatorForComposer(message, members ?? [], group) ?? undefined);
     }
-    const responders = roomRespondersForComposer(message, members ?? [], group);
+    const responders = roomRespondersForComposer(message, members ?? [], group, replyTo?.from?.botId);
     return responders.length > 0 && responders.every(botSupportsImages);
   };
   // A typed "/goal …" IS Goal mode — the same send, reached by keyboard. The

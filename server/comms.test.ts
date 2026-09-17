@@ -75,6 +75,24 @@ describe("roomResponders", () => {
     expect(roomResponders("@everyone hello", members, { kind: "mentions" })).toEqual(members);
   });
 
+  it("routes a reply to a member's message to that member", () => {
+    expect(roomResponders("what did you mean?", members, { kind: "member", botId: "atlas" }, "milind")).toEqual([members[1]]);
+    expect(roomResponders("what did you mean?", members, { kind: "everyone" }, "milind")).toEqual([members[1]]);
+    expect(roomResponders("what did you mean?", members, { kind: "mentions" }, "milind")).toEqual([members[1]]);
+  });
+
+  it("lets explicit mentions and @everyone win over the replied-to member", () => {
+    expect(roomResponders("@Atlas check this", members, { kind: "member", botId: "atlas" }, "milind")).toEqual([members[0]]);
+    expect(roomResponders("@everyone check this", members, { kind: "member", botId: "atlas" }, "milind")).toEqual(members);
+  });
+
+  it("keeps the room policy when the replied-to author is not an active member", () => {
+    const withArchived = [...members, { id: "old", name: "Old", hidden: true }];
+    expect(roomResponders("hello", withArchived, { kind: "member", botId: "atlas" }, "old")).toEqual([members[0]]);
+    expect(roomResponders("hello", withArchived, { kind: "member", botId: "atlas" }, "stranger")).toEqual([members[0]]);
+    expect(roomResponders("hello", withArchived, { kind: "member", botId: "atlas" }, undefined)).toEqual([members[0]]);
+  });
+
   it("keeps bot-to-bot channels on their last-speaker routing", () => {
     expect(normalizeGroupDefaultResponder({ kind: "everyone" }, members.map((member) => member.id), true)).toEqual({
       kind: "mentions",

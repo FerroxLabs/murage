@@ -27,6 +27,14 @@ describe("roomRespondersForComposer", () => {
       members,
     );
   });
+
+  it("routes a reply to a member's message to that member unless the text mentions someone", () => {
+    const group = { defaultResponder: { kind: "member" as const, botId: "atlas" } };
+    expect(roomRespondersForComposer("what did you mean?", members, group, "milind")).toEqual([members[1]]);
+    expect(roomRespondersForComposer("@Atlas check this", members, group, "milind")).toEqual([members[0]]);
+    expect(roomRespondersForComposer("@everyone check this", members, group, "milind")).toEqual(members);
+    expect(roomRespondersForComposer("hello", members, group, "stranger")).toEqual([members[0]]);
+  });
 });
 
 describe("goalCoordinatorForComposer", () => {

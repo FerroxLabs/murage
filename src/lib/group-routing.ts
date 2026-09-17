@@ -35,18 +35,22 @@ export function groupComposerHint(group: Group, members: Bot[]): string {
   return `${defaultResponderName(group, members) ?? "Lead"} responds`;
 }
 
-/** Same routing sendGroup uses: explicit @mentions win, otherwise the
- * room's default responder. Keep this aligned with server/store.ts
+/** Same routing sendGroup uses: explicit @mentions win, then a reply to an
+ * active member's message addresses that member, otherwise the room's
+ * default responder. Keep this aligned with server/store.ts
  * `roomResponders` / `mentionedBots`. */
 export function roomRespondersForComposer<T extends { id: string; name: string; hidden?: boolean }>(
   text: string,
   members: T[],
   group: Pick<Group, "defaultResponder">,
+  replyToBotId?: string,
 ): T[] {
   const available = members.filter((member) => !member.hidden);
   if (/(?:^|\s)@everyone\b/i.test(text)) return available;
   const mentioned = mentionedMembers(text, available);
   if (mentioned.length) return mentioned;
+  const repliedTo = replyToBotId ? available.find((member) => member.id === replyToBotId) : undefined;
+  if (repliedTo) return [repliedTo];
   const fallback = effectiveDefaultResponder(group, available);
   if (fallback.kind === "everyone") return available;
   if (fallback.kind === "member") {

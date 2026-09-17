@@ -750,16 +750,20 @@ export function normalizeGroupDefaultResponder(
 }
 
 /** Resolve the bots invoked by a human room message. Explicit targets win;
+ * then a reply to an active member's message addresses that member;
  * otherwise the room policy chooses one member, everyone, or nobody. */
 export function roomResponders<T extends { id: string; name: string; hidden?: boolean }>(
   text: string,
   members: T[],
   defaultResponder: GroupDefaultResponder,
+  replyToBotId?: string,
 ): T[] {
   const available = members.filter((member) => !member.hidden);
   if (/(?:^|\s)@everyone\b/i.test(text)) return available;
   const mentioned = mentionedBots(text, available);
   if (mentioned.length) return mentioned;
+  const repliedTo = replyToBotId ? available.find((member) => member.id === replyToBotId) : undefined;
+  if (repliedTo) return [repliedTo];
   if (defaultResponder.kind === "everyone") return available;
   if (defaultResponder.kind === "member") {
     const lead = available.find((member) => member.id === defaultResponder.botId);
