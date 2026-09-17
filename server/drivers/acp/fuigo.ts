@@ -457,6 +457,12 @@ const support: AcpSupport = {
    *  and core.ts FUIGOTRUST1). */
   folderTrust: true,
 
+  /** 1.0.19/1.0.20 answer session/new before the `mcpServers` are connected
+   *  and emit `_fuigo/mcp_initialized {sessionId, mcpToolCount, elapsedMs}`
+   *  once every server (the user's imported ones too) has settled. The core
+   *  holds the first prompt for it, bounded (core.ts MCP_READY_WAIT_MS). */
+  mcpReadyNotification: "_fuigo/mcp_initialized",
+
   /**
    * `transformEnv`, NOT `applyTurnEnv` — and that is the opposite of every
    * other Flux-routed driver in this tree, on purpose.

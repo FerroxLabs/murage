@@ -13,7 +13,7 @@ const integer=z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_
 const version=z.string().regex(/^\d{1,5}\.\d{1,5}\.\d{1,6}(?:[-+][0-9A-Za-z.-]{1,24})?$/).nullable();
 const method=z.enum([...DIAGNOSTIC_RPC_METHODS,"other"]);
 const rowSchema=z.object({
-  at:z.iso.datetime(),event:z.enum(["spawn_requested","spawned","spawn_failed","rpc_requested","rpc_rejected","stop_requested","stop_route","stop_route_result","turn_settled","closed","events_omitted"]),
+  at:z.iso.datetime(),event:z.enum(["spawn_requested","spawned","spawn_failed","rpc_requested","rpc_rejected","stop_requested","stop_route","stop_route_result","turn_settled","closed","events_omitted","mcp_ready","mcp_ready_timeout"]),
   processGeneration:z.uuid(),turnId:z.uuid(),sequence:natural.min(1),elapsedMs:natural,platform:z.enum(["darwin","linux","win32","other"]),
   appVersion:version.optional(),engineVersion:version.optional(),pid:natural.min(1).nullable().optional(),
   rpcId:natural.optional(),method:method.optional(),rpcCode:integer.optional(),httpStatus:z.number().int().min(100).max(599).optional(),

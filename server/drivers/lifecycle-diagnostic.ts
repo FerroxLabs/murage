@@ -34,6 +34,8 @@ export const LIFECYCLE_MAX_PENDING_METHODS = 8;
 export const LIFECYCLE_EVENTS = [
   "spawn_requested", "spawned", "spawn_failed", "rpc_requested", "rpc_rejected", "stop_requested",
   "stop_route", "stop_route_result", "turn_settled", "closed", "events_omitted",
+  // Engine MCP readiness before the first prompt (Fuigo `_fuigo/mcp_initialized`).
+  "mcp_ready", "mcp_ready_timeout",
 ] as const;
 export type LifecycleEventName = (typeof LIFECYCLE_EVENTS)[number];
 

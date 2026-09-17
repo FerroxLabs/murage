@@ -37,7 +37,7 @@ import { resetPathCacheForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { FuigoAgentDriver, fuigoLocalSlug, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
-import { acpVersionFailureDetail } from "./core.ts";
+import { acpVersionFailureDetail, createAcpDriver, MCP_READY_WAIT_MS, type AcpSupport } from "./core.ts";
 import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
 import { localHost } from "../local-inject.ts";
 
@@ -78,7 +78,7 @@ Available models:
  * executable bit, and it is the only shape that behaves identically on Windows,
  * where there is no shebang at all.
  */
-const FAKE_SOURCE = `import { writeFileSync } from "node:fs";
+const FAKE_SOURCE = `import { appendFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
@@ -89,6 +89,18 @@ if (kind === "version") { console.log("fuigo 1.0.4 (fake)"); process.exit(0); }
 if (kind === "models") { process.stdout.write(process.env.FUIGO_FAKE_MODELS ?? ""); process.exit(0); }
 const SID = "fake-fuigo-session";
 const send = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+// MCP readiness, as 1.0.19/1.0.20 report it: session/new answers first and
+// \`_fuigo/mcp_initialized\` follows once the handed servers settle.
+// FUIGO_FAKE_MCP: "ready" (default, after the response), "before" (ahead of
+// the response), "never". Only sent when mcpServers is non-empty.
+const mcpMode = process.env.FUIGO_FAKE_MCP ?? "ready";
+const order = (event) => {
+  if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "order.log"), event + " " + Date.now() + "\\n");
+};
+const mcpReady = (sessionId) => {
+  order("mcp-ready:" + sessionId);
+  send({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: 1, elapsedMs: 1 } });
+};
 let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
@@ -104,9 +116,19 @@ process.stdin.on("data", (d) => {
     else if (m.method === "authenticate") ok({});
     else if (m.method === "session/new") {
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "session.json"), JSON.stringify(m.params));
+      const hasMcp = Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length > 0;
+      if (hasMcp) send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 1, connected: 0 } });
+      if (hasMcp && mcpMode === "before") mcpReady(SID);
       ok({ sessionId: SID });
+      order("new-response");
+      if (hasMcp && mcpMode === "ready") {
+        // Another session's readiness must not release this one.
+        mcpReady("some-other-session");
+        setTimeout(() => mcpReady(SID), Number(process.env.FUIGO_FAKE_MCP_DELAY_MS ?? 0));
+      }
     }
     else if (m.method === "session/prompt") {
+      order("prompt");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });
@@ -630,5 +652,143 @@ describe("fuigo local models (spec E1)", () => {
     expect(argv[argv.indexOf("-m") + 1]).toBe("claude-opus-5");
     expect(env[KEY_ENV]).toBeUndefined();
     expect(existsSync(join(home, ".fuigo", "config.toml"))).toBe(false);
+  });
+});
+
+describe("fuigo waits for MCP readiness before the first prompt", () => {
+  // Fuigo 1.0.19/1.0.20 answer session/new before the handed mcpServers are
+  // connected and tell the model "MCP servers currently connecting … do not
+  // use" if prompted at once. The driver holds the prompt for
+  // `_fuigo/mcp_initialized`, bounded by MCP_READY_WAIT_MS.
+  const AGENTS = { agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: {} } };
+
+  afterEach(() => {
+    delete process.env.MURAGE_ACP_MCP_READY_MS;
+  });
+
+  const readOrder = () => {
+    const path = join(dumps, "order.log");
+    if (!existsSync(path)) return [] as Array<{ event: string; at: number }>;
+    return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => {
+      const [event, at] = line.split(" ");
+      return { event: event!, at: Number(at) };
+    });
+  };
+  const lifecycleEvents = (threadId: string, turnId: string) =>
+    readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
+      .filter((row) => row.dir === "lifecycle" && row.msg.turnId === turnId)
+      .map((row) => row.msg);
+
+  async function start(
+    environment: Record<string, string>,
+    integrations: SendTurnInput["integrations"] | undefined,
+    driver: typeof FuigoAgentDriver = FuigoAgentDriver,
+  ) {
+    instance = await driver.create({
+      instanceId: "fuigo-mcp-ready",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, ...environment },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const threadId = `t-fuigo-mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const startedAt = Date.now();
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", ...(integrations ? { integrations } : {}) });
+    return { threadId, turnId, startedAt };
+  }
+
+  it("keeps the bound at 15 s", () => {
+    expect(MCP_READY_WAIT_MS).toBe(15_000);
+  });
+
+  it("(a) sends no prompt until mcp_initialized names this session, then sends it at once", async () => {
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_DELAY_MS: "700" }, AGENTS);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    const events = order.map((row) => row.event);
+    // the other session's readiness came first and did not release the prompt
+    expect(events).toEqual(["new-response", "mcp-ready:some-other-session", "mcp-ready:fake-fuigo-session", "prompt"]);
+    const response = order[0]!.at, ready = order[2]!.at, prompt = order[3]!.at;
+    expect(ready - response).toBeGreaterThanOrEqual(600);
+    expect(prompt - ready).toBeLessThan(1_000);
+    const lifecycle = lifecycleEvents(threadId, turnId).map((row) => row.event);
+    expect(lifecycle).toContain("mcp_ready");
+    expect(lifecycle).not.toContain("mcp_ready_timeout");
+  });
+
+  it("(b) a readiness notification that arrives BEFORE the session/new response still releases the wait", async () => {
+    const { startedAt } = await start({ FUIGO_FAKE_MCP: "before" }, AGENTS);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(readOrder().map((row) => row.event)).toEqual(["mcp-ready:fake-fuigo-session", "new-response", "prompt"]);
+    expect(Date.now() - startedAt).toBeLessThan(MCP_READY_WAIT_MS);
+  });
+
+  it("(c) never ready: the prompt goes out after the bound, with an mcp_ready_timeout lifecycle row", async () => {
+    process.env.MURAGE_ACP_MCP_READY_MS = "400";
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "never" }, AGENTS);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
+    expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(350);
+    const rows = lifecycleEvents(threadId, turnId);
+    const timeoutAt = rows.findIndex((row) => row.event === "mcp_ready_timeout");
+    expect(timeoutAt).toBeGreaterThan(-1);
+    const promptAt = rows.findIndex((row) => row.event === "rpc_requested" && row.method === "session/prompt");
+    expect(timeoutAt).toBeLessThan(promptAt);
+    expect(rows.map((row) => row.event)).not.toContain("mcp_ready");
+  });
+
+  it("(d) a Stop during the wait sends no prompt and ends the turn as cancelled, promptly", async () => {
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "never" }, AGENTS);
+    await recorder!.until((e) => e.type === "session.started");
+    const stoppedAt = Date.now();
+    await instance!.adapter.interruptTurn(threadId, turnId);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(Date.now() - stoppedAt).toBeLessThan(3_000);
+    expect(readOrder().map((row) => row.event)).not.toContain("prompt");
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    await expect(instance!.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const rows = lifecycleEvents(threadId, turnId);
+    expect(rows.filter((row) => row.event === "rpc_requested").map((row) => row.method)).not.toContain("session/prompt");
+    expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ promptSent: false, cancelRequested: true });
+  });
+
+  it("(e) an empty mcpServers list does not wait at all", async () => {
+    const { startedAt } = await start({ FUIGO_FAKE_MCP: "never" }, undefined);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(join(dumps, "session.json"), "utf8")).mcpServers).toEqual([]);
+    expect(readOrder().map((row) => row.event)).toEqual(["new-response", "prompt"]);
+    expect(Date.now() - startedAt).toBeLessThan(MCP_READY_WAIT_MS);
+  });
+
+  it("(f) an ACP engine without the readiness notification prompts at once, servers or not", async () => {
+    const other: AcpSupport = {
+      driverKind: "otherAcpTest",
+      displayName: "Other ACP",
+      models: { default: "", options: [] },
+      defaultCli: "other-acp",
+      nativeSource: "other.acp",
+      loginNote: "never reached",
+      spawnArgs: () => [],
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+    };
+    const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "never" }, AGENTS, createAcpDriver(other));
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(join(dumps, "session.json"), "utf8")).mcpServers).toHaveLength(1);
+    expect(readOrder().map((row) => row.event)).toEqual(["new-response", "prompt"]);
+    expect(Date.now() - startedAt).toBeLessThan(MCP_READY_WAIT_MS);
+    const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
+    expect(events).not.toContain("mcp_ready");
+    expect(events).not.toContain("mcp_ready_timeout");
   });
 });
