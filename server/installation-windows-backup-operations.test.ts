@@ -28,6 +28,17 @@ const options = { ageExecutable: age, identity: `AGE-SECRET-KEY-1${"A".repeat(58
   selection: { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const };
 const roots: string[] = [], privateRoots: string[] = [], events: string[] = [];
 let target: string | undefined, failDecrypt = false;
+// The Windows source fixture models NTFS's case-insensitive lookups: under
+// platform=win32 the product case-folds canonical paths (data-dir-lease.mjs
+// normalizedCanonicalPath) around mixed-case mkdtemp stage names, which only
+// resolve where the scratch filesystem folds case (Windows, macOS). Stage-level
+// cases run only there; on a case-sensitive host the simulation cannot hold.
+const caseFoldingScratch = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "murage-win-casefold-"));
+  try { writeFileSync(join(probe, "Probe"), ""); return existsSync(join(probe, "probe")); }
+  finally { rmSync(probe, { recursive: true, force: true }); }
+})();
+const staged = it.skipIf(!caseFoldingScratch);
 function fixture() {
   const original = realpathSync(mkdtempSync(join(tmpdir(), "murage-win-operation-")));
   const root = join(dirname(original), original.slice(dirname(original).length + 1).toLowerCase());
@@ -73,7 +84,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-it("writes only beneath a native private root and publishes after every stage/age closure", async () => {
+staged("writes only beneath a native private root and publishes after every stage/age closure", async () => {
   const f = fixture(); target = f.archive; const before = readFileSync(join(f.data, "config.json"));
   const result = await writeEncryptedInstallationBackup(f.data, f.archive, options);
   expect(result.path).toBe(f.archive.toLowerCase()); expect(existsSync(f.archive)).toBe(true); expect(readFileSync(join(f.data, "config.json"))).toEqual(before);
@@ -82,7 +93,7 @@ it("writes only beneath a native private root and publishes after every stage/ag
   expect(readdirSync(f.root).some(name => name.startsWith(".murage-encrypted"))).toBe(false); expect(mocks.spawn).not.toHaveBeenCalled();
 });
 
-it("inspects through existing strict parser only after authenticated native completion", async () => {
+staged("inspects through existing strict parser only after authenticated native completion", async () => {
   const f = fixture(); await writeEncryptedInstallationBackup(f.data, f.archive, options);
   const inspect = vi.spyOn(archives, "inspectArchiveEntries"); events.length = 0;
   const result = await inspectEncryptedInstallationBackup(f.archive, f.root, options);
@@ -91,21 +102,21 @@ it("inspects through existing strict parser only after authenticated native comp
   expect(inspect.mock.calls[0][1]).toBe(result.directory); expect(result.directory.includes(".murage-backup-")).toBe(true);
 });
 
-it("retains all Windows failed-decrypt output and never inspects unauthenticated bytes", async () => {
+staged("retains all Windows failed-decrypt output and never inspects unauthenticated bytes", async () => {
   const f = fixture(); await writeEncryptedInstallationBackup(f.data, f.archive, options); failDecrypt = true;
   const inspect = vi.spyOn(archives, "inspectArchiveEntries");
   const caught = await inspectEncryptedInstallationBackup(f.archive, f.root, options).catch(error => error);
   expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true); expect(inspect).not.toHaveBeenCalled();
 });
 
-it("keeps raw snapshot staging and refuses publication after Windows readback failure", async () => {
+staged("keeps raw snapshot staging and refuses publication after Windows readback failure", async () => {
   const f = fixture(); failDecrypt = true; target = f.archive;
   const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
   expect(caught).toMatchObject({ code: "AGE_PROCESS_FAILED", retainedDirectory: privateRoots[0] });
   expect(existsSync(join(caught.retainedDirectory, "backup.age"))).toBe(true); expect(existsSync(f.archive)).toBe(false);
 });
 
-it("waits for pending extraction to close after helper rejection before returning retained failure", async () => {
+staged("waits for pending extraction to close after helper rejection before returning retained failure", async () => {
   const f = fixture(); await writeEncryptedInstallationBackup(f.data, f.archive, options);
   let started!: () => void; const began = new Promise<void>(resolve => { started = resolve; }); let extractionClosed = false;
   vi.spyOn(archives, "inspectArchiveEntries").mockImplementationOnce(async (_archive, parent, _parse, limits) => {
@@ -123,7 +134,7 @@ it("waits for pending extraction to close after helper rejection before returnin
   expect(extractionClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true);
 });
 
-it("waits for an aborted encryption writer to finish teardown before reporting private-stage loss", async () => {
+staged("waits for an aborted encryption writer to finish teardown before reporting private-stage loss", async () => {
   const f = fixture(); let started!: () => void; const began = new Promise<void>(resolve => { started = resolve; }); let writerClosed = false;
   vi.mocked(encryption.encryptBackupStream).mockImplementationOnce(async (_exe, _recipient, input: Readable, _output, limits) => {
     input.on("error", () => {}); started();
@@ -138,7 +149,7 @@ it("waits for an aborted encryption writer to finish teardown before reporting p
   expect(writerClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true); expect(existsSync(f.archive)).toBe(false);
 });
 
-it("restores the paused candidate through the private preparation parent and same-volume journal", async () => {
+staged("restores the paused candidate through the private preparation parent and same-volume journal", async () => {
   const f = fixture(); const backup = await writeEncryptedInstallationBackup(f.data, f.archive, options);
   const prepare = vi.spyOn(preparation, "prepareInstallationRestore"), target = join(f.root, "restored");
   const result = await restoreEncryptedInstallationNew(target, f.archive, backup.sha256, options);
