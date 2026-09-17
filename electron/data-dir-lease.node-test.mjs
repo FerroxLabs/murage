@@ -1005,7 +1005,7 @@ test("Windows identity: a release that wins the race with the identity probe lea
   assert.deepEqual(readdirSync(f.root).filter((name) => name.includes(".identity-")), []);
 });
 
-test("Windows identity: non-Windows owners neither probe nor publish identities", async () => {
+test("Windows identity: non-Windows owners neither probe nor publish identities", { skip: process.platform === "win32" }, async () => {
   const f = fixture();
   const holder = worker(f, { LEASE_TEST_PS: JSON.stringify({ self: "SELF_PID:133711112222333344" }) });
   const acquired = await holder.command("acquire");
@@ -1014,7 +1014,7 @@ test("Windows identity: non-Windows owners neither probe nor publish identities"
   assert.equal(released.released, true);
   assert.deepEqual(released.probes, []);
   assert.deepEqual(readdirSync(f.root).filter((name) => name.includes(".identity-")), []);
-}, { skip: process.platform === "win32" });
+});
 
 test("Windows identity: contenders against a reused-PID record elect exactly one owner", async () => {
   const f = fixture();
