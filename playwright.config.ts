@@ -6,6 +6,11 @@ import { APP_URL, HARNESS_PORT, HARNESS_URL, SCRATCH_DATA_DIR, UI_PORT } from ".
 // Human specs: the pass a person would do by hand, done by a browser. See
 // src/e2e/rig.ts for why this rig owns its own ports and its own data dir
 // rather than borrowing the developer's 8799/5199.
+// Reusing a server already on the rig's fixed ports would run the specs
+// against whatever data dir that process owns and skip prepare-scratch.mjs.
+// Only a local developer may opt in, never CI.
+const reuseExistingServer = process.env.MURAGE_E2E_REUSE_SERVER === "1" && !process.env.CI;
+
 export default defineConfig({
   testDir: "./src/e2e",
   // Live engine/credential/spend admission belongs to the dedicated B08 config.
@@ -79,7 +84,7 @@ export default defineConfig({
         MURAGE_PORT: String(HARNESS_PORT),
         MURAGE_WEBHOOK_PORT: String(HARNESS_PORT + 1),
       },
-      reuseExistingServer: true,
+      reuseExistingServer,
       stdout: "ignore",
       stderr: "pipe",
       timeout: 120_000,
@@ -94,7 +99,7 @@ export default defineConfig({
         MURAGE_UI_PORT: String(UI_PORT),
         MURAGE_PORT: String(HARNESS_PORT),
       },
-      reuseExistingServer: true,
+      reuseExistingServer,
       stdout: "ignore",
       stderr: "pipe",
       timeout: 120_000,
