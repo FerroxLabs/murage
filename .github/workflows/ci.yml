@@ -309,9 +309,9 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
-    # The GEPA runtime build adds about 3 minutes; package-linux.yml runs the
-    # same sequence in about 16.
-    timeout-minutes: 35
+    # The GEPA runtime build adds about 3 minutes (CPython from source can take
+    # longer on a cold runner); package-linux.yml runs the same sequence in ~16.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
