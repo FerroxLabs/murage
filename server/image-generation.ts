@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { redactSecretsInText } from "./redact.ts";
 import { IMAGE_REFERENCE_LIMITS } from "../shared/media-assets.ts";
 import { decodeGeneratedImage, type DecodedGeneratedImage } from "./generated-image.ts";
 
@@ -113,6 +114,22 @@ export function assertCredentialOrigin(provider: ImageProvider, url: string): vo
   try { const parsed = new URL(url); if (parsed.protocol === "https:" && !parsed.username && !parsed.password) origin = parsed.origin; } catch { /* invalid URL stays empty */ }
   if (!Object.hasOwn(PROVIDER_ORIGINS, provider) || origin !== PROVIDER_ORIGINS[provider]) fail("credential-origin-mismatch", "The image request did not match its connection's provider, so no key was sent.");
 }
+/** `: <code> — <message>` from a 4xx JSON error body, or "" when the body is
+ * not that shape. Bounded and secret-redacted; never the raw body. */
+async function providerErrorDetail(response: Response): Promise<string> {
+  try {
+    if (Number(response.headers.get("content-length") ?? 0) > 64 * 1024) { void response.body?.cancel(); return ""; }
+    const text = (await response.text()).slice(0, 64 * 1024);
+    const body = JSON.parse(text) as unknown;
+    const error = record(body) && record(body.error) ? body.error : record(body) ? body : null;
+    if (!error) return "";
+    const clean = (value: unknown, max: number) => typeof value === "string" && value.trim() ? redactSecretsInText(value.replace(/\s+/g, " ").trim()).slice(0, max) : "";
+    const code = clean(error.code, 80), message = clean(error.message, 300);
+    if (!code && !message) return "";
+    return `: ${[code, message].filter(Boolean).join(" — ")}`;
+  } catch { return ""; }
+}
+
 async function boundedJson(response: Response, limit: number): Promise<unknown> {
   if (Number(response.headers.get("content-length") ?? 0) > limit) { void response.body?.cancel(); fail("oversized-response", "The image provider response was too large.", "uncertain"); }
   if (!response.body) fail("invalid-response", "The image provider returned no response.", "uncertain");
@@ -348,8 +365,11 @@ export class ImageGenerationService {
       const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, authorization: `Bearer ${connection.apiKey}` }, body: outbound.body, signal, redirect: "error" });
       if (!response.ok) {
         outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";
-        void response.body?.cancel();
-        fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status}). No fallback or automatic retry was attempted.`, outcome);
+        // A 4xx body from the provider says why (Flux: error.code such as
+        // moderation_blocked or invalid_reference_image, plus error.message).
+        // Throwing it away left the person with only the status number.
+        const detail = outcome === "failed" ? await providerErrorDetail(response) : (void response.body?.cancel(), "");
+        fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome);
       }
       const result = await boundedJson(response, MAX_RESPONSE_BYTES);
       if (!record(result) || !Array.isArray(result.data) || result.data.length !== 1 || !record(result.data[0]) || typeof result.data[0].b64_json !== "string") fail("invalid-image", "The image provider did not return one supported image.", outcome);

@@ -104,6 +104,17 @@ it("never retries or falls back on a rejected or uncertain provider attempt and 
  for(const status of [401,429,503]){const f=fixture();f.fetcher.mockResolvedValueOnce(new Response("FAKE_CREDENTIAL_CANARY",{status}));await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow("No fallback");expect(f.fetcher).toHaveBeenCalledOnce();expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith(status<500?"failed":"uncertain");}
  const f=fixture();f.fetcher.mockRejectedValueOnce(new Error("FAKE_CREDENTIAL_CANARY"));await expect(f.service.generate(f.request,f.hooks)).rejects.not.toThrow("CANARY");expect(f.fetcher).toHaveBeenCalledOnce();expect(f.finish).toHaveBeenCalledWith("uncertain");
 });
+it("surfaces the provider's own error code and message from a 4xx JSON body, bounded and redacted",async()=>{
+ const f=fixture();f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:"moderation_blocked",message:"the provider's safety system rejected this prompt (key sk-abcdefghijklmnopqrstuvwxyz0123)",type:"invalid_request_error"}}),{status:400,headers:{"content-type":"application/json"}}));
+ const error=await f.service.generate(f.request,f.hooks).catch(e=>e);
+ expect(error).toMatchObject({code:"provider-error",outcome:"failed"});expect(error.message).toContain("HTTP 400");expect(error.message).toContain("moderation_blocked");expect(error.message).toContain("safety system rejected this prompt");expect(error.message).not.toContain("sk-abcdefghijklmnopqrstuvwxyz0123");expect(error.message).toContain("No fallback");
+ const long=fixture();long.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:"invalid_reference_image",message:"x".repeat(2000)}}),{status:400}));
+ const bounded=await long.service.generate(long.request,long.hooks).catch(e=>e);expect(bounded.message).toContain("invalid_reference_image");expect(bounded.message.length).toBeLessThan(700);
+ const plain=fixture();plain.fetcher.mockResolvedValueOnce(new Response("not json",{status:400}));
+ await expect(plain.service.generate(plain.request,plain.hooks)).rejects.toThrow("rejected the request (HTTP 400). No fallback");
+ const server=fixture();server.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:"upstream_down",message:"PRIVATE_DETAIL"}}),{status:502}));
+ await expect(server.service.generate(server.request,server.hooks)).rejects.not.toThrow("PRIVATE_DETAIL");
+});
 it("rejects oversized response, invalid raster, URL-only output and extra images without publishing",async()=>{
  const responses=[()=>new Response("{}",{headers:{"content-length":String(16*1024*1024)}}),()=>new Response(JSON.stringify({data:[{b64_json:Buffer.from("<svg/>").toString("base64") }]})),()=>new Response(JSON.stringify({data:[{url:"https://untrusted.invalid/image.png"}]})),()=>new Response(JSON.stringify({data:[{b64_json:PNG},{b64_json:PNG}]}))];
  for(const response of responses){const f=fixture();f.fetcher.mockResolvedValueOnce(response());await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow();expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith("uncertain");expect(f.fetcher).toHaveBeenCalledOnce();}
