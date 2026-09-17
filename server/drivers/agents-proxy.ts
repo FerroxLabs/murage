@@ -496,6 +496,10 @@ const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 
+/** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS)
+ * plus the 300 s the provider request itself was already allowed. */
+const GENERATE_IMAGE_TIMEOUT_MS = 15 * 60_000 + 300_000;
+
 async function api(path: string, init?: RequestInit): Promise<Json> {
   let res: Response;
   try {
@@ -571,7 +575,11 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     return { text: JSON.stringify(await api("/api/internal/resolve-image-reference", { method: "POST", body: JSON.stringify({ sources }) })) };
   }
   if (name === "generate_image") {
-    const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(300_000), body: JSON.stringify({
+    // The harness holds this request open while the owner's approval card
+    // waits (IMAGE_APPROVAL_TIMEOUT_MS, 15 minutes, in server/image-operations.ts)
+    // and then while the provider renders. Giving up here first would close the
+    // request, which cancels the card under the owner as "not answered".
+    const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), body: JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, operation: args.operation, connectionId: args.connection_id,
       model: args.model, quality: args.quality, size: args.size, referenceIds: args.reference_ids,
     }) });

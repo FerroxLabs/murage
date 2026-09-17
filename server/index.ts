@@ -2226,9 +2226,18 @@ const imageOperations = new ImageOperations({ store, waiting: (threadId, waiting
   if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
   else askMessageByRequest.delete(`${threadId}:${requestId}`);
   watchdog.setWaitingOnHuman(threadId, waiting);
+  const ownerId = internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
+  if (!ownerId) return;
+  // The same attention state every provider approval sets (request.opened /
+  // request.resolved below): the sidebar says "Waiting for you…" instead of
+  // showing the bot as still working, and clears once the card settles.
   if (waiting && messageId) {
-    const ownerId = internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
-    if (ownerId) notifyApproval(ownerId, threadId, requestId, messageId);
+    if (!store.setTaskActivity(ownerId, threadId, "waiting-on-you") && store.bot(ownerId)?.busy) store.setActivity(ownerId, "waiting-on-you");
+    notifyApproval(ownerId, threadId, requestId, messageId);
+  } else if (store.taskByThread(ownerId, threadId)?.activity === "waiting-on-you") {
+    store.setTaskActivity(ownerId, threadId, "working");
+  } else if (!store.taskByThread(ownerId, threadId) && store.bot(ownerId)?.activity === "waiting-on-you") {
+    store.setActivity(ownerId, "working");
   }
 } });
 function imageConnection(id: string): ImageConnection | null {

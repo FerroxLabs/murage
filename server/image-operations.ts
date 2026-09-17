@@ -15,7 +15,13 @@ import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOu
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
-interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean) => void; active: () => void }
+interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void }
+/** How long an image approval card waits for the owner: the same 15 minutes
+ * every engine permission request gets (drivers/acp/core.ts, drivers/codex.ts)
+ * before the harness closes it as unanswered. The generate_image MCP call in
+ * drivers/agents-proxy.ts keeps its HTTP request open past this bound plus
+ * generation time, so the proxy never gives up on a card first. */
+export const IMAGE_APPROVAL_TIMEOUT_MS = 15 * 60_000;
 const error = (status: number, message: string) => Object.assign(new Error(message), { status });
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 function inside(root: string, file: string) { const tail = relative(root, file); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); }
@@ -220,14 +226,18 @@ export class ImageOperations {
     this.waiting(actor.threadId, true, requestId, card.id);
     return new Promise(resolve => {
       let settled = false;
-      const finish = (allow: boolean) => {
+      // Only the owner's own answer is recorded as allow/deny. A card nobody
+      // answered (turn cancelled, request revoked, the shared bound elapsed)
+      // settles as "unavailable", the same closing the harness gives every
+      // other approval its turn abandoned, so it never reads as a denial.
+      const finish = (allow: boolean, source: "user" | "system" = "system") => {
         if (settled) return; settled = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
         const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
-        if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: allow ? "allow" : "deny", dismissed: !allow } });
+        if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
         this.waiting(actor.threadId, false, requestId); resolve(allow);
       };
       const abort = () => finish(false);
-      const timer = setTimeout(abort, 60_000); timer.unref();
+      const timer = setTimeout(abort, IMAGE_APPROVAL_TIMEOUT_MS); timer.unref();
       this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();
@@ -238,7 +248,7 @@ export class ImageOperations {
     const pending = this.pending.get(requestId);
     if (!pending || pending.threadId !== threadId || behavior === "answer") return "unavailable";
     try { pending.active(); } catch { pending.settle(false); return "unavailable"; }
-    pending.settle(behavior === "allow"); return behavior === "allow" ? "allowed-once" : "rejected";
+    pending.settle(behavior === "allow", "user"); return behavior === "allow" ? "allowed-once" : "rejected";
   }
   cancelThread(threadId: string) { for (const pending of this.pending.values()) if (pending.threadId === threadId) pending.settle(false); }
 }

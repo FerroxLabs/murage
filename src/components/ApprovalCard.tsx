@@ -110,6 +110,12 @@ export function ApprovalCard({
             <Check size={14} className="text-success" />
             {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : isSkillRequest ? "Skill confirmed" : "Allowed")}
           </>
+        ) : settled === "unavailable" ? (
+          // closed by nobody: the turn stopped, the request was revoked, or
+          // the wait ran out — never the owner's own decision
+          <>
+            <X size={14} /> Not answered
+          </>
         ) : settled ? (
           <>
             <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : "Denied"}

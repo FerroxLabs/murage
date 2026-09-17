@@ -30,6 +30,18 @@ describe("ApprovalCard hold explanation", () => {
   });
 });
 
+describe("ApprovalCard settled state", () => {
+  it("shows an image approval nobody answered as not answered, never as a denial", () => {
+    const message: Message = { id: "image-card", role: "bot", kind: "options", at: 1,
+      card: { title: "Approve image generation", subtitle: "One image · flux · flux-image-1 · high · 1024x1024", options: ["Allow", "Deny"],
+        tool: "generate_image", requestId: "image-1", answered: "unavailable", dismissed: true } };
+    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    expect(markup).toContain("Not answered");
+    expect(markup).not.toContain("Denied");
+    expect(markup).toContain("generate image");
+  });
+});
+
 const createRoutineOperation = {
   action: "create" as const,
   routine: {

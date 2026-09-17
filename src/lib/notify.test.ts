@@ -48,6 +48,17 @@ describe("desktop notifications", () => {
     expect(show).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId, requestId: approval.requestId, messageId: "card", title: frame.title, body: frame.body });
     expect(notices).toHaveLength(0);
   });
+  it("delivers an image approval (no turn id) through the native bridge once, even while its thread is on screen", () => {
+    const { notices } = installNotification("granted", true);
+    const show = vi.fn(async () => ({ accepted: true }));
+    Object.assign(window, { muragebox: { platform: "darwin", approvalNotifications: { show } } });
+    const approval = { ...frame, kind: "approval" as const, requestId: "image-9b0e", messageId: "image-card", title: "Ember needs approval", body: "One image · flux" };
+    showNotification(approval, vi.fn(), undefined, frame.threadId);
+    showNotification(approval, vi.fn(), undefined, frame.threadId);
+    expect(show).toHaveBeenCalledOnce();
+    expect(show).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId, requestId: "image-9b0e", messageId: "image-card", title: approval.title, body: approval.body });
+    expect(notices).toHaveLength(0);
+  });
   it.each(["default", "denied"] as const)("does not deliver an approval with permission %s", permission => {
     const { notices } = installNotification(permission, true);
     const show = vi.fn();

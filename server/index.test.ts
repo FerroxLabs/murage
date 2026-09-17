@@ -1783,6 +1783,7 @@ describe("harness HTTP API", () => {
     };
     const pendingCard = async () => { let card:any; await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);return card; };
     const proxies: ReturnType<typeof imageCall>["proxy"][]=[];
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
     try {
       expect((await api("GET","/api/images/settings")).status).toBe(404);
       expect((await desktopApi("PATCH","/api/config?secretStorage=external",{imageGen:{key:"fixture-image-key"}})).status).toBe(200);
@@ -1790,10 +1791,20 @@ describe("harness HTTP API", () => {
       expect(settings.status).toBe(200);expect(settings.body.selected).toEqual({connectionId:"openai",model:"gpt-image-2"});
       expect(JSON.stringify(settings.body)).not.toContain("fixture-image-key");expect(readFileSync(join(home,".murage","config.json"),"utf8")).not.toContain("fixture-image-key");
       let turn=await startInternalFixtureTurn(bot.id);
+      // 0.1.54: an image card is an approval like any other — it buzzes the
+      // owner, flips the task to "waiting for you", and waits for an answer.
+      stream=await openSse(`${BASE}/api/events`);await stream.until(frame=>frame.kind==="hello");
       const denied=imageCall(turn.env,{request_id:"deny",prompt:"Synthetic image fixture"});proxies.push(denied.proxy);
       let card=await pendingCard();expect(existsSync(receipt)).toBe(false);
+      const buzz=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.requestId===card.card.requestId,10_000);
+      expect(buzz.notification).toMatchObject({kind:"approval",botId:bot.id,threadId:bot.threadId,messageId:card.id});
+      expect(buzz.notification.body).toContain("gpt-image-2");
+      await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).toBe("waiting-on-you");
       expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
       expect((await denied.result).isError).toBe(true);expect(existsSync(receipt)).toBe(false);
+      const deniedCard=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.find((m:any)=>m.id===card.id);
+      expect(deniedCard.card).toMatchObject({answered:"deny",dismissed:false});
+      await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).not.toBe("waiting-on-you");
       await stopFixtureTurn(bot.id,turn);
       turn=await startInternalFixtureTurn(bot.id);
       const args={request_id:"generate",prompt:"Synthetic image fixture",connection_id:"openai",model:"gpt-image-2"};
@@ -1814,6 +1825,7 @@ describe("harness HTTP API", () => {
       await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"});
       expect((await edit.result).isError).not.toBe(true);expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:2,references:1});
     } finally {
+      stream?.close();
       await api("POST",`/api/bots/${bot.id}/interrupt`);for(const proxy of proxies)if(proxy.exitCode===null)await waitForExit(proxy,{signal:"SIGTERM"});
       await desktopApi("PATCH","/api/config",{imageGen:{key:"",enabled:false}});await desktopApi("DELETE",`/api/bots/${bot.id}`);
     }

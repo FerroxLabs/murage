@@ -8,7 +8,7 @@ import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
-import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
+import { IMAGE_APPROVAL_TIMEOUT_MS, ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { ImageGenerationService, type ImageReference } from "./image-generation.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
@@ -405,4 +405,49 @@ it("B16 resolves two exactly 10 MiB conversation PNG attachments as 20 MiB of re
   expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(20 * MiB);
   for (const [index, item] of refs.entries()) { expect(item.mime).toBe("image/png"); expect(item.bytes.length).toBe(10 * MiB); expect(item.bytes.equals(readFileSync(exact[index]!.path))).toBe(true); }
   expect(() => imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)))).toThrow("total at most 20 MB");
+});
+// 0.1.54: an image approval is an approval like any other. It used to deny
+// itself after 60 s, so an owner who was not staring at the screen found a
+// "Denied" card and never got the chance to answer.
+it("image approval waits like any other approval and settles as not answered on abort", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = generationFixture();
+    const job = f.run("patient", f.request), refused = expect(job).rejects.toThrow("not approved");
+    const card = await f.card(), requestId = card.card!.requestId!;
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS - 60_000 - 5_000); // vi.waitFor already advanced the clock a little
+    const stillOpen = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
+    expect(stillOpen.answered).toBeUndefined(); expect(stillOpen.dismissed).toBeFalsy();
+    expect(f.waiting.mock.calls.filter(call => call[1] === false)).toHaveLength(0);
+    f.controller.abort(); await refused;
+    const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
+    expect(settled.answered).toBe("unavailable"); expect(settled.dismissed).toBe(true);
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, false, requestId);
+    expect(f.fetcher).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+it("image approval times out on the shared permission bound as not answered, never as the owner's denial", async () => {
+  vi.useFakeTimers();
+  try {
+    expect(IMAGE_APPROVAL_TIMEOUT_MS).toBe(15 * 60_000);
+    const f = generationFixture();
+    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("not approved");
+    const card = await f.card();
+    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS);
+    await refused;
+    const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
+    expect(settled.answered).toBe("unavailable"); expect(settled.dismissed).toBe(true);
+    expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
+    expect(f.fetcher).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+it("the owner's own deny stays a denial and their allow dispatches exactly once", async () => {
+  const f = generationFixture();
+  const job = f.run("owner", f.request), refused = expect(job).rejects.toThrow("not approved");
+  const card = await f.card();
+  expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected"); await refused;
+  const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
+  expect(settled.answered).toBe("deny"); expect(settled.dismissed).toBe(false);
 });
