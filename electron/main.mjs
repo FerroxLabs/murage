@@ -3591,7 +3591,8 @@ app.on("before-quit", (e) => {
   const alreadyClosing = Boolean(desktopCleanup);
   const operation = cleanupDesktopForExit();
   if (alreadyClosing) return;
-  void operation.then(() => app.quit()).catch(() => {
+  // Let the prevented native quit unwind before re-entering Electron's quit.
+  void operation.then(() => { setImmediate(() => app.quit()); }).catch(() => {
     slog(`desktop cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
     dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
   });
