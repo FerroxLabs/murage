@@ -20,9 +20,10 @@ import {
   type BotAvatarCrop,
 } from "../../shared/bot-avatar";
 import { BotAvatar, EmberAvatar } from "./Avatar";
+import { MASCOT_BODY_IDS, MASCOT_BODY_NAMES, botMascotBody } from "../../shared/mascot-bodies";
 
 type AvatarPatch = Partial<
-  Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression">
+  Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression" | "mascotBody">
 >;
 
 const CROP_LABEL = {
@@ -157,7 +158,7 @@ export function BotProfileAvatarCard({
       <div className="flex items-center justify-between border-b border-hairline/40 px-3 py-2.5">
         <span className="rounded-lg bg-control px-3 py-1.5 text-[14px] font-medium text-ink">Avatar</span>
         <button
-          onClick={() => onPatch({ avatarCrop: "mascot", color: "orange", mascotExpression: null })}
+          onClick={() => onPatch({ avatarCrop: "mascot", color: "orange", mascotExpression: null, mascotBody: "ember" })}
           className="rounded-md px-2 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink"
         >
           Reset mascot
@@ -249,7 +250,7 @@ export function BotProfileAvatarCard({
                   title={expression}
                   aria-label={`Use ${expression} expression`}
                 >
-                  <EmberAvatar color={bot.color} state={expression} size={42} animated={false} />
+                  <EmberAvatar color={bot.color} body={bot.mascotBody} state={expression} size={42} animated={false} />
                 </button>
               ))}
             </div>
@@ -272,6 +273,28 @@ export function BotProfileAvatarCard({
                   title={color}
                   aria-label={`Use ${color} mascot color`}
                 />
+              ))}
+            </div>
+
+            <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+              Body
+            </div>
+            <div className="grid grid-cols-5 gap-2">
+              {MASCOT_BODY_IDS.map((body) => (
+                <button
+                  key={body}
+                  type="button"
+                  aria-pressed={botMascotBody(bot.mascotBody) === body}
+                  onClick={() => onPatch({ mascotBody: body })}
+                  className={cn(
+                    "flex h-[58px] items-center justify-center rounded-xl bg-inset transition-colors hover:bg-control",
+                    botMascotBody(bot.mascotBody) === body && "ring-2 ring-accent-border",
+                  )}
+                  title={MASCOT_BODY_NAMES[body]}
+                  aria-label={`Use the ${MASCOT_BODY_NAMES[body]} body`}
+                >
+                  <EmberAvatar color={bot.color} body={body} state="idle" size={42} animated={false} trackPointer={false} />
+                </button>
               ))}
             </div>
           </>

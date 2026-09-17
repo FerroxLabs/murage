@@ -9,6 +9,7 @@ import {
   memo,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -21,6 +22,7 @@ import {
   type EmberSilhouette,
 } from "./EmberAvatar";
 import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
+import { MASCOT_BODIES, MASCOT_BODY_NAMES, botMascotBody, type MascotBodyId } from "../../shared/mascot-bodies";
 
 /**
  * The pack's baked-in silhouette was exported with the body fill hardcoded
@@ -32,6 +34,17 @@ const GRADIENT_SILHOUETTE: EmberSilhouette = {
   ...DEFAULT_SILHOUETTE,
   body: DEFAULT_SILHOUETTE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
 };
+
+/**
+ * The silhouette a body id wears. Unknown, missing or corrupt ids fall back to
+ * the Ember flame, so a stale profile can never render an empty mascot.
+ */
+export function mascotSilhouette(body: unknown): EmberSilhouette {
+  const id = botMascotBody(body);
+  if (id === "ember") return GRADIENT_SILHOUETTE;
+  const { name: _name, id: _id, ...shape } = MASCOT_BODIES[id];
+  return { ...shape, name: MASCOT_BODY_NAMES[id] };
+}
 
 export const EYE_SCALE = 1.12;
 export const MOUTH_WEIGHT = 11;
@@ -97,6 +110,8 @@ export type EmberAvatarHandle = EmberMascotHandle;
 
 export type EmberAvatarProps = {
   color: EmberColor;
+  /** Mascot body id (shared/mascot-bodies.ts). Absent or unknown means the Ember flame. */
+  body?: MascotBodyId | string | null;
   /** Named behaviour — drives the expression pool, its cadence and blinking. */
   state?: EmberState;
   /** Pin one of the 25 faces and stop the state's own drift. */
@@ -128,6 +143,7 @@ export type EmberAvatarProps = {
 function EmberAvatarComponent(
   {
     color,
+    body,
     state = "idle",
     expression,
     size = 44,
@@ -148,6 +164,7 @@ function EmberAvatarComponent(
   ref: React.Ref<EmberAvatarHandle>,
 ) {
   const inner = useRef<EmberMascotHandle>(null);
+  const silhouette = useMemo(() => mascotSilhouette(body), [body]);
   useImperativeHandle(ref, () => ({
     blink: () => inner.current?.blink(),
     spin: (durationMs?: number) => inner.current?.spin(durationMs),
@@ -192,7 +209,7 @@ function EmberAvatarComponent(
         state={motionState ?? state}
         expression={expression}
         size={size}
-        shape={GRADIENT_SILHOUETTE}
+        shape={silhouette}
         gradient={gradientFor(color)}
         title={label ?? null}
         lookAround={lookAround ?? (forward ? 0 : 1)}
@@ -216,6 +233,7 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
     color: EmberColor;
     avatarUrl?: string | null;
     avatarCrop?: BotAvatarCrop;
+    mascotBody?: MascotBodyId | null;
   };
 };
 
@@ -243,6 +261,7 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
       <EmberAvatar
         {...mascotProps}
         color={bot.color}
+        body={bot.mascotBody}
         size={profile.avatarCrop === "mascot" ? size : Math.round(size * MASCOT_IN_TILE)}
         label={label ?? bot.name}
       />
