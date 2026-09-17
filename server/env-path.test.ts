@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   augmentedPath,
   bundledFuigoPath,
+  cmdShimTargets,
   resetPathCache,
   resetPathCacheForTests,
   resolveFuigoCli,
@@ -182,6 +183,78 @@ IF EXIST "%dp0%\\node.exe" (
 endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\pkg\\bin\\ombfake.js" %*
 `;
 
+// ...and npm's own npm.cmd / npx.cmd, the exact text npm 10/11 ships (checked
+// against npm 11.19.0) and Node's Windows installer puts beside node.exe with
+// CRLF endings: the entry sits in a variable, next to a helper script.
+const npmLauncher = (name: "npm" | "npx", eol = "\r\n") => {
+  const upper = name.toUpperCase();
+  return `:: Created by npm, please don't edit manually.
+@ECHO OFF
+
+SETLOCAL
+
+SET "NODE_EXE=%~dp0\\node.exe"
+IF NOT EXIST "%NODE_EXE%" (
+  SET "NODE_EXE=node"
+)
+
+SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"
+SET "${upper}_CLI_JS=%~dp0\\node_modules\\npm\\bin\\${name}-cli.js"
+FOR /F "delims=" %%F IN ('CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"') DO (
+  SET "NPM_PREFIX_${upper}_CLI_JS=%%F\\node_modules\\npm\\bin\\${name}-cli.js"
+)
+IF EXIST "%NPM_PREFIX_${upper}_CLI_JS%" (
+  SET "${upper}_CLI_JS=%NPM_PREFIX_${upper}_CLI_JS%"
+)
+
+"%NODE_EXE%" "%${upper}_CLI_JS%" %*
+`.replaceAll("\n", eol);
+};
+
+describe("cmdShimTargets", () => {
+  it.each([
+    ["npx", "\r\n"],
+    ["npx", "\n"],
+    ["npm", "\r\n"],
+    ["npm", "\n"],
+  ] as const)("puts npm's own %s.cmd entry first, never its prefix helper (eol %j)", (name, eol) => {
+    const targets = cmdShimTargets(npmLauncher(name, eol), `C:\\Program Files\\nodejs\\${name}.cmd`);
+    expect(targets[0]).toBe(`node_modules\\npm\\bin\\${name}-cli.js`);
+    expect(targets).not.toContain("node_modules\\npm\\bin\\npm-prefix.js");
+    expect(cmdShimTargets(npmLauncher(name, eol), `${name.toUpperCase()}.CMD`)[0]).toBe(targets[0]);
+  });
+
+  it("binds the entry variable to the shim's own name", () => {
+    // an npx launcher that also names npm's CLI must still start npx
+    const both = npmLauncher("npx").replace(
+      'SET "NPX_CLI_JS=',
+      'SET "NPM_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npm-cli.js"\r\nSET "NPX_CLI_JS=',
+    );
+    expect(cmdShimTargets(both, "npx.cmd")[0]).toBe("node_modules\\npm\\bin\\npx-cli.js");
+    expect(cmdShimTargets(both, "npm.cmd")[0]).toBe("node_modules\\npm\\bin\\npm-cli.js");
+    // a custom launcher that happens to carry the assignment is not steered by it
+    expect(cmdShimTargets(npmLauncher("npx"), "my-tool.cmd")).toEqual([]);
+    expect(cmdShimTargets(npmLauncher("npm"), "npx.cmd")).toEqual([]);
+  });
+
+  it("ignores a malformed entry assignment", () => {
+    for (const line of [
+      'SET "NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js',
+      "SET NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js",
+      'SET "NPX_CLI_JS=C:\\elsewhere\\npx-cli.js"',
+      'REM SET "NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js"',
+    ]) {
+      expect(cmdShimTargets(`@ECHO OFF\r\n${line}\r\n"%NODE_EXE%" "%NPX_CLI_JS%" %*\r\n`, "npx.cmd")).toEqual([]);
+    }
+  });
+
+  it("keeps reading package shims by their quoted %dp0% targets", () => {
+    expect(cmdShimTargets(EXE_SHIM, "ombfake.cmd")).toEqual(["node_modules\\pkg\\bin\\ombfake.exe"]);
+    expect(cmdShimTargets(JS_SHIM, "ombfake.cmd")).toEqual(["node.exe", "node_modules\\pkg\\bin\\ombfake.js"]);
+    expect(cmdShimTargets(JS_SHIM, "npx.cmd")).toEqual(["node.exe", "node_modules\\pkg\\bin\\ombfake.js"]);
+  });
+});
+
 describe("resolveCli", () => {
   it.skipIf(process.platform === "win32")("is identity off Windows — the kernel already resolves PATH and #!", () => {
     expect(resolveCli("claude", ["-p", "hi"])).toEqual({ command: "claude", args: ["-p", "hi"] });
@@ -230,6 +303,35 @@ winOnly("resolveCli (Windows)", () => {
       execFile(r.command, r.args, (err, out) => (err ? reject(err) : resolve(out))),
     );
     expect(stdout.trim()).toBe("js target -p,hi");
+  });
+
+  it.each(["npm", "npx"] as const)("parses npm's own %s.cmd down to `node <cli.js>`, argv intact", async (name) => {
+    // npm's launchers live wherever Node was installed: spaces and non-ASCII included
+    const home = join(dir, "Program Files", "nodejs ü");
+    const bin = join(home, "node_modules", "npm", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(home, `${name}.cmd`), npmLauncher(name));
+    writeFileSync(join(bin, "npm-prefix.js"), "console.log('prefix helper');\n");
+    writeFileSync(join(bin, `${name}-cli.js`), "console.log(JSON.stringify(process.argv.slice(2)));\n");
+    process.env.MURAGE_EXTRA_PATH = home;
+    resetPathCacheForTests();
+    const args = ["-y", "mcp-remote", "a b", "%PATH%", "x&y|z", "q^r", "<in>out", 'say "hi"'];
+    const r = resolveCli(name, args);
+    expect(r.args).toEqual([join(bin, `${name}-cli.js`), ...args]);
+    expect(r.command.toLowerCase()).toMatch(/node\.exe$/);
+    const stdout = await new Promise<string>((resolve, reject) =>
+      execFile(r.command, r.args, (err, out) => (err ? reject(err) : resolve(out))),
+    );
+    expect(JSON.parse(stdout)).toEqual(args);
+  });
+
+  it("hands npm's launcher back unresolved when its CLI entry is missing", () => {
+    const shim = join(dir, "npx.cmd");
+    writeFileSync(shim, npmLauncher("npx"));
+    onPath();
+    const resolved = resolveCli("npx", ["-y", "x"]);
+    expect(resolved.command.toLowerCase()).toBe(shim.toLowerCase());
+    expect(resolved.args).toEqual(["-y", "x"]);
   });
 
   it("prefers the PATHEXT hit over the extensionless sibling npm installs beside it", () => {

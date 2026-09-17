@@ -259,8 +259,26 @@ function nodeExe(near: string): string | null {
   return (process.versions as Record<string, string | undefined>).electron ? null : process.execPath;
 }
 
-/** npm/pnpm .cmd shims all spell their target as "%dp0%\..." (or
- * "%~dp0\..."). Whatever of those exists on disk is what the shim runs. */
+/** The shim-relative targets a .cmd shim names, in the order to try them.
+ * npm/pnpm package shims spell each target as "%dp0%\..." (or "%~dp0\...").
+ * npm's own npm.cmd / npx.cmd, installed beside node.exe, instead name their
+ * entry in a variable next to a helper script that is not the CLI:
+ * SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js". That assignment is
+ * honoured only for the variable matching the shim's own name, so npx.cmd
+ * never resolves to npm's CLI and no other shim is steered by one. The
+ * launcher's switch to a globally upgraded npm is not followed: this node's
+ * own npm runs. Pure text parsing — nothing in the shim is executed. */
+export function cmdShimTargets(text: string, shimName: string): string[] {
+  const name = (shimName.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(cmd|bat)$/, "");
+  const entry =
+    name === "npm" || name === "npx"
+      ? new RegExp(`^[ \\t]*SET "${name.toUpperCase()}_CLI_JS=%~dp0\\\\([^"\\r\\n]+)"`, "im").exec(text)
+      : null;
+  const quoted = [...text.matchAll(/"%~?dp0%?\\?([^"]+)"/g)].map((m) => m[1]!);
+  return [...(entry ? [entry[1]!] : []), ...quoted];
+}
+
+/** Whatever target of a .cmd shim exists on disk is what the shim runs. */
 function parseCmdShim(shim: string): ResolvedSpawn | null {
   let text: string;
   try {
@@ -269,8 +287,8 @@ function parseCmdShim(shim: string): ResolvedSpawn | null {
     return null;
   }
   const dir = dirname(shim);
-  const targets = [...text.matchAll(/"%~?dp0%?\\?([^"]+)"/g)]
-    .map((m) => join(dir, m[1]))
+  const targets = cmdShimTargets(text, shim)
+    .map((target) => join(dir, target))
     .filter((p) => isFile(p) && basename(p).toLowerCase() !== "node.exe");
   const script = targets.find((p) => /\.[cm]?js$/i.test(p));
   if (script) {
