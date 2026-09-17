@@ -76,10 +76,17 @@ export const LOCAL_DETECTION_TARGETS: readonly LocalDetectionTarget[] = [
 
 // ── address validation (spec A1) ──────────────────────────────────────────
 
-/** loopback / RFC1918 / tailnet (100.64.0.0/10) may use plain http; every
- *  other address must be https. A hostname other than `localhost` is
- *  `public`: without resolving it Murage cannot know where it points. */
-export type LocalAddressClass = "loopback" | "private" | "tailnet" | "public";
+/** loopback / RFC1918 / link-local / tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48)
+ *  may use plain http; every other address must be https.
+ *
+ *  `local-name` is a hostname that looks like it belongs to this network — a
+ *  single label (`gpubox`, a Tailscale MagicDNS short name), `*.ts.net`,
+ *  `*.local`, `*.lan`, `*.internal` or `*.home.arpa`. The syntax alone proves
+ *  nothing, so it is only a candidate: the server resolves it and allows plain
+ *  http only when every address it resolves to is itself non-public, and
+ *  resolves it again before every request it sends (server/local-address-guard.ts).
+ *  Any other hostname is `public`. */
+export type LocalAddressClass = "loopback" | "private" | "tailnet" | "local-name" | "public";
 
 function ipv4Octets(hostname: string): [number, number, number, number] | null {
   const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
@@ -88,23 +95,91 @@ function ipv4Octets(hostname: string): [number, number, number, number] | null {
   return octets.every((octet) => octet >= 0 && octet <= 255) ? octets : null;
 }
 
-export function classifyLocalHostname(hostname: string): LocalAddressClass {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host === "[::1]" || host === "::1") return "loopback";
-  const v4 = ipv4Octets(host);
-  if (!v4) return "public";
-  const [a, b] = v4;
+function classifyIpv4(octets: readonly [number, number, number, number]): LocalAddressClass {
+  const [a, b] = octets;
   if (a === 127) return "loopback";
   if (a === 10) return "private";
   if (a === 172 && b >= 16 && b <= 31) return "private";
   if (a === 192 && b === 168) return "private";
+  if (a === 169 && b === 254) return "private";
   if (a === 100 && b >= 64 && b <= 127) return "tailnet";
   return "public";
+}
+
+/** Eight 16-bit groups, or null when this is not an IPv6 literal. */
+function ipv6Groups(value: string): number[] | null {
+  let text = value;
+  if (!text || text.includes("%")) return null;
+  // A trailing dotted IPv4 (::ffff:1.2.3.4) becomes its two hex groups.
+  const lastColon = text.lastIndexOf(":");
+  const dotted = text.slice(lastColon + 1);
+  if (dotted.includes(".")) {
+    const v4 = ipv4Octets(dotted);
+    if (!v4) return null;
+    text = `${text.slice(0, lastColon + 1)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (chunk: string): number[] | null => {
+    if (!chunk) return [];
+    const groups = chunk.split(":");
+    return groups.every((group) => /^[0-9a-f]{1,4}$/i.test(group)) ? groups.map((group) => parseInt(group, 16)) : null;
+  };
+  const head = parse(halves[0]!);
+  const rest = halves.length === 2 ? parse(halves[1]!) : [];
+  if (!head || !rest) return null;
+  const used = head.length + rest.length;
+  if (halves.length === 1) return used === 8 ? head : null;
+  if (used > 7) return null;
+  return [...head, ...Array.from({ length: 8 - used }, () => 0), ...rest];
+}
+
+/** Class of one IP literal (v4, or v6 with or without brackets); `public`
+ *  for anything that is not an IP literal. */
+export function classifyIpAddress(address: string): LocalAddressClass {
+  const text = address.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  const v4 = ipv4Octets(text);
+  if (v4) return classifyIpv4(v4);
+  if (!text.includes(":")) return "public";
+  const groups = ipv6Groups(text);
+  if (!groups) return "public";
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups as [number, number, number, number, number, number, number, number];
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0 && g6 === 0 && g7 === 1) return "loopback";
+  // IPv4-mapped (::ffff:a.b.c.d): the embedded v4 address decides.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+    return classifyIpv4([g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff]);
+  }
+  if (g0 === 0xfd7a && g1 === 0x115c && g2 === 0xa1e0) return "tailnet";
+  if ((g0 & 0xfe00) === 0xfc00) return "private"; // ULA fc00::/7
+  if ((g0 & 0xffc0) === 0xfe80) return "private"; // link-local fe80::/10
+  return "public";
+}
+
+const LOCAL_NAME_SUFFIXES = [".ts.net", ".local", ".lan", ".internal", ".home.arpa"] as const;
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+export function classifyLocalHostname(hostname: string): LocalAddressClass {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost") return "loopback";
+  if (host.includes(":") || ipv4Octets(host)) return classifyIpAddress(host);
+  if (!host || host.length > 253) return "public";
+  const labels = host.split(".");
+  if (!labels.every((label) => HOST_LABEL.test(label))) return "public";
+  // An all-numeric single label is not a name anyone gives a machine.
+  if (labels.length === 1) return /^\d+$/.test(host) ? "public" : "local-name";
+  return LOCAL_NAME_SUFFIXES.some((suffix) => host.endsWith(suffix) && host.length > suffix.length) ? "local-name" : "public";
+}
+
+/** Whether plain http may even be attempted for this class. `local-name`
+ *  still needs the server's resolution check before anything is sent. */
+export function plainHttpCandidate(addressClass: LocalAddressClass): boolean {
+  return addressClass !== "public";
 }
 
 export type LocalModelsErrorCode =
   | "invalid-address"
   | "https-required"
+  | "unresolved-address"
   | "credentials-in-address"
   | "unsupported-scheme"
   | "invalid-name"
@@ -122,6 +197,7 @@ export type LocalModelsErrorCode =
 export const LOCAL_MODELS_ERROR_STATUS: Record<LocalModelsErrorCode, number> = {
   "invalid-address": 400,
   "https-required": 400,
+  "unresolved-address": 400,
   "credentials-in-address": 400,
   "unsupported-scheme": 400,
   "invalid-name": 400,
@@ -170,7 +246,7 @@ export function normalizeLocalServerAddress(
   if (url.username || url.password) return { ok: false, code: "credentials-in-address" };
   if (url.search || url.hash || !url.hostname) return { ok: false, code: "invalid-address" };
   const addressClass = classifyLocalHostname(url.hostname);
-  if (url.protocol === "http:" && addressClass === "public") return { ok: false, code: "https-required" };
+  if (url.protocol === "http:" && !plainHttpCandidate(addressClass)) return { ok: false, code: "https-required" };
   let path = url.pathname.replace(/\/+$/, "");
   path = path.replace(/\/v1$/i, "");
   if (path && !/^(\/[A-Za-z0-9._~-]+)+$/.test(path)) return { ok: false, code: "invalid-address" };

@@ -22,6 +22,7 @@ import {
   type LocalServerKind,
   type LocalToolTestOutcome,
 } from "../../shared/local-models.ts";
+import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { cachedLocalToolTest, readLocalServers, userLocalServer, type StoredLocalServer } from "../local-servers.ts";
 
 export interface LocalHost {
@@ -309,7 +310,8 @@ export interface LocalJsonAnswer {
  * One JSON request to a local server. `redirect: "error"` on purpose: the key
  * in the Authorization header belongs to this origin only, and a redirect is
  * the one way a server could forward it somewhere else. Null = no answer
- * (network error, timeout, refused redirect).
+ * (network error, timeout, refused redirect, or a local name that no longer
+ * resolves only to local addresses — checked again before every request).
  */
 export async function localRequestJson(
   url: string,
@@ -318,6 +320,7 @@ export async function localRequestJson(
   fetchImpl: typeof fetch,
   init: { method?: "GET" | "POST"; body?: unknown; timeoutMs?: number } = {},
 ): Promise<LocalJsonAnswer | null> {
+  if (!(await checkLocalServerUrl(url)).ok) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 1200);
   timer.unref?.();

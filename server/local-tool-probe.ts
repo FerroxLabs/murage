@@ -30,6 +30,7 @@ import {
   type LocalToolTestOutcome,
   type LocalToolTestResult,
 } from "../shared/local-models.ts";
+import { checkLocalServerUrl } from "./local-address-guard.ts";
 
 export interface LocalToolProbeInput {
   serverId: string;
@@ -217,6 +218,9 @@ export async function runLocalToolProbe(input: LocalToolProbeInput): Promise<Loc
     const t0 = now();
     const timeout = AbortSignal.timeout(input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+    // A local name is resolved again before every call: one that now points
+    // at a public address gets no request (and no key) over plain http.
+    if (!(await checkLocalServerUrl(base + path)).ok) return { kind: "failed", ms: now() - t0, detail: "network" };
     let response: Response;
     try {
       response = await fetchImpl(base + path, {
