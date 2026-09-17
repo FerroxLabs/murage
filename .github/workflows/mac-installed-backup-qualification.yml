@@ -26,8 +26,8 @@ jobs:
       ARTIFACT_DIGEST: sha256:7d09ff5de721898b89fe259937b25b78273fef71486571f4d4886b88b7413a1a
       EVIDENCE_ARTIFACT_ID: "10472969210"
       EVIDENCE_ARTIFACT_DIGEST: sha256:bc8162e4f4d5c1440c3bef989a5ef9925c48d10d9cacc813279f92d10c2b1326
-      # R23: twenty-two prior Mac rounds retained; finite worker attestation reason readout only.
-      MURAGE_MAC_QUALIFICATION_ROUND: "23"
+      # R24: twenty-three prior Mac rounds retained; focus-verified settled native time entry.
+      MURAGE_MAC_QUALIFICATION_ROUND: "24"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +72,7 @@ jobs:
               assert artifact['workflow_run']['id'] == int(os.environ['ARTIFACT_RUN_ID'])
               assert artifact['workflow_run']['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
           (p.parent / 'round-contract.json').write_text(json.dumps({
-              'round': 23, 'priorMacRounds': 22, 'maximumJobMinutes': 60,
+              'round': 24, 'priorMacRounds': 23, 'maximumJobMinutes': 60,
               'diagnosticInvocationsPerFailedProfile': 0,
               'scheduledFailureAlwaysRethrown': True, 'manualResultIsScheduledPass': False,
               'artifactSource': os.environ['ARTIFACT_SOURCE_SHA'],

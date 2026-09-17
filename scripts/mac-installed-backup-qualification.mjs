@@ -221,11 +221,37 @@ if(cmd.op==='time'){
  var h=Number(cmd.text.slice(0,2)),m=Number(cmd.text.slice(3)),expectedHour=twelve?(h%12||12):h;
  var parts=[{e:hour[0],text:String(expectedHour),value:expectedHour},{e:minute[0],text:String(m),value:m}];if(twelve)parts.push({e:period[0],text:h<12?'A':'P',value:periodBase+(h<12?0:1)});
  p.frontmost=true;
- for(var j=0;j<parts.length;j++){var focus=$.AXUIElementSetAttributeValue(parts[j].e,$('AXFocused'),$(true));if(focus!==0)return JSON.stringify({ok:false,error:'time-focus',code:focus,observed:observed});delay(0.2);se.keystroke(parts[j].text);delay(0.2);}
- se.keyCode(48);delay(0.2);
- var values=parts.map(function(part){return{title:read(part.e,'AXTitle'),value:read(part.e,'AXValue'),description:read(part.e,'AXValueDescription'),expected:part.value};});
+ // React may replace a segment after each real input. Never type through an
+ // unverified focus or continue using the pre-input segment references.
+ var entryDeadline=Date.now()+15000,entry=[];
+ function fresh(title){
+  var currentFields=[];visited=0;overflow=false;
+  var currentWindows=read(app,'AXWindows')||[];
+  for(var wi=0;wi<currentWindows.length;wi++)walk(currentWindows[wi],function(e){return read(e,'AXRole')==='AXTimeField'&&read(e,'AXTitle')===cmd.label;},currentFields,0);
+  if(overflow||currentFields.length!==1)throw{error:'time-field',count:currentFields.length};
+  var current=[];visited=0;walk(currentFields[0],function(e){return read(e,'AXRole')==='AXIncrementor'&&read(e,'AXTitle')===title;},current,0);
+  if(overflow||current.length!==1)throw{error:'time-segment',count:current.length};
+  return current[0];
+ }
+ function settle(fn,label){while(Date.now()<entryDeadline){var value=fn();if(value)return value;delay(.1);}throw{error:label};}
+ function valuesNow(){return parts.map(function(part){var e=fresh(part.title);return{title:part.title,value:read(e,'AXValue'),description:read(e,'AXValueDescription'),expected:part.value};});}
+ try{
+  for(var j=0;j<parts.length;j++)parts[j].title=read(parts[j].e,'AXTitle');
+  for(var j=0;j<parts.length;j++){
+   var part=parts[j],current=fresh(part.title),before=read(current,'AXValue'),state={title:part.title,before:before,expected:part.value,typed:false};entry.push(state);
+   if(before===part.value){state.skipped=true;continue;}
+   if(Date.now()>=entryDeadline)throw{error:'time-entry-deadline'};
+   state.focusCode=$.AXUIElementSetAttributeValue(current,$('AXFocused'),$(true));
+   if(state.focusCode!==0)throw{error:'time-focus',code:state.focusCode};
+   settle(function(){current=fresh(part.title);state.focused=read(current,'AXFocused');return state.focused===true;},'time-focus-readback');
+   se.keystroke(part.text);state.typed=true;
+   settle(function(){current=fresh(part.title);state.readback=read(current,'AXValue');return state.readback===part.value;},'time-segment-readback');
+  }
+  se.keyCode(48);
+  var values=settle(function(){var actual=valuesNow();return actual.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;})?actual:null;},'time-readback');
+ }catch(error){return JSON.stringify({ok:false,error:error.error||'time-entry',code:error.code===undefined?null:error.code,count:error.count===undefined?null:error.count,requested:cmd.text,observed:observed,entry:entry});}
  var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
- return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
+ return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,entry:entry,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
 }
 // Query the owned PID through public AX APIs. System Events remains keyboard-only.
 ObjC.import('ApplicationServices');
