@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { readMemoryLearning } from "./learning-policy.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -117,5 +118,18 @@ describe("H2 downgrade", () => {
     f.db.exec = exec;
     expect(f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(before);
     expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(2);
+  });
+});
+
+describe("H3 review mode for migrated installs", () => {
+  it("seeds reviewMode:true when upgrading an existing v1 install, keeping the cost switch untouched", () => {
+    const f = legacyInstallation("off");
+    migrateMemorySchema(f.db, "active", { snapshotPath: f.snapshot });
+    expect(readMemoryLearning(f.db)).toMatchObject({ revision: 0, automaticFacts: true, automaticProcedures: true, reviewMode: true, dailyCostUsd: null, inputLimit: 100000, outputLimit: 20000, callsPerMinute: 6 });
+  });
+  it("keeps the shipped default for a fresh install", () => {
+    const db = open(join(dataDir(), "messages.db"));
+    migrateMemorySchema(db, "active", { snapshotPath: join(roots[roots.length - 1], MEMORY_PRE_V2_SNAPSHOT) });
+    expect(readMemoryLearning(db)).toMatchObject({ revision: 0, reviewMode: false, dailyCostUsd: null });
   });
 });

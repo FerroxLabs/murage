@@ -31,7 +31,7 @@ it.each(["off", "paused", "capture", "active"])("migrates v1 %s without altering
   expect(db.prepare("SELECT * FROM memory_scopes").all()).toEqual(scopes);
   expect(db.prepare("SELECT * FROM memory_tombstones").all()).toEqual(deleted);
   expect(db.prepare("SELECT partition,claim_status,observed_at FROM memory_record_details").get()).toEqual({ partition: "semantic", claim_status: "provisional", observed_at: null });
-  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: false, dailyCostUsd: null });
+  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: true, dailyCostUsd: null });
   const after = db.prepare("SELECT * FROM memory_meta").get(); migrateMemorySchema(db);
   expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual(after); expect(validateMemorySchema(db).has("memory_learning_config")).toBe(true);
 });

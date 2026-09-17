@@ -205,7 +205,11 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       db.exec(MEMORY_SCHEMA);
       db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,2,?,?)").run(randomUUID(),initialMode);
     }
-    db.prepare("INSERT INTO memory_learning_config VALUES(1,0,?)").run(JSON.stringify(DEFAULT_MEMORY_LEARNING));
+    // An existing install kept every candidate in "Needs review" before v2; keep
+    // that behaviour until the owner opts into automatic activation. Fresh installs
+    // take the shipped default. dailyCostUsd stays null: any value disables learning.
+    const learning = exists ? { ...DEFAULT_MEMORY_LEARNING, reviewMode: true } : DEFAULT_MEMORY_LEARNING;
+    db.prepare("INSERT INTO memory_learning_config VALUES(1,0,?)").run(JSON.stringify(learning));
     validateMemorySchema(db);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
