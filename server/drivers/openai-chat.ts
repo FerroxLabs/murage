@@ -55,6 +55,8 @@ interface RuntimeOptions<Config> {
   httpErrorLabel: string;
   missingKeyError: string;
   unavailableReason: string;
+  /** Longest wait without provider progress, renewed by each progress frame.
+   * Bounds connecting, headers and first progress; not a total deadline. */
   timeoutMs: number;
   nativeLog: NativeLog;
   refreshModels?: () => Promise<void>;
@@ -111,6 +113,84 @@ const inBandErrorDetail = (body: CompletionJson): string | null => {
   return "unspecified error";
 };
 
+/** The renewable idle budget for one provider request (U02, upstream 1083).
+ * It is armed before the request, so connecting, response headers and the wait
+ * for first progress are all bounded; only provider progress renews it. Expiry
+ * aborts with a TimeoutError, never an AbortError: an idle provider is a
+ * failure, not the user's Stop. */
+interface IdleBudget {
+  readonly signal: AbortSignal;
+  readonly expired: boolean;
+  readonly message: string;
+  renew(): void;
+  clear(): void;
+}
+
+function createIdleBudget(ms: number): IdleBudget {
+  const controller = new AbortController();
+  const message = `timed out after ${ms}ms without provider progress`;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let cleared = false;
+  const arm = () => {
+    if (cleared || controller.signal.aborted) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      controller.abort(new DOMException(message, "TimeoutError"));
+    }, ms);
+  };
+  arm();
+  return {
+    signal: controller.signal,
+    get expired() {
+      return controller.signal.aborted;
+    },
+    message,
+    renew: arm,
+    clear: () => {
+      cleared = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+/** Whether a parsed stream frame proves the model is still producing. Only
+ * generated text or reasoning, a finish frame or usage counts. Keepalive
+ * comments, blank or role-only deltas and unreadable frames never renew the
+ * idle budget, so keepalive traffic alone cannot hold a request open. */
+const isProgress = (chunk: CompletionJson): boolean => {
+  const choice = chunk.choices?.[0];
+  const delta = choice?.delta;
+  return (typeof delta?.content === "string" && delta.content !== "")
+    || (typeof delta?.reasoning_content === "string" && delta.reasoning_content !== "")
+    || (typeof choice?.finish_reason === "string" && choice.finish_reason !== "")
+    || (chunk.usage !== undefined && chunk.usage !== null);
+};
+
+/** One body read that settles as soon as the request is aborted, even when a
+ * transport fails to propagate the abort into its body stream. */
+const readUnlessAborted = <T>(
+  reader: ReadableStreamDefaultReader<T>,
+  signal: AbortSignal,
+): ReturnType<ReadableStreamDefaultReader<T>["read"]> => {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+
 /** Shared runtime for the three providers that speak OpenAI chat completions. */
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
   const { input } = options;
@@ -137,14 +217,40 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     providerRoute?: ProviderTurnRoute,
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
+    const idle = createIdleBudget(options.timeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+    try {
+      return await completeWithin(requestSignal, idle, messages, model, stream, onDelta, providerRoute);
+    } catch (value) {
+      // An idle expiry outside the stream reader (connect, headers, or a
+      // non-streamed body) is the provider's timeout failure. The caller's own
+      // Stop always wins and stays an AbortError (STOP1).
+      if (idle.expired && !signal?.aborted && asError(value).name === "TimeoutError") {
+        throw new Error(`${label} ${idle.message}`, { cause: value });
+      }
+      throw value;
+    } finally {
+      idle.clear();
+    }
+  };
+
+  const completeWithin = async (
+    requestSignal: AbortSignal,
+    idle: IdleBudget,
+    messages: OpenAIChatMessage[],
+    model: string,
+    stream: boolean,
+    onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
+    providerRoute?: ProviderTurnRoute,
+  ): Promise<Completion> => {
+    const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
     const redact = (value: string) => (secret ? value.replaceAll(secret, "[redacted]") : value);
-    const timeout = AbortSignal.timeout(options.timeoutMs);
     const response = await fetch(`${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: JSON.stringify(options.requestBody(model, messages, stream)),
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      signal: requestSignal,
     });
     if (!response.ok) {
       const rawBody = await response.text().catch(() => "");
@@ -205,6 +311,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       }
       const errorDetail = inBandErrorDetail(chunk);
       if (errorDetail !== null) throw failure(`stream error: ${errorDetail}`, "provider_error");
+      if (isProgress(chunk)) idle.renew();
       const choice = chunk.choices?.[0];
       const delta = choice?.delta;
       const reasoningDelta = options.reasoning && typeof delta?.reasoning_content === "string"
@@ -237,10 +344,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       readLoop: for (;;) {
         let result: Awaited<ReturnType<typeof reader.read>>;
         try {
-          result = await reader.read();
+          result = await readUnlessAborted(reader, requestSignal);
         } catch (value) {
           const cause = asError(value);
           if (cause.name === "AbortError") throw cause;
+          if (idle.expired && cause.name === "TimeoutError") throw failure(`stream ${idle.message}`, "incomplete", cause);
           throw failure(`stream failed: ${cause.message}`, "incomplete", cause);
         }
         if (result.done) {

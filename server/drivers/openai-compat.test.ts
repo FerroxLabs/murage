@@ -486,6 +486,94 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 
+  describe("renewable idle budget (U02)", () => {
+    const encoder = new TextEncoder();
+    const chunk = (text: string) => encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+
+    /** A held SSE body the test feeds by hand, plus the provider request count. */
+    const heldStream = () => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({ start: (c) => { controller = c; } });
+      const state = { requests: 0 };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) => {
+          if (String(input).endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+          state.requests++;
+          return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }),
+      );
+      return { controller: () => controller, state };
+    };
+
+    const createDriver = (instanceId: string) => OpenAICompatDriver.create({
+      instanceId,
+      displayName: "Idle budget",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("completes a progressing stream that runs far past the former 120s total budget", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      const { controller, state } = heldStream();
+      const inst = await createDriver("test-idle-renew");
+      const recorder = recordEvents(inst.adapter);
+      try {
+        await inst.adapter.sendTurn({ threadId: "thread-idle-renew", text: "prompt", model: "vendor/model" });
+        controller().enqueue(chunk("start "));
+        await vi.advanceTimersByTimeAsync(100_000);
+        controller().enqueue(chunk("middle "));
+        await vi.advanceTimersByTimeAsync(100_000);
+        controller().enqueue(chunk("end"));
+        await vi.advanceTimersByTimeAsync(100_000);
+        expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
+        controller().enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller().close();
+
+        const completed = await recorder.until((event) => event.type === "turn.completed");
+        expect(completed).toMatchObject({ ok: true, stopReason: null });
+        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "start middle end" });
+        expect(state.requests).toBe(1);
+        // the idle timer and its abort listener are gone once the turn settles
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        recorder.stop();
+        await inst.dispose();
+      }
+    });
+
+    it("fails a stalled stream after 180s idle as incomplete, never as a user Stop", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      const { controller, state } = heldStream();
+      const inst = await createDriver("test-idle-stall");
+      const recorder = recordEvents(inst.adapter);
+      try {
+        await inst.adapter.sendTurn({ threadId: "thread-idle-stall", text: "prompt", model: "vendor/model" });
+        controller().enqueue(chunk("part 1"));
+        await vi.advanceTimersByTimeAsync(179_000);
+        expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
+        await vi.advanceTimersByTimeAsync(1_500);
+
+        const completed = await recorder.until((event) => event.type === "turn.completed");
+        expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+        expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([
+          expect.objectContaining({ message: "upstream stream timed out after 180000ms without provider progress" }),
+        ]);
+        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1" });
+        expect(state.requests).toBe(1);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        recorder.stop();
+        await inst.dispose();
+      }
+    });
+  });
+
   it("omits provider routing when none is configured", async () => {
     let sentBody: any = null;
     vi.stubGlobal(
