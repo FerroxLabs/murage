@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 
 it("the real main-process launch blocks share one fresh private token without mutating ambient env", () => {
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
@@ -15,7 +16,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(Math.min(optionsStart,optionsEnd,serverStart,serverEnd)).toBeGreaterThan(0);
   // Execute the actual environment/option construction, replacing Electron
   // and credential storage. No GUI, utility process, or network is started.
-  const launch = new Function("randomBytes","process","path","app",`
+  const launch = new Function("randomBytes","process","path","app","packagedGepaManifestEnvironment",`
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
     const secureCredentials={}, credentialStoreUnavailable=false;
@@ -37,7 +38,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   `);
   const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value"};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
-  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{getPath:()=>"/fixture/user-data"});
+  // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
+  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app"},packagedGepaManifestEnvironment);
   const first = invoke();
   const second = invoke();
   expect(first.env.MURAGE_COMPANION_TOKEN).toMatch(/^[a-f0-9]{64}$/);
@@ -46,6 +48,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(first.options.companionToken).toBe(first.env.MURAGE_COMPANION_TOKEN);
   expect(first.env.MURAGE_INTERNAL_DATA_DIR_LEASE).toBe("private-lease-fixture");
   expect(first.env.MURAGE_DATA_DIR).toBe("/fixture/canonical-installation");
+  expect(first.env.MURAGE_GEPA_MANIFEST_SHA256).toBe("");
   expect(first.options.MURAGE_INTERNAL_DATA_DIR_LEASE).toBeUndefined();
   expect(second.env.MURAGE_COMPANION_TOKEN).not.toBe(first.env.MURAGE_COMPANION_TOKEN);
   expect(ambient).toEqual({MURAGE_COMPANION_TOKEN:"untrusted-ambient-value"});
