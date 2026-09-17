@@ -209,8 +209,11 @@ describe("published Linux artifact verification", () => {
 });
 
 describe("scoped CI confirmation", () => {
+  // CI is split into quality (all OSes: validator, typecheck, lint, broker,
+  // Electron and packaged-server gates), vitest (sharded, needs quality) and
+  // human jobs; scoped confirmation narrows only the Vitest step.
   const workflow = load("ci.yml");
-  const steps = workflow.jobs.test.steps;
+  const steps = workflow.jobs.quality.steps;
   const guard = steps.find(step => step.name === "Validate scoped CI confirmation input");
   const javascript = guard.run.split("<<'EOF'\n")[1].split("\nEOF")[0];
   const validate = (env) => spawnSync(process.execPath, ["--input-type=module", "-"], {
@@ -244,26 +247,32 @@ describe("scoped CI confirmation", () => {
   });
 
   it("preserves the default test chain and every downstream gate during scoped confirmation", () => {
-    const full = steps.find(step => step.name === "Run tests");
+    const vitest = workflow.jobs.vitest;
+    expect(vitest.needs).toBe("quality");
+    expect(vitest.name).toContain("Scoped Vitest confirmation");
+    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3]') }}");
+    const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
-    expect(full.run).toBe("pnpm test");
-    const scoped = steps.find(step => step.name === "Scoped Vitest confirmation and required downstream suites");
+    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3");
+    expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
+    const scoped = vitest.steps.find(step => step.name === "Scoped Vitest confirmation");
     expect(scoped.if).toBe("inputs.vitest_file != ''");
     expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
     expect(scoped.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
     expect(scoped.run.trim().split("\n").slice(1)).toEqual([
-      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:check", "pnpm broker:test",
-      "pnpm test:electron", "pnpm test:packaged-server",
+      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', 'pnpm exec vitest run "${test_paths[@]}"',
     ]);
-    expect(workflow.jobs.test.name).toContain("Scoped CI confirmation");
-    expect(steps.some(step => step.run === "pnpm typecheck")).toBe(true);
+    // Every downstream gate still runs, unconditionally, in the quality job.
+    for (const run of ["pnpm typecheck", "pnpm check:contrast", "pnpm broker:check", "pnpm broker:test", "pnpm test:electron", "pnpm test:packaged-server", "pnpm check:electron"]) {
+      const step = steps.find(item => item.run === run);
+      expect(step, run).toBeDefined();
+      expect(step.if, run).toBeUndefined();
+    }
     // The Worker is compiled on every run (FLUXCFG follow-up 6): broker:check
     // sits between the repo typecheck and the tests, on every platform.
     const brokerCheck = steps.findIndex(step => step.run === "pnpm broker:check");
     expect(brokerCheck).toBeGreaterThan(steps.findIndex(step => step.run === "pnpm typecheck"));
-    expect(brokerCheck).toBeLessThan(steps.indexOf(full));
-    expect(steps[brokerCheck].if).toBeUndefined();
-    expect(steps.some(step => step.run === "pnpm check:electron")).toBe(true);
+    expect(brokerCheck).toBeLessThan(steps.findIndex(step => step.run === "pnpm test:electron"));
   });
 });
 
@@ -330,8 +339,9 @@ describe("scoped Windows confirmation", () => {
   it("keeps default CI complete and retains the full test command", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
-    expect(ci.jobs.test.strategy.matrix.os).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
-    expect(ci.jobs.test.steps.find(step => step.name === "Run tests").run).toBe("pnpm test");
+    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
+    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3");
+    expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
   });
@@ -341,7 +351,8 @@ describe("scoped Ubuntu human confirmation", () => {
   it("uses explicit manual selection while preserving default CI", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.human_files.type).toBe("string");
-    expect(ci.jobs.test.if).toBe('${{ !inputs.human_files }}');
+    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].if, job).toBe('${{ !inputs.human_files }}');
+    expect(ci.jobs.human.if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     const job = ci.jobs["human-confirmation"];
     expect(job.if).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}");
     expect(job["runs-on"]).toBe("ubuntu-latest");
@@ -361,7 +372,7 @@ describe("scoped Ubuntu human confirmation", () => {
     const scoped = ci.jobs["human-confirmation"];
     expect(scoped.steps.find(step => step.name === "Confirm selected human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
     expect(scoped.steps.find(step => step.name === "Upload human screenshots and traces").with.path).toBe(`${evidence}/human-results`);
-    const test = ci.jobs.test;
+    const test = ci.jobs.human;
     expect(test.steps.find(step => step.name === "Run human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
     expect(test.steps.find(step => step.name === "Upload human spec traces on failure").with.path).toBe(`${evidence}/human-results`);
     for (const job of Object.values(ci.jobs)) {
