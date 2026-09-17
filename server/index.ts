@@ -116,6 +116,7 @@ import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
+import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { subscribe } from "./sendlane.ts";
 import {
@@ -1458,15 +1459,20 @@ function fuigoHomeForTrust(instance: Pick<ProviderInstance, "instanceId" | "driv
  * which Fuigo never gates. `providerRouted` = the turn runs on a provider
  * connection (temporary FUIGO_HOME), so the user's own Fuigo store is not
  * consulted. */
-function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean): SendTurnInput["folderTrust"] {
+function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean, managed?: { botId: string; threadId: string; bundleIds: readonly string[] }): SendTurnInput["folderTrust"] {
   if (instance.adapter.capabilities.folderTrust !== true || !cwd) return undefined;
   const fuigoHome = fuigoHomeForTrust(instance, providerRouted);
   const scan = scanFolderTrustSources(cwd, { fuigoHome });
   if (isUnrecordableTrustRoot(scan.key)) return undefined;
   // looked up by the engine's key for this turn (its registry collapses a
   // `fuigo -w` worktree onto its source repo, FUIGOTRUST4), then the
-  // folder's own
-  const decision = folderTrust.decision(scan.folder, { fuigoHome });
+  // folder's own. A recorded answer (a card's Don't trust) always wins.
+  // Without one, the turn's own thread desk whose only sources are Murage's
+  // links to the skills it pinned runs trusted with no card
+  // (managed-workspace-trust.ts); nothing is recorded, so every turn decides
+  // again from what the desk holds then.
+  const recorded = folderTrust.decision(scan.folder, { fuigoHome });
+  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed }) ? "trust" as const : undefined);
   return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
 }
 /** A folder the human chose in a picker is trusted at that moment (the
@@ -4841,7 +4847,7 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute)),
+        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
@@ -6240,7 +6246,7 @@ async function runGroupMemberTurn(
         system: roomSystem,
         cwd,
         integrations,
-        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute)),
+        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
         ...memberTurnSelection(bot.modelSelection),
       }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
