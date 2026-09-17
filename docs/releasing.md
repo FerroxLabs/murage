@@ -36,6 +36,17 @@ download name, updater feed, blockmap, size, or digest is absent or
 inconsistent — the complete asset set is named in `release.yml`, and anything
 missing or extra fails the run rather than shipping a half release.
 
+Each build job also builds, verifies and pins the GEPA memory worker for its
+own target before packaging (the same steps as the `package-*.yml` workflows),
+and the after-pack gate refuses to package without that receipt. The one
+exception is the Intel Mac: `native/gepa/build-mac.py` builds only the runner's
+own architecture, and the release runner is arm64, so `darwin-x64` is packaged
+with an explicit `murageGepaManifests.darwin-x64=unavailable` opt-out. The app
+treats that as unpinned and takes its documented "no local semantic runtime"
+path; the gate still refuses an Intel package that somehow carries a worker
+tree. The `*-gepa-evidence` artifacts hold each job's sanitized build
+evidence and never merge into the release asset set.
+
 GitHub lookup failures (including authentication, rate limits, and outages)
 stop the workflow. A missing published tag is checked against authenticated
 draft listings too. Prepare next release inspects an existing version branch:
