@@ -1,4 +1,4 @@
-# B35 R28: exact combined native-authorization product; original criteria unchanged.
+# B35 R29: fresh Tools identity after Deny; same artifact and original criteria.
 name: Mac packaged attention machine checks
 on:
   push:

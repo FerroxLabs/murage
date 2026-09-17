@@ -57,7 +57,7 @@ const shot=label=>{const file=path.join(E,label+'.png');must(run('/usr/sbin/scre
 async function press(pid,label,roles=['AXButton'],extra={}){
  const deadline=Date.now()+15000,remaining=()=>{const ms=deadline-Date.now();check(ms>0,'PRESS_'+label);return ms;};
  let last,queries=0;
- try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra},{timeout:remaining()});queries++;return last.ok&&last.count===1;},remaining(),'UNIQUE_'+label);}
+ try{await until(()=>{last=ax(pid,{op:'count',label,roles,...extra},{timeout:remaining()});queries++;return last.ok&&last.count===1&&(!extra.requireEnabled||last.enabled===true);},remaining(),'UNIQUE_'+label);}
  catch(error){record('selector-query-failed',{pid,label,roles,queries,result:last??null});throw error;}
  if(label==='Send message'){const enabled=ax(pid,{op:'state',label,roles,...extra},{timeout:remaining()});record('send-enabled',{pid,result:enabled});check(enabled.ok&&enabled.enabled===true,'SEND_ENABLED');}
  for(let readAttempt=1;readAttempt<=3;readAttempt++){
@@ -169,8 +169,9 @@ function inboxObservation(t,sourceLabel){
 }
 const inboxSource=(s,kind)=>[s.bots[kind].name,s.bots[kind].tasks.find(t=>t.threadId===s.bots[kind].threadId)?.title].filter(Boolean).join(' · ');
 async function openPendingInbox(s){
- const buttons=tree(s.pid,'tools-selector').elements.filter(n=>n.role==='AXPopUpButton'&&n.names.some(x=>/^Tools(?:,|$)/.test(x)));check(buttons.length===1,'TOOLS_UNIQUE');
- await press(s.pid,buttons[0].names.find(x=>/^Tools(?:,|$)/.test(x)),['AXPopUpButton']);await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
+ // Preserve observation, but do not freeze the count-dependent accessible name.
+ tree(s.pid,'tools-selector');
+ await press(s.pid,'Tools',['AXPopUpButton'],{tools:true,requireEnabled:true});await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
 }
 async function readPendingInbox(s,kind){return inboxObservation(tree(s.pid,'pending-'+kind),inboxSource(s,kind));}
 async function pending(s,kind,ms=10000){

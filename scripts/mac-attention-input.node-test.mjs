@@ -15,7 +15,7 @@ function helper(options={}){
   AXUIElementCopyActionNames:(_e,r)=>{r[0]=['AXPress'];return 0;},AXUIElementIsAttributeSettable:(_e,_k,r)=>{r[0]=options.settable??true;return options.settableCode??0;},
   AXUIElementSetAttributeValue:(e,k,v)=>{events.push({kind:'set',value:v});set=true;e[k]=v;return options.setCode??0;},AXUIElementPerformAction:()=>{events.push({kind:'press'});return options.pressCode??0;}});
  const run=runInNewContext(jxa+';run',{Application:()=>({processes:{whose:()=>[{}]},keystroke:()=>assert.fail('no keyboard fallback')}),ObjC:{import(){},bindFunction(){},deepUnwrap:x=>x},$:dollar,Ref:()=>[],Date:{now:()=>clock},delay:()=>{clock+=1000;}});
- return{events,query:c=>JSON.parse(run([JSON.stringify({pid:123,roles:['AXTextArea','AXTextField'],label:'Message B35',...c})]))};
+ return{events,app,button,query:c=>JSON.parse(run([JSON.stringify({pid:123,roles:['AXTextArea','AXTextField'],label:'Message B35',...c})]))};
 }
 test('composer exact AXValue setter waits for full readback and refuses incomplete input without click',()=>{
  for(const options of [{},{delayReads:2}]){const h=helper(options),r=h.query({op:'type',text:expected});assert.equal(r.ok,true);assert.equal(r.observed.readback,expected);assert.equal(h.events.filter(e=>e.kind==='set').length,1);}
@@ -97,15 +97,28 @@ test('exact request card requires synthetic marker and both enabled decision con
  for(const enabled of [true,false]){const controls=[];const exact=runInNewContext('('+fn+')',{until:async(cb)=>check(cb(),'marker'),texts:()=>['B35_SYNTHETIC_NO_EXECUTION_banner_run'],tree:()=>({}),state:(_pid,label)=>{controls.push(label);return{enabled};},check});if(enabled){await exact({pid:123,runId:'run'},'banner');assert.deepEqual(controls,['Deny','Allow once']);}else await assert.rejects(exact({pid:123,runId:'run'},'banner'),/REQUEST_DECISION_ENABLED/);}
 });
 
-test('recorded B35 R15 Tools popup keeps exact native role through selector and press',async()=>{
- const fn=/async function openPendingInbox\(s\)\{[\s\S]*?\n\}/.exec(source)[0];
- // Exact tools-selector.ax.json row 70 from native run B35 R15.
- const recorded={index:70,parent:69,role:'AXPopUpButton',names:['Tools, 0 pending approvals'],value:''};
+test('Tools resolves fresh native semantic identity across pending1 to pending0 before its one action',async()=>{
+ const openSource=/async function openPendingInbox\(s\)\{[\s\S]*?\n\}/.exec(source)[0];
+ const pressSource=source.slice(source.indexOf('async function press(pid,label,roles='),source.indexOf('\nfunction key('));
+ const h=helper();h.app.AXChildren=[h.button];h.button.AXRole='AXPopUpButton';h.button.AXTitle='Tools, 1 pending approvals, items need attention';
  const calls=[];
- const run=elements=>runInNewContext('('+fn+')',{tree:()=>({elements}),check,press:async(pid,label,roles=['AXButton'],extra={})=>calls.push({pid,label,roles:Array.from(roles),extra:JSON.parse(JSON.stringify(extra))})});
- await run([recorded])({pid:123});
- assert.deepEqual(calls,[{pid:123,label:'Tools, 0 pending approvals',roles:['AXPopUpButton'],extra:{}},{pid:123,label:'Pending approvals',roles:['AXMenuItem'],extra:{prefix:true}}]);
- for(const elements of [[],[recorded,{...recorded,index:71}],[{...recorded,role:'AXButton'}],[{...recorded,names:['Other tools']}],[{...recorded,names:['Toolshed']}]]){const before=calls.length;await assert.rejects(run(elements)({pid:123}),/TOOLS_UNIQUE/);assert.equal(calls.length,before);}
+ const press=runInNewContext('('+pressSource+')',{check,record(){},until:async cb=>{check(await cb(),'UNIQUE');},ax:(_pid,c)=>{
+  calls.push(c);const result=h.query(c);
+  if(c.op==='count')h.button.AXTitle='Tools, 0 pending approvals';
+  return result;
+ }});
+ const open=runInNewContext('('+openSource+')',{tree:()=>({elements:[{role:'AXPopUpButton',names:[h.button.AXTitle]}]}),press:async(pid,label,roles,extra)=>{if(label==='Pending approvals')return;await press(pid,label,roles,extra);}});
+ await open({pid:123});assert.equal(h.events.filter(e=>e.kind==='press').length,1);
+ assert.deepEqual(calls.map(c=>c.op),['count','press']);assert(calls.every(c=>c.tools===true&&c.requireEnabled===true&&c.label==='Tools'&&c.roles[0]==='AXPopUpButton'));
+});
+test('Tools grammar rejects unrelated, disabled and ambiguous controls before action',()=>{
+ const command={op:'press',roles:['AXPopUpButton'],label:'Tools',tools:true,requireEnabled:true};
+ for(const name of ['Tools','Tools, 0 pending approvals','Tools, 12 pending approvals, items need attention','Tools, approvals may be stale']){const h=helper();h.app.AXChildren=[h.button];h.button.AXRole='AXPopUpButton';h.button.AXTitle=name;assert.equal(h.query({...command,op:'count'}).enabled,true);assert.equal(h.query(command).ok,true);}
+ for(const mutation of [h=>{h.button.AXTitle='Toolshed';},h=>{h.button.AXTitle='Tools, 0 pending approvals unexpected';},h=>{h.button.AXRole='AXButton';},h=>{h.button.AXEnabled=false;},h=>{h.app.AXChildren.push({...h.button});}]){
+  const h=helper();h.app.AXChildren=[h.button];h.button.AXRole='AXPopUpButton';h.button.AXTitle='Tools, 0 pending approvals';mutation(h);assert.equal(h.query(command).ok,false);assert.equal(h.events.length,0);
+ }
+ const h=helper();h.app.AXChildren=[h.button];h.button.AXRole='AXPopUpButton';h.button.AXTitle='Tools, 0 pending approvals';h.button.AXEnabled=false;assert.equal(h.query({...command,op:'count'}).enabled,false);
+ assert.equal(h.query({...command,roles:['AXButton']}).error,'AX-tools-contract');
 });
 
 function stalePressFixture(results,{readCost=100}={}){

@@ -44,12 +44,13 @@ function run(argv){
  function text(n){return n.names.concat(typeof n.value==='string'?[n.value]:[]).join(' ');}
  function within(id,ancestor){while(id>=0){if(id===ancestor)return true;id=nodes[id].parent;}return false;}
  function scope(){if(!c.scopeName)return null;var s=nodes.map(function(n,i){return {n:n,i:i};}).filter(function(x){return x.n.names.indexOf(c.scopeName)>=0;});if(s.length!==1)fail('AX-scope',{count:s.length});return s[0].i;}
- function matches(){var sc=scope();return nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return (sc===null||within(x.i,sc))&&(!c.roles||c.roles.indexOf(x.n.role)>=0)&&x.n.names.some(function(name){return c.prefix?name===c.label||name.indexOf(c.label+' ')===0:name===c.label;});});}
+ function matches(){var sc=scope();return nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return (sc===null||within(x.i,sc))&&(!c.roles||c.roles.indexOf(x.n.role)>=0)&&x.n.names.some(function(name){return c.tools?/^Tools(?:, (?:0|[1-9][0-9]*) pending approvals)?(?:, approvals may be stale|, items need attention)?$/.test(name):c.prefix?name===c.label||name.indexOf(c.label+' ')===0:name===c.label;});});}
  function one(){var found=matches();if(found.length!==1)fail('AX-match',{count:found.length,label:c.label});return found[0].n;}
  function press(n){if((c.requireEnabled?read(n.e,'AXEnabled',true)!==true:read(n.e,'AXEnabled',false)===false))fail('AX-disabled');if(actions(n.e).indexOf('AXPress')<0)fail('AX-no-press');bound();actionAttempted=true;var code=$.AXUIElementPerformAction(n.e,$('AXPress'));if(code!==0)fail('AX-press',{code:code});}
  try{
   if(!Number.isInteger(c.pid)||c.pid<=0)fail('AX-pid');
   if(!$.AXIsProcessTrusted())fail('AX-client-not-trusted');
+  if(c.tools!==undefined&&(c.tools!==true||c.label!=='Tools'||!c.roles||c.roles.length!==1||c.roles[0]!=='AXPopUpButton'||c.requireEnabled!==true||['count','press'].indexOf(c.op)<0))fail('AX-tools-contract');
   if(c.settingsReadiness!==undefined&&(c.settingsReadiness!==true||c.op!=='tree'))fail('AX-settings-read-contract');
   var app=$.AXUIElementCreateApplication(c.pid),code=$.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(),c.settingsReadiness===true?3:1);if(code!==0)fail('AX-timeout',{code:code});
   if(c.op==='manual'){code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),$(true));return JSON.stringify({ok:code===0,code:code});}
@@ -66,7 +67,7 @@ function run(argv){
    }
    return JSON.stringify(chosen);
   }
-  if(c.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,visited:visited});}
+  if(c.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,visited:visited,enabled:c.requireEnabled&&found.length===1?read(found[0].n.e,'AXEnabled',true):null});}
   if(c.op==='state'){var n=one();return JSON.stringify({ok:true,value:n.value,selected:read(n.e,'AXSelected',false),enabled:read(n.e,'AXEnabled',false),role:n.role,names:n.names});}
   if(c.op==='press'){press(one());return JSON.stringify({ok:true});}
   if(c.op==='type'){

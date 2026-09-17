@@ -9,12 +9,12 @@
   "zipSha256": "ad1a7e66ebbc725dd2ad119e5050f4fda0557259fa4a8d901b9b1a76fb03df07",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-24T00:35:01Z",
-  "nativeRoundsUsed": 27,
+  "nativeRoundsUsed": 28,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R28 confirmation under standing corrective authority on combined native-authorization and deferred-Quit candidate. Exact producer35166072643 attempt1 and verified artifact receipts; original first-approval, native click, pending persistence, suppression/private preview and 20second banner wait unchanged. Reuse R27 observed OS consent interaction, retain all27 prior native attempts; one60minute push-triggered run.",
+  "admission": "One R29 confirmation under standing corrective authority on the same verified49cc37be signed artifact. Correct only the observed post-Deny count-dependent Tools selector race: fresh exact Tools grammar, AXPopUpButton uniqueness and enabled readback before its single action. Original pending-resolution/first-approval/click/privacy/mute/quiet/DND criteria and deadlines unchanged; retain all28 prior native runs and R28 first-approval proof; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -75,5 +75,13 @@
     "reveal": "advertised AXShowMenu or one native hover from fresh AX bounds",
     "action": "observed scoped enabled Options/Allow only",
     "cleanup": "record change; ephemeral runner profile teardown, no DBreset"
+  },
+  "toolsSelector": {
+    "role": "AXPopUpButton",
+    "nameGrammar": "Tools[, nonnegative-integer pending approvals][, approvals may be stale | , items need attention]",
+    "freshEachCountAndPress": true,
+    "uniqueRequired": true,
+    "enabledRequired": true,
+    "actionRetry": false
   }
 }
