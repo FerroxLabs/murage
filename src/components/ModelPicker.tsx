@@ -81,7 +81,7 @@ export function ModelPicker({bot,threadId,className,contained=false,label}:{bot:
   const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections]);const ordered=useMemo(()=>orderedPickerModels(rows,query,prefs.favorites,prefs.recent),[rows,query,prefs]);
   // Spec V3: the Local rail is always answered for. No local server on this
   // computer is a state with a next step, not an absence the user has to notice.
-  // The "add one" row is a next step only for an engine the Local models section feeds (spec V3, "no dead ends"): never for the chat-only drivers (openai-compat, grok — their catalogs never carry a local row, so it would read as a permanent lie), never for gemini/cursor/…, and never while the engine is still loading.
+  // The "add one" row is a next step only for an engine the Local models section feeds (spec V3, "no dead ends"): never for the chat-only drivers (openai-compat, grok — they are not local engines; openai-compat lists local rows only as chat-only extras), never for gemini/cursor/…, and never while the engine is still loading.
 const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows]);
   const selectedKey=pickerKey(bot.modelSelection);const selected=rows.find(row=>row.key===selectedKey);const selectedConnection=connections.find(c=>c.id===bot.modelSelection.connectionId);const selectedLabel=selected?.label??active?.models.options.find(o=>o.id===bot.modelSelection.model)?.label??unavailableSelectionLabel(bot.modelSelection.model);
   const threadModelMutationLocked=isThreadModelMutationLocked(threadId,bot.busy);

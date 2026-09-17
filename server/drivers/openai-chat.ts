@@ -66,7 +66,23 @@ interface RuntimeOptions<Config> {
   includeUsageInCompleted?: boolean;
   noBodyError?: string;
   retryScale?: number;
+  /** A model this runtime serves from a Local models server instead of
+   *  apiUrl: that server's endpoint, key and API model id. The request body is
+   *  the same either way, so no tools are ever sent. */
+  localEndpoint?: (model: string) => LocalChatEndpoint | null;
 }
+
+export interface LocalChatEndpoint {
+  baseUrl: string;
+  apiKey: string;
+  /** The id the server knows the model by (without the host prefix). */
+  model: string;
+  /** Names the server in errors, e.g. "Ollama on gpu-box". */
+  label: string;
+}
+
+/** Where one request goes: a provider connection route or a local server. */
+type ChatEndpoint = Pick<ProviderTurnRoute, "baseUrl" | "apiKey"> & { preset: string };
 
 /** Why a streamed reply is not a successful completion. */
 type FailedStreamStop = "incomplete" | "provider_error" | "empty_response";
@@ -216,11 +232,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ProviderTurnRoute,
   ): Promise<Completion> => {
-    const label = providerRoute?.preset ?? options.httpErrorLabel;
+    const local = providerRoute ? null : options.localEndpoint?.(model) ?? null;
+    const endpoint: ChatEndpoint | undefined = local
+      ? { baseUrl: local.baseUrl, apiKey: local.apiKey, preset: local.label }
+      : providerRoute;
+    if (local) model = local.model;
+    const label = endpoint?.preset ?? options.httpErrorLabel;
     const idle = createIdleBudget(options.timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
     try {
-      return await completeWithin(requestSignal, idle, messages, model, stream, onDelta, providerRoute);
+      return await completeWithin(requestSignal, idle, messages, model, stream, onDelta, endpoint);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -241,7 +262,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     model: string,
     stream: boolean,
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
-    providerRoute?: ProviderTurnRoute,
+    providerRoute?: ChatEndpoint,
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
@@ -395,14 +416,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
   const sendTurn = async (turn: SendTurnInput) => {
     if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
-    if (!turn.providerRoute?.apiKey && !options.apiKey) throw new Error(options.missingKeyError);
+    const local = turn.providerRoute ? null : options.localEndpoint?.(turn.model || options.models().default) ?? null;
+    if (!turn.providerRoute?.apiKey && !options.apiKey && !local) throw new Error(options.missingKeyError);
     if (active.has(turn.threadId)) throw new Error("a turn is already running on this thread");
 
     const turnId = newId();
     const abort = new AbortController();
     const messages = messagesFor(turn);
     const model = turn.providerRoute?.model || turn.model || options.models().default;
-    const label = turn.providerRoute?.preset ?? options.httpErrorLabel;
+    const label = turn.providerRoute?.preset ?? local?.label ?? options.httpErrorLabel;
     active.set(turn.threadId, abort);
     appendNative(turn.threadId, {
       dir: "out",
@@ -522,7 +544,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       return options.models();
     },
     ...(options.refreshModels ? { refreshModels: options.refreshModels } : {}),
-    snapshot: async () => options.apiKey
+    // A runtime with no key still answers for the Local models servers it serves.
+    snapshot: async () => options.apiKey || options.models().options.some((option) => options.localEndpoint?.(option.id))
       ? { state: "available", authenticated: true, version: null, ...(options.billing ? { billing: options.billing } : {}) }
       : { state: "unavailable", reason: options.unavailableReason },
     adapter: {
