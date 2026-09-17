@@ -108,7 +108,7 @@ if (!details.isFile() || (details.mode & 0o111) === 0) {
 // asserted universal below so a future non-universal pin fails loudly here,
 // not on a user's Intel Mac); the SDK's dylib/.node are genuinely per-arch,
 // pulled from the two darwin native packages that pnpm installs because of
-// supportedArchitectures in package.json.
+// supportedArchitectures in pnpm-workspace.yaml.
 const MAC_ARCHES = resolveCuaMacArches(process.env);
 
 const { stdout: archList } = await run("/usr/bin/lipo", ["-archs", binary]);
@@ -135,7 +135,7 @@ for (const arch of MAC_ARCHES) {
   const nativePackage = join(dependencyRoot, "@trycua", `cua-driver-darwin-${arch}`);
   if (!existsSync(nativePackage)) {
     throw new Error(
-      `required CUA darwin-${arch} native package is missing — is pnpm.supportedArchitectures.cpu set in package.json?`,
+      `required CUA darwin-${arch} native package is missing — is supportedArchitectures.cpu set in pnpm-workspace.yaml?`,
     );
   }
   await mkdir(nativeDir, { recursive: true });

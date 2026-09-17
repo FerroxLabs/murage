@@ -5,6 +5,13 @@ packages:
   - "."
   - "apps/docs"
   - "cloudflare/control-plane"
+# Packaging needs the optional native binaries for both macOS CPU targets
+# (e.g. @trycua/cua-driver-darwin-{arm64,x64}). pnpm 10 also accepted this in
+# package.json's "pnpm" field; pnpm 11 ignores that field, so it lives here.
+supportedArchitectures:
+  cpu:
+    - arm64
+    - x64
 allowBuilds:
   electron: true # postinstall downloads the Electron dist
   esbuild: true # postinstall validates the platform binary
