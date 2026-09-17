@@ -55,6 +55,18 @@ it("checks exact direct task and room goal membership", async () => {
   f.store.bots[0]!.hidden = true;
   await expect(f.images.read("goal", "a", f.text(saved.path))).rejects.toThrow("Reattach");
 });
+it("lets a text-only turn through to an archived bot's own thread and still refuses its images", async () => {
+  // Archiving keeps a bot out of rooms and goals, not out of its own direct
+  // and webhook turns (routines botState); only image reads are refused.
+  const f = fixture(), saved = f.file();
+  f.append("t", { attachments: [{ kind: "image", ...saved }] });
+  f.store.bots[0]!.hidden = true;
+  expect(f.images.promote("t", "status please")).toEqual([]);
+  expect(await f.images.read("t", "a", "status please")).toEqual([]);
+  expect(() => f.images.promote("t", f.text(saved.path))).toThrow("Reattach");
+  await expect(f.images.read("t", "a", f.text(saved.path))).rejects.toThrow("Reattach");
+  expect(() => f.images.promote("missing", "status please")).not.toThrow();
+});
 it("refuses linked files, MIME masquerading and per-image/count/aggregate overflow", async () => {
   const f = fixture();
   const link = join(f.root, "attachments", `${randomUUID()}.png`), target = f.file(); symlinkSync(target.path, link);

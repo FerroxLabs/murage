@@ -45,18 +45,24 @@ export class TurnImages {
   /** Called at user append. Non-image and legacy callers retain their text;
    * ACP dispatch below explicitly refuses any unbound selected image. */
   promote(threadId: string, text: string): Attachment[] {
+    // A turn that references no image is not an image request: an archived
+    // bot still takes its own direct and webhook turns, and a refusal here
+    // would name an image the person never attached.
+    const paths = [...new Set(splitTranscriptAttachments(text).images)];
+    if (!paths.length) return [];
     if (!turnImageAudience(this.store, threadId)) throw fail();
     this.prune();
     const historical = new Map(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => [item.path, item] as const)));
-    return [...new Set(splitTranscriptAttachments(text).images)].flatMap(path => {
+    return paths.flatMap(path => {
       if (!this.canonical(path)) return [];
       const item = historical.get(path) ?? this.pending.get(`${threadId}\0${path}`)?.item;
       return item ? [{ kind: "image" as const, path: item.path, mime: item.mime }] : [];
     });
   }
   async read(threadId: string, botId: string, text: string): Promise<NonNullable<SendTurnInput["images"]>> {
-    if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     const paths = [...new Set(splitTranscriptAttachments(text).images)];
+    if (!paths.length) return [];
+    if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     if (paths.length > IMAGE_REFERENCE_LIMITS.maxCount) throw Object.assign(new Error("Attach at most four images per turn."), { status: 413 });
     const allowed = new Set(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => item.path)));
     const result: NonNullable<SendTurnInput["images"]> = [];
