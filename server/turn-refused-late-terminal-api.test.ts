@@ -204,10 +204,10 @@ export async function verifyAgentBrowserBinary(binary, env) {
     expect((await replies(room.threadId)).length).toBe(0);
     expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room turn held, refused, re-dispatched under a late terminal event" })).status).toBe(202);
     const refusedTurnId = await refuseThenLandLateTerminal(room.threadId, async () => {
-      // A task created for the speaking member inside that window moves the
-      // policy revision and revokes the room turn's prepared disclosure.
-      const task = await api("POST", `/api/bots/${member.id}/tasks`, { title: "Created mid room dispatch" });
-      expect(task.status).toBe(201);
+      // Moving the speaking member to another team inside that window moves
+      // the policy revision and revokes the room turn's prepared disclosure
+      // (a single fresh owner task no longer does: memory/policy.ts).
+      expect((await api("PATCH", `/api/bots/${member.id}`, { section: "Moved mid room dispatch" })).status).toBe(200);
     }, `[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing once (room member Late terminal member)`);
 
     // Without the owner-aware fold the room settles with
