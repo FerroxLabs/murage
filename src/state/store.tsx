@@ -22,6 +22,7 @@ import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
+import type { MascotBodyId } from "../../shared/mascot-bodies";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
@@ -292,6 +293,8 @@ export interface Bot {
   notifications: boolean;
   color: EmberColor;
   mascotExpression?: string | null;
+  /** Which mascot body this bot wears; absent means the Ember flame. */
+  mascotBody?: MascotBodyId | null;
   /** App-owned image attachment used for this bot's profile. */
   avatarUrl?: string | null;
   /** Mascot, or the crop applied to avatarUrl. */
@@ -1395,7 +1398,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case "updateBot": {
       const mascotChanged =
         Object.prototype.hasOwnProperty.call(action.patch, "color") ||
-        Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression");
+        Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression") ||
+        Object.prototype.hasOwnProperty.call(action.patch, "mascotBody");
       const animated = mascotChanged
         ? withMascotMotion(state, action.botId, "customize")
         : state;
@@ -2155,6 +2159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             autoStartVps: source.autoStartVps,
             avatarUrl: source.avatarUrl,
             avatarCrop: source.avatarCrop,
+            mascotBody: source.mascotBody ?? undefined,
           };
           api("/api/bots", { method: "POST" })
             .then(({ bot }) =>

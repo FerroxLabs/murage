@@ -5,6 +5,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BotAvatar } from "./Avatar";
+import { DEFAULT_SILHOUETTE } from "./EmberAvatar";
+import { MASCOT_BODIES } from "../../shared/mascot-bodies";
 
 const vega = { name: "Vega", color: "orange" as const };
 const html = (bot: Parameters<typeof BotAvatar>[0]["bot"]) =>
@@ -31,6 +33,15 @@ describe("BotAvatar shapes for a mascot", () => {
       expect(markup).not.toContain("<img");
       expect(markup).toContain("Vega");
     }
+  });
+
+  it("wears the bot's chosen mascot body, and the flame for none or an unknown one", () => {
+    const flame = html(vega);
+    expect(flame).toContain(DEFAULT_SILHOUETTE.clip.slice(0, 60));
+    const star = html({ ...vega, mascotBody: "star" });
+    expect(star).toContain(MASCOT_BODIES.star.clip.match(/d="([^"]{40})/)![1]);
+    expect(star).not.toContain(DEFAULT_SILHOUETTE.clip.slice(0, 60));
+    expect(html({ ...vega, mascotBody: "cursor" as never })).toContain(DEFAULT_SILHOUETTE.clip.slice(0, 60));
   });
 
   it("frames the mascot too when the stored image is unusable", () => {

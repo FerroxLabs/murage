@@ -95,6 +95,18 @@ Unreleased upstream adaptations in the current development branch
 The following changes selectively adapt OpenMausBot work under Apache-2.0.
 They do not imply import of a complete upstream release.
 
+  OpenMausBot PR #663 (mascot body catalog, desktop data and picker only)
+    merge commit d789f849a1bc42c0e6bba2be9a339eee72ad8f9a; catalog data as of
+    commit 2da55d778e747d843084f7911d96e8f47cf2b3ca
+    Nine generated mascot body outlines (blob, circle, squircle, capsule,
+    drop, shield, hexagon, diamond, star) with their fit transforms and face
+    anchors, copied verbatim; a per-bot body field; and a body picker.
+    Upstream's cursor outline, generator scripts and phone renderers were not
+    taken; Murage's Ember flame stays the default body.
+    Murage: shared/mascot-bodies.ts, src/components/Avatar.tsx,
+    src/components/BotProfileAvatarCard.tsx, server/bot-profile.ts and the
+    team/package appearance fields
+
   OpenMausBot PR #1069
     commit bac90598261115eb2f68868f1a6420e79b74d0c4
     Parent thread/turn scoping for Codex notifications, adapted to Murage's

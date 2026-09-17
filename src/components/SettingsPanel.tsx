@@ -361,6 +361,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "autoStartVps"
         | "color"
         | "mascotExpression"
+        | "mascotBody"
         | "avatarUrl"
         | "avatarCrop"
         | "autoApprove"
