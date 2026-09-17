@@ -874,7 +874,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
       const { threadId } = turn;
       const running = active.get(threadId);
-      if (running) {
+      // A relaunch runs under its own logical turn's stop handle (U06), which
+      // the retry path left in place so Stop stays reachable during setup.
+      if (running && !(relaunch && running.turnId === relaunch.turnId)) {
         if (!running.stopRequested()) throw new Error("a turn is already running on this thread");
         // A Stop is "requested, not observed": interruptTurn returns as soon
         // as the kill is sent, the harness reads the thread idle, and the
@@ -900,7 +902,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const turnId = relaunch?.turnId ?? newId();
       const retryAbort = new AbortController();
       const retry = retryState.get(threadId) ?? { attempt: 0, cancelled: false };
-      retry.cancelled = false;
+      // Only a genuinely new user turn starts un-cancelled. A relaunch keeps
+      // a Stop that landed while it was being scheduled or set up (U06).
+      if (!relaunch) retry.cancelled = false;
       retryState.set(threadId, retry);
       // a retry relaunches the whole CLI; the backoff is scaled down in tests
       // so a fake's transient failures don't stall real seconds
@@ -1189,6 +1193,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       } catch (error) {
         cleanupUnownedLaunch();
         throw error;
+      }
+
+      // Stop reached this logical turn while its relaunch was still setting
+      // up (model probe, broker bind). Settle it as the user's Stop (STOP1)
+      // instead of spawning a process nobody wants. No await separates this
+      // fence from the spawn below.
+      if (relaunch && retry.cancelled) {
+        cleanupUnownedLaunch();
+        if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+        return { turnId };
       }
 
       let child: ReturnType<typeof spawnCli>;
@@ -1493,15 +1508,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 });
                 return;
               }
-              // hand the thread back before recursing — the relaunch's own
-              // guard would otherwise reject it as "already running". The
-              // turn itself continues, so nobody waiting behind a Stop is
-              // released here (a stopped turn never reaches this branch).
-              active.delete(threadId);
+              // The logical turn continues across the relaunch (U06): its
+              // setup has no process yet, so this handle only records the
+              // Stop and the relaunched sendTurn honours it before spawning.
+              // Keeping the entry also keeps the thread busy, so no other
+              // send can start beside the relaunch. Nobody waits behind the
+              // old entry (a stopped turn never reaches this branch).
+              const previous = active.get(threadId);
+              active.set(threadId, activeTurn(turnId, undefined, () => {
+                retry.cancelled = true;
+              }, () => retry.cancelled));
+              previous?.close();
               try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
                 await sendTurn({ ...turn, resumeCursor: cursor }, { turnId });
               } catch (e) {
+                if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
                 retryState.delete(threadId);
                 emit({
                   ...base(threadId, turnId),

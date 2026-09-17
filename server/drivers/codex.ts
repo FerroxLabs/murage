@@ -34,7 +34,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface } from "../flux-routing.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
-import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import {
@@ -185,6 +185,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // One driver instance serves many threads. Interrupt state belongs to
       // this turn so activity elsewhere cannot cancel or revive its retry.
       let stopRequested = false;
+      // Wakes a retry backoff the moment Stop arrives, so the logical turn
+      // settles now rather than after the full wait (U06).
+      const stopSignal = new AbortController();
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
@@ -348,6 +351,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       let lastProviderError: string | undefined;
       const stop = async () => {
         stopRequested = true;
+        stopSignal.abort();
         const stopped = await terminate();
         if (stopped) completeStoppedTurn?.();
         return stopped;
@@ -820,6 +824,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const message = e instanceof Error ? e.message : String(e);
         const needsAuth = /(?:\b401\b|unauthorized|missing bearer|authentication required)/i.test(message);
         const verdict = classifyError(failure);
+        // A Stop already asked for wins over whatever the handshake reported:
+        // never announce or run a relaunch after it, and settle as the user's
+        // Stop rather than an engine failure (U06, STOP1).
+        if (stopRequested) {
+          if (!state.settled) void settle(true, "cancelled");
+          return;
+        }
         if (!state.settled && !needsAuth && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false) {
           const delayMs = computeBackoff(attempt);
           attempt++;
@@ -837,10 +848,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             await settle(false, "shutdown_timeout");
             return;
           }
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, Math.max(1, Math.round(delayMs * retryScale)));
-            timer.unref?.();
-          });
+          await interruptibleDelay(Math.max(1, Math.round(delayMs * retryScale)), stopSignal.signal).promise;
           if (!stopRequested) {
             void launchAttempt(attempt).catch(() => {});
           } else {

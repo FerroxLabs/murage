@@ -11,13 +11,14 @@ import { connect, createServer as createNetServer, type Socket } from "node:net"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, createPermissionBroker, permissionSocketPath, type ClaudeConfig } from "./claude.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import * as localInject from "./local-inject.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
@@ -1448,6 +1449,142 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
     expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toHaveLength(0);
     expect(readFileSync(join(scratch, "launches-cancel"), "utf8")).toBe("1");
+  }, 30_000);
+
+  // U06 (upstream 1198): between two CLI processes of one logical turn the
+  // driver resolves the model and binds a broker before spawning. A custom
+  // model id routes through the local-model probe; holding that probe once a
+  // retry was announced parks the relaunch inside its setup deterministically.
+  const holdRelaunchProbe = () => {
+    let reached!: () => void;
+    let release!: () => void;
+    const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const probe = vi.spyOn(localInject, "probeLocalInjects").mockImplementation(async () => {
+      if (recorder.events.some((e) => e.type === "turn.retrying")) {
+        reached();
+        await released;
+      }
+      return [];
+    });
+    return { probe, reached: reachedPromise, release };
+  };
+
+  it("a Stop during the relaunch setup settles the logical turn as cancelled without spawning", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-relaunch-setup");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create("hang");
+    const hold = holdRelaunchProbe();
+    try {
+      const threadId = "t-stop-relaunch-setup";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      await recorder.until((e) => e.threadId === threadId && e.type === "turn.retrying");
+      // an unrelated thread's turn, started after the failed launch so the
+      // fixture's pre-accept quota is already spent
+      await instance.adapter.sendTurn({ threadId: "t-unrelated-live", text: "keep working" });
+      // init proves that CLI is running (and counted its launch), not just spawned
+      await recorder.until((e) => e.threadId === "t-unrelated-live" && e.type === "session.started");
+      await hold.reached;
+      // the logical turn is still owned while its relaunch sets up
+      expect(instance.adapter.hasSession(threadId)).toBe(true);
+      await instance.adapter.interruptTurn(threadId);
+      await instance.adapter.interruptTurn(threadId);
+      hold.release();
+
+      const done = await recorder.until((e) => e.threadId === threadId && e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled", turnId });
+      const events = recorder.events.filter((e) => e.threadId === threadId);
+      expect(events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+      expect(events.filter((e) => e.type === "runtime.error")).toEqual([]);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+      // one launch for the stopped turn plus the unrelated thread's; the
+      // stopped relaunch never reached spawn
+      expect(readFileSync(join(scratch, "launches-relaunch-setup"), "utf8")).toBe("2");
+      expect(instance.adapter.hasSession("t-unrelated-live")).toBe(true);
+      expect(recorder.events.some((e) => e.threadId === "t-unrelated-live" && e.type === "turn.completed")).toBe(false);
+    } finally {
+      hold.release();
+      hold.probe.mockRestore();
+    }
+  }, 30_000);
+
+  it("a new user turn sent after that Stop waits for the stopped relaunch, then runs fresh", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-relaunch-next");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    const hold = holdRelaunchProbe();
+    try {
+      const threadId = "t-stop-relaunch-next";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      await recorder.until((e) => e.type === "turn.retrying");
+      await hold.reached;
+      await instance.adapter.interruptTurn(threadId);
+      const next = instance.adapter.sendTurn({ threadId, text: "the next request" });
+      hold.release();
+      const { turnId: nextTurnId } = await next;
+
+      expect(nextTurnId).not.toBe(turnId);
+      const stopped = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(stopped).toMatchObject({ ok: true, stopReason: "cancelled" });
+      const fresh = await recorder.until((e) => e.type === "turn.completed" && e.turnId === nextTurnId);
+      expect(fresh).toMatchObject({ ok: true });
+      expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "turn.started").map((e) => e.turnId)).toEqual([turnId, nextTurnId]);
+      expect(readFileSync(join(scratch, "launches-relaunch-next"), "utf8")).toBe("2");
+    } finally {
+      hold.release();
+      hold.probe.mockRestore();
+    }
+  }, 30_000);
+
+  it("keeps the thread busy while a relaunch sets up, then completes that same turn", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-relaunch-busy");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    const hold = holdRelaunchProbe();
+    try {
+      const threadId = "t-relaunch-busy";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      await recorder.until((e) => e.type === "turn.retrying");
+      await hold.reached;
+      expect(instance.adapter.hasSession(threadId)).toBe(true);
+      await expect(instance.adapter.sendTurn({ threadId, text: "a concurrent request" })).rejects.toThrow("a turn is already running");
+      hold.release();
+
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true, turnId });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "turn.started").map((e) => e.turnId)).toEqual([turnId, turnId]);
+      expect(readFileSync(join(scratch, "launches-relaunch-busy"), "utf8")).toBe("2");
+    } finally {
+      hold.release();
+      hold.probe.mockRestore();
+    }
+  }, 30_000);
+
+  it("a Stop after the relaunched process started cancels without a further relaunch", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-relaunch-started");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create("hang");
+    const threadId = "t-stop-relaunch-started";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT });
+    await recorder.until((e) => e.type === "turn.retrying");
+    // the relaunched CLI is running and took up the prompt: only it emits init
+    await recorder.until((e) => e.type === "session.started");
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(2);
+    await instance.adapter.interruptTurn(threadId);
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled", turnId });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(readFileSync(join(scratch, "launches-relaunch-started"), "utf8")).toBe("2");
   }, 30_000);
 
 

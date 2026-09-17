@@ -8,9 +8,15 @@
 //                     mcp-elicitation | form-elicitation | user-input | image |
 //                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CODEX_STOP_RACE  marker file path: hold turn/start, append one line to
+//                     the marker (the launch count, and proof this phase was
+//                     reached), and answer the held request with a transient
+//                     503 error only from the SIGTERM handler — so the failure
+//                     is strictly caused by, and observed after, the driver's
+//                     Stop. POSIX-shaped: win32 has no SIGTERM handler.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../atomic.ts";
 
 const mode = process.env.FAKE_CODEX_MODE ?? "happy";
@@ -174,6 +180,17 @@ process.stdin.on("data", (chunk) => {
         break;
       case "turn/start": {
         nativeThreadId = msg.params.threadId;
+        if (process.env.FAKE_CODEX_STOP_RACE) {
+          const heldId = msg.id;
+          process.once("SIGTERM", () => {
+            process.stdout.write(
+              JSON.stringify({ jsonrpc: "2.0", id: heldId, error: { code: -32603, message: "provider returned 503: upstream capacity exceeded" } }) + "\n",
+              () => process.exit(0),
+            );
+          });
+          appendFileSync(process.env.FAKE_CODEX_STOP_RACE, "turn/start\n");
+          break;
+        }
         if (mode.startsWith("parent-")) {
           const ack = { jsonrpc: "2.0", id: msg.id, result: mode === "parent-invalid-ack" ? { ok: true } : turnResult() };
           const foreign = (threadId: string, turnId: string) => [

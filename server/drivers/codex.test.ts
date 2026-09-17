@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_PARTIAL_FAILS;
     delete process.env.FAKE_CODEX_STATE;
     delete process.env.FAKE_CODEX_RETRY_SCALE;
+    delete process.env.FAKE_CODEX_STOP_RACE;
     delete process.env.OPENAI_API_KEY;
     delete process.env.BOX_TOKEN;
     delete process.env.MURAGE_TTS_KEY;
@@ -1006,6 +1007,56 @@ describe("CodexDriver turns (fake app-server)", () => {
     ).resolves.toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(recorder.events.filter((e) => e.type === "runtime.error" && e.threadId === "t-codex-stop")).toEqual([]);
     await Promise.allSettled([first, second]);
+  }, 20_000);
+
+  // U06 (upstream 1198): Stop wakes the retry backoff. A 60x scale makes the
+  // first backoff 45s or more, so settling well inside 5s proves the wait was
+  // interrupted rather than served out.
+  it("a Stop during the retry backoff settles at once as cancelled, without a relaunch", async () => {
+    process.env.FAKE_CODEX_TRANSIENTS = "9";
+    process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-cancel-backoff");
+    process.env.FAKE_CODEX_RETRY_SCALE = "60";
+    await create();
+    const threadId = "t-codex-cancel-backoff";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((e) => e.type === "turn.retrying");
+    const stoppedAt = Date.now();
+    await instance.adapter.interruptTurn(threadId);
+    await instance.adapter.interruptTurn(threadId);
+
+    const done = await recorder.until((e) => e.type === "turn.completed", 5_000);
+    expect(Date.now() - stoppedAt).toBeLessThan(5_000);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled", turnId });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(readFileSync(join(scratch, "codex-launches-cancel-backoff"), "utf8")).toBe("1");
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  }, 20_000);
+
+  // U06 (upstream 1222 Stop fence): the fixture answers turn/start with a
+  // transient error only once it receives the driver's SIGTERM, so the
+  // failure deterministically arrives after Stop was requested.
+  it.skipIf(process.platform === "win32")("a handshake failure caused by Stop never announces a retry", async () => {
+    const marker = join(scratch, "codex-stop-race");
+    process.env.FAKE_CODEX_STOP_RACE = marker;
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    await create();
+    const threadId = "t-codex-stop-race";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((e) => e.type === "session.started");
+    // the fixture holds turn/start: the handshake phase is reached
+    for (let i = 0; i < 1_000 && !existsSync(marker); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(existsSync(marker)).toBe(true);
+    await instance.adapter.interruptTurn(threadId);
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled", turnId });
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(readFileSync(marker, "utf8")).toBe("turn/start\n");
   }, 20_000);
 
   it("never retries after agent text already streamed (duplicate-text hazard)", async () => {
