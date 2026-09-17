@@ -39,6 +39,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 
 import { BotAvatar, InitialsAvatar } from "./Avatar";
@@ -968,6 +969,8 @@ function BotListItem({
   onArchive,
   archiveDisabled,
   onNavigate,
+  onBotDragStart,
+  onBotDragEnd,
 }: {
   bot: Bot;
   density: SidebarDensity;
@@ -975,6 +978,9 @@ function BotListItem({
   onArchive: (bot: Bot) => void;
   archiveDisabled: boolean;
   onNavigate: () => void;
+  /** Present only where a drag can file the bot under another team. */
+  onBotDragStart?: (bot: Bot, event: React.DragEvent<HTMLDivElement>) => void;
+  onBotDragEnd?: () => void;
 }) {
   const { state, dispatch } = useStore();
   const [renaming, setRenaming] = useState(false);
@@ -1111,6 +1117,9 @@ function BotListItem({
     <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
         data-sidebar-bot-row={bot.id}
+        draggable={Boolean(onBotDragStart) && !renaming}
+        onDragStart={onBotDragStart && !renaming ? (event) => onBotDragStart(bot, event) : undefined}
+        onDragEnd={onBotDragEnd}
         onMouseDown={(event) => {
           pressSelected.current = false;
           if (botListItemPointerIntent(event.type, insideRenameField(event.target), renaming, event.button) !== "select") return;
@@ -1383,6 +1392,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; place: SectionDropPlace } | null>(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState("");
+  // A bot row being dragged onto a team. Kept apart from the section drag so
+  // the two gestures never read each other's drop targets.
+  const botDragRef = useRef<Bot | null>(null);
+  const [botDropSectionId, setBotDropSectionId] = useState<string | null>(null);
+  const botMoveInFlight = useRef(false);
   const sectionDragRef = useRef<{
     from: string | null;
     over: { id: string; place: SectionDropPlace } | null;
@@ -1665,6 +1679,60 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     setDropTarget(next);
   };
 
+  const startBotDrag = (bot: Bot, event: React.DragEvent<HTMLDivElement>) => {
+    if (!sidebarBotDraggable(bot)) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(SIDEBAR_BOT_DRAG_TYPE, bot.id);
+    botDragRef.current = bot;
+  };
+
+  const resetBotDrag = () => {
+    botDragRef.current = null;
+    setBotDropSectionId(null);
+  };
+
+  /** True when a bot drag is in progress, whether or not `id` accepts it —
+   *  a bot hovering a section must never fall through to section reorder. */
+  const updateBotDropTarget = (event: React.DragEvent<HTMLDivElement>, id: string) => {
+    const bot = botDragRef.current;
+    if (!bot) return false;
+    if (planSidebarBotDrop(bot, id)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      if (botDropSectionId !== id) setBotDropSectionId(id);
+    } else if (botDropSectionId === id) {
+      setBotDropSectionId(null);
+    }
+    return true;
+  };
+
+  const dropBot = async (event: React.DragEvent<HTMLDivElement>, id: string) => {
+    const bot = botDragRef.current;
+    resetBotDrag();
+    if (!bot) return false;
+    event.preventDefault();
+    const plan = planSidebarBotDrop(bot, id);
+    if (!plan || botMoveInFlight.current) return true;
+    botMoveInFlight.current = true;
+    try {
+      const result = await moveSidebarBot<Bot>(bot, plan, (path, init) => api(path, init));
+      if (result.ok) {
+        for (const moved of result.bots) dispatch({ type: "botPatched", bot: moved });
+        setTeamFeedback({ error: false, text: result.text });
+        setReorderAnnouncement(result.text);
+      } else {
+        // The bot stays where it was: nothing was patched optimistically.
+        setTeamFeedback({ error: true, text: result.error });
+      }
+    } finally {
+      botMoveInFlight.current = false;
+    }
+    return true;
+  };
+
   const dropSection = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const from =
@@ -1936,11 +2004,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               <div
                 key={id}
                 data-sidebar-section-id={id}
-                onDragOver={(event) => updateSectionDropTarget(event, id)}
-                onDrop={dropSection}
+                onDragOver={(event) => {
+                  if (!updateBotDropTarget(event, id)) updateSectionDropTarget(event, id);
+                }}
+                onDragLeave={(event) => {
+                  if (botDropSectionId === id && !event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setBotDropSectionId(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  if (botDragRef.current) void dropBot(event, id);
+                  else dropSection(event);
+                }}
+                data-bot-drop-target={botDropSectionId === id ? "true" : undefined}
                 className={cn(
-                  "flex flex-col gap-0.5",
+                  "flex flex-col gap-0.5 rounded-xl",
                   density !== "icons" && index > 0 && "pt-3",
+                  botDropSectionId === id && "bg-accent/10 outline outline-1 outline-accent/60",
                 )}
               >
                 {dropTarget?.id === id && dropTarget.place === "before" && draggingSectionId !== id && (
@@ -1976,6 +2056,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         onMenu={setMenu}
                         onArchive={(candidate) => void archiveBot(candidate)}
                         archiveDisabled
+                        onBotDragStart={layoutInteractive ? startBotDrag : undefined}
+                        onBotDragEnd={resetBotDrag}
                       />
                     ))}
                     {sectionGroupItems.map((group) => (
@@ -1996,6 +2078,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         onMenu={setMenu}
                         onArchive={(candidate) => void archiveBot(candidate)}
                         archiveDisabled={activeBotCount <= 1}
+                        onBotDragStart={layoutInteractive ? startBotDrag : undefined}
+                        onBotDragEnd={resetBotDrag}
                       />
                     ))}
                   </>
