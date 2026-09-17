@@ -224,29 +224,41 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
  * values and images that fail to load both fall back to the animated mascot,
  * so an old/corrupt profile can never leave a broken-image icon in the app.
  */
+const BOT_AVATAR_RADIUS = { mascot: "0", circle: "50%", rounded: "22%", square: "0" } satisfies Record<BotAvatarCrop, string>;
+/** How much of a shaped tile the mascot fills, leaving room for the corners. */
+const MASCOT_IN_TILE = 0.78;
+
 export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarProps) {
   const profile = botAvatarProfile(bot);
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => setImageFailed(false), [profile.avatarUrl]);
 
+  const radius = BOT_AVATAR_RADIUS[profile.avatarCrop];
+
   if (profile.avatarCrop === "mascot" || !profile.avatarUrl || imageFailed) {
-    return (
+    const mascot = (
       <EmberAvatar
         {...mascotProps}
         color={bot.color}
-        size={size}
+        size={profile.avatarCrop === "mascot" ? size : Math.round(size * MASCOT_IN_TILE)}
         label={label ?? bot.name}
       />
     );
+    if (profile.avatarCrop === "mascot") return mascot;
+    // A shape chosen without an image still has to show: the mascot sits in a
+    // tile cut to that shape, the same frame an uploaded image would get.
+    return (
+      <span
+        data-avatar-shape={profile.avatarCrop}
+        className="inline-flex shrink-0 items-center justify-center overflow-hidden bg-raised"
+        style={{ width: size, height: size, borderRadius: radius }}
+      >
+        {mascot}
+      </span>
+    );
   }
 
-  const radius =
-    profile.avatarCrop === "circle"
-      ? "50%"
-      : profile.avatarCrop === "rounded"
-        ? "22%"
-        : "0";
   return (
     <img
       src={profile.avatarUrl}

@@ -228,7 +228,9 @@ export function BotProfileAvatarCard({
           ))}
         </div>
 
-        {crop === "mascot" && (
+        {/* A shaped tile with no image still shows the mascot, so its
+            expression and colour stay choosable until an image replaces it. */}
+        {(crop === "mascot" || !bot.avatarUrl) && (
           <>
             <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
               Expression

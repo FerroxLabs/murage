@@ -1,0 +1,45 @@
+// A bot with no uploaded image still gets the shape it was given: the mascot
+// is framed in a circle, rounded, or square tile instead of silently ignoring
+// the choice.
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { BotAvatar } from "./Avatar";
+
+const vega = { name: "Vega", color: "orange" as const };
+const html = (bot: Parameters<typeof BotAvatar>[0]["bot"]) =>
+  renderToStaticMarkup(createElement(BotAvatar, { bot, size: 100, animated: false }));
+
+describe("BotAvatar shapes for a mascot", () => {
+  it("draws the bare mascot when the shape is Mascot or unset", () => {
+    for (const bot of [vega, { ...vega, avatarCrop: "mascot" as const }]) {
+      const markup = html(bot);
+      expect(markup).not.toContain("data-avatar-shape");
+      expect(markup).toContain("Vega");
+    }
+  });
+
+  it("frames the mascot in the chosen tile when there is no image", () => {
+    for (const [crop, radius] of [["circle", "50%"], ["rounded", "22%"], ["square", "0"]] as const) {
+      const markup = html({ ...vega, avatarCrop: crop });
+      expect(markup).toContain(`data-avatar-shape="${crop}"`);
+      expect(markup).toContain(`border-radius:${radius}`);
+      expect(markup).toContain("bg-raised");
+      expect(markup).not.toContain("<img");
+      expect(markup).toContain("Vega");
+    }
+  });
+
+  it("frames the mascot too when the stored image is unusable", () => {
+    const markup = html({ ...vega, avatarCrop: "rounded", avatarUrl: "https://untrusted.invalid/a.png" });
+    expect(markup).toContain('data-avatar-shape="rounded"');
+    expect(markup).not.toContain("untrusted.invalid");
+  });
+
+  it("still crops a real uploaded image with no extra tile", () => {
+    const markup = html({ ...vega, avatarCrop: "circle", avatarUrl: "/api/attachments/portrait.png" });
+    expect(markup).toContain('src="/api/attachments/portrait.png"');
+    expect(markup).toContain("border-radius:50%");
+    expect(markup).not.toContain("data-avatar-shape");
+  });
+});
