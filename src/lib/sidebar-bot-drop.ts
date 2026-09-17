@@ -5,18 +5,16 @@
 // that refuses to seat a second lead in a team, so a drag can never quietly
 // demote somebody — the "Move to section" menu's PATCH hands leadership over
 // instead, which is an explicit role change and stays behind that menu.
+import { botRole, type RoleBot } from "./bot-role";
 import { BOTS_SECTION_ID, userSectionName, type SidebarSectionId } from "./sidebar-layout";
 
 /** Distinct from the section-reorder drag type, so a bot dropped between two
  *  sections never reorders them and a section never files itself as a bot. */
 export const SIDEBAR_BOT_DRAG_TYPE = "application/x-murage-sidebar-bot";
 
-export interface SidebarDropBot {
+export interface SidebarDropBot extends RoleBot {
   id: string;
   name: string;
-  section?: string;
-  chiefOfStaff?: boolean;
-  chiefScope?: "workspace";
   hidden?: boolean;
 }
 
@@ -26,7 +24,7 @@ export type SidebarBotMoveResult<T> =
   | { ok: true; bots: T[]; text: string }
   | { ok: false; error: string };
 
-const isWorkspaceChief = (bot: SidebarDropBot) => bot.chiefOfStaff === true && bot.chiefScope === "workspace";
+const isWorkspaceChief = (bot: SidebarDropBot) => botRole(bot) === "chief";
 
 /** The workspace Chief of Staff sits above every team, not in one. */
 export function sidebarBotDraggable(bot: SidebarDropBot): boolean {
@@ -44,7 +42,7 @@ export function planSidebarBotDrop(bot: SidebarDropBot, targetId: SidebarSection
   if (targetId !== BOTS_SECTION_ID || !current) return null;
   // Leaving a team for Bots goes through PATCH, which would make a lead the
   // lead of Bots and demote whoever holds that today. Not by drag.
-  return bot.chiefOfStaff ? null : { kind: "general" };
+  return botRole(bot) === "leader" ? null : { kind: "general" };
 }
 
 type Request = (path: string, init: { method: string; body: string }) => Promise<unknown>;
