@@ -28,7 +28,8 @@ afterAll(async () => { await fixture?.close(); });
 
 it("resolves saved and workspace media for the desktop only and streams exact ranges without the desktop header", async () => {
   const bot = (await api("POST", "/api/bots", { name: "Media fixture" })).body.bot as { id: string; threadId: string };
-  const root = join(fixture.info.dataDir, "workspaces", bot.id); mkdirSync(root, { recursive: true });
+  // A bot's default file workspace is its per-conversation managed root (workspace.ts taskWorkspacePath).
+  const root = join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId); mkdirSync(root, { recursive: true });
   const image = png(320, 200, 700_000);
   writeFileSync(join(root, "photo.png"), image);
   const registered = await api("POST", "/api/artifacts/register", { botId: bot.id, threadId: bot.threadId, relativePath: "photo.png", name: "Photo" });
