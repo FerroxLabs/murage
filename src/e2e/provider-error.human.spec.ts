@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { axeScriptPath } from "./axe";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -38,7 +39,7 @@ test("selected incident export is explicit, bound and safe on success cancellati
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   await page.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.addInitScript(()=>{const w=window as any;w.exportCalls=[];w.exportMode="success";if(!new URLSearchParams(location.search).has("noBridge"))w.muragebox={exportDiagnostics:async(...args:unknown[])=>{w.exportCalls.push(args);if(w.exportMode==="hold")await new Promise(resolve=>w.releaseExport=resolve);if(w.exportMode==="error")throw Error("PRIVATE_EXPORT_ERROR_CANARY");return w.exportMode==="cancel"?null:"/PRIVATE_EXPORT_PATH/report.md";}};});
-  const axe=readFileSync(process.env.MURAGE_AXE_SCRIPT??"/Users/seandonahoe/.sable/web/tools/node_modules/axe-core/axe.min.js","utf8");
+  const axe=readFileSync(axeScriptPath,"utf8");
   for(const runtime of [false,true])for(const width of [390,820,1440]){
     await page.setViewportSize({width,height:900});await page.goto(origin+"/__provider?kind=payment&status=402&skin=dark&tracking=valid&incident=saved"+(runtime?"&runtime=1":""));await page.waitForLoadState("networkidle");
     expect(await page.evaluate(()=>(window as any).exportCalls)).toEqual([]);
@@ -67,7 +68,7 @@ test("bound diagnostic tracking copies only its ID and rejects private or legacy
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   await page.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   await page.context().grantPermissions(["clipboard-read","clipboard-write"]);
-  const axe=readFileSync(process.env.MURAGE_AXE_SCRIPT??"/Users/seandonahoe/.sable/web/tools/node_modules/axe-core/axe.min.js","utf8");
+  const axe=readFileSync(axeScriptPath,"utf8");
   for(const runtime of [false,true])for(const width of [390,820,1440]){
     await page.setViewportSize({width,height:900});await page.goto(origin+"/__provider?kind=payment&status=402&skin=dark&tracking=valid"+(runtime?"&runtime=1":""));await page.waitForLoadState("networkidle");
     expect(await page.evaluate(()=>[(window as any).retryCalls,(window as any).settingsCalls])).toEqual([0,0]);
@@ -97,7 +98,7 @@ test("bound diagnostic tracking copies only its ID and rejects private or legacy
 test("HTTP402 payment guidance is generic, translated and manual at three widths in both skins", async ({ page }, info) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message)); page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-  const axe = readFileSync(process.env.MURAGE_AXE_SCRIPT ?? "/Users/seandonahoe/.sable/web/tools/node_modules/axe-core/axe.min.js", "utf8");
+  const axe = readFileSync(axeScriptPath, "utf8");
   for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(origin + "/__provider?kind=payment&status=402&skin=" + skin); await page.waitForLoadState("networkidle");

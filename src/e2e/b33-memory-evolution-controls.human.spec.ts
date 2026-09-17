@@ -2,17 +2,17 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { axeScriptPath } from "./axe";
 interface Fixture {info:{url:string;dataDir:string};close():Promise<void>}
 let fixture:Fixture,vite:ViteDevServer,origin:string,headers:Record<string,string>,axeSource:string;
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 async function api(path:string,body?:unknown){const response=await fetch(fixture.info.url+path,{method:body===undefined?"GET":"POST",headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10000)});expect(response.ok).toBe(true);return response.json();}
 test.beforeAll(async()=>{
-  axeSource=process.env.MURAGE_B33_AXE_SOURCE??createRequire(import.meta.url).resolve("axe-core/axe.min.js");
+  axeSource=process.env.MURAGE_B33_AXE_SOURCE??axeScriptPath;
   const root=fileURLToPath(new URL("../../",import.meta.url));
   const {launchVerificationServer}=await import(new URL("../../scripts/control-murage.ts",import.meta.url).href) as {launchVerificationServer:(env:NodeJS.ProcessEnv)=>Promise<Fixture>};
   fixture=await launchVerificationServer(process.env);

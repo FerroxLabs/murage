@@ -131,6 +131,7 @@
     "@types/yauzl": "3.4.0",
     "@types/yazl": "3.3.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "axe-core": "4.13.0",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "electron-updater": "^6.8.9",

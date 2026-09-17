@@ -7,9 +7,10 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {safeWipeSync} from "../../server/testing/safe-wipe.mjs";
+import { axeScriptPath } from "./axe";
 let vite:ViteDevServer,origin:string,cache:string;
 const root=fileURLToPath(new URL("../../",import.meta.url));
-const axe=readFileSync("/Users/seandonahoe/.sable/web/tools/node_modules/axe-core/axe.min.js","utf8");
+const axe=readFileSync(axeScriptPath,"utf8");
 test.beforeAll(async()=>{
  cache=mkdtempSync(join(tmpdir(),"murage-schedule-ui-"));
  vite=await createServer({configFile:false,envFile:false,root,cacheDir:cache,resolve:{alias:{"@":join(root,"src")}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[react(),tailwindcss(),{

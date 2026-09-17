@@ -6,14 +6,13 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { axeScriptPath } from "./axe";
 
 let vite: ViteDevServer, scratch: string, origin: string;
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const require = createRequire(import.meta.url);
-const axePath = process.env.MURAGE_AXE_SCRIPT ?? require.resolve("axe-core/axe.min.js");
+const axePath = axeScriptPath;
 test.beforeAll(async () => {
   scratch = mkdtempSync(join(tmpdir(), "murage-browser-display-"));
   vite = await createServer({ configFile: false, root, envFile: false, cacheDir: scratch,

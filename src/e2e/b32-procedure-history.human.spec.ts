@@ -3,15 +3,15 @@ import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { readFileSync, existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { axeScriptPath } from "./axe";
 interface Fixture {info:{url:string;dataDir:string};close():Promise<void>}
 let fixture:Fixture,vite:ViteDevServer,origin:string,headers:Record<string,string>,routine:any,firstRevision:string,axeSource:string;
 const botId="procedure-ui-bot",threadId="procedure-ui-thread",skill="reviewed-method";
 async function api(path:string,method="GET",body?:unknown){const response=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10000)});expect(response.ok).toBe(true);return response.json();}
 test.beforeAll(async()=>{
-  const require=createRequire(import.meta.url);axeSource=process.env.MURAGE_B32_AXE_SOURCE??require.resolve("axe-core/axe.min.js");
+  axeSource=process.env.MURAGE_B32_AXE_SOURCE??axeScriptPath;
   if(!existsSync(axeSource))throw Error("B32 requires a readable axe-core script before browser verification");
   const root=fileURLToPath(new URL("../../",import.meta.url));
   const {launchVerificationServer}=await import(new URL("../../scripts/control-murage.ts",import.meta.url).href) as {launchVerificationServer:(env:NodeJS.ProcessEnv,unused?:undefined,options?:{instrumentationSource:string})=>Promise<Fixture>};

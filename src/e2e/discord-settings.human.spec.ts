@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { axeScriptPath } from "./axe";
 let server: ViteDevServer, origin: string, cache: string;
 const empty = { state: "idle", configured: false, botConfigured: false, enabled: false, paired: false, requiresRevoke: false, busy: false,
   pending: 0, uncertain: 0, rejected: 0, needsReview: 0, error: null, nextRetryAt: null };
@@ -52,7 +53,7 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   await expect(page.getByLabel("Application ID", { exact: true })).toBeDisabled(); await expect(page.getByLabel("Bot token (saved)", { exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Copy pairing command" }).click(); expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/pair " + "a".repeat(64));
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("a".repeat(64));
-  await page.addScriptTag({ content: readFileSync("/Users/seandonahoe/.sable/web/tools/node_modules/axe-core/axe.min.js", "utf8") });
+  await page.addScriptTag({ content: readFileSync(axeScriptPath, "utf8") });
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.evaluate(() => window.scrollTo(0, 0));
