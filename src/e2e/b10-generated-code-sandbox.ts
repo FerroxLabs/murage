@@ -19,8 +19,9 @@
 // canary file, a 127.0.0.1 listener and a SIGTERM-ignoring busy loop. Without a
 // passing qualification no sandbox is issued, so generated code never runs.
 import { spawn } from "node:child_process";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { randomBytes } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -400,7 +401,7 @@ export class QualifiedGeneratedCodeSandbox {
       if (!run.groupGone) throw new Error(`GENERATED_CODE_SANDBOX_TERMINATION_UNCONFIRMED: process group ${run.pid} was still present after SIGKILL`);
       const verdict = acceptBoundaryFrame(run, nonce);
       return verdict.ok ? frameEvaluation(verdict.frame, calls) : rejected(verdict.reason);
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { safeWipeSync(root); }
   }
 }
 
@@ -472,6 +473,6 @@ export async function qualifyGeneratedCodeSandbox(options: HostSupport & { profi
     return new QualifiedGeneratedCodeSandbox(ISSUE, runtime, profile, { runtime: { platform: process.platform, ...runtime }, checks, elapsedMs: Date.now() - started });
   } finally {
     server.close();
-    rmSync(root, { recursive: true, force: true });
+    safeWipeSync(root);
   }
 }

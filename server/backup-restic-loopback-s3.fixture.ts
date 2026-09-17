@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { safeWipeSync } from "./testing/safe-wipe.mjs";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:https";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -117,6 +118,6 @@ export async function startLoopbackS3(options:{bucket?:string;region?:string}={}
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
   const address=server.address();if(!address||typeof address==="string")throw Error("LOOPBACK_S3_UNAVAILABLE");
   state.endpoint=`https://127.0.0.1:${address.port}`;
-  state.close=async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});};
+  state.close=async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));safeWipeSync(directory);};
   return state;
 }

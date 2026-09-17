@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from 'node:test';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
@@ -176,7 +177,7 @@ test('macOS fixed resource and built private worker capture, refuse wrong key/ta
     evidence.diagnostics=diagnostics;evidence.success=success;evidence.durationMs=Date.now()-started;
     if(process.env.MURAGE_QUAL_EVIDENCE_DIR)writeFileSync(join(process.env.MURAGE_QUAL_EVIDENCE_DIR,'b20-mac-native.json'),JSON.stringify(evidence,null,1),{mode:0o600,flag:'wx'});
     console.log('B20 macOS worker receipt:',JSON.stringify({success,diagnostics}));
-    if(success)rmSync(f.parent,{recursive:true,force:true});
+    if(success)safeWipeSync(f.parent);
     else console.error('B20 macOS failure artifacts retained:',f.parent);
   }
 });

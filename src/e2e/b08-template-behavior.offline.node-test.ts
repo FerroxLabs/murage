@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { test } from "node:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -17,7 +18,7 @@ function fixture() {
   const home = join(root, "synthetic-home"), repoRoot = join(root, "synthetic-repo");
   mkdirSync(home); mkdirSync(repoRoot);
   const descriptor: B08EngineDescriptor = { instanceId: "dedicated", driver: "openai-compat", displayName: "Dedicated local model", model: "local-model", account: "synthetic-account", config: {}, spend: { paid: false, reason: "offline admission only" }, maxDispatches: 24 };
-  return { root, home, repoRoot, descriptor, close: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, home, repoRoot, descriptor, close: () => safeWipeSync(root) };
 }
 
 test("admission refuses credential parent symlink into synthetic personal store", () => {
@@ -285,7 +286,7 @@ test("engine stop reasons come from native ACP logs, classify an engine-ended de
     assert.equal(exported.length, 1);
     assert.equal(readFileSync(exported[0]!.file, "utf8"), readFileSync(join(native, "s1.ndjson"), "utf8"));
     assert.equal(statSync(exported[0]!.file).mode & 0o077, 0);
-    rmSync(data, { recursive: true });
+    safeWipeSync(data);
     const manifest = JSON.parse(readFileSync(join(f.root, "evidence", "native", "cowork__denied-access", "MANIFEST.json"), "utf8"));
     assert.equal(manifest.files[0].sha256, exported[0]!.sha256);
     assert.equal(readFileSync(exported[0]!.file, "utf8").includes("PermissionRejected"), true);

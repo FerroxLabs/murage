@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, statSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -66,7 +67,7 @@ test("the CLI exits 2 for an invalid manifest and prints only the plan for a val
     const good=join(dir,"good.json");writeFileSync(good,JSON.stringify({...valid(),budget:{...valid().budget,cleanupDeadlineUtc:new Date(Date.now()+3600000).toISOString()}}));
     const output=JSON.parse(execFileSync(process.execPath,["scripts/b22-linux-pilot.mjs","plan",good],{encoding:"utf8"}));
     assert.equal(output.phases[0].phase,"admit");assert.equal(output.target,"pilot-host");
-  }finally{rmSync(dir,{recursive:true,force:true});}
+  }finally{safeWipeSync(dir);}
 });
 
 
@@ -102,7 +103,7 @@ test("generated SSH commands preserve one remote command through local shell par
     assert.match(cleanup,/\.pilot-owner/);assert.match(cleanup,/--one-file-system --/);assert.match(cleanup,/sport = :8800/);
     // Every required port (server, loopback webhook serverPort+1, companion control, door) is checked before setup and after cleanup.
     for(const text of [preflight,cleanup])for(const port of [8799,8800,8811,8813])assert.ok(text.includes(`sport = :${port} `),`port ${port}`);
-  }finally{rmSync(dir,{recursive:true,force:true});}
+  }finally{safeWipeSync(dir);}
 });
 
 test("SYNTHETIC entrypoint: generated setup and status invoke the release CLI; the current symlink path would no-op",()=>{
@@ -163,7 +164,7 @@ test("SYNTHETIC entrypoint: generated setup and status invoke the release CLI; t
     // CONTROL, direct: through the symlink the entrypoint exits 0 and prints nothing, so an exit code alone proves nothing ran.
     assert.equal(execFileSync(process.execPath,[currentCli,"status","--service-user","murage"],{env:{PATH:"/usr/bin:/bin"},encoding:"utf8"}),"");
     assert.equal(existsSync(capture),false);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 
 
@@ -197,5 +198,5 @@ test("runtime paths are persisted through the generated command before service s
     result=run();assert.notEqual(result.status,0);assert.equal(readFileSync(envFile,"utf8"),malformed);
     const arm=pilotPlan({...m,target:{...m.target,arch:"aarch64"}}).phases.find(phase=>phase.phase==="install-unit").run[0];
     assert.match(arm,/fuigo\/linux-arm64/);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });

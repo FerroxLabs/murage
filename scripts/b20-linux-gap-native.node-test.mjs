@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from 'node:test';
 import { Readable } from 'node:stream';
 import { copyFileSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -39,8 +40,8 @@ test('Linux age refuses held archive input aliases before decryption', { timeout
     rmSync(link); rmSync(hardlink);
     const inspected=await inspectEncryptedInstallationBackup(archive,f.parent,{...keys,ageExecutable:tool});
     try { assert.match(inspected.sha256,/^[a-f0-9]{64}$/); }
-    finally { rmSync(inspected.directory,{recursive:true,force:true}); }
-  } finally { rmSync(f.parent,{recursive:true,force:true}); }
+    finally { safeWipeSync(inspected.directory); }
+  } finally { safeWipeSync(f.parent); }
 });
 
 test('Linux age decrypts only the descriptor held before synthetic pathname replacement', { timeout: 30000 }, async () => {
@@ -71,7 +72,7 @@ test('Linux age decrypts only the descriptor held before synthetic pathname repl
     await decryptBackupFile(tool,keys.identity,archive,output,{maxBytes:4096});
     assert.equal(replaced,true); assert.deepEqual(readFileSync(output),original);
     assert.deepEqual(readFileSync(archive),replacementCiphertext);
-  } finally { childProcess.spawn=originalSpawn; syncBuiltinESMExports(); rmSync(f.parent,{recursive:true,force:true}); }
+  } finally { childProcess.spawn=originalSpawn; syncBuiltinESMExports(); safeWipeSync(f.parent); }
 });
 
 test('Linux age cancellation aborts an in-flight pinned child and removes output', { timeout: 30000 }, async () => {
@@ -107,6 +108,6 @@ test('Linux age cancellation aborts an in-flight pinned child and removes output
     assert.equal(existsSync(output),false);
   } finally {
     input.destroy(); childProcess.spawn=originalSpawn; syncBuiltinESMExports();
-    if(confirmed)rmSync(root,{recursive:true,force:true});else console.error(`B20 retained cancellation fixture: ${root}`);
+    if(confirmed)safeWipeSync(root);else console.error(`B20 retained cancellation fixture: ${root}`);
   }
 });

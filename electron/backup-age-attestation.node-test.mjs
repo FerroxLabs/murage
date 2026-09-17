@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync } from "node:fs";
+import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { AGE_PAYLOAD_SHA256,normalizedAgePayloadHash,signedAgeOwnedByCurrentApp,trustedBackupAgeExecutable } from "./backup-age-attestation.mjs";
@@ -19,7 +20,7 @@ test("actual ad-hoc resign keeps the pinned payload but is not production trust"
     assert.equal(normalizedAgePayloadHash(readFileSync(signed)),AGE_PAYLOAD_SHA256);
     assert.equal(trustedBackupAgeExecutable(signed),false);
     assert.throws(()=>execFileSync("/usr/bin/codesign",["--verify","--strict","-R","=anchor apple generic",signed],{stdio:"pipe",timeout:10000}));
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("code tampering, load-command bounds, overlapping segments and undeclared tail fail",{skip:!qualified},()=>{
   const base=original();
@@ -41,5 +42,5 @@ test("mock Developer-ID verification also requires current app, same team and pa
     assert.equal(signedAgeOwnedByCurrentApp(file,original(),{currentExecutable,run:()=>({status:1,stderr:"untrusted"})}),false);
     assert.equal(signedAgeOwnedByCurrentApp(file,original(),{currentExecutable:process.execPath,run}),false);
     const corrupt=original();corrupt[4096]^=1;assert.equal(signedAgeOwnedByCurrentApp(file,corrupt,{currentExecutable,run}),false);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });

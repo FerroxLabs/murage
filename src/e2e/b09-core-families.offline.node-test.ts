@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
@@ -45,7 +46,7 @@ test("denied-source scan handles internal skill-directory links without hiding c
     assert.equal(workspaceLeakTexts(root, "private.md").filter(text => text === "CANARY").length, 2);
     symlinkSync(dirname(root), join(root, "outside"), "dir");
     assert.throws(() => workspaceLeakTexts(root, "private.md"), /outside the controlled workspace/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 
 /** A stored (uncompressed) ZIP built byte by byte, so package inspection is exercised on real archive bytes. */
@@ -133,7 +134,7 @@ test("live inputs are package-scoped and the B09 ledger admits its own suite siz
     assert.deepEqual(dispatchHeadroom(ledger, descriptor, B09_FROZEN_TURNS), { used: 0, max: 40, remaining: 40 });
     assert.throws(() => dispatchHeadroom(ledger, descriptor), /at most one full suite \(22\)/);
     assert.equal(claimEngineDispatch(ledger, descriptor, B09_FROZEN_TURNS), 1);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 
 test("CSV, Markdown table and practice-set readers extract the deterministic facts deliverable checks use", () => {
@@ -196,7 +197,7 @@ test("a real .docx written by the platform converter opens, and plain prose conv
     assert.equal(inspection.format, "docx");
     assert.equal(inspection.ok, true, JSON.stringify(inspection.problems));
     if (inspection.format === "docx") { assert.match(inspection.text, /if QA passes/); assert.equal(inspection.insertions + inspection.deletions, 0); }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 
 test("text deliverables must be non-empty UTF-8, CSV must parse, and unknown formats are recorded without judgement", async () => {
@@ -214,5 +215,5 @@ test("tool absence is proved on an explicit PATH, not assumed", () => {
     writeFileSync(join(bin, "soffice"), "#!/bin/sh\n"); chmodSync(join(bin, "soffice"), 0o755);
     writeFileSync(join(bin, "pandoc"), "not executable"); chmodSync(join(bin, "pandoc"), 0o644);
     assert.deepEqual(toolsOnPath(["soffice", "pandoc", "libreoffice"], `${join(root, "empty")}:${bin}`), { soffice: join(bin, "soffice"), pandoc: null, libreoffice: null });
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });

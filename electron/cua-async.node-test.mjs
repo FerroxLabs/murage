@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { test } from "node:test";
 import { registerHooks } from "node:module";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -75,7 +76,7 @@ async function setup(t) {
   // already fixtures, so the same protocol assertions run on Linux and Windows.
   const platform=Object.getOwnPropertyDescriptor(process,"platform");
   Object.defineProperty(process,"platform",{...platform,value:"darwin"});
-  t.after(()=>{ Object.defineProperty(process,"platform",platform); if(prior===undefined)delete process.env.MURAGE_CUA_EMBEDDED;else process.env.MURAGE_CUA_EMBEDDED=prior;rmSync(fixture.home,{recursive:true,force:true}); });
+  t.after(()=>{ Object.defineProperty(process,"platform",platform); if(prior===undefined)delete process.env.MURAGE_CUA_EMBEDDED;else process.env.MURAGE_CUA_EMBEDDED=prior;safeWipeSync(fixture.home); });
   return import(`./cua.mjs?fixture=${++sequence}`);
 }
 

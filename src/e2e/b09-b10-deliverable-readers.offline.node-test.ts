@@ -6,8 +6,9 @@
 // model output, network, credential or install. No test is skipped: on a host
 // without these readers the adapters throw and the tests fail.
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -22,7 +23,7 @@ import { B09_CASES } from "./b09-core-families-cases.ts";
 
 async function withRoot(body: (root: string) => Promise<void>): Promise<void> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "b09-b10-readers-")));
-  try { await body(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  try { await body(root); } finally { safeWipeSync(root); }
 }
 
 function standIn(root: string, name: string, body: string): string {

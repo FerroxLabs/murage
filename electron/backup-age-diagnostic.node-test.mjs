@@ -1,6 +1,7 @@
 import test from 'node:test';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,linkSync,realpathSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,symlinkSync,linkSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
@@ -15,7 +16,7 @@ const diagnostic=(operation='encrypt',predicate='app-verify')=>({operation,predi
 const bytes=readFileSync(process.env.MURAGE_BACKUP_TEST_AGE_FILE??new URL('../dist-native/backup-age/arm64/age',import.meta.url));
 function fixture(work){
  const root=realpathSync(mkdtempSync(path.join(tmpdir(),'murage-age-diagnostic-'))),app=path.join(root,'Murage.app'),file=path.join(app,'Contents/Resources/backup-tools/arm64/age'),exe=path.join(app,'Contents/MacOS/Murage');mkdirSync(path.dirname(file),{recursive:true});mkdirSync(path.dirname(exe),{recursive:true});writeFileSync(file,bytes);writeFileSync(exe,'test executable, never run');
- try{return work({root,app,file,exe});}finally{rmSync(root,{recursive:true,force:true});}
+ try{return work({root,app,file,exe});}finally{safeWipeSync(root);}
 }
 const good=()=>({status:0,stderr:'TeamIdentifier=ABCDEFGHIJ\n',attestationElapsedMs:3});
 test('read and close errors retain the exact failed predicate without changing refusal',()=>{

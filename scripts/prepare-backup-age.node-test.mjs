@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ test("public Linux archive is staged without execution, with complete license an
     assert.equal(verifiedBackupTool(resources,"linux","x64"),verifiedBackupTool(resources));
     assert.equal(await stageBackupAge({root,target:"linux-x64"}),file);
     writeFileSync(file,"tampered");await assert.rejects(stageBackupAge({root,target:"linux-x64"}),/RESOURCE_MISMATCH/);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("unsupported metadata, wrong archives and linked inputs refuse without staging executables",async()=>{
   const root=fixture();
@@ -53,7 +54,7 @@ test("unsupported metadata, wrong archives and linked inputs refuse without stag
     rmSync(linked);linkSync(wrong,linked);
     await assert.rejects(stageBackupAge({root,target:"linux-x64",archive:linked}),/FILE_UNSAFE/);
     assert.equal(existsSync(path.join(root,"dist-native","backup-age-linux","x64","age")),false);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("only the recorded old staged license may be refreshed; unknown bytes refuse",async()=>{
   const root=fixture();
@@ -67,5 +68,5 @@ test("only the recorded old staged license may be refreshed; unknown bytes refus
     await stageBackupAge({root});assert.equal(sha(license),BACKUP_AGE_LICENSE_SHA256);
     writeFileSync(license,"unknown owned by somebody else");await assert.rejects(stageBackupAge({root}),/LICENSE_MISMATCH/);
     assert.equal(readFileSync(license,"utf8"),"unknown owned by somebody else");
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });

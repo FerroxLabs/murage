@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { test } from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
@@ -154,5 +155,5 @@ test("B10 inputs, admission and ledger use the package's own 43-dispatch suite",
     const ledger = dispatchLedgerPath(join(root, "authority", "b10-engine.json"), descriptor, "b10");
     assert.match(ledger, /b10-dispatch-ledger-b10-engine\.json$/);
     assert.deepEqual(dispatchHeadroom(ledger, descriptor, B10_FROZEN_DISPATCHES), { used: 0, max: 43, remaining: 43 });
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,realpathSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,symlinkSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from "node:events";
@@ -23,7 +24,7 @@ for(const [name,verify,pin] of [['age',signedAgeOwnedByCurrentAppAsync,AGE_ORIGI
    const link=path.join(root,'link');symlinkSync(file,link);assert.equal(await verify(link,bytes,{currentExecutable,run}),false);
    let heartbeat=false;const held=verify(file,bytes,{currentExecutable,run:async()=>{await new Promise(r=>setTimeout(r,5));assert(heartbeat);writeFileSync(currentExecutable,'replacement main');return{status:0,stderr:'TeamIdentifier=ABCDEFGHIJ\n'};}});setTimeout(()=>{heartbeat=true;},0);assert.equal(await held,false);
    const controller=new AbortController();assert.equal(await verify(file,bytes,{currentExecutable,signal:controller.signal,run:async()=>{controller.abort();return{status:0,stderr:'TeamIdentifier=ABCDEFGHIJ\n'};}}),false);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
  });
 }
 

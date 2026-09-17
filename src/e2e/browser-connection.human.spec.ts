@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,7 +55,7 @@ test.beforeAll(async () => {
   if (!address || typeof address === "string") throw Error("Fixture port missing");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await vite?.close(); if (scratch) rmSync(scratch, { recursive: true }); });
+test.afterAll(async () => { await vite?.close(); if (scratch) safeWipeSync(scratch); });
 
 test("resolved approval cards no longer request approval", async ({ page }, info) => {
   await page.route("**/*", route => route.request().url().startsWith(origin) || route.request().url().startsWith("data:") ? route.continue() : route.abort());

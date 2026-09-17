@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from 'node:test';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -54,5 +55,5 @@ test('Linux fixed resource and built private worker capture inspect paused resto
     assert.equal(existsSync(join(target,'startup-background.json')),false);
     const db=new DatabaseSync(join(target,'messages.db'),{readOnly:true});
     try {assert.equal(db.prepare('SELECT mode FROM memory_meta').get().mode,'paused');assert.equal(db.prepare('SELECT target_id FROM memory_tombstones').get().target_id,'forgotten');assert.match(db.prepare('SELECT json FROM messages').get().json,/WAL-visible transcript/);} finally {db.close();}
-  } finally {lease?.release(); console.log('B20 Linux worker receipt:',JSON.stringify(diagnostics));rmSync(f.parent,{recursive:true,force:true});}
+  } finally {lease?.release(); console.log('B20 Linux worker receipt:',JSON.stringify(diagnostics));safeWipeSync(f.parent);}
 });

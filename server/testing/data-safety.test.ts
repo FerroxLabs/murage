@@ -36,6 +36,11 @@ const ALLOWLIST: Record<string, string> = {
   "installer/lib/tailscale.mjs": "shredAuthKeyFile removes the private mkdtemp directory it created for the auth key",
   ".github/workflows/package-win.yml": "rm -rf dist dist-server release: build outputs on an ephemeral CI runner",
   ".github/workflows/release.yml": "rm -rf dist dist-server dist-native release: build outputs on an ephemeral CI runner",
+  ".github/workflows/package-mac-qualification.yml": "rm -rf dist dist-server dist-native release: build outputs on an ephemeral CI runner",
+  "scripts/b22-linux-pilot.mjs": "prints (never runs) the pilot VM cleanup command, which re-checks both roots are not links and carry this pilot's owner marker before `rm -rf --one-file-system`",
+  "scripts/b22-linux-pilot.node-test.mjs": "asserts the printed plan omits `rm -rf` when removeData is false; the file's own fixture teardown uses safeWipeSync",
+  "scripts/prepare-backup-age.mjs": "build-only: removes the mkdtemp download/extract scratch under os.tmpdir()",
+  "scripts/prepare-windows-backup-tools.mjs": "build-only: removes the mkdtemp download/extract scratch under os.tmpdir()",
   // Production runtime. These delete paths the app itself owns (mkdtemp
   // scratch, staging, per-skill or per-bot subdirectories under DATA_DIR)
   // and are covered by their own unit tests; routing the app through a test
@@ -54,6 +59,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
+  "server/installation-encrypted-backup.ts": "removes its own mkdtemp .murage-encrypted-write-*/.murage-encrypted-inspection-* scratch, stage and .recovery-* directories (retained when a tool close is unconfirmed); never the installation root",
   "server/installation-recovery-command.ts": "removes the mkdtemp scratch of backup inspect / restore plan commands",
   "server/installation-restore-preparation.ts": "removes the inspected archive directory it extracted when preparation fails",
   "server/installation-restore.ts": "removes an unpublished restore candidate and its inspection directory; never the installation root",

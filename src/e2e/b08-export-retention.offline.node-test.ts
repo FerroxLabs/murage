@@ -9,10 +9,11 @@
 // harness with an empty explicit fleet, with the arguments the spec passes.
 // No engine, model, credential, descriptor, ledger or dispatch is involved.
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { test } from "node:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,7 +135,7 @@ test("native export failure retains the original harness bytes while owned proce
   } finally {
     await waitForExit(child, { signal: "SIGTERM", graceMs: 2_000 });
     const cleanup = await harness?.close();
-    if (confirmed || !harness || cleanup?.pidsGone) rmSync(root, { recursive: true, force: true });
+    if (confirmed || !harness || cleanup?.pidsGone) safeWipeSync(root);
   }
 });
 
@@ -170,6 +171,6 @@ test("control: without an export failure close(false) removes the data dir and t
   } finally {
     await waitForExit(child, { signal: "SIGTERM", graceMs: 2_000 });
     const cleanup = await harness?.close();
-    if (confirmed || !harness || cleanup?.pidsGone) rmSync(root, { recursive: true, force: true });
+    if (confirmed || !harness || cleanup?.pidsGone) safeWipeSync(root);
   }
 });

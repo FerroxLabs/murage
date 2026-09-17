@@ -1,4 +1,5 @@
 import test from "node:test";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from "node:assert/strict";
 import {chmodSync,existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,symlinkSync,writeFileSync} from "node:fs";
 import {tmpdir,userInfo} from "node:os";
@@ -44,7 +45,7 @@ function fixture(platform){
   };
   const provider=createNativeClosedBackupProvider({platform,owner,home,run});
   const stage=()=>{mkdirSync(root,{recursive:true,mode:0o700});for(const file of job.files)writeFileSync(path.join(root,file.name),file.text,{mode:0o600});};
-  return{home,owner,root,job,state,calls,provider,stage,cleanup:()=>rmSync(home,{recursive:true,force:true})};
+  return{home,owner,root,job,state,calls,provider,stage,cleanup:()=>safeWipeSync(home)};
 }
 for(const platform of ["darwin","linux"]){
   test(`${platform}: exact owned install/readback/remove uses only injected targeted operations`,{skip:POSIX_ONLY},async()=>{

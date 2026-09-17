@@ -3,9 +3,10 @@
 // parent secret, and busy loops. No model-generated code, network host,
 // credential or home path is touched.
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ const LIMITS: BoundaryLimits = { deadlineMs: 5_000, maxStdoutBytes: 64 * 1024, m
 
 async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  try { await body(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  try { await body(root); } finally { safeWipeSync(root); }
 }
 
 async function listener(): Promise<{ server: Server; port: number; hits: () => number }> {

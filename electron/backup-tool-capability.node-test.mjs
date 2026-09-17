@@ -1,6 +1,7 @@
 import test from "node:test";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -30,7 +31,7 @@ async function fixture(work) {
   const executable = path.join(root, "Murage.exe");
   const capability = createBackupToolCapability({ resourcesPath: resources, currentExecutable: executable, isUsable: () => state.usable });
   try { await work({ capability, state, resources, executable }); }
-  finally { Object.defineProperty(process, "platform", descriptor); delete globalThis[key]; rmSync(root, { recursive: true }); }
+  finally { Object.defineProperty(process, "platform", descriptor); delete globalThis[key]; safeWipeSync(root); }
 }
 
 test("Windows capability verifies fixed resources per operation, never during status reads", () => fixture(async ({ capability, state, resources, executable }) => {
@@ -114,7 +115,7 @@ async function macFixture(work){
  const descriptor=Object.getOwnPropertyDescriptor(process,"platform");Object.defineProperty(process,"platform",{...descriptor,value:"darwin"});
  const state={calls:0,usable:true,hold:null,fail:false};
  const capability=createBackupToolCapability({resourcesPath:resources,currentExecutable:executable,isUsable:()=>state.usable,verifyMacTool:async(_file,{signal})=>{state.calls++;await state.hold;return !state.fail&&!signal.aborted;}});
- try{await work({state,capability,file,executable});}finally{capability.invalidate();await capability.settled();Object.defineProperty(process,"platform",descriptor);rmSync(root,{recursive:true});}
+ try{await work({state,capability,file,executable});}finally{capability.invalidate();await capability.settled();Object.defineProperty(process,"platform",descriptor);safeWipeSync(root);}
 }
 test("macOS observational status never verifies; actions refresh and replacement invalidates",()=>macFixture(async({state,capability,file})=>{
  for(let i=0;i<20;i++){capability.currentTool();capability.status();}assert.equal(state.calls,0);assert.equal(await capability.requireTool(),file);

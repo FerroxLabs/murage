@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync } from "node:fs";
@@ -34,7 +35,7 @@ function fixture(overrides={}){
   return{root,installation,destination,keyFile,calls,host,controller,coordinator,create,setNow:value=>{now=value;},rotate:()=>{binding=JSON.stringify({...JSON.parse(binding),recipient:"changed"});},
     async enable(preUpgrade=false,closedApp=false){const status=await controller.selectReferences();await controller.configure(0,{...choices,preUpgrade,closedApp,...Object.fromEntries(["installationRef","destinationRef","recoveryRef"].map(key=>[key,status.refs[key]])),allowIdleRestart:true,allowClosedApp:closedApp});controller.stopPolling();for(let attempt=0;attempt<100&&controller.isPreparing();attempt++)await new Promise(resolve=>setImmediate(resolve));assert.equal(controller.isPreparing(),false,"initial tick must settle before fake-clock advance");},
     async arm(){await this.enable();now=Date.parse("2026-09-13T09:01:00Z");await controller.tick();},
-    cleanup(){controller.stopPolling();rmSync(root,{recursive:true,force:true});}};
+    cleanup(){controller.stopPolling();safeWipeSync(root);}};
 }
 test("disabled selection never enables, exposes only labels/refs, and needs explicit consent",async()=>{
   const f=fixture();try{await f.controller.tick();assert.deepEqual(f.calls,[]);const s=await f.controller.selectReferences();assert.equal(s.enabled,false);const encoded=JSON.stringify(s);assert.equal(encoded.includes(f.root),false);assert.equal(encoded.includes("AGE-SECRET"),false);assert.equal(encoded.includes("age1"),false);
@@ -282,5 +283,5 @@ test("real isolated private worker verifies an encrypted handoff under delegated
       diagnostic.privateLogDetected=logs.includes("AGE-SECRET")||logs.includes("FAKE-CREDENTIAL-CANARY");assert.equal(logs.includes("AGE-SECRET"),false);assert.equal(logs.includes("FAKE-CREDENTIAL-CANARY"),false);assert.equal(exit,0);assert.equal(inputs,1);assert.equal(result?.ok,true);assert.throws(()=>acquireDataDirLease(data.data));diagnostic.stages.push("worker-result-verified");return result;
     }});
     await next.resumeOffline();const s=f.coordinator().status();assert.equal(s.phase,"return-pending");assert.equal(digest(readFileSync(path.join(f.destination,s.job.id+".age"))),s.lastVerified.sha256);assert.equal(readFileSync(path.join(data.data,"config.json")).equals(original),true);next.completeReturn();assert.equal(f.coordinator().status().phase,"returned");diagnostic.stages.push("host-return-verified");success=true;
-  }finally{owner?.release();rmSync(f.keyFile,{force:true});console.log("B21 safe worker diagnostic:",JSON.stringify(diagnostic));if(success){f.cleanup();rmSync(data.parent,{recursive:true,force:true});}else{writeFileSync(path.join(f.root,"safe-worker-diagnostic.json"),JSON.stringify(diagnostic),{mode:0o600});f.controller.stopPolling();console.error("B21 isolated failure artifacts retained:",f.root,data.parent);}}
+  }finally{owner?.release();rmSync(f.keyFile,{force:true});console.log("B21 safe worker diagnostic:",JSON.stringify(diagnostic));if(success){f.cleanup();safeWipeSync(data.parent);}else{writeFileSync(path.join(f.root,"safe-worker-diagnostic.json"),JSON.stringify(diagnostic),{mode:0o600});f.controller.stopPolling();console.error("B21 isolated failure artifacts retained:",f.root,data.parent);}}
 });

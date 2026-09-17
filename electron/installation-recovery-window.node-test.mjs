@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import vm from "node:vm";
 import test from "node:test";
@@ -32,7 +33,7 @@ test("encrypted key selection and lazy reread await host verification", async ()
       const wc = opened.window.webContents;
       const state = await handler({ sender: wc, senderFrame: wc.mainFrame }, { action: "backup-encrypted" });
       assert.equal(state.error, "AGE_TOOL_UNVERIFIED"); assert.equal(verified, failAt); assert.equal(ran, failAt - 1);
-    } finally { rmSync(root, { recursive: true }); }
+    } finally { safeWipeSync(root); }
   }
 });
 

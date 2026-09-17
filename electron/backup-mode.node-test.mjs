@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
-import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from "node:fs";
+import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
@@ -39,7 +40,7 @@ test("private key files must be independent, bounded and do not supply arbitrary
     const value=readBackupIdentity(path.join(root,"key.txt"),data);assert.ok(value.identity===key);assert.ok(value.recipient.startsWith("age1"));
     assert.throws(()=>readBackupIdentity(path.join(data,"key.txt"),data),/INDEPENDENT/);
     writeFileSync(path.join(root,"large"),"X".repeat(4097));assert.throws(()=>readBackupIdentity(path.join(root,"large"),data));
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("actual staged binary matches the packaged lookup and unsupported targets need no executable",()=>{
   const root=mkdtempSync(path.join(tmpdir(),"murage-backup-resources-test-"));
@@ -60,7 +61,7 @@ test("actual staged binary matches the packaged lookup and unsupported targets n
     const scripts=JSON.parse(readFileSync(new URL("../package.json",import.meta.url),"utf8")).scripts;
     assert.ok(scripts["package:prepare"].startsWith("node scripts/prepare-backup-age.mjs && "));
     for(const name of ["package:linux","package:linux:offline","package:linux:dir"])assert.ok(scripts[name].startsWith("pnpm prepare:backup-age:linux && "));
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("intentional backup mode is routed before harness and native writers start",()=>{
   const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");

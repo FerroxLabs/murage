@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -11,7 +12,7 @@ import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 const digest = (text) => createHash("sha512").update(text).digest("base64");
 async function fixture(t, { platform = process.platform, packageArtifact = false } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "murage-candidate-")));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => safeWipe(directory));
   const file = join(directory, "update.zip");
   await writeFile(file, "candidate A");
   const sha512 = digest("candidate A");
