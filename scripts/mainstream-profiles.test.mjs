@@ -193,9 +193,11 @@ describe("the front door reaches people the honest way", () => {
     const trail = chain.join(" -> ");
     // the skills a profile brings are still the ones the library can install
     expect([...bodies.values()].some((body) => /intakeProfileSkills\(/.test(body)), trail).toBe(true);
-    // …and a profile that brings none of them is refused rather than offered
+    // …and a profile that brings none of them is refused rather than offered.
+    // A profile may also bring playbooks (40d9027d): refusing only when it
+    // brings neither is still the zero-content refusal this guards.
     expect(
-      [...bodies.values()].some((body) => /skills\.length === 0\)\s*return null;/.test(body)),
+      [...bodies.values()].some((body) => /skills\.length === 0(?: && playbooks\.length === 0\))?\)\s*return null;/.test(body)),
       `a front door that installs nothing would be offered: no zero-skill refusal on ${trail}`,
     ).toBe(true);
   });
