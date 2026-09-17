@@ -12275,6 +12275,7 @@ const server = createServer(async (req, res) => {
         description: persona.description,
         color: persona.color,
         ...(persona.mascotExpression ? { mascotExpression: persona.mascotExpression } : {}),
+        ...(persona.mascotBody ? { mascotBody: persona.mascotBody } : {}),
         ...(parsed.data.rename === false ? {} : { name: persona.name }),
       };
       // Re-applying a reviewed profile is idempotent for its public guidance.

@@ -77,6 +77,7 @@ const packageSchema = z.object({
       appearance: z.object({
         color: z.enum(COLORS, { error: "is not supported" }),
         mascotExpression: optionalText(80),
+        mascotBody: optionalText(40),
       }),
       playbooks: z.array(key).max(40).optional(),
       skills: z.array(key).max(200).optional(),
@@ -305,6 +306,7 @@ export function packageAgentAsMember(agent: BotPackageAgent): TeamManifestMember
     appearance: {
       color: agent.appearance.color,
       ...(agent.appearance.mascotExpression ? { mascotExpression: agent.appearance.mascotExpression } : {}),
+      ...(agent.appearance.mascotBody ? { mascotBody: agent.appearance.mascotBody } : {}),
     },
   };
 }

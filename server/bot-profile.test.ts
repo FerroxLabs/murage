@@ -73,6 +73,15 @@ describe("parseBotProfilePatch (both modes)", () => {
     expect(nulled).toEqual({ ok: true, patch: { avatarUrl: undefined } });
   });
 
+  it("accepts every mascot body and names the choices when one is unknown", () => {
+    expect(parseBotProfilePatch({ mascotBody: "hexagon" }, true)).toEqual({ ok: true, patch: { mascotBody: "hexagon" } });
+    expect(parseBotProfilePatch({ mascotBody: "ember" }, false)).toEqual({ ok: true, patch: { mascotBody: "ember" } });
+    expect(parseBotProfilePatch({ mascotBody: "cursor" } as never, true)).toEqual({
+      ok: false,
+      error: "mascotBody must be ember, blob, circle, squircle, capsule, drop, shield, hexagon, diamond, or star",
+    });
+  });
+
   it("maps an avatarCrop issue to the readable message", () => {
     expect(parseBotProfilePatch({ avatarCrop: "hexagon" } as never, true)).toEqual({
       ok: false,

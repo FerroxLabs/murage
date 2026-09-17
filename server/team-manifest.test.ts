@@ -198,6 +198,18 @@ describe("team manifests", () => {
     });
   });
 
+  it("carries a bot's mascot body through export and import, defaulting a stale id", () => {
+    const manifest = createTeamManifest({ name: "Crew", memberIds: ["b1"] }, [
+      { id: "b1", name: "Star", title: "", description: "", color: "blue", mascotBody: "star" },
+    ]);
+    const parsed = parseTeamManifest(JSON.parse(JSON.stringify(manifest)));
+    const star = parsed.team.members[0]!;
+    expect(star.appearance.mascotBody).toBe("star");
+    expect(importedMemberProfile(star, new Set()).mascotBody).toBe("star");
+    const stale = { ...star, appearance: { ...star.appearance, mascotBody: "cursor" } };
+    expect(importedMemberProfile(stale, new Set()).mascotBody).toBe("ember");
+  });
+
   it("builds import profiles from persona fields only and numbers colliding names", () => {
     const member = {
       key: "mira",
