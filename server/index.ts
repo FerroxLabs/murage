@@ -13056,7 +13056,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if(!body||typeof body!=="object"||Array.isArray(body))return json(res,400,{error:"body must be an object"});
       const current=store.projectBotForTask(m[1],m[2]);if(!current)return json(res,404,{error:"no such task"});
-      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","cwd","unread","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
+      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","cwd","unread","pinned","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
       const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.cwd!==undefined;
       // the working folder is a desktop setting: a paired device answers 404
       // and (FUIGOTRUST2) records no folder trust either way
@@ -13074,6 +13074,7 @@ const server = createServer(async (req, res) => {
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
       if(body.title!==undefined)patch.title=body.title;
+      if(body.pinned!==undefined){if(typeof body.pinned!=="boolean")return json(res,400,{error:"pinned must be true or false"});patch.pinned=body.pinned;}
       const task = store.patchTask(m[1],m[2],patch);
       if (!task) return json(res, 404, { error: "no such task" });
       const fresh = botWithThread(store.bot(m[1])!);

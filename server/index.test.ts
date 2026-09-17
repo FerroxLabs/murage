@@ -7426,6 +7426,31 @@ describe("section context API", () => {
   });
 });
 
+describe("task pin API", () => {
+  it("pins and unpins a bot task, keeps it on reload, and rejects a non-boolean", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const task = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Quarterly plan" })).body;
+      const threadId: string = task.bot?.threadId ?? task.task?.threadId;
+      expect(threadId).toEqual(expect.any(String));
+
+      const pinned = await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: true });
+      expect(pinned.status).toBe(200);
+      expect(pinned.body.task).toMatchObject({ threadId, pinned: true });
+      const reloaded = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+      expect(reloaded.tasks.find((candidate: { threadId: string }) => candidate.threadId === threadId)?.pinned).toBe(true);
+
+      expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: "yes" })).status).toBe(400);
+
+      const unpinned = await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: false });
+      expect(unpinned.status).toBe(200);
+      expect(unpinned.body.task.pinned).toBeUndefined();
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+});
+
 // The memory routes expose plain files in the bot's workspace. The
 // traversal cases matter more than the happy path here: a topic name in a
 // URL is hostile-adjacent input, and the only defensible answer to "../"
