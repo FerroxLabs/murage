@@ -297,6 +297,9 @@ export interface TaskRecord {
   /** Runtime only. Never resume a running process after restart. */
   activity?: BotActivity;
   busy?: boolean;
+  /** Runtime only: this busy task is waiting for another thread to release a
+   * shared working folder, computer or browser profile before it starts. */
+  waitingFor?: TaskResourceWait;
   /** which instance dispatched the most recent turn. A cursor alone can't
    * say whether an engine's session is current — another engine may have
    * taken turns since — so this is what decides an inline replay. Absent
@@ -310,6 +313,13 @@ export interface TaskRecord {
    * a folder that moved under a live session would break resume. `null`
    * = pinned to the default (home); absent = not pinned yet. */
   cwd?: string | null;
+}
+
+export type TaskResourceWaitKind = "working-folder" | "computer" | "browser" | "shared";
+export interface TaskResourceWait {
+  resource: TaskResourceWaitKind;
+  /** Title of the thread being waited for, only when the viewer may see it. */
+  holderTitle?: string;
 }
 
 export interface TaskUsage {
@@ -797,7 +807,7 @@ interface ThreadState {
 function persistedBotsJson(bots: readonly BotRecord[]): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
-    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, ...task }) => task),
+    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, ...task }) => task),
   })), null, 2);
 }
 
@@ -999,7 +1009,7 @@ export class Store {
         if (task.unread === undefined) { task.unread=task.threadId===b.threadId&&b.unread; botsMigrated=true; }
         task.resumeCursors ??= task.threadId===b.threadId?structuredClone(b.resumeCursors??{}):{};
         if (task.threadId===b.threadId) { task.rewound??=b.rewound; task.pinnedMessageId??=b.pinnedMessageId; }
-        task.busy=false;task.activity="idle";
+        task.busy=false;task.activity="idle";delete task.waitingFor;
       }
       b.unread=b.tasks.some(task=>task.unread);
     }
@@ -1811,8 +1821,19 @@ export class Store {
   setTaskActivity(botId:string,threadId:string,activity:BotActivity):BotRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);
     if(!bot||!task)return null;
-    task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);this.refreshBotActivity(bot);
+    task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);if(activity!=="working")delete task.waitingFor;this.refreshBotActivity(bot);
     this.emit({type:"bot",botId});return bot;
+  }
+
+  /** Runtime-only waiting marker for a busy task; cleared by any non-working
+   * activity, so a stopped or failed turn can never keep showing it. */
+  setTaskWaiting(botId:string,threadId:string,waitingFor?:TaskResourceWait):void {
+    const task=this.taskByThread(botId,threadId);
+    if(!task)return;
+    const next=waitingFor&&task.activity==="working"?{...waitingFor}:undefined;
+    if(JSON.stringify(task.waitingFor)===JSON.stringify(next))return;
+    if(next)task.waitingFor=next;else delete task.waitingFor;
+    this.emit({type:"bot",botId});
   }
   private refreshBotActivity(bot:BotRecord){
     const values=[this.legacyActivities.get(bot.id),...(bot.tasks??[]).map(task=>task.activity)];

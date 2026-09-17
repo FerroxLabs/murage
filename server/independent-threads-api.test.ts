@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { classifyLocalResourceConflict } from "../shared/provider-error.ts";
 
 const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
 const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
@@ -85,20 +84,67 @@ it("keeps simultaneous approval requests on their owning thread and provider",as
   await expect.poll(()=>replyA.length>0).toBe(true);expect(replyB).toBe("");expect(await pending(bot.second)).toBeTruthy();
   for(const threadId of [bot.first,bot.second])await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId});
 },30000);
-it("refuses a competing working-directory launch without touching its peer's run",async()=>{
+const taskState=async(botId:string,threadId:string)=>(await botState(botId)).tasks.find((task:any)=>task.threadId===threadId);
+it("waits for a competing working folder, keeps the message, and runs when the holder releases",async()=>{
   const bot=await create(),cwd=join(fixture.info.dataDir,"shared-project");mkdirSync(cwd);
   for(const threadId of [bot.first,bot.second])expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${threadId}`,{cwd})).status).toBe(200);
   await hold(bot.id,bot.first,"workspace-first");rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
-  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"competing workspace"})).status).toBe(202);
-  await expect.poll(async()=>(await messages(bot.second)).some(message=>message.tool?.name?.includes("Another thread is using this working folder")),{timeout:5000}).toBe(true);
-  // The saved refusal must stay recognizable as local contention so the chat
-  // offers wait/retry guidance instead of provider or account advice.
-  const refusal=(await messages(bot.second)).find(message=>message.tool?.name?.includes("Another thread is using this working folder"))!;
-  expect(refusal.tool.ok).toBe(false);expect(refusal.tool.providerError).toBeUndefined();expect(refusal.tool.setup).toBeFalsy();
-  expect(classifyLocalResourceConflict(refusal.tool.name.slice("error:".length).trim(),refusal.tool.errorDetails)).toEqual({kind:"resource-busy",resource:"working-folder"});
+  const holderTitle=(await taskState(bot.id,bot.first)).title;
+  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"__fixture_hold_authority__ workspace-waiter"})).status).toBe(202);
+  // Barrier: the server publishes the waiting marker only once the waiter is queued.
+  await expect.poll(async()=>(await taskState(bot.id,bot.second)).waitingFor,{timeout:5000}).toEqual({resource:"working-folder",holderTitle});
+  const waiting=await taskState(bot.id,bot.second);
+  expect(waiting).toMatchObject({busy:true,activity:"working"});
+  expect((await messages(bot.second)).some(message=>message.role==="user"&&message.text?.includes("workspace-waiter"))).toBe(true);
+  expect((await messages(bot.second)).some(message=>message.tool?.ok===false)).toBe(false);
   expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
-  expect((await botState(bot.id)).tasks.find((task:any)=>task.threadId===bot.first).busy).toBe(true);
-  await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
+  await expect.poll(()=>{try{return JSON.stringify(dump(true).prompt).includes("workspace-waiter");}catch{return false;}},{timeout:10000}).toBe(true);
+  const running=await taskState(bot.id,bot.second);
+  expect(running.busy).toBe(true);expect(running.waitingFor).toBeUndefined();
+  expect((await messages(bot.second)).some(message=>message.tool?.name?.includes("Another thread is using"))).toBe(false);
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.second})).status).toBe(200);
+},30000);
+it("stops a waiting thread cleanly without starting it or taking the folder",async()=>{
+  const bot=await create(),cwd=join(fixture.info.dataDir,"stop-waiting-project");mkdirSync(cwd);
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third same folder"})).body.task;
+  for(const threadId of [bot.first,bot.second,third.threadId])expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${threadId}`,{cwd,modelSelection:{instanceId:threadId===bot.second?"second":"verification",model:threadId===bot.second?modelTwo:modelOne}})).status).toBe(200);
+  await hold(bot.id,bot.first,"stop-waiting-holder");rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
+  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"__fixture_hold_authority__ stopped-while-waiting"})).status).toBe(202);
+  await expect.poll(async()=>(await taskState(bot.id,bot.second)).waitingFor?.resource,{timeout:5000}).toBe("working-folder");
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.second})).status).toBe(200);
+  await expect.poll(async()=>(await taskState(bot.id,bot.second)).busy,{timeout:5000}).toBe(false);
+  const stopped=await taskState(bot.id,bot.second);
+  expect(stopped.waitingFor).toBeUndefined();expect(stopped.activity).toBe("idle");
+  expect((await messages(bot.second)).filter(message=>message.tool?.ok===false)).toEqual([]);
+  expect((await taskState(bot.id,bot.first)).busy).toBe(true);
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
+  // Barrier: a fresh thread on the same folder starts at once, so the stopped
+  // waiter neither leaked a claim nor took the folder when the holder left.
+  await hold(bot.id,third.threadId,"after-stopped-waiter");
+  expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
+  expect((await taskState(bot.id,bot.second)).busy).toBe(false);
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:third.threadId})).status).toBe(200);
+},30000);
+it("a routine run that needs a busy working folder waits and then runs instead of failing",async()=>{
+  const holder=await create(),cwd=join(fixture.info.dataDir,"routine-shared-project");mkdirSync(cwd);
+  expect((await api("PATCH",`/api/bots/${holder.id}/tasks/${holder.first}`,{cwd})).status).toBe(200);
+  await hold(holder.id,holder.first,"routine-folder-holder");rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
+  const routineBot=(await api("POST","/api/bots",{name:"Routine waiter fixture",modelSelection:{instanceId:"second",model:modelTwo}})).body.bot;
+  expect((await api("PATCH",`/api/bots/${routineBot.id}`,{computer:"off",browser:false,composio:false,cwd})).status).toBe(200);
+  const routine=(await api("POST","/api/routines",{name:"Routine waiter",prompt:"routine-waiter-prompt",botId:routineBot.id,schedule:{type:"interval",everyMinutes:60,anchorAt:Date.now()+3_600_000},enabled:false})).body.routine;
+  expect(routine?.id).toBeTruthy();
+  try {
+    expect((await api("POST",`/api/routines/${routine.id}/run`)).status).toBe(201);
+    const routineTask=async()=>(await botState(routineBot.id)).tasks.find((task:any)=>task.title==="Routine waiter");
+    await expect.poll(async()=>(await routineTask())?.waitingFor?.resource,{timeout:10000}).toBe("working-folder");
+    expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
+    expect((await messages((await routineTask()).threadId)).some(message=>message.tool?.ok===false)).toBe(false);
+    expect((await api("POST",`/api/bots/${holder.id}/interrupt`,{threadId:holder.first})).status).toBe(200);
+    await expect.poll(()=>{try{return JSON.stringify(dump(true).prompt).includes("routine-waiter-prompt");}catch{return false;}},{timeout:10000}).toBe(true);
+    await expect.poll(async()=>(await routineTask()).busy,{timeout:10000}).toBe(false);
+    expect((await messages((await routineTask()).threadId)).some(message=>message.tool?.name?.includes("Another thread is using"))).toBe(false);
+  } finally { await api("DELETE",`/api/routines/${routine.id}`); }
 },30000);
 it("keeps a stopped ACP thread's working folder until its engine process has closed",async()=>{
   const created=(await api("POST","/api/bots",{name:"Close-confirmed stop fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
@@ -120,15 +166,17 @@ it("keeps a stopped ACP thread's working folder until its engine process has clo
     // termination request until the gate opens. Windows taskkill /F cannot be
     // intercepted; there only the post-close invariants below are observable.
     await expect.poll(()=>existsSync(acpFile("term")),{timeout:10000}).toBe(true);
-    expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:waiting.threadId,text:"close-confirmed competing folder"})).status).toBe(202);
-    await expect.poll(async()=>(await messages(waiting.threadId)).some(message=>message.tool?.name?.includes("Another thread is using this working folder")),{timeout:5000}).toBe(true);
-    expect(JSON.stringify(dump().prompt)).not.toContain("close-confirmed competing folder");
+    // The same-folder send waits (it does not fail) until the engine closes.
+    expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:waiting.threadId,text:"__fixture_hold_authority__ close-confirmed-replacement"})).status).toBe(202);
+    await expect.poll(async()=>(await botState(created.id)).tasks.find((task:any)=>task.threadId===waiting.threadId).waitingFor?.resource,{timeout:5000}).toBe("working-folder");
+    expect(JSON.stringify(dump().prompt)).not.toContain("close-confirmed-replacement");
     expect(processAlive(pid)).toBe(true);
     writeFileSync(acpFile("gate"),"");
   }
   expect((await stopping).status).toBe(200);
   expect(processAlive(pid)).toBe(false);
-  await hold(created.id,waiting.threadId,"close-confirmed-replacement");
+  if(process.platform!=="win32")await expect.poll(()=>{try{return JSON.stringify(dump().prompt).includes("close-confirmed-replacement");}catch{return false;}},{timeout:10000}).toBe(true);
+  else await hold(created.id,waiting.threadId,"close-confirmed-replacement");
   expect((await botState(created.id)).tasks.find((task:any)=>task.threadId===sibling.threadId).busy).toBe(true);
   for(const threadId of [waiting.threadId,sibling.threadId])await api("POST",`/api/bots/${created.id}/interrupt`,{threadId});
 },30000);

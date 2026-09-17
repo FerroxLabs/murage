@@ -2,6 +2,7 @@
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
+import type { TaskResourceWait } from "@/lib/resource-wait";
 import {
   createContext,
   useCallback,
@@ -256,6 +257,8 @@ export interface Task {
   unread?: boolean;
   busy?: boolean;
   activity?: Bot["activity"];
+  /** runtime only: waiting for another thread's folder, computer or browser */
+  waitingFor?: TaskResourceWait;
   pinnedMessageId?: string;
   /** what this task has spent, banked once per settled turn */
   usage?: TaskUsage;

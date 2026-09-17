@@ -35,8 +35,10 @@ export type LocalResource = "working-folder" | "computer" | "browser" | "shared"
 export interface LocalResourceConflict { kind: "resource-busy"; resource: LocalResource }
 
 /** The exact copy the server uses when a thread cannot claim a resource another
- * thread holds (`server/index.ts` setup claims and the `resource_busy` conflict in
- * `server/independent-thread-runs.ts`). Matched verbatim, never by pattern. */
+ * thread holds (the `resource_busy` admission conflict in
+ * `server/independent-thread-runs.ts`). Direct-turn setup now waits instead of
+ * refusing; the setup copies stay so messages saved by earlier builds keep
+ * their card. Matched verbatim, never by pattern. */
 export const LOCAL_RESOURCE_BUSY_MESSAGES: ReadonlyMap<string, LocalResource> = new Map([
   ["Another thread is using this working folder. Wait for it to finish.", "working-folder"],
   ["Another thread is using this computer. Wait for it to finish.", "computer"],

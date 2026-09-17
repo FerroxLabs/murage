@@ -45,6 +45,7 @@ import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
@@ -1194,7 +1195,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // is finished, the whole bubble pops in above the mascot.
   const lastMessage = messages.at(-1);
   const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
-  const activityLabel = liveActivityLabel(lastMessage);
+  // A turn queued behind another thread's folder, computer or browser says
+  // what it is waiting for instead of "Thinking".
+  const resourceWait = profile.tasks?.find((task) => task.threadId === bot.threadId)?.waitingFor;
+  const activityLabel = (bot.busy ? resourceWaitLabel(resourceWait) : undefined) ?? liveActivityLabel(lastMessage);
   const waiting = Boolean(
     bot.busy &&
       bot.activity !== "waiting-on-you" &&

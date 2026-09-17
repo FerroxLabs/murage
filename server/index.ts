@@ -278,6 +278,7 @@ import {
   type Message,
   type OptionCardData,
   type TaskRecord,
+  type TaskResourceWaitKind,
 } from "./store.ts";
 import {
   companionMarked,
@@ -941,7 +942,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
   }));
 }
 
-import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget } from "./independent-thread-runs.ts";
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
 import { workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
@@ -958,6 +959,33 @@ const directRuns = new IndependentThreadRuns<BotRecord>();
 function botForDirectThread(botId:string,threadId:string):BotRecord|null {
   const run=directRuns.get(threadId);
   return run?{...run.snapshot,alwaysAllow:isWorkspaceOwner(threadHumanPrincipal(threadId))?structuredClone(store.taskByThread(botId,threadId)?.alwaysAllow??run.snapshot.alwaysAllow):[],busy:true,activity:store.taskByThread(botId,threadId)?.activity??"working"}:store.projectBotForTask(botId,threadId);
+}
+/** Claim a direct turn's shared folder/computer/browser resources, waiting —
+ * visibly, on the task — while another thread holds them. The primitive never
+ * waits while holding a claim; a Stop, provider reload or replaced generation
+ * ends the wait as a setup cancellation, before any provider work exists. */
+async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean):Promise<void>{
+  if(!resources.length)return;
+  let waited=false;
+  const granted=await directRuns.acquire(run,resources,(blockers)=>{
+    waited=true;
+    store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
+  });
+  if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
+  if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+}
+function resourceWaitKind(resource:string,screenUse:"computer"|"browser"):TaskResourceWaitKind{
+  if(resource.startsWith("workspace:"))return "working-folder";
+  if(resource.startsWith("computer:"))return "computer";
+  if(resource.startsWith("browser:"))return "browser";
+  return resource.startsWith("screen:")?screenUse:"shared";
+}
+function resourceWaitFor(blockers:readonly ResourceBlocker[],screenUse:"computer"|"browser",showHolder:boolean){
+  const kinds=[...new Set(blockers.map(blocker=>resourceWaitKind(blocker.resource,screenUse)))];
+  const holders=[...new Set(blockers.map(blocker=>blocker.owner.threadId))];
+  // Only a single, owner-visible thread is named; anything else stays generic.
+  const holderTitle=showHolder&&holders.length===1?store.botByThread(holders[0])?.tasks?.find(task=>task.threadId===holders[0])?.title?.trim():undefined;
+  return {resource:kinds.length===1?kinds[0]:"shared" as const,...(holderTitle?{holderTitle:holderTitle.slice(0,120)}:{})};
 }
 function directThreadBusy(botId:string,threadId:string):boolean { return Boolean(directRuns.get(threadId)||store.taskByThread(botId,threadId)?.busy); }
 function requestedDirectBot(botId:string,requested:unknown):BotRecord {
@@ -4352,9 +4380,29 @@ async function startTurn(
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
           : null;
       let cwd = pinnedCwd ?? undefined;
+      const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
+      const screenResource = `screen:bot:${bot.id}`;
+      const computerResources = (kind: string) => [...(kind === "local" ? [] : [kind === "vm" ? "computer:vm" : `computer:bot:${bot.id}`]), screenResource];
+      // Admission for every shared resource this turn is expected to use, as
+      // ONE atomic claim before the folder, VM, VPS or browser side effects
+      // below. Waiting here holds nothing, so turns needing the same folder
+      // and computer in any order cannot deadlock; a later unexpected claim
+      // uses the same release-then-wait path.
+      if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
+      {
+        const admissionBot = store.bot(bot.id);
+        const expected = [
+          ...(privateWorkspace && opts?.runOn !== "cloud" ? [workspaceResource(cwd ?? homedir())] : []),
+          ...(wants && wants !== "off" && wants !== "browser" ? computerResources(wants) : []),
+          ...(wants === undefined && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: instance.adapter.capabilities.localComputerMcp === true }) && readCuaConnection() ? [screenResource] : []),
+          ...(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true
+            ? [`browser:${unifiedBrowserKey(admissionBot) ?? `guest:${bot.id}`}`, screenResource] : []),
+        ];
+        await acquireDirectTurnResources(run, expected, wants && wants !== "off" && wants !== "browser" ? "computer" : "browser", humanIsOwner);
+      }
       if (privateWorkspace && opts?.runOn !== "cloud") {
         if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
-        if(!directRuns.claim(run,[workspaceResource(cwd??homedir())]))throw new Error("Another thread is using this working folder. Wait for it to finish.");
+        await acquireDirectTurnResources(run, [workspaceResource(cwd ?? homedir())], "computer", humanIsOwner);
         cwd = projectTurnLeases.acquire(threadId, dispatchClaimId, cwd ?? homedir()).canonicalPath;
       }
       // Checkpoint explicit project folders, where a bot can overwrite the
@@ -4366,11 +4414,10 @@ async function startTurn(
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
       if (humanIsOwner && dwebUrl) integrations.dweb = { url: dwebUrl };
-      const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
       // Mounting host tools does not reserve the host for this entire turn.
       // The broker arbitrates actual host actions; private screens and other
       // destinations retain their existing turn-lifetime ownership.
-      if(wants&&wants!=="off"&&wants!=="browser"&&!directRuns.claim(run,[...(wants==="local"?[]:[wants==="vm"?"computer:vm":`computer:bot:${bot.id}`]),`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
+      if (wants && wants !== "off" && wants !== "browser") await acquireDirectTurnResources(run, computerResources(wants), "computer", humanIsOwner);
       // Cloud routines always use Box/BoxAgent. The per-bot backend applies
       // only to ordinary turns that mount a computer into the local agent.
       const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
@@ -4593,7 +4640,10 @@ async function startTurn(
       // Mint the browser bearer at the last possible moment. The desktop
       // registration is asynchronous, so validate this exact setup claim
       // again inside browserIntegration before the capability is published.
-      if(computerKind&&!directRuns.claim(run,[...(computerKind==="local"?[]:[computerKind==="vm"?"computer:vm":`computer:bot:${bot.id}`]),`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
+      if (computerKind) {
+        await acquireDirectTurnResources(run, computerResources(computerKind), "computer", humanIsOwner);
+        if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before dispatch");
+      }
       const liveBot = store.bot(bot.id);
       if (
         humanIsOwner && liveBot &&
@@ -4602,7 +4652,8 @@ async function startTurn(
         instance.adapter.capabilities.browserMcp === true
       ) {
         const selectedProfile = liveBot.browserProfile;
-        if(!directRuns.claim(run,[`browser:${unifiedBrowserKey(liveBot)??`guest:${bot.id}`}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this browser profile. Wait for it to finish.");
+        await acquireDirectTurnResources(run, [`browser:${unifiedBrowserKey(liveBot) ?? `guest:${bot.id}`}`, screenResource], computerKind ? "computer" : "browser", humanIsOwner);
+        if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before dispatch");
         browser = await browserIntegration(bot.id, selectedProfile, threadId, () => {
           const current = store.bot(bot.id);
           return (

@@ -6,7 +6,11 @@ describe("local resource contention", () => {
   it("recognizes exactly the refusal copy the server throws for held leases", () => {
     const thrown = ["../server/index.ts", "../server/independent-thread-runs.ts"].flatMap((file) =>
       [...readFileSync(new URL(file, import.meta.url), "utf8").matchAll(/"(Another thread is using [^"]+)"/g)].map((match) => match[1]));
-    expect(new Set(thrown)).toEqual(new Set(LOCAL_RESOURCE_BUSY_MESSAGES.keys()));
+    // Setup now waits for held folders, computers and browsers; only admission's
+    // resource_busy conflict still throws. The other entries stay recognized so
+    // refusals saved by earlier builds keep their wait/retry card.
+    for (const message of thrown) expect(LOCAL_RESOURCE_BUSY_MESSAGES.has(message)).toBe(true);
+    expect(thrown).toEqual(["Another thread is using this browser, computer or working folder."]);
     expect(classifyLocalResourceConflict("Another thread is using this working folder. Wait for it to finish.")).toEqual({ kind: "resource-busy", resource: "working-folder" });
     expect(classifyLocalResourceConflict(" Another thread is using this computer. Wait for it to finish.\n")).toEqual({ kind: "resource-busy", resource: "computer" });
     expect(classifyLocalResourceConflict("Another thread is using this browser profile. Wait for it to finish.")).toEqual({ kind: "resource-busy", resource: "browser" });
