@@ -56,6 +56,11 @@ describe("trusted packaged GEPA manifest environment", () => {
     const env = { MURAGE_GEPA_MANIFEST_SHA256: "ambient-forged-pin", ...packagedGepaManifestEnvironment({ packaged: true, appPath, platform: "darwin", arch: "arm64" }, source(raw)) };
     expect(env.MURAGE_GEPA_MANIFEST_SHA256).toBe("");
   });
+  it("treats the explicit darwin-x64 opt-out as unpinned, so the app takes its no-local-runtime path", () => {
+    const raw = JSON.stringify({ murageGepaManifests: { "darwin-arm64": pin, "darwin-x64": "unavailable" } });
+    expect(packagedGepaManifestEnvironment({ packaged: true, appPath, platform: "darwin", arch: "x64" }, source(raw))).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: "" });
+    expect(packagedGepaManifestEnvironment({ packaged: true, appPath, platform: "darwin", arch: "arm64" }, source(raw))).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: pin });
+  });
   it("does not read package files in development or follow a symlinked metadata file", () => {
     const refuse = () => { throw Error("must not read"); };
     expect(packagedGepaManifestEnvironment({ packaged: false, appPath }, { stat: refuse, read: refuse })).toEqual({ MURAGE_GEPA_MANIFEST_SHA256: "" });

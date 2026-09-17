@@ -1,3 +1,4 @@
+import { lstatSync } from "node:fs";
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateNotificationAuthorizationResource } from "./notification-authorization-resource.mjs";
@@ -15,12 +16,27 @@ import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROW
 import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 import { verifyGepaBundle } from "../server/gepa-resource.ts";
 
+/** Intel Macs ship without a local semantic runtime (README "Current
+ * boundaries"): native/gepa/build-mac.py builds only the runner's own arch and
+ * the release runner is arm64. The opt-out must be spelled out per target in
+ * build metadata, is honoured for darwin-x64 alone, and still refuses a
+ * worker tree that reached the package without a pin. The literal lands in
+ * the app's package.json, where packagedGepaManifestEnvironment already
+ * treats any non-sha256 pin as unpinned, so the app takes its existing
+ * "no local semantic runtime" path. */
+export const GEPA_MANIFEST_UNAVAILABLE = "unavailable";
+export const GEPA_UNAVAILABLE_TARGETS = Object.freeze(["darwin-x64"]);
+
 /** Read-only required-resource gate; final signed-tree pins come from build metadata. */
 export function validatePackagedGepa(resources, context) {
   if (!context.packager) return; // Existing partial hook fixtures are not packages.
   const arch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
   const target = `${context.electronPlatformName}-${arch}`;
   const expected = context.packager.config?.extraMetadata?.murageGepaManifests?.[target];
+  if (expected === GEPA_MANIFEST_UNAVAILABLE && GEPA_UNAVAILABLE_TARGETS.includes(target)) {
+    if (lstatSync(path.join(resources, "gepa-worker"), { throwIfNoEntry: false })) throw new Error("GEPA_RESOURCE_UNPINNED_BUNDLE_PRESENT");
+    return null;
+  }
   if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected)) throw new Error("GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED");
   try { return verifyGepaBundle(path.join(resources, "gepa-worker"), target, expected); }
   catch (error) { if (error?.code === "ENOENT") throw new Error("GEPA_RESOURCE_UNAVAILABLE"); throw error; }

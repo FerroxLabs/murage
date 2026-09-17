@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { admitBundledGepa, GEPA_RESOURCE_LICENSES, GEPA_RESOURCE_TARGETS, inventoryGepaBundle, verifyGepaBundle, type GepaResourceManifest } from "./gepa-resource.ts";
-import { validatePackagedGepa } from "../scripts/after-pack.mjs";
+import { GEPA_MANIFEST_UNAVAILABLE, GEPA_UNAVAILABLE_TARGETS, validatePackagedGepa } from "../scripts/after-pack.mjs";
 
 const roots:string[]=[];
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
@@ -55,4 +55,15 @@ it("fails required packaging without a trusted build receipt and never stamps a 
   const f=fixture();expect(()=>validatePackagedGepa(f.resources,{electronPlatformName:"darwin",arch:"arm64",packager:{config:{}}})).toThrow("GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED");
   expect(()=>validatePackagedGepa(f.resources,{electronPlatformName:"darwin",arch:"arm64",packager:{config:{extraMetadata:{murageGepaManifests:{"darwin-arm64":f.hash}}}}})).not.toThrow();
   expect(sha(readFileSync(join(f.directory,"manifest.json")))).toBe(f.hash);
+});
+it("admits an explicit darwin-x64 opt-out only when no unpinned worker tree was packaged",()=>{
+  expect([...GEPA_UNAVAILABLE_TARGETS]).toEqual(["darwin-x64"]);
+  const optOut={extraMetadata:{murageGepaManifests:{[GEPA_UNAVAILABLE_TARGETS[0]]:GEPA_MANIFEST_UNAVAILABLE}}};
+  const empty=mkdtempSync(join(tmpdir(),"murage-gepa-resource-"));roots.push(empty);
+  expect(validatePackagedGepa(empty,{electronPlatformName:"darwin",arch:"x64",packager:{config:optOut}})).toBeNull();
+  expect(validatePackagedGepa(empty,{electronPlatformName:"darwin",arch:1,packager:{config:optOut}})).toBeNull();
+  const f=fixture("darwin-x64");expect(()=>validatePackagedGepa(f.resources,{electronPlatformName:"darwin",arch:"x64",packager:{config:optOut}})).toThrow("GEPA_RESOURCE_UNPINNED_BUNDLE_PRESENT");
+  for(const target of GEPA_RESOURCE_TARGETS.filter(t=>t!=="darwin-x64")){const [platform,arch]=target.split("-");
+    expect(()=>validatePackagedGepa(empty,{electronPlatformName:platform,arch,packager:{config:{extraMetadata:{murageGepaManifests:{[target]:GEPA_MANIFEST_UNAVAILABLE}}}}})).toThrow("GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED");}
+  expect(()=>validatePackagedGepa(empty,{electronPlatformName:"darwin",arch:"x64",packager:{config:{extraMetadata:{murageGepaManifests:{"darwin-x64":"UNAVAILABLE"}}}}})).toThrow("GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED");
 });
