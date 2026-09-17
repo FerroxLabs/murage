@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
@@ -7030,16 +7030,16 @@ describe("harness HTTP API", () => {
         "update",
         "A stale replacement.",
       );
-      const skillPath = join(
-        home,
-        ".murage",
-        "workspaces",
-        bot.id,
-        ".agents",
-        "skills",
-        "reviewed-skill-one",
-        "SKILL.md",
-      );
+      // Native discovery is per task: each turn links its pinned copy under
+      // threads/<id>/.agents/skills, never the bot workspace root. The bytes
+      // a staged update is checked against are the reviewed revision the
+      // manifest selects in the bot's canonical skills/.revisions store.
+      const revisionsRoot = join(home, ".murage", "workspaces", bot.id, "skills", ".revisions");
+      const selectedRevisions = readdirSync(revisionsRoot)
+        .map((revision) => join(revisionsRoot, revision, "SKILL.md"))
+        .filter((path) => existsSync(path) && readFileSync(path, "utf8") === updated.skillRequest.preview);
+      expect(selectedRevisions).toHaveLength(1);
+      const skillPath = selectedRevisions[0]!;
       writeFileSync(skillPath, updated.skillRequest.preview.replace("newly reviewed", "changed after staging"));
       const staleResponse = await api("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: staleUpdate.requestId,
@@ -7131,6 +7131,23 @@ describe("harness HTTP API", () => {
       ]);
       expect(inventory.skills.some((skill) => skill.name === "reviewed-skill-denied")).toBe(false);
       expect(inventory.staged).toEqual([]);
+
+      // An approved skill reaches the engine through the next task's pin. The
+      // listing above dispatched a held turn on that task, which pinned the latest
+      // approved bytes of both skills and linked them for native discovery in its desk.
+      const nextTaskState = (await api("GET", "/api/bots")).body.bots
+        .find((candidate: { id: string }) => candidate.id === bot.id)
+        ?.tasks.find((task: { threadId: string }) => task.threadId === nextThreadId);
+      const bundleId = nextTaskState?.procedurePin?.bundleId as string;
+      expect(bundleId).toMatch(/^[a-f0-9]{64}$/);
+      const desk = join(home, ".murage", "workspaces", bot.id, "threads", nextThreadId);
+      const pinnedSkill = join(desk, ".murage-procedures", bundleId, "skills", "reviewed-skill-one", "SKILL.md");
+      const nativeSkill = join(desk, ".agents", "skills", "reviewed-skill-one", "SKILL.md");
+      await expect.poll(() => existsSync(nativeSkill), { timeout: 5_000 }).toBe(true);
+      expect(readFileSync(pinnedSkill, "utf8")).toBe(staleUpdate.skillRequest.preview);
+      expect(readFileSync(join(desk, ".murage-procedures", bundleId, "skills", "reviewed-skill-two", "SKILL.md"), "utf8"))
+        .toBe(second.skillRequest.preview);
+      expect(realpathSync(nativeSkill)).toBe(realpathSync(pinnedSkill));
     } finally {
       await desktopApi("PATCH", "/api/config", { features: { skillRecorder: false } });
       await api("POST", `/api/bots/${bot.id}/interrupt`);
