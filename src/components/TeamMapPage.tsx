@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, BookOpen, Network, Radio, RefreshCw } from "lucide-react";
 
-import { EmberAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { api, formatTime, useStore, type Bot } from "@/state/store";
 import { normalizeState } from "@/lib/mascot";
 import {
@@ -40,8 +40,10 @@ function BotNode({ bot, top = false }: { bot: Bot; top?: boolean }) {
           : "border-hairline/50 bg-card hover:border-accent/35 hover:bg-raised/50",
       )}
     >
-      <EmberAvatar
-        color={bot.color}
+      {/* BotAvatar, not the bare mascot: the org chart shows the same
+          uploaded image and chosen shape as every other bot surface. */}
+      <BotAvatar
+        bot={bot}
         state={normalizeState(bot.mascotExpression) ?? "idle"}
         size={34}
         motion="none"
