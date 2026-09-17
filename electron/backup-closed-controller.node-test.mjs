@@ -12,6 +12,10 @@ import {createClosedBackupController,closedControlDirectory} from "./backup-clos
 import {closedInstallationIdentity} from "./backup-closed-profile.mjs";
 import {readClosedBackupStage} from "./backup-closed-jobs.mjs";
 import {launchClosedCapture,runBackupScheduleTrigger} from "../scripts/backup-schedule-trigger.ts";
+// Closed backup is POSIX-only: win32 descriptors are refused (backup-closed-profile.mjs,
+// backup-closed-jobs.mjs). These cases need real POSIX owner uids and mode bits,
+// which NTFS does not have; they run on the macOS and Ubuntu CI legs.
+const POSIX_ONLY=process.platform==="win32"&&"closed backup owner and mode checks are POSIX-only";
 
 function fixture(t){
   const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-closed-controller-")));t.after(()=>safeWipeSync(root));
@@ -26,7 +30,7 @@ function fixture(t){
   const stage=()=>{const control=closedControlDirectory(installation),pointer=JSON.parse(readFileSync(path.join(control,"closed-job-pointer.json")));return readClosedBackupStage(path.join(control,pointer.directory));};
   return{root,profile,provider,controller,coordinator,stage,now:()=>clock,setNow:value=>{clock=value;},installs:()=>installs,removes:()=>removes,setConsent:value=>{consent=value;},setCurrent:value=>{current=value;},getCurrent:()=>current};
 }
-test("controller stages private stable trigger without registration and needs native confirmation/readback",async t=>{
+test("controller stages private stable trigger without registration and needs native confirmation/readback",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);assert.equal((await f.controller.status()).state,"unconfigured");assert.equal((await f.controller.stage()).state,"staged");assert.equal(f.installs(),0);
   const stage=f.stage();assert.ok(stage.descriptor.triggerEntry.startsWith(closedControlDirectory(f.profile.installation)));assert.match(path.basename(stage.descriptor.triggerEntry),/^closed-trigger-[a-f0-9]{64}\.mjs$/);
   assert.equal(JSON.stringify(await f.controller.status()).includes(f.root),false);
@@ -35,13 +39,13 @@ test("controller stages private stable trigger without registration and needs na
   await f.controller.assertInvocation(stage.descriptor,stage.descriptorPath);
   await f.controller.install();assert.equal(f.installs(),1);
 });
-test("controller rejects changed registration/stage and disables before running removal is deferred",async t=>{
+test("controller rejects changed registration/stage and disables before running removal is deferred",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);await f.controller.stage();await f.controller.install();
   f.setCurrent({...f.getCurrent(),running:true});assert.equal((await f.controller.disable()).state,"disabled-removal-pending");assert.equal(f.removes(),0);
   f.setCurrent({...f.getCurrent(),running:false,files:[{name:"foreign",text:"keep"}]});await assert.rejects(f.controller.assertInstalled());assert.equal((await f.controller.status()).state,"unavailable");
   const staged=f.stage();writeFileSync(path.join(staged.directory,staged.files[0].name),"changed",{mode:0o600});await assert.rejects(f.controller.stage());assert.equal(f.removes(),0);
 });
-test("real lightweight entry validates staged registration and same coordinator before due launch",async t=>{
+test("real lightweight entry validates staged registration and same coordinator before due launch",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);await f.controller.stage();await f.controller.install();const staged=f.stage();let launches=0;
   const options={provider:f.provider,now:f.now,environment:{ELECTRON_RUN_AS_NODE:"1",TOKEN:"private"},launch:async invoke=>{launches++;assert.equal(invoke.env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(invoke.env.TOKEN,undefined);return{status:"verified"};}};
   assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath],options)).status,"disabled");assert.equal(launches,0);

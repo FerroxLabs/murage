@@ -6,6 +6,10 @@ import path from "node:path";
 import vm from "node:vm";
 import {buildClosedBackupJob} from "./backup-closed-jobs.mjs";
 import {createNativeClosedBackupProvider,CLOSED_MAC_QUERY,selectedMacJobEnabled} from "./backup-closed-native.mjs";
+// Closed backup is POSIX-only: win32 descriptors are refused (backup-closed-profile.mjs,
+// backup-closed-jobs.mjs). These cases need real POSIX owner uids and mode bits,
+// which NTFS does not have; they run on the macOS and Ubuntu CI legs.
+const POSIX_ONLY=process.platform==="win32"&&"closed backup owner and mode checks are POSIX-only";
 
 // Frozen native-provider checks: all commands injected; actual roots are
 // private, task-only temp directories. No OS manager/osascript invocation.
@@ -43,23 +47,23 @@ function fixture(platform){
   return{home,owner,root,job,state,calls,provider,stage,cleanup:()=>rmSync(home,{recursive:true,force:true})};
 }
 for(const platform of ["darwin","linux"]){
-  test(`${platform}: exact owned install/readback/remove uses only injected targeted operations`,async()=>{
+  test(`${platform}: exact owned install/readback/remove uses only injected targeted operations`,{skip:POSIX_ONLY},async()=>{
     const f=fixture(platform);try{assert.equal(f.provider.supported,true);assert.equal(await f.provider.read(f.job),null);await f.provider.install(f.job,{expected:null});const current=await f.provider.read(f.job);assert.equal(current.registered,true);assert.deepEqual(current.files,f.job.files);assert.equal(current.running,false);for(const file of f.job.files)assert.equal(readFileSync(path.join(f.root,file.name),"utf8"),file.text);await f.provider.remove(f.job,{expected:current});assert.equal(await f.provider.read(f.job),null);assert.equal(f.calls.some(call=>call.args.includes("--system")||call.args.includes("--global")||call.args.includes("print")||call.args.includes("list")||call.args.includes("kickstart")),false);}finally{f.cleanup();}
   });
-  test(`${platform}: running before or after disable never receives a killing removal`,async()=>{
+  test(`${platform}: running before or after disable never receives a killing removal`,{skip:POSIX_ONLY},async()=>{
     const f=fixture(platform);try{await f.provider.install(f.job,{expected:null});f.state.running=true;let current=await f.provider.read(f.job);const before=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(before).some(call=>call.args.includes("bootout")||call.args.includes("stop")||call.args.includes("disable")),false);f.state.running=false;current=await f.provider.read(f.job);f.state.race=true;const start=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(start).some(call=>call.args.includes("bootout")||call.args.includes("stop")),false);assert.ok(f.job.files.every(file=>existsSync(path.join(f.root,file.name))));}finally{f.cleanup();}
   });
-  test(`${platform}: foreign, malformed or changed registration refuses mutation`,async()=>{
+  test(`${platform}: foreign, malformed or changed registration refuses mutation`,{skip:POSIX_ONLY},async()=>{
     const f=fixture(platform);try{await f.provider.install(f.job,{expected:null});const current=await f.provider.read(f.job);f.state.foreign=true;await assert.rejects(f.provider.remove(f.job,{expected:current}));f.state.foreign=false;f.state.unknown=true;await assert.rejects(f.provider.read(f.job));f.state.unknown=false;writeFileSync(path.join(f.root,f.job.files[0].name),"foreign definition",{mode:0o600});const before=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.length,before);assert.equal(readFileSync(path.join(f.root,f.job.files[0].name),"utf8"),"foreign definition");}finally{f.cleanup();}
   });
 }
-test("Linux drop-ins and stale loaded definitions cannot borrow exact disk-file ownership",async()=>{
+test("Linux drop-ins and stale loaded definitions cannot borrow exact disk-file ownership",{skip:POSIX_ONLY},async()=>{
  const f=fixture("linux");try{await f.provider.install(f.job,{expected:null});f.state.dropin=true;await assert.rejects(f.provider.read(f.job));f.state.dropin=false;f.state.reload=true;await assert.rejects(f.provider.read(f.job));}finally{f.cleanup();}
 });
-test("Mac explicit unknown PID does not invalidate proven registration but blocks removal conservatively",async()=>{
+test("Mac explicit unknown PID does not invalidate proven registration but blocks removal conservatively",{skip:POSIX_ONLY},async()=>{
  const f=fixture("darwin");try{await f.provider.install(f.job,{expected:null});f.state.pidMissing=true;const current=await f.provider.read(f.job);assert.equal(current.registered,true);assert.equal(current.activityKnown,false);assert.equal(current.running,true);assert.equal(JSON.stringify(current).includes("foreign-private-label"),false);const before=f.calls.length;await f.provider.install(f.job,{expected:current});await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(before).some(call=>["enable","disable","bootout","bootstrap"].includes(call.args[0])),false);}finally{f.cleanup();}
 });
-test("Mac external disable is not registered; enabling an owned loaded job does not bootstrap another",async()=>{
+test("Mac external disable is not registered; enabling an owned loaded job does not bootstrap another",{skip:POSIX_ONLY},async()=>{
  const f=fixture("darwin");try{await f.provider.install(f.job,{expected:null});f.state.enabled=false;const current=await f.provider.read(f.job);assert.equal(current.registered,false);const before=f.calls.length;await f.provider.install(f.job,{expected:current});assert.equal((await f.provider.read(f.job)).registered,true);assert.equal(f.calls.slice(before).filter(call=>call.args[0]==="enable").length,1);assert.equal(f.calls.slice(before).some(call=>call.args[0]==="bootstrap"),false);f.state.overrideUnknown=true;await assert.rejects(f.provider.read(f.job));}finally{f.cleanup();}
 });
 test("Mac override parsing retains only the exact label and rejects unknown or ambiguous maps",()=>{
@@ -67,10 +71,10 @@ test("Mac override parsing retains only the exact label and rejects unknown or a
  assert.equal(selectedMacJobEnabled("disabled services = {\n}\n",label),true);
  for(const text of ["arbitrary output",`disabled services = {\n "${label}" => maybe\n}`,`disabled services = {\n "${label}" => enabled\n "${label}" => disabled\n}`,`disabled services = {\n "private" => enabled\n trailing unknown\n}`,"x".repeat(65537)])assert.throws(()=>selectedMacJobEnabled(text,label));
 });
-test("unregistered exact files are not installed; expected-state races and failed bootstrap retain them",async()=>{
+test("unregistered exact files are not installed; expected-state races and failed bootstrap retain them",{skip:POSIX_ONLY},async()=>{
  const f=fixture("darwin");try{f.state.loaded=true;await assert.rejects(f.provider.read(f.job));f.state.loaded=false;f.stage();const current=await f.provider.read(f.job);assert.equal(current.registered,false);await assert.rejects(f.provider.install(f.job,{expected:null}));f.state.fail="bootstrap";await assert.rejects(f.provider.install(f.job,{expected:current}));assert.equal((await f.provider.read(f.job)).registered,false);assert.ok(existsSync(path.join(f.root,f.job.files[0].name)));}finally{f.cleanup();}
 });
-test("private same-user files, known definitions and supported platform are prerequisites",async()=>{
+test("private same-user files, known definitions and supported platform are prerequisites",{skip:POSIX_ONLY},async()=>{
  const f=fixture("linux");try{const unsupported=createNativeClosedBackupProvider({platform:"win32",owner:f.owner,home:f.home,run:async()=>{assert.fail("No OS call on unsupported host");}});assert.equal(unsupported.supported,false);await assert.rejects(unsupported.read(f.job));await assert.rejects(f.provider.read({...f.job,owner:{uid:f.owner.uid+1}}));await assert.rejects(f.provider.read({...f.job,files:[{...f.job.files[0],name:"../../foreign"}]}));assert.equal(f.calls.length,0);f.stage();chmodSync(path.join(f.root,f.job.files[0].name),0o644);await assert.rejects(f.provider.read(f.job));chmodSync(path.join(f.root,f.job.files[0].name),0o600);rmSync(path.join(f.root,f.job.files[0].name));const sentinel=path.join(f.home,"sentinel");writeFileSync(sentinel,"private-canary",{mode:0o600});symlinkSync(sentinel,path.join(f.root,f.job.files[0].name));await assert.rejects(f.provider.read(f.job));assert.equal(readFileSync(sentinel,"utf8"),"private-canary");}finally{f.cleanup();}
 });
 test("Mac query treats a nil copied Ref as absent and compares only launchd's exposed job view",()=>{
