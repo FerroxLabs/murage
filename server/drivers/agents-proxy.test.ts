@@ -278,8 +278,10 @@ describe("agents-proxy MCP surface", () => {
   it("tells bots that managed outputs/ files are saved automatically and other files need register_artifact", async () => {
     const list = await rpc("tools/list");
     const register = list.result.tools.find((tool: { name: string }) => tool.name === "register_artifact");
-    expect(register.description).toContain("under outputs/ are saved to Files automatically when the turn completes successfully");
-    expect(register.description).toContain("use this tool for other files and custom project folders");
+    // Wording follows the per-turn destination contract: admitted managed
+    // outputs/ files are checked automatically; everything else needs the tool.
+    expect(register.description).toContain("admitted managed outputs/ files are checked automatically after successful completion");
+    expect(register.description).toContain("other files and custom folders require this tool");
     expect(register.description).toContain("A filename in prose is not a saved deliverable.");
   });
 
