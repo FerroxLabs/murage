@@ -69,7 +69,13 @@ async function setup(t) {
   };
   const prior=process.env.MURAGE_CUA_EMBEDDED;
   process.env.MURAGE_CUA_EMBEDDED="1";
-  t.after(()=>{ if(prior===undefined)delete process.env.MURAGE_CUA_EMBEDDED;else process.env.MURAGE_CUA_EMBEDDED=prior;rmSync(fixture.home,{recursive:true,force:true}); });
+  // These cases pin the macOS CuaDriver lifecycle. cua.mjs reads
+  // process.platform per call (Linux routes to its own runtime, and retry is
+  // macOS-only), so simulate darwin on every host; all native effects are
+  // already fixtures, so the same protocol assertions run on Linux and Windows.
+  const platform=Object.getOwnPropertyDescriptor(process,"platform");
+  Object.defineProperty(process,"platform",{...platform,value:"darwin"});
+  t.after(()=>{ Object.defineProperty(process,"platform",platform); if(prior===undefined)delete process.env.MURAGE_CUA_EMBEDDED;else process.env.MURAGE_CUA_EMBEDDED=prior;rmSync(fixture.home,{recursive:true,force:true}); });
   return import(`./cua.mjs?fixture=${++sequence}`);
 }
 
