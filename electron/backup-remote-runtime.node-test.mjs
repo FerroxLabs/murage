@@ -8,7 +8,11 @@ import ts from "typescript";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
 import {remoteWorkDirectory} from "./backup-remote-runtime.mjs";
 import {trustedBackupResticExecutable} from "./backup-restic-attestation.mjs";
-test("remote work is private, revision-specific and rejects foreign links",t=>{
+// Remote backup storage fails closed without a POSIX owner uid (process.getuid is
+// unavailable on Windows), so its success paths are POSIX-only; they run on the
+// macOS and Ubuntu CI legs, and the refusal cases still run on Windows.
+const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";
+test("remote work is private, revision-specific and rejects foreign links",{skip:POSIX_ONLY},t=>{
  const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-runtime-test-")));t.after(()=>safeWipeSync(root));const control=path.join(root,".murage-backup-control","installation");
  const one=remoteWorkDirectory(control,"remote-one",1),two=remoteWorkDirectory(control,"remote-one",2);assert.notEqual(one,two);assert.equal(remoteWorkDirectory(control,"remote-one",1),one);
  assert.throws(()=>remoteWorkDirectory(control,"../escape",1));const outside=path.join(root,"outside");mkdirSync(outside);symlinkSync(outside,path.join(control,"remote","foreign"));assert.throws(()=>remoteWorkDirectory(control,"foreign",1));
