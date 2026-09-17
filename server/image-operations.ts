@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, join, relative, isAbsolute, sep } from "node:path";
-import type { Store } from "./store.ts";
+import type { Message, Store } from "./store.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { ATTACHMENTS_DIR, IMAGE_MAX_BYTES } from "./attachments.ts";
@@ -100,12 +100,16 @@ export type PublishOperationImage = (image: DecodedGeneratedImage, metadata: Gen
 /** One explicit count grant, one attempt per turn, one active operation per bot workspace. */
 export class ImageOperations {
   private readonly store: Store;
-  private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string) => void;
+  private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
+  private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
   private readonly pending = new Map<string, Pending>();
   private readonly jobs = new Map<string, Promise<unknown>>();
   private readonly workspaces = new Set<string>();
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string) => void }) {
-    this.store = options.store; this.waiting = options.waiting;
+  /** `speaker` names the member who asked when the card lands in a channel:
+   * without it the card has no sender, so neither the channel view nor the
+   * native approval notification can tell whose request it is. */
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined }) {
+    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker;
   }
   private db() {
     const db = database();
@@ -216,14 +220,15 @@ export class ImageOperations {
   private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown): Promise<boolean> {
     const requestId = `image-${randomUUID()}`;
     const prompt = request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "";
-    const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", card: {
+    const from = this.speaker?.(actor.threadId, actor.botId);
+    const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
       // F1-T4: the owner approves the exact upstream that will bill them. An
       // OpenRouter edit names its pinned endpoint; nothing else is routed.
       subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
-    this.waiting(actor.threadId, true, requestId, card.id);
+    this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
     return new Promise(resolve => {
       let settled = false;
       // Only the owner's own answer is recorded as allow/deny. A card nobody
@@ -234,7 +239,7 @@ export class ImageOperations {
         if (settled) return; settled = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
         const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
         if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
-        this.waiting(actor.threadId, false, requestId); resolve(allow);
+        this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve(allow);
       };
       const abort = () => finish(false);
       const timer = setTimeout(abort, IMAGE_APPROVAL_TIMEOUT_MS); timer.unref();

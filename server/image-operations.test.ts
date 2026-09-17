@@ -415,7 +415,7 @@ it("image approval waits like any other approval and settles as not answered on 
     const f = generationFixture();
     const job = f.run("patient", f.request), refused = expect(job).rejects.toThrow("not approved");
     const card = await f.card(), requestId = card.card!.requestId!;
-    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id);
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id, f.bot.id);
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS - 60_000 - 5_000); // vi.waitFor already advanced the clock a little
     const stillOpen = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
@@ -424,7 +424,7 @@ it("image approval waits like any other approval and settles as not answered on 
     f.controller.abort(); await refused;
     const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
     expect(settled.answered).toBe("unavailable"); expect(settled.dismissed).toBe(true);
-    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, false, requestId);
+    expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, false, requestId, undefined, f.bot.id);
     expect(f.fetcher).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
@@ -450,4 +450,23 @@ it("the owner's own deny stays a denial and their allow dispatches exactly once"
   expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected"); await refused;
   const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
   expect(settled.answered).toBe("deny"); expect(settled.dismissed).toBe(false);
+});
+it("names the asking bot to the waiting hook and stamps a channel card with its sender",async()=>{
+ const store=new Store(()=>({instanceId:"fixture",model:"fixture"}));const bot=store.createBot();
+ const controller=new AbortController();
+ const actor={botId:bot.id,threadId:"channel-thread",generation:randomUUID(),signal:controller.signal,assertActive:()=>{}};
+ const waiting=vi.fn(),from={botId:bot.id,name:"Sable",color:"#fff"};
+ const speaker=vi.fn(()=>from);
+ const operations=new ImageOperations({store,waiting,speaker});
+ const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({data:[{b64_json:png.toString("base64")}]})));
+ const service=new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:fetcher});
+ const request={connectionId:"flux",prompt:"fixture"};
+ const job=operations.execute(actor,"channel",request,(reserve,publish)=>service.generate(request,{reserve,publish,assertActive:actor.assertActive,signal:actor.signal},[])).catch(()=>undefined);
+ await vi.waitFor(()=>expect(store.messagesFor("channel-thread").some(m=>m.card?.tool==="generate_image")).toBe(true));
+ const card=store.messagesFor("channel-thread").find(m=>m.card?.tool==="generate_image")!;
+ expect(speaker).toHaveBeenCalledWith("channel-thread",bot.id);
+ expect(card.from).toEqual(from);
+ expect(waiting).toHaveBeenCalledWith("channel-thread",true,card.card!.requestId,card.id,bot.id);
+ operations.resolve("channel-thread",card.card!.requestId!,"deny");await job;
+ expect(waiting).toHaveBeenLastCalledWith("channel-thread",false,card.card!.requestId,undefined,bot.id);
 });

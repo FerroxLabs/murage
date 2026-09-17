@@ -1802,6 +1802,11 @@ describe("harness HTTP API", () => {
       await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).toBe("waiting-on-you");
       expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
       expect((await denied.result).isError).toBe(true);expect(existsSync(receipt)).toBe(false);
+      // A second answer to a card the owner already settled (double click, or
+      // the Inbox copy) is not a failure: no "Couldn't deliver" chip.
+      const repeated=await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"});
+      expect(repeated.status).toBe(200);expect(repeated.body.outcome).toBe("rejected");
+      expect((await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.some((m:any)=>String(m.tool?.name??"").startsWith("Couldn't deliver"))).toBe(false);
       const deniedCard=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.find((m:any)=>m.id===card.id);
       expect(deniedCard.card).toMatchObject({answered:"deny",dismissed:false});
       await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).not.toBe("waiting-on-you");

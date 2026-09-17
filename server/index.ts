@@ -2222,11 +2222,21 @@ function broadcast(payload: Record<string, unknown>) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
-const imageOperations = new ImageOperations({ store, waiting: (threadId, waiting, requestId, messageId) => {
+const imageOperations = new ImageOperations({ store, speaker: (threadId, botId) => {
+  // A channel card carries its sender like every other member message; a
+  // one-to-one task needs none.
+  if (!store.groupByThread(threadId)) return undefined;
+  const speaker = groupSpeakers.get(threadId);
+  if (speaker?.botId === botId) return speaker;
+  const bot = store.bot(botId);
+  return bot ? { botId: bot.id, name: bot.name, color: bot.color } : undefined;
+}, waiting: (threadId, waiting, requestId, messageId, botId) => {
   if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
   else askMessageByRequest.delete(`${threadId}:${requestId}`);
   watchdog.setWaitingOnHuman(threadId, waiting);
-  const ownerId = internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
+  // The bot that asked. A channel thread belongs to no single bot, so the
+  // thread alone cannot name who is waiting on the owner.
+  const ownerId = botId ?? internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
   if (!ownerId) return;
   // The same attention state every provider approval sets (request.opened /
   // request.resolved below): the sidebar says "Waiting for you…" instead of
@@ -2325,6 +2335,12 @@ async function answerRequest(
     ? thread.find((m) => m.id === cardMessageId)
     : thread.find((m) => m.card?.requestId === requestId);
   const card = cardMessage?.card;
+  // The owner already settled this card (a second click, or the same card
+  // answered from the Inbox and the conversation). The first answer was
+  // delivered; a repeat must not claim the action failed or log it twice.
+  if (card && !card.dismissed && (card.answered === "allow" || card.answered === "deny") && behavior !== "answer") {
+    return card.answered === "allow" ? "allowed-once" : "rejected";
+  }
   const instance = registry.get(instanceId);
   let outcome: RequestOutcome = imageOperations.resolve(threadId, requestId, behavior) ?? "unavailable";
   if (!requestId.startsWith("image-") && instance) {
