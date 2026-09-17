@@ -242,7 +242,10 @@ async function trigger(s,kind){
 async function nativeConsent(s,state,deadline){
  if(state.phase==='done'||state.phase==='failed'||Date.now()>=deadline)return;
  const pid=systemPid('NotificationCenter'),remaining=()=>Math.max(1,deadline-Date.now());
- const result=ax(pid,{op:'allowNotificationPermission',consentPhase:state.phase,deadline},{timeout:Math.min(3000,remaining())});
+ if(state.phase==='menu'){
+  const menu=ax(pid,{op:'tree'},{timeout:Math.min(3000,remaining())});writeFileSync(path.join(E,'notification-consent-menu.ax.json'),JSON.stringify(menu,null,2)+'\n',{mode:0o600});check(menu.ok,'CONSENT_MENU_READ');
+ }
+ const result=ax(pid,{op:'allowNotificationPermission',consentPhase:state.phase,consentDecision:state.decision??'allow',deadline},{timeout:Math.min(3000,remaining())});
  if(result.error==='consent-notice-not-unique'&&result.count===0)return;
  record('OS-notification-consent-observation',{phase:state.phase,result});
  if(result.ok&&result.consentPhase==='hover'){
@@ -253,6 +256,18 @@ async function nativeConsent(s,state,deadline){
  if(result.ok){state.phase=result.consentPhase;if(state.phase==='done'){record('OS-notification-consent',{action:result.action,scope:'exact Murage initial OS notice only'});s.osConsentChanged=true;save(s);}return;}
  // A mutation or unknown subprocess outcome cannot be safely repeated.
  if(result.actionAttempted!==false||result.error!=='consent-controls-not-observed')state.phase='failed';
+}
+async function denialJourney(s){
+ const {marker}=await trigger(s,'banner'),consent={phase:'initial',decision:'deny'},deadline=Date.now()+20000;
+ await until(async()=>{
+  const observed=notice(s,'waiting-os-denied');check(!observed.text.includes(marker),'DENIED_APPROVAL_BANNER');
+  await nativeConsent(s,consent,deadline);check(consent.phase!=='failed','OS_DENIAL_ACTION');return consent.phase==='done';
+ },Math.max(0,deadline-Date.now()),'OS_DENIAL_CONSENT');
+ await sampleNoBanner(s,marker,'banner');await selectBot(s,'banner');await exactRequestCard(s,'banner');
+ check(!existsSync(path.join(s.control,'decision-banner.json')),'OS_DENIAL_NOT_APPROVAL');
+ record('os-denied-pending',{osAction:'Don’t Allow',nativeBannerAbsent:true,exactPendingCard:true,autoApproval:false});
+ await resolveDeny(s,'banner');s.machineChecksComplete=true;s.permissionDeniedOS=true;save(s);
+ record('machine-complete',{caseSet:'os-denied',permissionDeniedOS:'OBSERVED_DONT_ALLOW_PENDING_PRESERVED',grantFiveCasesReusedRun:35170464452,soundAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false});
 }
 async function journey(){
  const s=load();check(s.prepared&&!s.journeyStarted,'JOURNEY_ONCE');s.journeyStarted=true;save(s);const timer=setTimeout(()=>{stopping=true;},C.scriptMinutes*60000);
@@ -279,6 +294,7 @@ async function journey(){
   const roster=(await api(s,'/api/bots?messages=0')).bots;check(Object.values(s.bots).every(b=>roster.some(x=>x.id===b.id&&x.threadId===b.threadId)),'OWNED_DATA_DIR');
   await press(s.pid,'App settings');const t=await settingsTree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
   await until(()=>{const rendered=texts(tree(s.pid,'notification-permission-requested'));check(!rendered.some(x=>x.includes('Notification permission is blocked.')),'RENDERER_NOTIFICATION_PERMISSION_DENIED');check(!rendered.some(x=>x.includes('Notification permission controls are unavailable')),'RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE');return rendered.some(x=>x.includes('Notification permission is granted.'));},10000,'RENDERER_NOTIFICATION_PERMISSION');await press(s.pid,'Close settings');
+  if(C.caseSet==='os-denied'){await denialJourney(s);return;}
   for(const kind of ['banner','private','mute','quiet','dnd']){
    check(!stopping,'SCRIPT_DEADLINE');if(kind==='private')await settings(s,{'Show notification previews':false});if(kind==='mute')await settings(s,{'Show notification previews':true,'Needs your attention':false});if(kind==='quiet')await settings(s,{'Needs your attention':true,'Quiet hours':true});if(kind==='dnd'){await settings(s,{'Quiet hours':false});await dnd(s,true);}
    const {marker,item}=await trigger(s,kind);
@@ -302,7 +318,7 @@ async function cleanup(){
  try{const nativeTail=readSafeLogTail(path.join(s.private,'app.log'),1024*1024);if(nativeTail)writeFileSync(path.join(E,'notification-lifecycle.json'),JSON.stringify({tailLimitBytes:1024*1024,sourceBytes:nativeTail.bytes,entries:notificationLifecycleMetadata(redactSecretsInLine(nativeTail.tail))},null,2)+'\n',{mode:0o600});}catch{record('notification-lifecycle-unavailable',{error:'NATIVE_LOG_READ_UNAVAILABLE'});}
  if(existsSync(path.join(s.private,'app.log')))writeFileSync(path.join(E,'app-redacted.log'),redactSecretsInLine(readFileSync(path.join(s.private,'app.log'),'utf8')).slice(-20000),{mode:0o600});
  let notificationCenter={ok:false};try{notificationCenter=await restoreNotificationCenter({run,uid:process.getuid(),state:s.notificationCenterPrerequisite,persist:value=>{s.notificationCenterPrerequisite=value;save(s);},record});}catch(error){record('notification-service-restore-failed',{code:/^NC_[A-Z_]+$/.test(error.message)?error.message:'NC_RESTORE_FAILED'});}
- const result={ownedProcessesGone,dndRestored,keychain,notificationCenter,osNotificationConsent:{changed:s.osConsentChanged===true,restoration:'disposable runner profile teardown; no notification database mutation'},machineChecksComplete:s.machineChecksComplete===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok&&notificationCenter.ok,'CLEANUP_POSTCONDITIONS');
+ const result={ownedProcessesGone,dndRestored,keychain,notificationCenter,osNotificationConsent:{changed:s.osConsentChanged===true,restoration:'disposable runner profile teardown; no notification database mutation'},machineChecksComplete:s.machineChecksComplete===true,permissionDeniedOS:s.permissionDeniedOS===true,audioAudibility:'NOT_ESTABLISHED',fullB35Acceptance:false};record('cleanup',result);check(ownedProcessesGone&&dndRestored&&keychain.ok&&notificationCenter.ok,'CLEANUP_POSTCONDITIONS');
  for(const dir of [s.private,s.appDir,s.data,s.userData,s.tmp]){check(dir.startsWith(ROOT+path.sep),'CLEANUP_PATH');rmSync(dir,{recursive:true,force:true});}save({...s,cleanupComplete:true});
 }
 try{await({admit,prepare,run:journey,cleanup})[phase]();record('phase-complete');}catch(error){record('phase-failed',{gate:error.gate??null,error:redactSecretsInLine(error.message)});try{shot('failed-'+phase);}catch{}process.exitCode=1;}

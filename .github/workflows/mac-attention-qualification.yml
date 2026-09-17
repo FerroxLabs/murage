@@ -1,4 +1,4 @@
-# B35 R30: bounded stale Inbox read refresh; same artifact and original criteria.
+# B35 R31: standalone OS denial only; reuse R30 grant/five-case proof.
 name: Mac packaged attention machine checks
 on:
   push:
@@ -76,7 +76,7 @@ jobs:
           node scripts/mac-attention-qualification.mjs admit "$A/Murage-0.1.53-arm64.zip" "$A/evidence/final-package-gates.json" "$A/evidence/SHA256SUMS"
       - name: Prepare canonical synthetic permission peer
         run: node scripts/mac-attention-qualification.mjs prepare
-      - name: Native banner, click, mute, quiet-hours and DND journey
+      - name: One OS-denied approval, pending persistence and explicit resolution
         run: node scripts/mac-attention-qualification.mjs run
       - name: Restore DND and Keychain, close exact owned processes
         if: always()

@@ -84,6 +84,9 @@ function run(argv){
    if(candidates.length!==1)fail('notification-action-ambiguous',{count:candidates.length});press(nodes[candidates[0]]);return JSON.stringify({ok:true,marker:c.marker,targetRole:nodes[candidates[0]].role});
   }
   if(c.op==='allowNotificationPermission'){
+   var consentDecision=c.consentDecision||'allow';if(['allow','deny'].indexOf(consentDecision)<0)fail('consent-decision');
+   var decisionNames=consentDecision==='deny'?['Don’t Allow',"Don't Allow"]:['Allow'];
+   function isDecision(n){return n.names.some(function(name){return decisionNames.indexOf(name)>=0;});}
    var title='“Murage” Notifications',body='Notifications may include alerts, sounds, and icon badges.';
    var groups=nodes.map(function(n,i){return{n:n,i:i};}).filter(function(x){return x.n.role==='AXGroup'&&x.n.names.indexOf(title)>=0&&nodes.some(function(n,j){return within(j,x.i)&&n.role==='AXStaticText'&&n.value===body;});});
    if(groups.length!==1)return JSON.stringify({ok:false,error:'consent-notice-not-unique',count:groups.length,actionAttempted:false});
@@ -93,14 +96,14 @@ function run(argv){
    var candidates;
    if(c.consentPhase==='menu'){
     if(popupMenus.length!==1)fail('consent-menu-not-unique',{observed:observed,count:popupMenus.length});
-    candidates=nodes.filter(function(n,i){return within(i,popupMenus[0].i)&&['AXMenuItem','AXButton'].indexOf(n.role)>=0&&n.names.indexOf('Allow')>=0;});
+    candidates=nodes.filter(function(n,i){return within(i,popupMenus[0].i)&&['AXMenuItem','AXButton'].indexOf(n.role)>=0&&isDecision(n);});
     if(candidates.length!==1)fail('consent-allow-not-unique',{observed:observed,count:candidates.length});
-    press(candidates[0]);return JSON.stringify({ok:true,consentPhase:'done',action:'Allow',observed:observed,actionAttempted:true});
+    observed.decisionControl={role:candidates[0].role,names:candidates[0].names,menu:popupMenus[0].n.names};observed.menuControls=nodes.filter(function(n,i){return within(i,popupMenus[0].i)&&['AXMenuItem','AXButton'].indexOf(n.role)>=0;}).map(function(n){return{role:n.role,names:n.names};});c.requireEnabled=true;press(candidates[0]);return JSON.stringify({ok:true,consentPhase:'done',action:consentDecision==='deny'?'Don’t Allow':'Allow',observed:observed,actionAttempted:true});
    }
    if(['initial','revealed'].indexOf(c.consentPhase)<0)fail('consent-phase');
-   candidates=members.filter(function(n){return n.role==='AXButton'&&n.names.indexOf('Allow')>=0;});
+   candidates=members.filter(function(n){return n.role==='AXButton'&&isDecision(n);});
    if(candidates.length>1)fail('consent-allow-not-unique',{observed:observed,count:candidates.length});
-   if(candidates.length===1){press(candidates[0]);return JSON.stringify({ok:true,consentPhase:'done',action:'Allow',observed:observed,actionAttempted:true});}
+   if(candidates.length===1){observed.decisionControl={role:candidates[0].role,names:candidates[0].names};c.requireEnabled=true;press(candidates[0]);return JSON.stringify({ok:true,consentPhase:'done',action:consentDecision==='deny'?'Don’t Allow':'Allow',observed:observed,actionAttempted:true});}
    var options=members.filter(function(n){return ['AXButton','AXPopUpButton'].indexOf(n.role)>=0&&n.names.indexOf('Options')>=0;});
    if(options.length>1)fail('consent-options-not-unique',{observed:observed,count:options.length});
    if(options.length===1){if(popupMenus.length)fail('consent-preexisting-menu',{observed:observed});press(options[0]);return JSON.stringify({ok:true,consentPhase:'menu',action:'Options',observed:observed,actionAttempted:true});}

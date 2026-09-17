@@ -1,5 +1,5 @@
 {
-  "scope": "B35 packaged macOS native attention: canonical synthetic approval -> actual signed application -> OS banner/click/DND and app mute/quiet/privatepreview; no model/provider",
+  "scope": "B35 standalone fresh-runner OS notification denial: one existing canonical synthetic approval, observed owned Don\u2019t Allow, no banner/no autoapproval, pending persistence, explicit Deny and cleanup. Reuse R30 grant/five-case proof; no provider.",
   "base": "31749c53e0ca7552c974e56f94a81a1232ad11a1",
   "artifactSource": "49cc37be2e43cb97fd3d5ac64a19106e5eff501d",
   "artifactRun": 35166072643,
@@ -9,12 +9,12 @@
   "zipSha256": "ad1a7e66ebbc725dd2ad119e5050f4fda0557259fa4a8d901b9b1a76fb03df07",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-24T00:35:01Z",
-  "nativeRoundsUsed": 29,
+  "nativeRoundsUsed": 30,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R30 confirmation under standing corrective authority on the same verified49cc37be artifact. Refresh only explicit read-only stale Inbox AX snapshots, at most3 attempts under existing caller deadlines. No menu/action replay, no timeout or pending/card/privacy/mute/quiet/DND criterion change; retain all29 prior runs and accepted R29 native coverage; one60minute push-triggered run.",
+  "admission": "One R31 denial-only case under standing completion authority on unchanged verified49cc37be signed artifact. Original observed notice/Options protocol; press only newly observed uniquely enabled exact Don\u2019t Allow (ASCII apostrophe equivalent) and preserve popup snapshot before action. No regrant/SystemSettings/DB mutation or action retry. Same20s consent and12s absence windows, one60min CI cap. Retain30 prior native attempts and accepted R30 machine proof; audio audibility remains unproved.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -73,7 +73,7 @@
     "exactBody": "Notifications may include alerts, sounds, and icon badges.",
     "scope": "verified NotificationCenter PID, unique matching group",
     "reveal": "advertised AXShowMenu or one native hover from fresh AX bounds",
-    "action": "observed scoped enabled Options/Allow only",
+    "action": "Observed scoped Options then uniquely enabled exact Don\u2019t Allow (ASCII apostrophe equivalent), no Allow",
     "cleanup": "record change; ephemeral runner profile teardown, no DBreset"
   },
   "toolsSelector": {
@@ -91,5 +91,12 @@
     "requiresActionAttemptedFalse": true,
     "deadline": "existing caller absolute deadline",
     "replayActions": false
+  },
+  "caseSet": "os-denied",
+  "reusedNativeEvidence": {
+    "grantFiveCaseRun": 35170464452,
+    "fixture": "e34df9e7aedc0364bfbefb9f424df9eeeb86e913",
+    "status": "PASS",
+    "notRerun": true
   }
 }
