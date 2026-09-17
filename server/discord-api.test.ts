@@ -68,6 +68,10 @@ it.each([true])("joins owner DM binding, restart and revocation (scripted model:
     expect(traces.filter(t => t.op === "send").every(t => t.channel === "14")).toBe(true);
     expect(traces.filter(t => t.op === "send")[1].text).toContain("Review approvals in Murage");
     if (withModel) {
+      // Channel messages run only for a linked person: link the verified
+      // pairing sender as the workspace owner, as the owner does in settings.
+      const bindings = (await request("POST", "/api/memory/action", { action: "humans" })).body.bindings; expect(bindings).toHaveLength(1);
+      expect((await request("POST", "/api/memory/action", { action: "human-link", bindingId: bindings[0].id, expectedRevision: bindings[0].revision, as: "owner" })).status).toBe(200);
       event("EvWORK", "Summarize this synthetic note: the blue fixture is ready.");
       await expect.poll(() => traces.filter(t => t.op === "send").length, { timeout: 15000 }).toBe(3);
       expect(traces.filter(t => t.op === "send")[2]).toMatchObject({ channel: "14", text: "hello from fake claude" });
