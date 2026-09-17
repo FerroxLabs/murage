@@ -240,6 +240,34 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(readDump().argv).toContain("--trust");
   });
 
+  it("(0.1.54 C) a bot with a linked library skill runs its own thread desk trusted: no card, --trust on the spawn, nothing recorded; a planted AGENTS.md next to the links still asks", async () => {
+    const bot = await makeBot("Linked skill bot");
+    const installed = await request("POST", `/api/bots/${bot.id}/skills/library`, { ids: ["abstract-writing"] });
+    expect(installed.status, JSON.stringify(installed.body)).toBe(201);
+    const workspace = realpathSync(join(home, ".murage")) + `/workspaces/${bot.id}/threads/${bot.threadId}`;
+
+    await send(bot);
+    await settled(bot);
+    // the desk now holds only Murage's links to the pinned skill
+    expect(existsSync(join(workspace, ".agents", "skills", "abstract-writing"))).toBe(true);
+    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(0);
+    expect(readDump().argv).toContain("--trust");
+    expect(readDump().folderTrust).toMatchObject({ trustedAtBuild: true, requested: false });
+    expect(await activities(bot.threadId)).not.toContainEqual(expect.stringContaining("untrusted folder"));
+    // decided per turn from what the desk holds, never remembered by Murage
+    expect((await trustRecord(workspace)).record).toBeNull();
+
+    // anything beyond the links keeps the card (the fake engine keeps no
+    // grant of its own; the real one would, see managed-workspace-trust.ts)
+    writeFileSync(join(workspace, "AGENTS.md"), "# planted\n");
+    await send(bot, "again");
+    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
+    const card = (await openTrustCard(bot.threadId))!;
+    expect(card.card.folderTrust.sources).toEqual(["AGENTS.md", ".agents/skills", ".claude/skills"]);
+    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
+    await settled(bot);
+  });
+
   it("Don't trust runs untrusted with a chip naming what was left out and is remembered; forgetting asks again; a skip remembers nothing", async () => {
     const bot = await makeBot("Reject bot");
     const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
