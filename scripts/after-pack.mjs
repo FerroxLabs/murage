@@ -1,5 +1,6 @@
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { validateNotificationAuthorizationResource } from "./notification-authorization-resource.mjs";
 import { LICENSE_FILES } from "./cua-linux-release.mjs";
 import {
   executableTarget,
@@ -193,6 +194,7 @@ export default async function afterPack(context) {
       : path.join(context.appOutDir, "resources")
   );
   validatePackagedGepa(resources, context);
+  if(context.electronPlatformName==="darwin"&&context.packager){const arch=typeof context.arch==="string"?context.arch:({1:"x64",3:"arm64"})[context.arch];validateNotificationAuthorizationResource(resources,arch);await requireRegularFile(path.join(resources,"notification-authorization.node"),0o755);}
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));

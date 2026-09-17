@@ -1,6 +1,7 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
@@ -319,7 +320,25 @@ for(const [action,arity] of [["status",0],["save",2],["selectRepositoryPassword"
     void operation.finally(()=>backupRemoteOperations.delete(operation)).catch(()=>{});return operation;
   });
 }
-const showApprovalNotification = createApprovalNotifications({ Notification, platform: process.platform, onOpen: target => {
+const notificationAuthorization=createNotificationAuthorization();
+async function currentDesktopApproval(payload){
+  const owner=desktopDataOwner,secret=desktopSurfaceSecret,proc=serverProc;
+  if(!owner||!secret||!proc||!serverReady||desktopShutdownStarted||desktopRecoveryMode)return null;
+  const current=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode;
+  const read=async route=>{
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":secret},signal:AbortSignal.timeout(5000),redirect:"error"});
+    if(!response.ok||!current())throw Error("APPROVAL_NO_LONGER_AVAILABLE");return response.json();
+  };
+  const [config,bot,page]=await Promise.all([read("/api/config"),read("/api/bots?messages=0"),read("/api/threads/"+encodeURIComponent(payload.threadId)+"/messages?around="+encodeURIComponent(payload.messageId)+"&limit=1")]);
+  const entry=app.isPackaged?path.join(process.resourcesPath,"server","approval-notification-state.js"):path.join(__dirname,"..","dist-server","approval-notification-state.js");
+  const {currentApprovalNotification}=await import(pathToFileURL(entry).href);
+  if(!current())return null;
+  return currentApprovalNotification(payload,bot.bots?.find(value=>value.id===payload.botId),page.messages,config.notifications);
+}
+const showApprovalNotification = createApprovalNotifications({ Notification, platform: process.platform,
+  authorize:async request=>{const result=await(request===false?notificationAuthorization.current():notificationAuthorization.ensure());return result.authorized&&!desktopShutdownStarted;},
+  revalidate:currentDesktopApproval,
+  onOpen: target => {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
@@ -3522,6 +3541,7 @@ function cleanupDesktopForExit() {
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
+  notificationAuthorization.invalidate();showApprovalNotification.dispose();
   desktopBackupTool.invalidate();
   desktopResticTool?.invalidate();
   remoteBackupAttestation.abort();

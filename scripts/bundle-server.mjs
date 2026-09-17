@@ -40,6 +40,7 @@ const yamlEsmPlugin = {
 
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
+  "approval-notification-state.ts",
   "incident-diagnostics.ts",
   "backup-coordinator.ts",
   "backup-remote-host.ts",

@@ -140,6 +140,10 @@ mac:
     - '/Contents/Resources/gepa-worker(?:/|$)'
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
+    - from: dist-native/notification-authorization/${arch}/notification-authorization.node
+      to: notification-authorization.node
+    - from: dist-native/notification-authorization/${arch}/build.json
+      to: notification-authorization-build.json
     - from: dist-native/gepa/darwin-${arch}
       to: gepa-worker
     - from: dist-native/backup-age
