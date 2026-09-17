@@ -15,7 +15,8 @@ function fixture() {
 describe("normalized routine event provenance", () => {
   it("keeps Telegram channel origin and cumulative budget across duplicate intake", () => {
     const f = fixture();
-    const input = { webhookId: "telegram:123", telegramConnectionId: "123", webhookName: "Telegram",
+    // Channel intake requires a linked human principal; this is the local owner.
+    const input = { webhookId: "telegram:123", telegramConnectionId: "123", humanPrincipal: { personId: "workspace-owner", bindingId: "local", revision: 1 }, webhookName: "Telegram",
       prompt: "run it", botId: "bot", runOn: "ember" as const, deliveryId: "telegram:123:42", receivedAt: 900 };
     const run = f.manager.enqueueWebhook(input);
     expect(run.event).toMatchObject({ source: "channel", origin: { kind: "channel", channel: "telegram", connectionId: "123" }, budgetId: run.id });

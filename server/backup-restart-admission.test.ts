@@ -17,7 +17,7 @@ it.each(["slack","discord"] as const)("holds %s channel receipts queued without 
   const startTurn=vi.fn(async()=>{gate.assertOpen();});
   const manager=new RoutineManager({file:join(root,"routines.json"),automaticPaused:()=>gate.held(),isChannelCurrent:()=>true,botState:()=>gate.held()?"busy":"ready",startTurn,createTask:()=>({threadId:"detached"}),channelThread:()=>({threadId:"chief-thread"})});
   try{
-    const run=manager.enqueueWebhook({webhookId:`${platform}:binding`,webhookName:platform,deliveryId:"event",prompt:"held owner message",botId:"chief",runOn:"ember",receivedAt:Date.now(),channelOrigin:{platform,connectionId:"binding"}});
+    const run=manager.enqueueWebhook({webhookId:`${platform}:binding`,webhookName:platform,deliveryId:"event",prompt:"held owner message",botId:"chief",runOn:"ember",receivedAt:Date.now(),channelOrigin:{platform,connectionId:"binding"},humanPrincipal:{personId:"workspace-owner",bindingId:"local",revision:1}});
     await manager.tick();expect(startTurn).not.toHaveBeenCalled();expect(manager.listRuns().find(item=>item.id===run.id)?.status).toBe("queued");
     gate.cancel(token);await manager.tick();expect(startTurn).toHaveBeenCalledOnce();
   }finally{manager.stop();rmSync(root,{recursive:true,force:true});}

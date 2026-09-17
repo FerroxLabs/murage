@@ -28,7 +28,8 @@ function harness() {
   const enqueue = (id: string, channel = true) => manager.enqueueWebhook({
     webhookId: "telegram-hook", webhookName: "Sable", botId: "sable", prompt: id,
     runOn: "ember", deliveryId: id, receivedAt: Date.now(),
-    ...(channel ? { telegramConnectionId: "telegram-connection" } : {}),
+    // Channel intake requires a linked human principal; this is the local owner.
+    ...(channel ? { telegramConnectionId: "telegram-connection", humanPrincipal: { personId: "workspace-owner", bindingId: "local", revision: 1 } } : {}),
   });
   const tick = async () => {
     // Drain enqueue/completion microtasks before explicitly ticking.

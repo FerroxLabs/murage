@@ -13,7 +13,9 @@ function fixture() {
     isChannelCurrent: (origin: { platform: "slack" | "discord"; connectionId: string }, botId: string) => valid && origin.platform === "slack" && origin.connectionId === "binding" && botId === "chief",
     botState: (): "busy" | "ready" => busy ? "busy" : "ready", startTurn, createTask, channelThread: () => ({ threadId: "chief-thread" }) };
   const input = { webhookId: "slack:binding", webhookName: "Slack", deliveryId: "EvONE", prompt: "hello", botId: "chief", runOn: "ember" as const, receivedAt: 1,
-    channelOrigin: { platform: "slack" as const, connectionId: "binding" } };
+    channelOrigin: { platform: "slack" as const, connectionId: "binding" },
+    // Channel intake requires a linked human principal; this is the local owner.
+    humanPrincipal: { personId: "workspace-owner", bindingId: "local", revision: 1 } };
   return { options, manager: new RoutineManager(options), input, startTurn, createTask, ready: () => { busy = false; }, invalidate: () => { valid = false; } };
 }
 it("only a current bound Slack owner event obtains channel provenance and pause exemption", () => {
