@@ -13,7 +13,9 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const SCOPE = { botId: "bot", threadId: "thread" };
 const scratchRoots = [];
 function scratch() {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-workspace-native-")));
+  // Native realpath, like the server's root (server/artifacts.ts): on Windows it also
+  // expands 8.3 short names such as a runner's RUNNER~1 temp directory.
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-workspace-native-")));
   scratchRoots.push(base);
   return base;
 }

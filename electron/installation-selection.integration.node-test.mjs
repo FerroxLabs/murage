@@ -137,7 +137,8 @@ test("recorder save after separate restore writes only the selected installation
   const relaunched = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", relaunch, userData, root], { env: { ...env, MURAGE_DATA_DIR: original }, encoding: "utf8", timeout: 15_000 }));
 
   assert.equal(relaunched.selected, plan.dataDirectory);
-  assert.equal(relaunched.requested, original);
+  // Windows canonical roots are deliberately case-folded (data-dir-lease.mjs).
+  assert.equal(relaunched.requested, dataDirLeasePaths(original).canonicalDataDir);
   assert.deepEqual(relaunched.refusals, ["NATIVE_ROOT_RECOVERY", "NATIVE_ROOT_CLOSING", "NATIVE_ROOT_UNOWNED", "NATIVE_SENDER_UNTRUSTED", "NATIVE_SENDER_UNTRUSTED"]);
   assert.deepEqual(relaunched.skillsBeforeSave, [false, false], "refused saves created no skills directory in either installation");
   assert.ok(relaunched.result.path.startsWith(path.join(plan.dataDirectory, "skills") + path.sep), relaunched.result.path);
@@ -161,6 +162,6 @@ test("changed archive hash cannot publish startup selection", () => {
   try { execFileSync(process.execPath, [cli, "restore", "--data-dir", plan.dataDirectory, "--archive", archive, "--sha256", "0".repeat(64)], { env, stdio: "pipe", timeout: 30_000 }); } catch (error) { failure = error; }
   assert.equal(JSON.parse(String(failure.stderr)).error, "ARCHIVE_HASH_CHANGED");
   assert.equal(existsSync(plan.selector), false);
-  assert.equal(resolveInstallationSelection(userData, original).dataDirectory, original);
+  assert.equal(resolveInstallationSelection(userData, original).dataDirectory, dataDirLeasePaths(original).canonicalDataDir);
   evidence.push({ kind: "hash-mismatch", result: "PASS", selectorNotPublished: true });
 });
