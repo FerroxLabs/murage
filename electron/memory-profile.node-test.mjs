@@ -5,15 +5,18 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { applyLoginProfileArguments } from "./background-login.mjs";
+import { CLOSED_DUE_FLAG, CLOSED_DESCRIPTOR_FLAG, parseClosedBackupArguments, readClosedBackupDescriptor, closedProfileEnvironment, assertClosedProfileBinding } from "./backup-closed-profile.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const source=fs.readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
 const start=source.indexOf("// Explicit fixture/profile isolation");
 const end=source.indexOf("const { desktopCapabilities, nativeDesktopActions }",start);
 assert(start>=0&&end>start,"Actual isolated startup block must exist");
-// The block calls the real sign-in profile argument parser first, so inject the actual module export.
-const run=new Function("app","process","fs","path","applyLoginProfileArguments",source.slice(start,end));
-function context(env,argv=[]){const calls=[];return {calls,env,run:()=>run({setPath:(key,value)=>calls.push([key,value]),setAppLogsPath:value=>calls.push(["logs",value])},{env,argv},fs,path,applyLoginProfileArguments)};}
+// The block first checks the closed-backup launch flags, then calls the real
+// sign-in profile argument parser, so inject the actual module exports.
+const closedProfile={CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding};
+const run=new Function("app","process","fs","path","applyLoginProfileArguments",...Object.keys(closedProfile),source.slice(start,end));
+function context(env,argv=[]){const calls=[];return {calls,env,run:()=>run({setPath:(key,value)=>calls.push([key,value]),setAppLogsPath:value=>calls.push(["logs",value])},{env,argv,exit:code=>{throw new Error(`unexpected exit ${code}`);}},fs,path,applyLoginProfileArguments,...Object.values(closedProfile))};}
 
 test("ordinary installed launches keep default user data, session and log paths",()=>{
   const fixture=context({});fixture.run();assert.deepEqual(fixture.calls,[]);

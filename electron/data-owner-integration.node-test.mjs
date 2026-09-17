@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { BACKUP_MODE_ARGUMENT } from "./backup-mode.mjs";
 import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
@@ -41,10 +42,21 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
     getApplicationMenu: () => null,
     setApplicationMenu: value => menu.push(value.items.map(item => item.label)),
   };
-  return { createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive };
+  // The whenReady block also consults the closed-backup launch flag and the
+  // backup schedule host before any migration. An ordinary launch has no
+  // closed-backup request, no armed handoff, no pending upgrade and no
+  // backup-mode argument, so those branches are inert here; tests that care
+  // about their ordering override the host initializer.
+  const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
+  return {
+    createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
+    closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    BACKUP_MODE_ARGUMENT, desktopStartup: Promise.resolve(), ensureDesktopUpdater: inert, resumeBackedUpInstall: inert, showDesktopRecovery: inert, finishClosedBackup: inert, cleanupDesktopForExit: inert,
+  };
 }
 function runBootstrap(scope, prelude = "", wiring = {}) {
   const full = { ...bootstrapWiring(wiring), ...scope };
+  full.process = { argv: [], ...full.process };
   return new AsyncFunction(...Object.keys(full), `${prelude}${bootstrapBody()}`)(...Object.values(full));
 }
 const between = (start, end) => {
@@ -53,6 +65,7 @@ const between = (start, end) => {
   assert.ok(first >= 0 && last > first, `actual main wiring exists: ${start}`);
   return source.slice(first, last);
 };
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
   let resolve;
   const promise = new Promise((done) => { resolve = done; });
@@ -65,8 +78,9 @@ test("packaged bootstrap claims canonical ownership before credential reads or m
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
     loadSecureCredentials:async()=>{events.push("read");return{};}, secureComposioConfig:async()=>events.push("composio"), secureWorkspaceConfig:async()=>events.push("workspace"),
     acquireDesktopDataOwner:()=>{events.push("lease");assert.deepEqual(menu,[["Server"]],"server menu is installed before ownership");}, assertDesktopStartupActive:()=>{},
+    initializeBackupScheduleHost:async()=>events.push("backup-host"),
   }, `${bootstrapDependencies} let secureCredentials;`, { menu });
-  assert.deepEqual(events, ["lease", "read", "composio", "workspace"]);
+  assert.deepEqual(events, ["lease", "backup-host", "read", "composio", "workspace"]);
   assert.deepEqual(menu, [["Server"]]);
 });
 
@@ -232,7 +246,7 @@ test("actual canonical root resolver rejects empty override without acquiring or
   assert.equal(claims,0);
 });
 
-function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
+function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
   const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
   const messages=[];let quit=0,backgroundQuits=0;let trigger;
   const scope={
@@ -246,13 +260,20 @@ function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise
     awaitOwnedWork:(promise,label,timeout)=>awaitOwnedWork(promise,label,Math.min(timeout??25,25)),
     desktopStartup:startup,
     managedComposioShutdown,
+    // Backup work added to cleanupDesktopForExit: polling stops, resource and
+    // attestation work is invalidated, and in-flight remote backup operations
+    // are drained before the lease is released. None are private barriers of
+    // these tests except backupOperations, which is exercised below.
+    stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},
+    desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},desktopResticTool:null,remoteBackupAttestation:{abort(){}},
   };
-  const state=new Function(...Object.keys(scope),"stop","writes","release",`
+  const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
     let desktopDataOwner={release};const CUA_STOP_TIMEOUT_MS=25;
-    const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),companionStarts=new Set();
+    const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),backupRemoteOperations=new Set(backupOperations),companionStarts=new Set();
     ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
-  `)(...Object.values(scope),stop,writes,release);
+  `)(...Object.values(scope),stop,writes,backupOperations,release);
   return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,trigger:()=>trigger({preventDefault(){}})};
 }
 
@@ -263,7 +284,8 @@ test("actual before-quit waits for child exit AND pending credentials before rel
   await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   write.resolve();await f.state.cleanup;
-  assert.equal(released,1);assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
+  // Quit is re-entered on the next turn so the prevented native quit unwinds first.
+  assert.equal(released,1);assert.equal(f.quit(),0);await nextTurn();assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
 });
 
 // R2-T5 changed intended behavior: an aborted registration that derives an
@@ -303,6 +325,7 @@ test("actual quit cancels stalled optional registration but drains its credentia
   assert.equal(released, 0, "cancelling HTTP must not skip persistent write settlement");
   persist.resolve();
   await f.state.cleanup;
+  await nextTurn();
   assert.equal(released, 1);
   assert.equal(f.quit(), 1);
   assert.deepEqual(f.messages, []);
@@ -333,10 +356,10 @@ test("actual private browser cleanup admission closes during recovery and shutdo
   }
 });
 
-for (const held of ["child", "credential"]) test(`actual before-quit ${held} barrier independently blocks release`,async()=>{
+for (const held of ["child", "credential", "remote backup"]) test(`actual before-quit ${held} barrier independently blocks release`,async()=>{
   const gate=deferred();let released=0;
   const f=shutdownFixture({
-    ...(held==="child"?{stop:()=>gate.promise}:{writes:[gate.promise]}),
+    ...(held==="child"?{stop:()=>gate.promise}:held==="credential"?{writes:[gate.promise]}:{backupOperations:[gate.promise]}),
     release:()=>{released++;return true;},
   });
   f.trigger();await new Promise(resolve=>setImmediate(resolve));
@@ -352,7 +375,7 @@ test("actual before-quit timeout retains lease, names blocker and permits retry"
   f.trigger();await assert.rejects(f.state.cleanup);await new Promise(resolve=>setImmediate(resolve));
   assert.equal(released,0);assert.equal(f.state.owned,true);assert.equal(f.quit(),0);
   assert.match(f.messages[0],/owned harness/);
-  blocked=false;f.trigger();await f.state.cleanup;
+  blocked=false;f.trigger();await f.state.cleanup;await nextTurn();
   assert.equal(released,1);assert.equal(f.quit(),1);
 });
 
@@ -397,7 +420,7 @@ test("actual companion startup cannot fork after shutdown during HTTPS observati
 test("actual startup rejection is handled visibly without echoing arbitrary private details",async()=>{
   const text=between("void desktopStartup.catch((error) => {",'app.on("window-all-closed"');
   const visible=[],logs=[];let quits=0;
-  const scope={desktopStartup:Promise.reject(new Error("private supplied credential")),desktopShutdownStarted:false,
+  const scope={desktopStartup:Promise.reject(new Error("private supplied credential")),desktopShutdownStarted:false,closedBackupRequested:false,finishClosedBackup:()=>{throw new Error("ordinary startup is not a closed backup");},
     slog:line=>logs.push(line),dialog:{showErrorBox:(...args)=>visible.push(args)},app:{quit:()=>{quits++;}}};
   await new Function(...Object.keys(scope),`${text};return desktopStartup.catch(()=>{});`)(...Object.values(scope));
   assert.equal(quits,1);assert.equal(visible.length,1);
