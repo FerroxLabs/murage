@@ -647,6 +647,15 @@ export interface AcpSupport {
      * without this. Empty when the agent advertised none. */
     sessionModels: Array<{ modelId?: string; name?: string }>;
   }): Promise<void>;
+  /** Extension notification the engine sends, per session, once every MCP
+   *  server of that session has settled (connected or unavailable). Fuigo
+   *  answers `session/new` before the `mcpServers` it was handed are
+   *  connected and tells the model on its first request that they are still
+   *  connecting, so a prompt sent at once cannot use Murage's tools on its
+   *  first step. When set, the core holds the first `session/prompt` of a
+   *  session that was given a non-empty `mcpServers` list until this
+   *  notification names the session, or `MCP_READY_WAIT_MS` passes. */
+  mcpReadyNotification?: string;
 }
 
 /** Handshake budgets, overridable per box. A cold `npx`-shaped agent, a slow
@@ -660,6 +669,14 @@ const envOr = (key: string, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+/** Longest the first prompt waits for `AcpSupport.mcpReadyNotification`.
+ *  Past it the prompt is sent anyway (the model is told the servers are still
+ *  connecting, which is the old behaviour) and a `mcp_ready_timeout`
+ *  lifecycle row records that MCP was not ready. Far below the 60 s floor of
+ *  the server's stall watchdog, so the wait can never read as a stall. */
+export const MCP_READY_WAIT_MS = 15_000;
+/** Read per turn so a box (or a test) can shorten it without a reload. */
+const mcpReadyWaitMs = () => envOr("MURAGE_ACP_MCP_READY_MS", MCP_READY_WAIT_MS);
 
 /** Settles one server→client ask. A permission takes allow/deny/cancel; a
  * question (Fuigo's ask_user_question, an ACP elicitation) takes `answer`
@@ -947,6 +964,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let nextId = 1;
         let sessionId: string | null = null;
         let promptStartedAt: number | null = null;
+        // Sessions the engine has reported MCP-ready. Recorded from the first
+        // byte of the child's stdout, so a notification that arrives BEFORE
+        // the session/new response is kept, not lost. One child per turn, so
+        // this holds one or two ids at most.
+        const mcpReadySessions = new Set<string>();
+        let releaseMcpWait: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
@@ -1042,6 +1065,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
           if (!ok) persistEngineStderr(stopReason);
           if (interruptTimer) clearTimeout(interruptTimer);
+          releaseMcpWait?.();
           // FUIGOTRUST2 (1): a routed turn's per-turn FUIGO_HOME is removed
           // on the child's close — but a turn that never spawned (its card
           // timed out, was stopped, or its launch threw) has no child.
@@ -1352,6 +1376,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             pendingPrompts: [...rpcPending.values()].filter(p => p.method === "session/prompt").length,
             promptSent: state.promptSent, settled: state.settled, cancelRequested: state.cancelRequested,
           });
+          if (support.mcpReadyNotification && msg.method === support.mcpReadyNotification) {
+            const readyId = msg.params?.sessionId;
+            if (typeof readyId === "string" && readyId) {
+              mcpReadySessions.add(readyId);
+              if (readyId === sessionId) releaseMcpWait?.();
+            }
+            return;
+          }
           // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
           // native log but never normalized: the prompt result is the settle.
           if (msg.method !== "session/update") return;
@@ -1522,6 +1554,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const interrupt = () => {
           if (state.settled) return;
           state.cancelRequested = true;
+          // A turn still waiting for MCP readiness has sent no prompt: the
+          // waiter wakes and settles it as cancelled at once.
+          releaseMcpWait?.();
           if (!child) {
             // Nothing spawned yet: the turn is waiting on its folder-trust
             // card. Stop settles it as cancelled at once (the card is closed
@@ -1544,6 +1579,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           interruptTimer = setTimeout(() => settle(true, "cancelled", "cancel_timeout"), ACP_CANCEL_GRACE_MS);
           interruptTimer.unref?.();
         };
+        /** Resolve when `id` is MCP-ready, the bound passes, or the turn ends.
+         * The timer and the release hook are always cleared together. */
+        const awaitMcpReady = (id: string) =>
+          new Promise<"ready" | "timeout" | "aborted">((resolve) => {
+            if (mcpReadySessions.has(id)) return resolve("ready");
+            if (state.settled || state.cancelRequested) return resolve("aborted");
+            const finish = (outcome: "ready" | "timeout" | "aborted") => {
+              if (releaseMcpWait !== release) return;
+              releaseMcpWait = null;
+              clearTimeout(timer);
+              resolve(outcome);
+            };
+            const release = () => finish(mcpReadySessions.has(id) ? "ready" : "aborted");
+            releaseMcpWait = release;
+            const timer = setTimeout(() => finish("timeout"), mcpReadyWaitMs());
+            timer.unref?.();
+          });
+
         let started = false;
         const start = () => {
           if (started) return;
@@ -1701,6 +1754,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
+            // Fuigo: the servers in `mcpServers` start connecting at
+            // session/new; prompting before they settle hands the model a
+            // "currently connecting, do not use" reminder on its first step.
+            if (support.mcpReadyNotification && mcpServers.length && sessionId) {
+              const outcome = await awaitMcpReady(sessionId);
+              if (state.settled) return;
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
+              lifecycle.record(outcome === "ready" ? "mcp_ready" : "mcp_ready_timeout");
+            }
             if (!(support.driverKind === "grokAgent" && providerBinding)) {
               state.promptSent = true;
               promptStartedAt = Date.now();
