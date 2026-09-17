@@ -107,7 +107,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     expect(await replies()).toBe(repliesAfterRefusal + 1);
   }, 60000);
 
-  // RED2G-3 (RED2B verifier): creating a task for a bot while a sibling turn
+  // RED2G-3 (RED2B verifier): changing a bot's authority while a sibling turn
   // sits in its dispatch window changes the bot's thread set, which the roster
   // policy treats as a revocation (p02 "existing-task" still revokes), so the
   // sibling turn is refused at acceptance. p02 holds — the refused provider
@@ -137,12 +137,17 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       const revisionAtDispatch = policyRevision();
       expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
 
-      // A task created for the same bot inside that window moves the policy
-      // revision and revokes the prepared disclosure.
+      // A single fresh owner task adds no authority to an existing thread, so
+      // it no longer revokes (memory/policy.ts onlyAddsIndependentOwnerTask).
       const task = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Created mid-dispatch" });
       expect(task.status).toBe(201);
       expect(task.body.task).toMatchObject({ title: "Created mid-dispatch", busy: false });
       expect(task.body.task.threadId).not.toBe(bot.threadId);
+      expect(policyRevision()).toBe(revisionAtDispatch);
+      expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
+      // Moving the bot to another team inside that window does change its
+      // authority: the policy revision moves and the prepared disclosure is revoked.
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { section: "Moved mid-dispatch" })).status).toBe(200);
       expect(policyRevision()).toBeGreaterThan(revisionAtDispatch);
       expect(disclosures()).toEqual([{ state: "revoked", policy_revision: revisionAtDispatch }]);
       writeFileSync(gate, "");
@@ -213,12 +218,15 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       const revisionAtDispatch = policyRevision();
       expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
 
-      // A task created for the speaking member inside that window moves the
-      // policy revision and revokes the room turn's prepared disclosure.
+      // A single fresh owner task for the speaking member does not revoke;
+      // moving that member to another team inside the window does.
       const task = await api("POST", `/api/bots/${member.id}/tasks`, { title: "Created mid room dispatch" });
       expect(task.status).toBe(201);
       expect(task.body.task).toMatchObject({ title: "Created mid room dispatch", busy: false });
       expect(task.body.task.threadId).not.toBe(room.threadId);
+      expect(policyRevision()).toBe(revisionAtDispatch);
+      expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
+      expect((await api("PATCH", `/api/bots/${member.id}`, { section: "Moved mid room dispatch" })).status).toBe(200);
       expect(policyRevision()).toBeGreaterThan(revisionAtDispatch);
       expect(disclosures()).toEqual([{ state: "revoked", policy_revision: revisionAtDispatch }]);
       writeFileSync(gate, "");
