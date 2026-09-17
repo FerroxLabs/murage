@@ -40,3 +40,14 @@ it("serializes ancestor and symlink workspaces while allowing siblings", () => {
     if (existsSync(join(root, "project"))) expect(workspaceResource(join(root, "project"))).toBe(workspaceResource(join(root, "Project")));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+it("reports what a generation holds and who blocks a request, for release-then-wait", () => {
+  const leases = new TurnResources();
+  leases.claimAll(["workspace:/a/project", "screen:bot:x"], a);
+  expect(leases.heldBy(a).sort()).toEqual(["screen:bot:x", "workspace:/a/project"]);
+  expect(leases.heldBy(b)).toEqual([]);
+  expect(leases.conflicts(["workspace:/a/project/nested", "browser:free", "screen:bot:x"], b))
+    .toEqual([{ resource: "workspace:/a/project/nested", owner: a }, { resource: "screen:bot:x", owner: a }]);
+  expect(leases.conflicts(["screen:bot:x"], a)).toEqual([]);
+  leases.release(a);
+  expect(leases.heldBy(a)).toEqual([]);
+});

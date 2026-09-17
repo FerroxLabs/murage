@@ -27,6 +27,24 @@ export class TurnResources {
     return true;
   }
 
+  /** Resources this generation currently holds, so a waiter can release them
+   * all and later re-claim the same union atomically. */
+  heldBy(owner: TurnOwner): string[] {
+    return [...this.owners].filter(([, current]) => sameOwner(current, owner)).map(([key]) => key);
+  }
+
+  /** Other owners holding something that overlaps `resources`, one entry per
+   * requested resource that is blocked (first holder only). */
+  conflicts(resources: readonly string[], owner: TurnOwner): Array<{ resource: string; owner: TurnOwner }> {
+    const blocked: Array<{ resource: string; owner: TurnOwner }> = [];
+    for (const resource of resources) {
+      for (const [key, current] of this.owners) {
+        if (overlaps(key, resource) && !sameOwner(current, owner)) { blocked.push({ resource, owner: current }); break; }
+      }
+    }
+    return blocked;
+  }
+
   owns(resource: string, owner: TurnOwner): boolean {
     const current = this.owners.get(resource);
     return Boolean(current && sameOwner(current, owner));
@@ -39,7 +57,7 @@ export class TurnResources {
   }
 }
 
-function sameOwner(a: TurnOwner, b: TurnOwner): boolean {
+export function sameOwner(a: TurnOwner, b: TurnOwner): boolean {
   return a.threadId === b.threadId && a.generation === b.generation;
 }
 
@@ -50,7 +68,7 @@ export function workspaceResource(cwd: string): string {
   return `workspace:${process.platform === "win32" ? canonical.toLowerCase() : canonical}`;
 }
 
-function overlaps(a: string, b: string): boolean {
+export function overlaps(a: string, b: string): boolean {
   if (a === b) return true;
   if (!a.startsWith("workspace:") || !b.startsWith("workspace:")) return false;
   const left = a.slice("workspace:".length), right = b.slice("workspace:".length);

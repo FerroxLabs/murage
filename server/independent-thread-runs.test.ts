@@ -55,3 +55,141 @@ it("requires an unambiguous explicit thread and never falls back from a wrong ta
   expect(() => requireDirectThreadTarget(["one"], "other")).toThrow("No such thread");
   expect(() => requireDirectThreadTarget(["one"], "../one")).toThrow("task id");
 });
+
+// ── waiting for shared resources ─────────────────────────────────────────
+const settled = async <T,>(promise: Promise<T>) => {
+  let state: { value?: T; done: boolean } = { done: false };
+  void promise.then(value => { state = { value, done: true }; });
+  // Resolution is event-driven: two microtask turns flush any resolve().
+  await Promise.resolve();await Promise.resolve();
+  return state;
+};
+it("waits for a held resource and wakes on release, without polling", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("petra", "sweep", {}, ["screen:bot:petra"]);
+  const chat = runs.admit("petra", "chat", {});
+  const seen: string[] = [];
+  const waiting = runs.acquire(chat, ["screen:bot:petra"], blockers => seen.push(...blockers.map(blocker => `${blocker.owner.threadId}:${blocker.resource}:${blocker.queued}`)));
+  expect((await settled(waiting)).done).toBe(false);
+  expect(runs.waiting(chat)).toBe(true);
+  expect(seen).toEqual(["sweep:screen:bot:petra:false"]);
+  expect(runs.owns(chat, "screen:bot:petra")).toBe(false);
+  runs.dispatch(holder);runs.accepted(holder, "provider");runs.settling(holder);
+  expect((await settled(waiting)).done).toBe(false);
+  runs.release(holder);
+  expect(await waiting).toBe(true);
+  expect(runs.owns(chat, "screen:bot:petra")).toBe(true);
+  expect(runs.waiting(chat)).toBe(false);
+});
+it("serves waiters for the same resource first-in first-out and keeps newcomers behind the queue", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("bot", "holder", {}, ["computer:vm"]);
+  const first = runs.admit("bot", "first", {}), second = runs.admit("other", "second", {});
+  const order: string[] = [];
+  const a = runs.acquire(first, ["computer:vm"]).then(granted => { order.push(`first:${granted}`); return granted; });
+  const b = runs.acquire(second, ["computer:vm"]).then(granted => { order.push(`second:${granted}`); return granted; });
+  runs.release(holder);
+  expect(await a).toBe(true);
+  expect((await settled(b)).done).toBe(false);
+  // A new arrival cannot jump the queued waiter even though it holds nothing.
+  const late = runs.admit("late", "late", {});
+  expect(runs.claim(late, ["computer:vm"])).toBe(false);
+  const c = runs.acquire(late, ["computer:vm"]).then(granted => { order.push(`late:${granted}`); return granted; });
+  runs.release(first);
+  expect(await b).toBe(true);
+  expect((await settled(c)).done).toBe(false);
+  runs.release(second);
+  expect(await c).toBe(true);
+  expect(order).toEqual(["first:true", "second:true", "late:true"]);
+});
+it("cancel while waiting resolves false, leaks no claim and never takes the resource", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("bot", "holder", {}, ["workspace:/project"]);
+  const waiter = runs.admit("bot", "waiter", {}, ["browser:profile"]);
+  const next = runs.admit("bot", "next", {});
+  const waiting = runs.acquire(waiter, ["workspace:/project"]);
+  const behind = runs.acquire(next, ["workspace:/project", "browser:profile"]);
+  // Before waiting the waiter released its own browser claim.
+  expect(runs.owns(waiter, "browser:profile")).toBe(false);
+  expect(runs.cancel(waiter)).toBe(true);
+  expect(await waiting).toBe(false);
+  expect(runs.waiting(waiter)).toBe(false);
+  runs.release(holder);
+  expect(await behind).toBe(true);
+  expect(runs.owns(waiter, "workspace:/project")).toBe(false);
+  expect(runs.owns(next, "browser:profile")).toBe(true);
+  // A cancelled generation cannot re-enter the queue.
+  expect(await runs.acquire(waiter, ["computer:vm"])).toBe(false);
+  expect(runs.release(waiter)).toBe(true);
+  expect(runs.waiting(waiter)).toBe(false);
+});
+it("release of a waiting run (provider reload) and a replaced generation drop the waiter", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  runs.admit("bot", "holder", {}, ["computer:bot:x"]);
+  const waiter = runs.admit("bot", "waiter", {});
+  const waiting = runs.acquire(waiter, ["computer:bot:x"]);
+  expect(runs.release(waiter)).toBe(true);
+  expect(await waiting).toBe(false);
+  const replacement = runs.admit("bot", "waiter", {});
+  expect(await runs.acquire(waiter, ["browser:free"])).toBe(false);
+  expect(await runs.acquire(replacement, ["browser:free"])).toBe(true);
+});
+it("cannot deadlock when two turns claim folder and computer in opposite order", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const a = runs.admit("bot", "a", {}), b = runs.admit("bot", "b", {});
+  expect(await runs.acquire(a, ["workspace:/shared"])).toBe(true);
+  expect(await runs.acquire(b, ["computer:vm"])).toBe(true);
+  // A needs the computer B holds: A releases its folder before waiting.
+  const aNext = runs.acquire(a, ["computer:vm"]);
+  expect(runs.owns(a, "workspace:/shared")).toBe(false);
+  expect((await settled(aNext)).done).toBe(false);
+  // B needs the folder A just released, so B completes its set instead of
+  // both turns holding one resource each forever.
+  expect(await runs.acquire(b, ["workspace:/shared"])).toBe(true);
+  expect(runs.owns(b, "workspace:/shared") && runs.owns(b, "computer:vm")).toBe(true);
+  runs.release(b);
+  expect(await aNext).toBe(true);
+  expect(runs.owns(a, "workspace:/shared") && runs.owns(a, "computer:vm")).toBe(true);
+});
+it("cannot deadlock when both turns block at once: the later waiter queues holding nothing", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const other = runs.admit("other", "other", {}, ["workspace:/shared"]);
+  const a = runs.admit("bot", "a", {}, ["computer:vm"]), b = runs.admit("bot", "b", {});
+  // A holds the computer and waits for the folder: it lets the computer go.
+  const aNext = runs.acquire(a, ["workspace:/shared"]);
+  expect(runs.owns(a, "computer:vm")).toBe(false);
+  // B wants computer + folder while A is queued for both: B queues behind A.
+  const bNext = runs.acquire(b, ["computer:vm", "workspace:/shared"]);
+  expect((await settled(bNext)).done).toBe(false);
+  runs.release(other);
+  expect(await aNext).toBe(true);
+  expect((await settled(bNext)).done).toBe(false);
+  runs.release(a);
+  expect(await bNext).toBe(true);
+});
+it("does not let a queued waiter displace a holder that extends or re-claims its own resources", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("bot", "holder", {}, ["workspace:/project"]);
+  const waiter = runs.admit("bot", "waiter", {});
+  const waiting = runs.acquire(waiter, ["workspace:/project", "browser:profile"]);
+  expect(await runs.acquire(holder, ["workspace:/project"])).toBe(true);
+  expect(await runs.acquire(holder, ["browser:profile"])).toBe(true);
+  expect(runs.owns(holder, "workspace:/project") && runs.owns(holder, "browser:profile")).toBe(true);
+  expect((await settled(waiting)).done).toBe(false);
+  runs.release(holder);
+  expect(await waiting).toBe(true);
+});
+it("keeps the three-thread limit for waiting runs and ignores unrelated releases", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("other", "holder", {}, ["computer:vm"]);
+  const waits = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
+  const pending = waits.map(run => runs.acquire(run, ["computer:vm", `browser:${run.threadId}`]));
+  expect(() => runs.admit("bot", "d", {})).toThrow("three threads");
+  const unrelated = runs.admit("third", "unrelated", {}, ["browser:unrelated"]);
+  runs.release(unrelated);
+  expect((await settled(pending[0])).done).toBe(false);
+  runs.release(holder);
+  expect(await pending[0]).toBe(true);
+  for (const run of waits.slice(1)) runs.cancel(run);
+  expect(await Promise.all(pending.slice(1))).toEqual([false, false]);
+});
