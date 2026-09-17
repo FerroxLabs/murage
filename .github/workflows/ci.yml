@@ -94,6 +94,14 @@ jobs:
         run: pnpm broker:check
       - run: pnpm check:contrast
       - run: pnpm broker:test
+      - name: Stage pinned backup test fixtures
+        # Test-only: hash-pinned upstream age/restic bytes that backup tests read
+        # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
+        # where a pin exists. Packaging stages its own copies.
+        shell: bash
+        run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
+      - name: Build the server bundle that packaged-layout tests import
+        run: pnpm build:server
       - run: pnpm test:electron
       - run: pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
@@ -139,6 +147,14 @@ jobs:
         run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
       - name: Prepare Electron test runtime
         run: node --input-type=commonjs -e "require('electron')"
+      - name: Stage pinned backup test fixtures
+        # Test-only: hash-pinned upstream age/restic bytes that backup tests read
+        # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
+        # where a pin exists. Packaging stages its own copies.
+        shell: bash
+        run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
+      - name: Build the server bundle that packaged-layout tests import
+        run: pnpm build:server
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3
