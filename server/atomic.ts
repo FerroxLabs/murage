@@ -7,6 +7,51 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
+// Windows refuses a rename onto an existing path while anything else holds a
+// handle to either file, and a virus scanner or the search indexer opening a
+// just-closed file for a few milliseconds is enough. It surfaces as EPERM,
+// EACCES or EBUSY from a replacement that would succeed a moment later, and
+// every caller treats a throw as a failed save. Only those codes, and only on
+// Windows, are retried: on POSIX the same codes are a real permission or mount
+// problem that a delay would hide without fixing. Worst case is ~155 ms over
+// six attempts, spent synchronously because every caller is a synchronous
+// save path — and only ever on the Windows failure path.
+const RENAME_RETRY_DELAYS_MS = [5, 10, 20, 40, 80] as const;
+const RETRYABLE_WINDOWS_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* blocking wait not allowed on this thread: retry at once */
+  }
+}
+
+/** Rename `from` over `to`, retrying only a transient Windows refusal.
+ * `rename`, `platform` and `sleep` are injectable for tests: no portable way
+ * exists to make a real filesystem produce a transient EPERM on demand. */
+export function renameWithRetry(
+  from: string,
+  to: string,
+  rename: (from: string, to: string) => void = renameSync,
+  platform: NodeJS.Platform = process.platform,
+  sleep: (ms: number) => void = sleepSync,
+): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      const delay = RENAME_RETRY_DELAYS_MS[attempt];
+      if (platform !== "win32" || typeof code !== "string" || !RETRYABLE_WINDOWS_RENAME_CODES.has(code) || delay === undefined) {
+        throw error;
+      }
+      sleep(delay);
+    }
+  }
+}
+
 export function writeFileAtomic(path: string, data: string, options: { mode?: number } = {}): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
@@ -19,7 +64,7 @@ export function writeFileAtomic(path: string, data: string, options: { mode?: nu
     fsyncSync(fd);
     closeSync(fd);
     fd = null;
-    renameSync(tmp, path);
+    renameWithRetry(tmp, path);
   } catch (e) {
     if (fd !== null) {
       try {
