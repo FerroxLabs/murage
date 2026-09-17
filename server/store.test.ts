@@ -12,7 +12,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
-import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord } from "./store.ts";
+import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord, type Message } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -1951,5 +1951,246 @@ describe("Store.reconcileInterruptedGroupGoals", () => {
       .toBe("completed");
     expect(store.messagesFor(bot.threadId).find((message) => message.id === stray.id)?.goalRun?.status)
       .toBe("working");
+  });
+});
+
+// Bounded history pages (U09; adapted from OpenMausBot PRs #1100 and #1133).
+// The oracle is the pre-existing whole-history slicing over a separately,
+// fully loaded Store; every bounded result must be indistinguishable from it.
+describe("Store bounded message pages", () => {
+  type Page = { messages: Message[]; hasMore: boolean };
+  const oraclePage = (all: Message[], limit: number, before?: string | null): Page => {
+    const end = before ? all.findIndex((message) => message.id === before) : -1;
+    const stop = end === -1 ? all.length : end;
+    const start = Math.max(0, stop - limit);
+    return { messages: all.slice(start, stop), hasMore: start > 0 };
+  };
+  const oracleWindow = (all: Message[], id: string, limit: number): Page | null => {
+    const index = all.findIndex((message) => message.id === id);
+    if (index < 0) return null;
+    const before = Math.floor((limit - 1) / 2);
+    const start = Math.max(0, Math.min(index - before, all.length - limit));
+    const stop = Math.min(all.length, start + limit);
+    return { messages: all.slice(start, stop), hasMore: start > 0 };
+  };
+  let rows = 0;
+  const countRows = async <T>(run: () => T): Promise<T> => {
+    const sqlite = await import("node:sqlite");
+    const statement = sqlite.StatementSync.prototype as unknown as {
+      all: (...args: unknown[]) => unknown[];
+      get: (...args: unknown[]) => unknown;
+    };
+    const { all, get } = statement;
+    statement.all = function (this: unknown, ...args: unknown[]) {
+      const result = all.apply(this, args);
+      rows += result.length;
+      return result;
+    };
+    statement.get = function (this: unknown, ...args: unknown[]) {
+      const result = get.apply(this, args);
+      if (result !== undefined) rows += 1;
+      return result;
+    };
+    rows = 0;
+    try { return run(); } finally {
+      statement.all = all;
+      statement.get = get;
+    }
+  };
+  const legacyRow = (threadId: string, index: number, extra: Partial<Message> = {}): Message => ({
+    id: `${threadId}-legacy-${index}`,
+    at: 1_000_000 - index * 7, // deliberately out of order: stored order wins
+    role: index % 2 ? "bot" : "user",
+    kind: "text",
+    text: `legacy ${index}`,
+    ...extra,
+  });
+  /** Mixed history: Store appends (with parentId), a fork, raw legacy rows
+   * with no parentId, a screen with pixels, and a diagnostic to sanitize. */
+  const seed = (threadId: string, size: number) => {
+    const store = new Store(selection);
+    for (let i = 0; i < size; i++) {
+      if (i % 11 === 3) mdb.insertMessage(threadId, legacyRow(threadId, i));
+      else if (i % 17 === 5) {
+        mdb.insertMessage(threadId, legacyRow(threadId, i, {
+          role: "user", kind: "activity", text: undefined,
+          tool: { name: "probe", diagnostic: { turnId: "foreign", summary: "must be sanitized" } as never },
+        }));
+      } else if (i % 13 === 7) store.appendMessage(threadId, { role: "bot", kind: "screen", png: `png-${i}`, mime: "image/png" });
+      else if (i % 19 === 9) {
+        const source = store.messagesFor(threadId).findLast((message) => message.role === "user" && message.kind === "text");
+        if (source) store.branchMessage(threadId, source.id, `fork ${i}`);
+        else store.appendMessage(threadId, { role: "user", kind: "text", text: `message ${i}` });
+      } else store.appendMessage(threadId, { role: i % 2 ? "bot" : "user", kind: "text", text: `message ${i}` });
+      // Legacy rows inserted behind Store's back require a reload to be seen.
+      if (i % 11 === 3 || i % 17 === 5) (store as unknown as { threads: Map<string, unknown> }).threads.delete(threadId);
+    }
+  };
+  const full = (threadId: string) => {
+    const oracle = new Store(selection);
+    return { all: oracle.messagesFor(threadId), leaf: oracle.activeLeaf(threadId) };
+  };
+
+  beforeEach(() => {
+    mdb.closeMessageDb();
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    mkdirSync(DATA_DIR, { recursive: true });
+  });
+
+  it("matches whole-history newest pages, cursors and windows for every size and limit, cached or not", () => {
+    for (const size of [1, 49, 50, 51, 237]) {
+      const threadId = `t-${size}`;
+      seed(threadId, size);
+      const { all, leaf } = full(threadId);
+      expect(all.length).toBe(size);
+      expect(all.some((message) => message.tool?.diagnostic)).toBe(false);
+      // The raw rows really carry a diagnostic and legacy rows, so both transforms are exercised.
+      const raw = mdb.readThread(threadId, join(DATA_DIR, "absent.json")).messages;
+      expect(raw.some((message) => message.tool?.diagnostic)).toBe(size > 5);
+      expect(raw.some((message) => message.parentId === undefined)).toBe(size > 3);
+      for (const limit of [0, 1, 50, 200]) {
+        for (const cached of [false, true]) {
+          const fresh = () => {
+            const store = new Store(selection);
+            if (cached) store.messagesFor(threadId);
+            return store;
+          };
+          const newest = fresh().messagePage(threadId, limit);
+          expect(newest).toEqual({ ...oraclePage(all, limit), activeLeafId: leaf });
+          // Walk older pages by cursor to the top: no duplicates or omissions.
+          if (limit > 0) {
+            let page = newest!;
+            const walked = [...page.messages];
+            while (page.hasMore) {
+              const next = fresh().messagePage(threadId, limit, page.messages[0].id);
+              expect(next).toEqual({ ...oraclePage(all, limit, page.messages[0].id), activeLeafId: leaf });
+              walked.unshift(...next!.messages);
+              page = next!;
+            }
+            expect(walked).toEqual(all);
+          }
+          for (const index of [0, Math.floor(size / 2), size - 1]) {
+            expect(fresh().messagePage(threadId, limit, all[index].id)).toEqual({ ...oraclePage(all, limit, all[index].id), activeLeafId: leaf });
+            expect(fresh().messageWindow(threadId, all[index].id, limit)).toEqual(oracleWindow(all, all[index].id, limit));
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps ids thread-scoped and treats unknown cursors as absent data, not the newest page", () => {
+    seed("t-a", 60);
+    seed("t-b", 5);
+    const foreign = full("t-b").all[2].id;
+    const { all, leaf } = full("t-a");
+    for (const cached of [false, true]) {
+      const store = new Store(selection);
+      if (cached) store.messagesFor("t-a");
+      expect(store.messagePage("t-a", 10, foreign)).toBeNull();
+      expect(store.messagePage("t-a", 10, "missing")).toBeNull();
+      expect(store.messageWindow("t-a", foreign, 10)).toBeNull();
+      expect(store.messageWindow("t-a", "missing", 10)).toBeNull();
+      expect(store.messagePage("t-a", 10, "")).toEqual({ ...oraclePage(all, 10), activeLeafId: leaf });
+      expect(store.messagePage("t-a", 10, null)).toEqual({ ...oraclePage(all, 10), activeLeafId: leaf });
+    }
+  });
+
+  it("chains a bounded page's legacy first row to its predecessor outside the page", () => {
+    for (let i = 0; i < 30; i++) mdb.insertMessage("legacy", legacyRow("legacy", i));
+    const { all } = full("legacy");
+    expect(all[20].parentId).toBe(all[19].id);
+    const page = new Store(selection).messagePage("legacy", 10);
+    expect(page!.messages[0].parentId).toBe(all[19].id);
+    expect(page!.messages).toEqual(all.slice(20));
+    const window = new Store(selection).messageWindow("legacy", all[15].id, 5);
+    expect(window!.messages[0]).toEqual(all[13]);
+    expect(new Store(selection).messagePage("legacy", 5, all[5].id)!.messages[0].parentId).toBeNull();
+  });
+
+  it("imports a legacy-only thread through the full path and pages it like a full load", () => {
+    const legacy = Array.from({ length: 8 }, (_, i) => legacyRow("file", i));
+    writeFileSync(join(DATA_DIR, "messages-file.json"), JSON.stringify(legacy));
+    const page = new Store(selection).messagePage("file", 3);
+    expect(page!.messages.map((message) => message.text)).toEqual(["legacy 5", "legacy 6", "legacy 7"]);
+    expect(page!.hasMore).toBe(true);
+    expect(existsSync(join(DATA_DIR, "messages-file.json"))).toBe(false);
+    expect(new Store(selection).messageWindow("file", "file-legacy-0", 3)).toEqual(oracleWindow(full("file").all, "file-legacy-0", 3));
+    const empty = new Store(selection);
+    expect(empty.messagePage("nothing", 5)).toEqual({ messages: [], hasMore: false, activeLeafId: null });
+    expect(empty.messagePage("nothing", 5, "x")).toBeNull();
+    expect(empty.messageWindow("nothing", "x", 5)).toBeNull();
+  });
+
+  it("reads only the page from SQLite and never caches a partial page as the thread", async () => {
+    seed("big", 237);
+    const { all } = full("big");
+    const read = vi.spyOn(mdb, "readThread");
+    try {
+      const store = new Store(selection);
+      read.mockClear();
+      await countRows(() => store.messagePage("big", 50));
+      expect(rows).toBeLessThanOrEqual(2 * 50 + 4);
+      await countRows(() => store.messagePage("big", 50, all[120].id));
+      expect(rows).toBeLessThanOrEqual(2 * 50 + 4);
+      await countRows(() => store.messageWindow("big", all[120].id, 50));
+      expect(rows).toBeLessThanOrEqual(2 * 50 + 4);
+      await countRows(() => store.messagePage("big", 0));
+      expect(rows).toBeLessThanOrEqual(4);
+      expect(read).not.toHaveBeenCalled();
+      // After partial reads the first full read still sees every message.
+      expect(store.messagesFor("big")).toEqual(all);
+      expect(read).toHaveBeenCalledTimes(1);
+
+      // A zero-limit page is never cached as an empty thread (#1133).
+      const zero = new Store(selection);
+      expect(zero.messagePage("big", 0)).toMatchObject({ messages: [], hasMore: true });
+      expect(zero.messagesFor("big")).toHaveLength(237);
+
+      // A newest page that is the whole thread is cached as a full load.
+      seed("short", 12);
+      const shortOracle = full("short").all;
+      const complete = new Store(selection);
+      expect(complete.messagePage("short", 50)!.hasMore).toBe(false);
+      read.mockClear();
+      expect(complete.messagesFor("short")).toEqual(shortOracle);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("keeps later mutations and restarts complete after bounded reads", () => {
+    seed("live", 120);
+    const store = new Store(selection);
+    const before = full("live").all;
+    store.messagePage("live", 10);
+    store.messageWindow("live", before[40].id, 10);
+    const appended = store.appendMessage("live", { role: "user", kind: "text", text: "after paging" });
+    const patched = store.patchMessage("live", before[3].id, { text: "patched old" });
+    const fork = store.branchMessage("live", appended.id, "forked after paging");
+    const after = store.messagesFor("live");
+    expect(after).toHaveLength(122);
+    expect(after.slice(0, 3)).toEqual(before.slice(0, 3));
+    expect(after[3]).toEqual(patched);
+    expect(after.at(-1)).toEqual(fork);
+    const restarted = new Store(selection);
+    expect(restarted.messagePage("live", 2)).toEqual({ messages: after.slice(-2), hasMore: true, activeLeafId: fork!.id });
+    expect(restarted.messagesFor("live")).toEqual(after);
+    expect(new Store(selection).messagePage("live", 5, before[3].id)!.messages).toEqual(after.slice(0, 3));
+    // Screen pixels survive bounded reads for later slimming and image hydration.
+    const screen = after.find((message) => message.kind === "screen" && message.png);
+    if (screen) expect(new Store(selection).messageWindow("live", screen.id, 1)!.messages[0].png).toBe(screen.png);
+  });
+
+  it("returns nothing for a deleted thread after bounded reads", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    for (let i = 0; i < 20; i++) store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `m${i}` });
+    const oldThread = bot.threadId;
+    expect(new Store(selection).messagePage(oldThread, 5)!.messages).toHaveLength(5);
+    store.deleteBot(bot.id);
+    const after = new Store(selection);
+    expect(after.messagePage(oldThread, 5)).toEqual({ messages: [], hasMore: false, activeLeafId: null });
+    expect(after.messageWindow(oldThread, "anything", 5)).toBeNull();
   });
 });

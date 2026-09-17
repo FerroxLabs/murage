@@ -1386,23 +1386,85 @@ export class Store {
   }
 
   private thread(threadId: string): ThreadState {
-    let t = this.threads.get(threadId);
+    const t = this.threads.get(threadId);
     if (t) return t;
     // SQLite is the source of truth; a thread with no rows imports its
     // legacy messages-<threadId>.json once, inside readThread
-    const { messages: storedMessages, activeLeafId: storedLeaf } = mdb.readThread(threadId, messagesFile(threadId));
-    const messages = storedMessages.map(sanitizeMessageDiagnostic);
-    let activeLeafId = storedLeaf;
-    // legacy rows carry no parentId — chain them in array order
-    let prev: string | null = null;
+    return this.cacheThread(threadId, mdb.readThread(threadId, messagesFile(threadId)));
+  }
+
+  /** The read-side transform every loaded row receives: diagnostic
+   * sanitization, and legacy rows (no parentId) chained to the row before
+   * them in stored order. `previous` seeds that chain for a bounded slice. */
+  private loadedMessages(stored: Message[], previous: Message | null = null): Message[] {
+    const messages = stored.map(sanitizeMessageDiagnostic);
+    let prev: string | null = previous?.id ?? null;
     for (const m of messages) {
       if (m.parentId === undefined) m.parentId = prev;
       prev = m.id;
     }
-    if (!activeLeafId) activeLeafId = messages.at(-1)?.id ?? null;
-    t = { messages, activeLeafId };
+    return messages;
+  }
+
+  /** Cache a COMPLETE thread. Never call this with a bounded page that may
+   * omit older rows: every later messagesFor() would treat it as the whole
+   * transcript. */
+  private cacheThread(threadId: string, rows: mdb.ThreadRows): ThreadState {
+    const messages = this.loadedMessages(rows.messages);
+    const activeLeafId = rows.activeLeafId || (messages.at(-1)?.id ?? null);
+    const t = { messages, activeLeafId };
     this.threads.set(threadId, t);
     return t;
+  }
+
+  /** A display page of `limit` messages ending at the newest message, or
+   * just before `before`. Same order, hasMore and active leaf as slicing the
+   * full history, but an uncached thread reads only the page from SQLite
+   * instead of materializing its whole transcript. A bounded result is never
+   * cached; a newest page that turns out to be the entire thread is cached as
+   * a full load. Null only when a non-empty `before` is not in this thread. */
+  messagePage(
+    threadId: string,
+    limit: number,
+    before?: string | null,
+  ): { messages: Message[]; hasMore: boolean; activeLeafId: string | null } | null {
+    if (!this.threads.has(threadId)) {
+      const slice = before ? mdb.readThreadBefore(threadId, before, limit) : mdb.readThreadNewest(threadId, limit);
+      if (slice && (before || slice.hasMore || limit === 0)) {
+        return {
+          messages: this.loadedMessages(slice.messages, slice.previous),
+          hasMore: slice.hasMore,
+          activeLeafId: mdb.readActiveLeafOrNewest(threadId),
+        };
+      }
+      if (slice) this.cacheThread(threadId, { messages: slice.messages, activeLeafId: mdb.readActiveLeafOrNewest(threadId) });
+      else if (before && mdb.threadHasRows(threadId)) return null;
+      // No rows yet: the full path performs any one-time legacy import.
+    }
+    const t = this.thread(threadId);
+    const end = before ? t.messages.findIndex((message) => message.id === before) : -1;
+    if (before && end === -1) return null;
+    const stop = end === -1 ? t.messages.length : end;
+    const start = Math.max(0, stop - limit);
+    return { messages: t.messages.slice(start, stop), hasMore: start > 0, activeLeafId: t.activeLeafId };
+  }
+
+  /** A `limit`-message window containing `messageId`, positioned like the
+   * whole-history formula, read from SQLite without hydrating an uncached
+   * thread. Null when the message is not in this thread. Never cached. */
+  messageWindow(threadId: string, messageId: string, limit: number): { messages: Message[]; hasMore: boolean } | null {
+    if (!this.threads.has(threadId)) {
+      const slice = mdb.readThreadAround(threadId, messageId, limit);
+      if (slice) return { messages: this.loadedMessages(slice.messages, slice.previous), hasMore: slice.hasMore };
+      if (mdb.threadHasRows(threadId)) return null;
+    }
+    const all = this.thread(threadId).messages;
+    const index = all.findIndex((message) => message.id === messageId);
+    if (index < 0) return null;
+    const leading = Math.floor((limit - 1) / 2);
+    const start = Math.max(0, Math.min(index - leading, all.length - limit));
+    const stop = Math.min(all.length, start + limit);
+    return { messages: all.slice(start, stop), hasMore: start > 0 };
   }
 
   messagesFor(threadId: string): Message[] {

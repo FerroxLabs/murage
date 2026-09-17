@@ -37,6 +37,99 @@ export function readThread(threadId: string, legacyFile: string): ThreadRows {
   return importLegacy(threadId, legacyFile);
 }
 
+/** A bounded, chronological slice of one thread's rows, untransformed.
+ * `previous` is the row immediately before the first returned row (when the
+ * slice is non-empty and one exists), so a reader can chain legacy rows that
+ * carry no parentId exactly as a full load would. */
+export interface ThreadSlice {
+  messages: Message[];
+  previous: Message | null;
+  /** Rows exist before the first returned row. */
+  hasMore: boolean;
+}
+
+// Reads are served by the messages_thread index, whose entries are ordered by
+// rowid within a thread: the same order readThread() returns. Only the rows
+// named by LIMIT are materialized; no schema or index change is needed.
+const rowsDescending = (threadId: string, limit: number, beforeRowid?: number) =>
+  (beforeRowid === undefined
+    ? db().prepare("SELECT json FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT ?").all(threadId, limit)
+    : db().prepare("SELECT json FROM messages WHERE thread_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?").all(threadId, beforeRowid, limit)
+  ) as Array<{ json: string }>;
+
+function messageRowid(threadId: string, messageId: string): number | null {
+  const row = db().prepare("SELECT rowid AS position FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId) as
+    | { position: number }
+    | undefined;
+  return row ? row.position : null;
+}
+
+/** `limit` rows ending just before `rowid` (or at the newest row). */
+function sliceEndingBefore(threadId: string, limit: number, beforeRowid?: number): ThreadSlice & { empty: boolean } {
+  const rows = rowsDescending(threadId, limit + 1, beforeRowid);
+  const hasMore = rows.length > limit;
+  const kept = rows.slice(0, limit).reverse().map(rowToMessage);
+  return { messages: kept, previous: hasMore && kept.length ? rowToMessage(rows[limit]) : null, hasMore, empty: rows.length === 0 };
+}
+
+export function threadHasRows(threadId: string): boolean {
+  return db().prepare("SELECT 1 AS present FROM messages WHERE thread_id = ? LIMIT 1").get(threadId) !== undefined;
+}
+
+/** The stored branch head, or the newest row's id when none is stored —
+ * the same default Store applies after a full load. */
+export function readActiveLeafOrNewest(threadId: string): string | null {
+  const state = db().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id = ?").get(threadId) as
+    | { active_leaf_id: string | null }
+    | undefined;
+  if (state?.active_leaf_id) return state.active_leaf_id;
+  const newest = db().prepare("SELECT id FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId) as
+    | { id: string }
+    | undefined;
+  return newest?.id ?? null;
+}
+
+/** Newest `limit` rows. Null when the thread has no rows, so the caller can
+ * take the full path (which performs any one-time legacy import). */
+export function readThreadNewest(threadId: string, limit: number): ThreadSlice | null {
+  const { empty, ...slice } = sliceEndingBefore(threadId, limit);
+  return empty ? null : slice;
+}
+
+/** `limit` rows before `messageId` in this thread. Null when that id is not a
+ * row of this thread (including a thread with no rows). */
+export function readThreadBefore(threadId: string, messageId: string, limit: number): ThreadSlice | null {
+  const anchor = messageRowid(threadId, messageId);
+  if (anchor === null) return null;
+  const { empty: _empty, ...slice } = sliceEndingBefore(threadId, limit, anchor);
+  return slice;
+}
+
+/** A `limit`-row window containing `messageId`, positioned exactly as the
+ * whole-array formula (anchor slightly after centre, clamped to either end).
+ * Reads at most limit+1 older and limit newer rows. Null for a foreign or
+ * unknown id. */
+export function readThreadAround(threadId: string, messageId: string, limit: number): ThreadSlice | null {
+  const anchor = messageRowid(threadId, messageId);
+  if (anchor === null) return null;
+  // The whole-array start is index+1 for a zero limit: never the first row.
+  if (limit === 0) return { messages: [], previous: null, hasMore: true };
+  const older = rowsDescending(threadId, limit + 1, anchor);
+  const newer = db()
+    .prepare("SELECT json FROM messages WHERE thread_id = ? AND rowid >= ? ORDER BY rowid LIMIT ?")
+    .all(threadId, anchor, limit) as Array<{ json: string }>;
+  const leading = Math.floor((limit - 1) / 2);
+  // start = max(0, min(index - leading, length - limit)); expressed relative
+  // to the anchor, `newer.length` (capped at limit) is sufficient.
+  const included = Math.min(older.length, Math.max(0, -Math.min(-leading, newer.length - limit)));
+  const messages = [...older.slice(0, included).reverse(), ...newer.slice(0, limit - included)].map(rowToMessage);
+  return {
+    messages,
+    previous: older.length > included && messages.length ? rowToMessage(older[included]) : null,
+    hasMore: older.length > included,
+  };
+}
+
 function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   let messages: Message[] = [];
   let activeLeafId: string | null = null;
