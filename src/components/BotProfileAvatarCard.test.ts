@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from "vitest";
 globalThis.window ??= { location: { href: "http://localhost/" } } as unknown as Window & typeof globalThis;
 
 import { AVATAR_COPY, avatarGeneratorPlan, type AvatarGeneratorFacts } from "@/lib/avatar-generation";
-import { AvatarGenerateSection, type AvatarGenerateSectionProps } from "./BotProfileAvatarCard";
+import { AVATAR_IMAGE_TYPE_ERROR, AVATAR_ONE_FILE_ERROR, avatarDropHandlers, type FileDropEvent } from "@/lib/file-drop-zone";
+import { AvatarDropZone, AvatarGenerateSection, type AvatarGenerateSectionProps } from "./BotProfileAvatarCard";
 
 const facts = (over: Partial<AvatarGeneratorFacts> = {}): AvatarGeneratorFacts => ({
   flux: false,
@@ -103,5 +104,92 @@ describe("the panel never renders a secret", () => {
     });
     expect(typed).toContain("sk-typed-just-now");
     expect(() => expect(typed).not.toMatch(/value="[^"]/)).toThrow();
+  });
+});
+
+describe("dropping an image onto the avatar", () => {
+  const png = () => new File([new Uint8Array([137, 80, 78, 71])], "portrait.png", { type: "image/png" });
+  const text = () => new File(["hello"], "notes.txt", { type: "text/plain" });
+  const event = (files: File[], over: Partial<FileDropEvent> = {}) => {
+    const preventDefault = vi.fn();
+    const dataTransfer = { types: ["Files"], files, dropEffect: "none" };
+    return { preventDefault, dataTransfer, currentTarget: { contains: () => false }, relatedTarget: null, ...over };
+  };
+  const rig = (disabled = false) => {
+    const calls = { setDragActive: vi.fn(), onFile: vi.fn(), onError: vi.fn() };
+    return { calls, handlers: avatarDropHandlers({ disabled, ...calls }) };
+  };
+
+  it("hands a dropped PNG to the same upload the chooser uses, and stops the window navigating to it", () => {
+    const { calls, handlers } = rig();
+    const file = png();
+    const drop = event([file]);
+    handlers.onDrop(drop);
+    expect(drop.preventDefault).toHaveBeenCalled();
+    expect(calls.onFile).toHaveBeenCalledWith(file);
+    expect(calls.onError).not.toHaveBeenCalled();
+    expect(calls.setDragActive).toHaveBeenLastCalledWith(false);
+  });
+
+  it("refuses a non-image with the chooser's own words and uploads nothing", () => {
+    const { calls, handlers } = rig();
+    handlers.onDrop(event([text()]));
+    expect(calls.onFile).not.toHaveBeenCalled();
+    expect(calls.onError).toHaveBeenCalledWith(AVATAR_IMAGE_TYPE_ERROR);
+    expect(AVATAR_IMAGE_TYPE_ERROR).toBe("Choose a PNG, JPEG, GIF, or WebP image");
+  });
+
+  it("refuses several files at once rather than guessing which one was meant", () => {
+    const { calls, handlers } = rig();
+    handlers.onDrop(event([png(), png()]));
+    expect(calls.onFile).not.toHaveBeenCalled();
+    expect(calls.onError).toHaveBeenCalledWith(AVATAR_ONE_FILE_ERROR);
+  });
+
+  it("shows the drop affordance on dragover and clears it when the drag leaves the zone", () => {
+    const { calls, handlers } = rig();
+    const over = event([]);
+    handlers.onDragOver(over);
+    expect(over.preventDefault).toHaveBeenCalled();
+    expect(over.dataTransfer?.dropEffect).toBe("copy");
+    expect(calls.setDragActive).toHaveBeenLastCalledWith(true);
+    // Moving onto the avatar inside the zone is not leaving it.
+    handlers.onDragLeave(event([], { currentTarget: { contains: () => true }, relatedTarget: {} as EventTarget }));
+    expect(calls.setDragActive).toHaveBeenLastCalledWith(true);
+    handlers.onDragLeave(event([]));
+    expect(calls.setDragActive).toHaveBeenLastCalledWith(false);
+  });
+
+  it("ignores drags that carry no files, such as selected text", () => {
+    const { calls, handlers } = rig();
+    const over = event([], { dataTransfer: { types: ["text/plain"], files: [], dropEffect: "none" } });
+    handlers.onDragOver(over);
+    handlers.onDrop(over);
+    expect(over.preventDefault).not.toHaveBeenCalled();
+    expect(calls.setDragActive).not.toHaveBeenCalled();
+    expect(calls.onFile).not.toHaveBeenCalled();
+  });
+
+  it("takes nothing while an upload or generation is already running", () => {
+    const { calls, handlers } = rig(true);
+    const over = event([png()]);
+    handlers.onDragOver(over);
+    expect(over.dataTransfer?.dropEffect).toBe("none");
+    expect(calls.setDragActive).toHaveBeenLastCalledWith(false);
+    handlers.onDrop(event([png()]));
+    expect(calls.onFile).not.toHaveBeenCalled();
+  });
+
+  it("renders the affordance only while a file is over the zone, and marks the zone for the composer", () => {
+    const zone = (active: boolean) =>
+      renderToStaticMarkup(createElement(AvatarDropZone, { active, handlers: rig().handlers, children: createElement("span", null, "avatar") }));
+    const idle = zone(false);
+    const hovering = zone(true);
+    expect(idle).toContain('data-file-drop-zone="avatar"');
+    expect(idle).not.toContain("Drop image to set avatar");
+    expect(idle).toContain("border-transparent");
+    expect(hovering).toContain("Drop image to set avatar");
+    expect(hovering).toContain("border-accent");
+    expect(hovering).toContain('data-drag-active="true"');
   });
 });

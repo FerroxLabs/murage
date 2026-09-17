@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
 
@@ -6,6 +6,7 @@ import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { imageAttachmentFromFile } from "@/lib/composer-attachments";
 import { AVATAR_COPY, avatarGeneratorPlan, type AvatarGeneratorPlan } from "@/lib/avatar-generation";
 import { cn } from "@/lib/cn";
+import { AVATAR_IMAGE_TYPE_ERROR, FILE_DROP_ZONE_ATTRIBUTE, avatarDropHandlers } from "@/lib/file-drop-zone";
 import {
   PICKABLE_STATES,
   EMBER_COLORS,
@@ -51,6 +52,7 @@ export function BotProfileAvatarCard({
   const [generating, setGenerating] = useState(false);
   useBotSettingsDraft("Appearance", Boolean(imageKey.trim() || direction.trim()), savingKey || uploading || generating);
   const [error, setError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const crop = bot.avatarCrop ?? "mascot";
   const cropRef = useRef(crop);
   cropRef.current = crop;
@@ -71,7 +73,7 @@ export function BotProfileAvatarCard({
     setError(null);
     try {
       const saved = await imageAttachmentFromFile(file);
-      if (!saved) throw new Error("Choose a PNG, JPEG, GIF, or WebP image");
+      if (!saved) throw new Error(AVATAR_IMAGE_TYPE_ERROR);
       const avatarUrl = botAvatarUrlFromStoredPath(saved.path);
       if (!avatarUrl) throw new Error("The uploaded image could not be used as an avatar");
       const latestCrop = cropRef.current;
@@ -83,6 +85,13 @@ export function BotProfileAvatarCard({
       if (fileRef.current) fileRef.current.value = "";
     }
   };
+
+  const dropHandlers = avatarDropHandlers({
+    disabled: uploading || generating,
+    setDragActive,
+    onFile: (file) => void upload(file),
+    onError: setError,
+  });
 
   const removeImage = () => {
     setError(null);
@@ -156,7 +165,7 @@ export function BotProfileAvatarCard({
       </div>
 
       <div className="p-3">
-        <div className="flex justify-center py-3">
+        <AvatarDropZone active={dragActive} handlers={dropHandlers}>
           <BotAvatar
             bot={bot}
             state={activeState}
@@ -164,7 +173,7 @@ export function BotProfileAvatarCard({
             motion={mascotMotion?.kind ?? "none"}
             motionKey={mascotMotion?.nonce ?? 0}
           />
-        </div>
+        </AvatarDropZone>
 
         <div className="mt-2 flex gap-2">
           <input
@@ -196,7 +205,7 @@ export function BotProfileAvatarCard({
             </button>
           )}
         </div>
-        <div className="mt-1.5 text-[11.5px] text-ink-secondary">PNG, JPEG, GIF, or WebP · up to 10 MB</div>
+        <div className="mt-1.5 text-[11.5px] text-ink-secondary">PNG, JPEG, GIF, or WebP · up to 10 MB · or drop one on the avatar</div>
 
         <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
           Shape
@@ -283,6 +292,46 @@ export function BotProfileAvatarCard({
 
         {error && <div role="alert" className="mt-3 text-[12px] text-danger">{error}</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The avatar preview doubles as a drop target for an image file. Pointer-only
+ * convenience: the Upload image button stays the keyboard and screen-reader
+ * path, so the zone adds no role or tab stop of its own.
+ */
+export function AvatarDropZone({
+  active,
+  handlers,
+  children,
+}: {
+  active: boolean;
+  handlers: ReturnType<typeof avatarDropHandlers>;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      {...{ [FILE_DROP_ZONE_ATTRIBUTE]: "avatar" }}
+      data-drag-active={active ? "true" : undefined}
+      onDragEnter={handlers.onDragEnter}
+      onDragOver={handlers.onDragOver}
+      onDragLeave={handlers.onDragLeave}
+      onDrop={handlers.onDrop}
+      className={cn(
+        "relative flex justify-center rounded-xl border border-dashed py-3 transition-colors",
+        active ? "border-accent bg-accent/5" : "border-transparent",
+      )}
+    >
+      {children}
+      {active && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-1.5 text-center text-[12px] font-medium text-ink"
+        >
+          Drop image to set avatar
+        </div>
+      )}
     </div>
   );
 }

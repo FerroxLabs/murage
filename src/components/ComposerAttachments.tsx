@@ -14,6 +14,7 @@ import {
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
+import { insideFileDropZone } from "@/lib/file-drop-zone";
 import { AttachmentPreviewDialog, previewImage, type PreviewImage } from "./AttachmentPreview";
 
 /** Electron 32 removed File.path — only the preload can name a file. */
@@ -66,13 +67,19 @@ export function ComposerAttachments({
     // without preventDefault the window navigates to the dropped file and
     // the app is simply gone
     const onOver = (e: DragEvent) => {
-      if (carriesFiles(e)) e.preventDefault();
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      // Over a region that takes the file itself (a bot's avatar), the
+      // attach overlay would promise the wrong thing.
+      setDragging(!insideFileDropZone(e.target));
     };
     const onDrop = async (e: DragEvent) => {
       if (!carriesFiles(e)) return;
       e.preventDefault();
       depth.current = 0;
       setDragging(false);
+      // That region's own handler already took this drop.
+      if (insideFileDropZone(e.target)) return;
       const files = Array.from(e.dataTransfer?.files ?? []);
       // Same intake the attach button uses: a dropped file and a picked one
       // must not appear in a different order.
