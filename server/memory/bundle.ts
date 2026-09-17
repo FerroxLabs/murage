@@ -168,7 +168,12 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // Reserve recall space while letting checkpoints use the unused pin share.
   // Measure the same framed representation as final delivery, including evidence
   // metadata. A second pass may use recall space left empty after retrieval.
-  const checkpointCeiling = Math.min(budget,384+Math.max(512,tokens(render(pinned))));
+  // The fixed frame (preamble, tags, request boundary) is paid once by every
+  // non-empty bundle and is not a record's share: the ceiling sits above it,
+  // or a preamble longer than the share would defer every checkpoint behind
+  // recall (p09.test.ts, group-member-checkpoint-roll-api.test.ts).
+  const frame = tokens([MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_CLOSE].join("\n"));
+  const checkpointCeiling = Math.min(budget,Math.max(frame+896,tokens(render(pinned))+384));
   const deferredCheckpoints: BundleRecord[] = [];
   const checkpoints = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=0 AND kind='checkpoint' AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT 10").all(JSON.stringify(access.scopeIds));
   for (const row of checkpoints) {
