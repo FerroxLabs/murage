@@ -15,7 +15,7 @@ import {
   type GroupDefaultResponder,
   type Message,
 } from "@/state/store";
-import { BotAvatar, EmberAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
@@ -1378,8 +1378,8 @@ export function GroupView({ group }: { group: Group }) {
           {(speaker || presenceVisible) && (
             <TurnPresence
               avatar={
-                <EmberAvatar
-                  color={presenceSpeaker?.color ?? "orange"}
+                <BotAvatar
+                  bot={presenceSpeaker ?? { color: "orange" }}
                   state={toolInFlight ? "working" : "thinking"}
                   size={36}
                   forward={false}
