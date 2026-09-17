@@ -107,7 +107,15 @@ const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString
 // Markers count only on the prompt's last line (the current request): the
 // harness replays earlier messages into a fresh process's prompt, and an old
 // marker there must not re-trigger a fixture on a later, ordinary turn.
-const fixtureRequested = (text: string, marker: string) => (text.trimEnd().split("\n").pop() ?? "").includes(marker);
+// A room turn's prompt is the room transcript followed by the harness's
+// "(Reply to the conversation above as NAME.)" trailer, so its current request
+// is the last transcript line before that trailer.
+const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
+const fixtureRequested = (text: string, marker: string) => {
+  const lines = text.trimEnd().split("\n");
+  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
+  return (lines.pop() ?? "").includes(marker);
+};
 
 const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
