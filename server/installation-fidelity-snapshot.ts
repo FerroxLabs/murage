@@ -5,7 +5,7 @@ import { backupSelectionSchema, type BackupSelection, type BackupCoverage } from
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
 import { InstallationSnapshotError, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import type { StateSnapshotManifest } from "./installation-state-snapshot.ts";
-const excluded = new Set(["native","credentials.bin","companion","connection-profiles","memory-index","models","logs","tmp","browser-profiles","browser-engine","door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm"]);
+const excluded = new Set(["messages.pre-memory-v2.db","native","credentials.bin","companion","connection-profiles","memory-index","models","logs","tmp","browser-profiles","browser-engine","door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm"]);
 const applicationRoots=new Set(["config.json","bots.json","groups.json","routines.json","calendar-calls.json","webhooks.json","delegations.json","delegation-receipts.json","section-contexts.json","browser-cleanups.json","attachments","artifact-files","workspaces","skills","skill-state","checkpoints","events","channels","startup-background.json","memory-index.db"]);
 function fail(code:string):never{throw new InstallationSnapshotError(code);}
 const same=(a:Stats,b:Stats)=>a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
@@ -26,7 +26,7 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
   for(const name of roots){
     if(["messages.db-wal","messages.db-shm"].includes(name)||memorySidecar(name))continue;
     if(included.has(name)||applicationRoots.has(name))components.push({path:name,status:"included",reason:name==="memory-index.db"?"Consistent memory search projection retained encrypted only; rebuild from paused messages.db authority after review":name==="channels"?"Channel bindings and receipt history retained encrypted only; re-pairing required before use":name==="startup-background.json"?"Startup preferences retained encrypted only; automatic startup is not restored":"Application data preserved in encrypted fidelity payload"});
-    else if(excluded.has(name))components.push({path:name,status:"excluded",reason:["door-identity","folder-trust.json"].includes(name)?"Host identity and folder execution authority require fresh trust; not restored":name.startsWith("skill-index.db")?"Derived skill search index rebuilt from the skill library; not restored":"Outside application-data capture; native/credential/derived state is not restored"});
+    else if(excluded.has(name))components.push({path:name,status:"excluded",reason:name==="messages.pre-memory-v2.db"?"Pre-upgrade copy of messages.db kept for manual 0.1.x rollback only; the live messages.db is the backed-up authority":["door-identity","folder-trust.json"].includes(name)?"Host identity and folder execution authority require fresh trust; not restored":name.startsWith("skill-index.db")?"Derived skill search index rebuilt from the skill library; not restored":"Outside application-data capture; native/credential/derived state is not restored"});
     else fail("BACKUP_UNCLASSIFIED_COMPONENT");
   }
   // A skipped link inside a selected directory is not a complete capture.

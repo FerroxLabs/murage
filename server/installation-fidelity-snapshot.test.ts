@@ -51,3 +51,15 @@ it.each(["symlink","hardlink","corrupt","orphan-wal"])("refuses unsafe memory pr
     expect(readFileSync(outside,"utf8")).toBe("outside preserved");
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
+it("keeps the pre-memory-v2 snapshot out of state and fidelity backups without failing the sweep",async()=>{
+  const f=backupFixture();writeFileSync(join(f.data,"messages.pre-memory-v2.db"),"pre-upgrade copy fixture");
+  try{await withOfflineInstallation(f.data,async installation=>{
+    const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+    expect(stage.manifest.files.some(file=>file.path==="messages.pre-memory-v2.db")).toBe(false);
+    expect(stage.manifest.omitted.some(item=>item.path==="messages.pre-memory-v2.db")).toBe(true);
+    const inventory=await inventoryFidelity(installation,stage,selection);
+    expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"messages.pre-memory-v2.db",status:"excluded"}));
+    expect(inventory.sources.some(file=>file.path==="messages.pre-memory-v2.db")).toBe(false);
+    expect(existsSync(join(f.data,"messages.pre-memory-v2.db"))).toBe(true);
+  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});

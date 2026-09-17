@@ -2,7 +2,7 @@ import { chmodSync, closeSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DATA_DIR } from "./config.ts";
-import { migrateMemorySchema } from "./memory/schema.ts";
+import { MEMORY_PRE_V2_SNAPSHOT, migrateMemorySchema } from "./memory/schema.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeMessageTables } from "./message-tables.ts";
@@ -22,7 +22,7 @@ export function database(): DatabaseSync {
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     initializeMessageTables(db);
-    migrateMemorySchema(db, freshInstallation ? "active" : "off");
+    migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT) });
     initializeInbox(db);
     initializeArtifacts(db);
   } catch (error) { db.close(); throw error; }

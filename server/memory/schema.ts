@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_MEMORY_LEARNING, memoryLearningSchema } from "./learning-policy.ts";
 
@@ -157,11 +158,37 @@ export function validateMemorySchema(db: DatabaseSync): Set<string> {
   return new Set(memoryRows.map(row => row.name));
 }
 
-export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "active" = "off") {
+/** Consistent single-file copy of a v1 messages.db, taken before the one-way
+ * v1 -> v2 memory migration so a 0.1.53 install can be restored by hand.
+ * Lives beside messages.db in the data dir; backup sweeps classify it as
+ * excluded so it is never archived twice or restored as live data. */
+export const MEMORY_PRE_V2_SNAPSHOT = "messages.pre-memory-v2.db";
+
+export interface MigrateMemoryOptions {
+  /** Where to write the pre-migration copy. Omitted: no copy (restore/merge paths, tests). */
+  snapshotPath?: string;
+}
+
+function snapshotBeforeMigration(db: DatabaseSync, path: string) {
+  if (existsSync(path)) return; // an earlier attempt already preserved the v1 file
+  if (db.isTransaction) throw new Error("MEMORY_SCHEMA_SNAPSHOT_FAILED: VACUUM INTO cannot run inside a transaction");
+  try {
+    db.prepare("VACUUM INTO ?").run(path);
+    try { chmodSync(path, 0o600); } catch { /* matches messages.db handling on platforms without POSIX modes */ }
+  } catch (error) {
+    try { rmSync(path, { force: true }); } catch { /* partial output already absent */ }
+    const reason = error instanceof Error ? error.message : String(error);
+    throw Object.assign(new Error(`MEMORY_SCHEMA_SNAPSHOT_FAILED: ${reason}`), { code: "MEMORY_SCHEMA_SNAPSHOT_FAILED", cause: error });
+  }
+}
+
+export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "active" = "off", options: MigrateMemoryOptions = {}) {
   const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get();
   if (exists) {
     validateMemorySchema(db);
     if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version === MEMORY_SCHEMA_VERSION) return;
+    // Fail closed: without the copy the upgrade would be irreversible for a 0.1.53 reinstall.
+    if (options.snapshotPath) snapshotBeforeMigration(db, options.snapshotPath);
   }
   db.exec("BEGIN IMMEDIATE");
   try {
