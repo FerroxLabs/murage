@@ -56,3 +56,14 @@ companion/.ijfw/
 # Generated backup qualification evidence stays private.
 /native/backup-age/real-main-qualification/preflight-receipts/
 /native/backup-age/real-main-qualification/native-receipts/
+
+# Private agent planning, handoffs and session state stay outside public Git.
+.planning/
+.ijfw/
+**/.ijfw/
+ijfw/memory/
+ijfw/sessions/
+HANDOFF*.md
+*-EXECUTION.md
+docs/plans/**
+!docs/plans/0153-RELEASE-NOTES.md
