@@ -153,6 +153,78 @@ They do not imply import of a complete upstream release.
     Murage: src/state/store.tsx, src/components/Composer.tsx
 
 --------------------------------------------------------------------------
+Upstream adaptations for the next Murage version (unreleased)
+--------------------------------------------------------------------------
+
+The following changes selectively adapt OpenMausBot work under Apache-2.0,
+reviewed at the exact upstream commits named. None is a wholesale import.
+
+  OpenMausBot PR #1097 (Windows transient rename retry)
+    commit e32c64b903f6c59a541a046724849c6c7712dac2
+    Bounded retry of EPERM/EACCES/EBUSY when atomically replacing a file,
+    limited to Windows; other platforms still fail at once. Temporary-file
+    permissions, fsync and cleanup are unchanged.
+    Murage: server/atomic.ts
+
+  OpenMausBot PR #1083 (renewable stream idle timeout)
+    commit f4a87d2470a1900abd809c3f221d7330e8688792
+    Renewable idle timeout for streamed OpenAI-compatible chat completions,
+    adapted so only provider progress renews it, idle expiry is reported as a
+    failed turn rather than a user Stop, and Murage's stream terminal contract
+    is unchanged.
+    Murage: server/drivers/openai-chat.ts, server/drivers/openai-compat.ts
+
+  OpenMausBot PR #1343 (Windows npm/npx launcher resolution)
+    commit 1879ffdabb97db0202c53ce793fb907fd9dd7915
+    Resolve npm's own npm.cmd/npx.cmd to their Node CLI entry, bound to the
+    launcher's own name, without a shell.
+    Murage: server/env-path.ts
+
+  OpenMausBot PR #1344 (repository-root SKILL.md links)
+    commit 3621c6fe63d742352d901e03b420a2fb59eaaa9c
+    Accept a GitHub blob link to a SKILL.md at the repository root; the file
+    itself must be named SKILL.md. Host validation is unchanged.
+    Murage: server/skill-fetch.ts
+
+  OpenMausBot PR #1099 (pnpm target architectures)
+    commit dc7d05e59d8a36a69e6c2b17cc3c3ce9954c103b
+    Declare supportedArchitectures in pnpm-workspace.yaml instead of the
+    package.json "pnpm" field. Lockfile unchanged.
+    Murage: package.json, pnpm-workspace.yaml, scripts/prepare-cua.mjs
+
+  OpenMausBot PR #1198 (with the Stop retry guard from PR #1222)
+    commits 2741aa2ea4eaf05d07b0e6cc669b9bbb7ebffe39,
+            11808f1effb7f77d6e713ba03c9e5b3d0c0408b2
+    Stop remains reachable across a turn's retry backoff and relaunch setup,
+    adapted to Murage's cancelled Stop outcome and owned process teardown.
+    Murage: server/drivers/claude.ts, server/drivers/codex.ts
+
+  OpenMausBot PR #1220 and PR #1222
+    commits 1bd4059c102048ad08b07933777d92bc22116b45,
+            11808f1effb7f77d6e713ba03c9e5b3d0c0408b2
+    Honest Codex app-server exit reporting and crash recovery, adapted to
+    relaunch only crashes that precede turn/start, to confirm owned process
+    group teardown before relaunching, and to keep Murage's cancelled Stop.
+    Murage: server/drivers/codex.ts, server/testing/fake-codex-app-server.ts
+
+  OpenMausBot PR #1324 (same-boot Windows PID reuse concept)
+    commit 7c82592ff8b1e10158cc52a40e4aeb89c0601171
+    Guard installation-lease liveness against a reused Windows PID. Murage
+    binds an exact published process-creation identity queried through its
+    existing Windows PowerShell invocation, fails closed on any unavailable
+    or ambiguous probe, and does not use upstream's WMIC query or wall-clock
+    creation-time comparison.
+    Murage: electron/data-dir-lease.mjs
+
+  OpenMausBot PRs #1100 and #1133 (bounded history reads and complete-cache fix)
+    commits 31c18551347106cdbd463360b5161e7b8a3f19f8,
+            f4d562c2d811b9734ddbe8a2873a4cb94f51b747
+    Read display pages of uncached threads in SQL and cache only complete
+    threads. Adapted to Murage's store transforms and extended to older
+    pages and anchored windows; route integration in server/index.ts.
+    Murage: server/message-db.ts, server/store.ts, server/index.ts
+
+--------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,
 each retaining its own license and notices. See the LICENSE and NOTICE files
