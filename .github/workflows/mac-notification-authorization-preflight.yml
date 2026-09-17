@@ -38,8 +38,8 @@ jobs:
           node scripts/build-notification-authorization.mjs
           cp dist-native/notification-authorization/arm64/build.json "$RUNNER_TEMP/notification-auth-evidence/arm64-build.json"
           cp dist-native/notification-authorization/x64/build.json "$RUNNER_TEMP/notification-auth-evidence/x64-build.json"
-          lipo -verify_arch arm64 dist-native/notification-authorization/arm64/notification-authorization.node
-          lipo -verify_arch x86_64 dist-native/notification-authorization/x64/notification-authorization.node
+          lipo dist-native/notification-authorization/arm64/notification-authorization.node -verify_arch arm64
+          lipo dist-native/notification-authorization/x64/notification-authorization.node -verify_arch x86_64
       - name: Load arm64 exports without invoking notification APIs
         run: |
           set -euo pipefail

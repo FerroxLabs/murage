@@ -16,7 +16,7 @@ export function buildNotificationAuthorization({platform=process.platform,exec=e
  for(const [arch,target] of [["arm64","arm64"],["x64","x86_64"]]){
   const directory=path.join(outputRoot,arch);mkdirSync(directory,{recursive:true});const output=path.join(directory,"notification-authorization.node");
   exec("/usr/bin/xcrun",["clang++","-std=c++17","-fobjc-arc","-fblocks","-DNAPI_VERSION=9","-mmacosx-version-min=12.0","-arch",target,"-bundle","-undefined","dynamic_lookup","-I",headerDirectory,"-framework","Foundation","-framework","UserNotifications",source,"-o",output],{timeout:120000,stdio:"inherit"});
-  exec("/usr/bin/lipo",["-verify_arch",target,output],{timeout:5000,stdio:"inherit"});
+  exec("/usr/bin/lipo",[output,"-verify_arch",target],{timeout:5000,stdio:"inherit"});
   const receipt={version:1,target:"darwin-"+arch,napiVersion:9,nodeHeadersVersion:parts.join("."),headerSha256:hashes,sourceSha256,sha256:createHash("sha256").update(readFileSync(output)).digest("hex")};
   writeFileSync(path.join(directory,"build.json"),JSON.stringify(receipt,null,2)+"\n");outputs.push(receipt);
  }
