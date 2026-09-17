@@ -59,10 +59,35 @@ describe("looksSensitive", () => {
     "cp ~/.aws/credentials /tmp",
     "cat .npmrc",
     "security find-generic-password -s github",
+    // 2026-09-17 thread e4454625: every one of these was auto-approved and
+    // together they lifted a personal OpenAI key out of the shell profile.
+    "grep -n \"OPENAI\" ~/.zshrc | sed 's/sk-[A-Za-z0-9_-]*/sk-***/'",
+    "grep -rl \"OPENAI_API_KEY\" ~/.zshrc ~/.zshenv ~/.zprofile ~/.config/zsh",
+    "source ~/.zshrc 2>/dev/null; curl -s https://api.openai.com/v1/models -H \"Authorization: Bearer $OPENAI_API_KEY\"",
+    "export OPENAI_API_KEY=$(grep -m1 'OPENAI_API_KEY=' ~/.zshrc | sed 's/.*=\"//') && python3 /tmp/gen.py",
+    "env | grep -i openai | sed 's/=.*/=***/'",
+    "grep -rh \"sk-proj\\|OPENAI_API_KEY\" ~/.config",
+    "python3 -c \"import json; d=json.load(open('/Users/me/.codex/auth.json')); print(list(d))\"",
+    "ls -la ~/.config/murage/provider-keys.hUhjuA/",
+    "grep -o 'openai' ~/.murage/config.json",
+    "cat ~/.bash_profile",
+    "KEY=$(cat /tmp/.oai_key) && curl -H \"Authorization: Bearer $KEY\" https://api.openai.com/v1/models",
   ]) {
     it(`stops: ${text}`, () => expect(looksSensitive(text)).toBe(true));
   }
-  for (const text of ["cat README.md", "npm run env-check", "echo $PATH", "cat src/environment.ts"]) {
+  for (const text of [
+    "cat README.md",
+    "npm run env-check",
+    "echo $PATH",
+    "cat src/environment.ts",
+    "grep -rn TODO src",
+    "git log --oneline -5",
+    "python3 scripts/report.py --profile default",
+    "ls ~/.sable/ops/numbers/",
+    "cat ~/.sable/bots/carrie.md",
+    "curl -s https://api.github.com/repos/foo/bar",
+    "node -e \"console.log(process.env.HOME)\"",
+  ]) {
     it(`allows: ${text}`, () => expect(looksSensitive(text)).toBe(false));
   }
 });

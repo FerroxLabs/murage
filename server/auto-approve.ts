@@ -28,6 +28,17 @@ const SENSITIVE = [
   /\.aws\/credentials|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json/i,
   /security\s+find-(generic|internet)-password|\bkeychain\b/i,
   /\bcredentials?\.json\b|\bserviceaccount\b/i,
+  // 2026-09-17 (thread e4454625): an auto-mode bot lifted a personal OpenAI
+  // key by reading the shell profile, exporting it and calling the vendor.
+  // Shell rc files are where people keep keys; a provider key name, a bearer
+  // header or a `sk-` literal in a command is a key being moved, whatever
+  // the program; and the harness's own key stores are never a bot's to read.
+  /(^|[\s"'=])~?[\w./-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
+  /\b[A-Z][A-Z0-9_]*_(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN)\b/,
+  /\bBearer\s+\$\{?[A-Za-z_]/i,
+  /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/,
+  /\benv\b[^|;&]*\|\s*grep\b/i,
+  /\.codex\/auth\.json|\.claude\/\.credentials|provider-keys|\.murage\/config\.json/i,
 ];
 
 // Tools that ASK THE OWNER something. These are never permissions, however
