@@ -1713,6 +1713,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     try {
       const result = await moveSidebarBot<Bot>(bot, plan, (path, init) => api(path, init));
       if (result.ok) {
+        // A team's natural slot follows its newest bot, so filing a newer bot
+        // under a team made the whole team jump past the others. Keep the
+        // order the person was looking at when they dropped.
+        commitSectionOrder(sectionIds);
         for (const moved of result.bots) dispatch({ type: "botPatched", bot: moved });
         setTeamFeedback({ error: false, text: result.text });
         setReorderAnnouncement(result.text);
