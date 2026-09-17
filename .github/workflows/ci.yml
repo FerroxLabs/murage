@@ -143,6 +143,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Restore the pinned local memory test model
+        # Keyed on the hash-pinned manifest; the prepare step below still
+        # verifies every file's size and SHA-256 and downloads only what is missing.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.planning/memory-evidence/model
+          key: memory-model-${{ hashFiles('shared/memory-model-manifest.json') }}
       - name: Prepare the pinned local memory test model
         # P06 executes real offline inference; a clean runner must prepare the
         # hash-pinned fixture before tests, not skip it or fetch during inference.
