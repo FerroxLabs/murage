@@ -201,6 +201,8 @@ if(cmd.op==='time'){
  ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
  ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
  ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ ObjC.bindFunction('AXUIElementCopyActionNames',['int',['id','id *']]);
+ ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
  function read(e,k){var r=Ref();return $.AXUIElementCopyAttributeValue(e,$(k),r)===0?ObjC.deepUnwrap(r[0]):null;}
  var visited=0,overflow=false;
  function walk(e,predicate,out,depth){if(depth>64||++visited>4000){overflow=true;return;}if(predicate(e))out.push(e);var children=read(e,'AXChildren')||[];for(var i=0;i<children.length;i++)walk(children[i],predicate,out,depth+1);}
@@ -223,7 +225,7 @@ if(cmd.op==='time'){
  p.frontmost=true;
  // React may replace a segment after each real input. Never type through an
  // unverified focus or continue using the pre-input segment references.
- var entryDeadline=Date.now()+15000,entry=[];
+ var entryDeadline=Date.now()+15000,entry=[],visibility={};
  function fresh(title){
   var currentFields=[];visited=0;overflow=false;
   var currentWindows=read(app,'AXWindows')||[];
@@ -237,6 +239,15 @@ if(cmd.op==='time'){
  function valuesNow(){return parts.map(function(part){var e=fresh(part.title);return{title:part.title,value:read(e,'AXValue'),description:read(e,'AXValueDescription'),expected:part.value};});}
  try{
   for(var j=0;j<parts.length;j++)parts[j].title=read(parts[j].e,'AXTitle');
+  // Offscreen Chromium time segments can acknowledge AXFocused without taking
+  // focus. Use only the field's advertised native visibility action first.
+  visibility.enabled=read(fields[0],'AXEnabled');
+  if(visibility.enabled!==true)throw{error:'time-disabled'};
+  var scrollActions=Ref();visibility.actionsCode=$.AXUIElementCopyActionNames(fields[0],scrollActions);
+  visibility.actions=visibility.actionsCode===0?ObjC.deepUnwrap(scrollActions[0]):[];
+  if(visibility.actions.indexOf('AXScrollToVisible')<0)throw{error:'time-scroll-not-advertised',code:visibility.actionsCode};
+  visibility.scrollCode=$.AXUIElementPerformAction(fields[0],$('AXScrollToVisible'));
+  if(visibility.scrollCode!==0)throw{error:'time-scroll',code:visibility.scrollCode};
   for(var j=0;j<parts.length;j++){
    var part=parts[j],current=fresh(part.title),before=read(current,'AXValue'),state={title:part.title,before:before,expected:part.value,typed:false};entry.push(state);
    if(before===part.value){state.skipped=true;continue;}
@@ -249,9 +260,9 @@ if(cmd.op==='time'){
   }
   se.keyCode(48);
   var values=settle(function(){var actual=valuesNow();return actual.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;})?actual:null;},'time-readback');
- }catch(error){return JSON.stringify({ok:false,error:error.error||'time-entry',code:error.code===undefined?null:error.code,count:error.count===undefined?null:error.count,requested:cmd.text,observed:observed,entry:entry});}
+ }catch(error){return JSON.stringify({ok:false,error:error.error||'time-entry',code:error.code===undefined?null:error.code,count:error.count===undefined?null:error.count,requested:cmd.text,observed:observed,visibility:visibility,entry:entry});}
  var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
- return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,entry:entry,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
+ return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,visibility:visibility,entry:entry,values:values,periodEncoding:twelve?{min:periodLow,max:periodHigh,am:periodBase,pm:periodBase+1}:null});
 }
 // Query the owned PID through public AX APIs. System Events remains keyboard-only.
 ObjC.import('ApplicationServices');
