@@ -5901,7 +5901,7 @@ async function runGroupMemberTurn(
           Boolean(integrations.agents),
           openMurageStatusSystemPrompt(),
         )
-      : `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
+      : `Reply as yourself, briefly and conversationally. Use @Name only when intentionally asking that teammate to respond or act; they will see the conversation and respond. To acknowledge or refer to a teammate, use their plain name without @. Do not prefix your reply with another member's @name.`,
     integrations.agents &&
       "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
     integrations.agents &&
