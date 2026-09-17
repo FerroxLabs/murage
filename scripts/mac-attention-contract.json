@@ -1,20 +1,20 @@
 {
   "scope": "B35 packaged macOS native attention: canonical synthetic approval -> actual signed application -> OS banner/click/DND and app mute/quiet/privatepreview; no model/provider",
   "base": "31749c53e0ca7552c974e56f94a81a1232ad11a1",
-  "artifactSource": "c889d523bc5f25e6205fa76903c0af6a457141df",
-  "artifactRun": 35140352790,
+  "artifactSource": "49cc37be2e43cb97fd3d5ac64a19106e5eff501d",
+  "artifactRun": 35166072643,
   "artifactAttempt": 1,
-  "artifactId": 10465875957,
-  "artifactApiDigest": "276e09def895daeb06ade831e53afd288ea1a7e39829aeaa992751b2ee77370c",
-  "zipSha256": "91cc768bad731d978f44fa378c2aeaac5f9dcbda5e818e79c05f9ee381baae79",
+  "artifactId": 10474314226,
+  "artifactApiDigest": "ba87c772ac793bd5f96bd923ea2679a04ddb59909f10e76f38e592fba05fa515",
+  "zipSha256": "ad1a7e66ebbc725dd2ad119e5050f4fda0557259fa4a8d901b9b1a76fb03df07",
   "team": "PX6SP9GPWJ",
-  "expiresAt": "2026-09-23T19:41:47Z",
-  "nativeRoundsUsed": 26,
+  "expiresAt": "2026-09-24T00:35:01Z",
+  "nativeRoundsUsed": 27,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R27 confirmation under standing corrective authority: exact owned Murage OS notice consent through advertised native menu action or freshAXbounds hover, then only observed scoped Options/Allow. No guessedclicks, notificationDB writes or action retries. Original20second banner wait and acceptance unchanged; prior26native runs retained; one60minute push-triggered run.",
+  "admission": "One R28 confirmation under standing corrective authority on combined native-authorization and deferred-Quit candidate. Exact producer35166072643 attempt1 and verified artifact receipts; original first-approval, native click, pending persistence, suppression/private preview and 20second banner wait unchanged. Reuse R27 observed OS consent interaction, retain all27 prior native attempts; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -22,9 +22,9 @@
     "electron/diagnostics.mjs": "ab5966096e56ecc28d3a0d5b675d7f5fc80b07120c822dc9ca8590cca24e4b46"
   },
   "attentionInputHashes": {
-    "electron/approval-notification.mjs": "aaf69d4d439f22ccfc6b1d3e419011db8dbe0ef6902533ff00f2fb559f64045b",
+    "electron/approval-notification.mjs": "637558f188adf2bb3a54ac354b13e11dfc14decbded903ef2c91701c8faa5a65",
     "electron/preload.cjs": "befe112b0905b4a6432ff9c9b23c575ec72b41e58e4213c6a5854fb77b5c4df9",
-    "electron/main.mjs": "bc5a9935ca1b0ee02d3d3d34ae235fe984c20cf834392705177e4ea31137d404",
+    "electron/main.mjs": "b785a2dc0f782bf4518f3a37f36543be861cf3967aac0d4402a8126a47a0e585",
     "src/lib/notify.ts": "a078c3aa4fb1a35b6086ad9c6cf40775ff2e07b8eaad460badf81f3331638911",
     "shared/notification-preferences.ts": "12cf1900262ade7a85670197645293aa68bb4ca3442c86c0cfeb39a7f41ec61d",
     "src/components/NotificationSettings.tsx": "38abac94e338ef70b5124e0e4db9a8946bcc83ad24405604d64be3550e7443e6",
@@ -32,7 +32,7 @@
     "src/lib/sidebar-attention.ts": "75a08ec047d191b5e15fea53770c9180ad980fc4ed5b967277cb86e8367a2e5f",
     "src/components/Sidebar.tsx": "f08a41a1c71047628c5425950c72ef5b0328f2cd44a6a59e484a073ecc7f1fcd",
     "electron/resources/murage-approval.wav": "6fb6c2e12f5adc8cda30dcc02940a1c05b13b7eb60afd2006b2053e8d2919285",
-    "electron-builder.yml": "cec091037304aab631906666554e29b3c6f348ac6541adf390688e9b5c4bd00c"
+    "electron-builder.yml": "bdffd0bd6a1d2ad2a6af714aac1e66c54f93ebc0ebbdfbbc66000e584b41742e"
   },
   "acceptanceLimits": [
     "machine positivebanner/exactnativeclick/noautogrant +canonicalpendingpersistence +suppression/privatepreview readbacks",

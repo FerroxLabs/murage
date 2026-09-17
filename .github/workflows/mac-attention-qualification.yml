@@ -1,4 +1,4 @@
-# B35 round8 candidate. Push ONLY after root admits this exact reviewed source.
+# B35 R28: exact combined native-authorization product; original criteria unchanged.
 name: Mac packaged attention machine checks
 on:
   push:
@@ -18,8 +18,8 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: c889d523bc5f25e6205fa76903c0af6a457141df
-      ARTIFACT_RUN_ID: "35140352790"
+      ARTIFACT_SOURCE_SHA: 49cc37be2e43cb97fd3d5ac64a19106e5eff501d
+      ARTIFACT_RUN_ID: "35166072643"
       ARTIFACT_RUN_ATTEMPT: "1"
       MURAGE_B35_NATIVE_CONFIRM: disposable-packaged-attention
     steps:
@@ -48,21 +48,21 @@ jobs:
           assert run['status']=='completed' and run['conclusion']=='success'
           assert run['head_sha']==os.environ['ARTIFACT_SOURCE_SHA'] and run['run_attempt']==1
           artifacts=json.loads((root/'artifacts.json').read_text())['artifacts']
-          expected={10465875957:'sha256:276e09def895daeb06ade831e53afd288ea1a7e39829aeaa992751b2ee77370c',10465492068:'sha256:bb8626093527717fb3b9972a751e2ee64122d2b911cc7d8034f2b69318428428'}
+          expected={10474314226:'sha256:ba87c772ac793bd5f96bd923ea2679a04ddb59909f10e76f38e592fba05fa515',10474399247:'sha256:81458d334ba0913567c96af94f9c949dfdd2fd37aa0bbb14a75faf4030c9f6ab'}
           for identifier,digest in expected.items():
               row=next(a for a in artifacts if a['id']==identifier)
               assert row['expired'] is False and row['digest']==digest
           PYTHON
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: "10465875957"
+          artifact-ids: "10474314226"
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-b35-native/artifact
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: "10465492068"
+          artifact-ids: "10474399247"
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-b35-native/artifact/evidence
