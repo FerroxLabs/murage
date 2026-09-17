@@ -2056,26 +2056,33 @@ function slimMessage(message: Message): Message | Record<string, unknown> {
   return { ...rest, hasImage: true };
 }
 
-/** `limit === undefined` is the original, unpaginated shape. */
+/** `limit === undefined` is the original, unpaginated shape. A bounded page
+ * of a thread that is not already in memory reads only that page from SQLite
+ * (Store.messagePage). Null means `before` is not a message of this thread. */
 function messagePage(threadId: string, limit: number | undefined, before?: string | null) {
-  const all = store.messagesFor(threadId);
-  if (limit === undefined) return { messages: all };
-  const end = before ? all.findIndex((msg) => msg.id === before) : -1;
-  const stop = end === -1 ? all.length : end;
-  const start = Math.max(0, stop - limit);
-  return { messages: all.slice(start, stop).map(slimMessage), hasMore: start > 0 };
+  if (limit === undefined) return { messages: store.messagesFor(threadId) };
+  const page = store.messagePage(threadId, limit, before);
+  return page && { messages: page.messages.map(slimMessage), hasMore: page.hasMore };
+}
+
+/** A bot entry for a bounded `/api/bots?messages=n`: publicBot()'s fields in
+ * its key order, without publicBot()'s whole-transcript read. */
+function pagedPublicBot(bot: NonNullable<ReturnType<typeof store.bot>>, limit: number) {
+  const page = store.messagePage(bot.threadId, limit)!;
+  return {
+    ...wireBot(bot),
+    messages: page.messages.map(slimMessage),
+    activeLeafId: page.activeLeafId,
+    tasks: store.tasks(bot.id).map(wireTask),
+    hasMore: page.hasMore,
+  };
 }
 
 /** A bounded page centred on a known message, used when a search result is
  * opened on a client that only hydrated the newest part of the transcript. */
 function messageWindow(threadId: string, messageId: string, limit: number) {
-  const all = store.messagesFor(threadId);
-  const index = all.findIndex((message) => message.id === messageId);
-  if (index < 0) return null;
-  const before = Math.floor((limit - 1) / 2);
-  const start = Math.max(0, Math.min(index - before, all.length - limit));
-  const stop = Math.min(all.length, start + limit);
-  return { messages: all.slice(start, stop).map(slimMessage), hasMore: start > 0 };
+  const window = store.messageWindow(threadId, messageId, limit);
+  return window && { messages: window.messages.map(slimMessage), hasMore: window.hasMore };
 }
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
@@ -9965,7 +9972,7 @@ const server = createServer(async (req, res) => {
         ? store.groups.filter((group) => visibleToCompanion(store, { scope: "group", groupId: group.id }))
         : store.groups;
       return json(res, 200, {
-        bots: bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
+        bots: bots.map((bot) => (limit === undefined ? { ...publicBot(bot), ...messagePage(bot.threadId, limit) } : pagedPublicBot(bot, limit))),
         groups: groups.map((g) => ({ ...publicGroupState(g), ...messagePage(g.threadId, limit) })),
         computerControl: Object.fromEntries(
           bots.map((bot) => {
@@ -9998,10 +10005,9 @@ const server = createServer(async (req, res) => {
       }
       // An unknown cursor must not silently answer with the newest page —
       // the client would paginate in a circle and never reach the top.
-      if (before && !store.messagesFor(threadId).some((msg) => msg.id === before)) {
-        return json(res, 404, { error: "no such message" });
-      }
-      return json(res, 200, messagePage(threadId, limit ?? DEFAULT_PAGE, before));
+      const page = messagePage(threadId, limit ?? DEFAULT_PAGE, before);
+      if (!page) return json(res, 404, { error: "no such message" });
+      return json(res, 200, page);
     }
 
     // the pixels of one screen message, fetched only when something shows it
