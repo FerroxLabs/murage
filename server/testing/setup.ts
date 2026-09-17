@@ -38,6 +38,10 @@ delete process.env.HERMES_HOME;
 // it makes the model-catalog assertions depend on that developer's shell.
 // server/flux-surface.test.ts sets it deliberately, per test.
 delete process.env.FLUX_API_KEY;
+// The renderer catalog follows navigator.language (src/lib/i18n.ts), which Node
+// derives from the host's LANG/LC_ALL, so a German shell turned English UI
+// assertions red. Tests pin English; locale tests call setLocale explicitly.
+if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "language", { value: "en-US", configurable: true });
 // The companion keeps its paired devices in its own directory, and resolves
 // it from homedir() the same way — so the redirect above already covers it.
 // Named explicitly all the same: the device tests delete this directory
