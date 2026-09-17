@@ -65,6 +65,7 @@ jobs:
           pnpm package:prepare
           pnpm build:speech
           pnpm build:recorder
+          pnpm build:notification-authorization
           pnpm build:cua
       - name: Import the existing Developer ID into a throwaway keychain
         env:

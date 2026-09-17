@@ -20,20 +20,23 @@ export function approvalOptions(payload, platform) {
 
 /** Bounded identities survive renderer remounts for this desktop launch.
  * Oldest of 1024 identities is evicted; SSE replay suppression is independent. */
-export function createApprovalNotifications({ Notification, platform, onOpen, limit = 1024 }) {
+export function createApprovalNotifications({ Notification, platform, onOpen, authorize, revalidate, limit = 1024 }) {
   const seen = new Set();
-  const active = new Map();
-  return input => {
+  const active = new Map(), pending = new Set();
+  let stopped=false,generation=0;
+  const show = input => {
     const payload = approvalPayload(input);
-    if (!payload) return { accepted: false };
+    if (!payload||stopped) return { accepted: false };
     const options = approvalOptions(payload, platform);
-    if (!options || !Notification.isSupported()) return { accepted: false };
+    if (!options) return { accepted: false };
     const key = JSON.stringify([payload.botId, payload.threadId, payload.requestTurnId ?? "", payload.requestId]);
-    if (seen.has(key)) return { accepted: false };
+    if (seen.has(key)||pending.has(key)||pending.size>=limit) return { accepted: false };
     seen.add(key);
     if (seen.size > limit) seen.delete(seen.values().next().value);
+    const present = current => {
+    if(stopped||!Notification.isSupported())return {accepted:false};
     try {
-      const notice = new Notification(options);
+      const notice = new Notification(approvalOptions(current,platform));
       active.set(key, notice);
       let opened = false;
       notice.on("click", () => {
@@ -57,5 +60,18 @@ export function createApprovalNotifications({ Notification, platform, onOpen, li
       active.delete(key);
       return { accepted: false };
     }
+    };
+    if(platform!=="darwin")return present(payload);
+    if(typeof authorize!=="function"||typeof revalidate!=="function")return{accepted:false};
+    pending.add(key);const epoch=generation;
+    return Promise.resolve().then(authorize).then(async granted=>{
+      if(granted!==true||stopped||generation!==epoch)return{accepted:false};
+      const current=approvalPayload(await revalidate(payload));
+      if(!current||stopped||generation!==epoch||["botId","threadId","requestId","messageId","requestTurnId"].some(field=>current[field]!==payload[field]))return{accepted:false};
+      if(await authorize(false)!==true||stopped||generation!==epoch)return{accepted:false};
+      return present(current);
+    }).catch(()=>({accepted:false})).finally(()=>pending.delete(key));
   };
+  show.dispose=()=>{stopped=true;generation++;pending.clear();for(const notice of active.values())notice.removeAllListeners();active.clear();};
+  return show;
 }
