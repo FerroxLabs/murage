@@ -297,6 +297,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       let codexThreadId: string | null = null;
       let codexTurnId: string | null = null;
       let awaitingTurnStart = false;
+      // Set just before turn/start is written. From then on the engine may
+      // have accepted the turn, so a crash is never replayed (U-17).
+      let turnStartSent = false;
       let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
       let nextId = 1;
@@ -693,6 +696,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         } catch {
           return;
         }
+        stderrSinceOutput = "";
         // The native tee is a plain file people paste into issues. A
         // generated image would put megabytes of base64 in it and the
         // provider's own filesystem path beside them; keep the SHAPE and
@@ -725,16 +729,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       let stderr = "";
+      // Stderr received after the last parsed protocol message. The lifetime
+      // buffer's tail can name a long-past event (a websocket 426 logged at
+      // turn start, echoed when something else later kills the process), so
+      // only this slice may explain or classify an exit (U07).
+      let stderrSinceOutput = "";
       child.stderr.on("data", (c) => {
         stderr += c;
+        stderrSinceOutput += c;
         if (stderr.length > 8192) stderr = stderr.slice(-8192);
+        if (stderrSinceOutput.length > 2048) stderrSinceOutput = stderrSinceOutput.slice(-2048);
       });
       child.on("error", (e) => {
         if (abandoned) return;
         emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         if (abandoned) return;
         if (state.settled) { void stop(); return; }
         if (!state.settled && stopRequested) {
@@ -745,10 +756,57 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           return;
         }
         if (!state.settled) {
+          const recentStderr = stderrSinceOutput.trim();
+          const hadProtocolOutput = codexTurnId !== null || state.sawStreamDelta;
+          // A signal exit is terminal whatever stderr says: something killed
+          // the process, and the classifier cannot see a signal behind a null
+          // code. Otherwise classify only this generation's recent stderr.
+          const verdict = signal !== null
+            ? { transient: false, reason: "interrupted" }
+            : classifyError({ exitCode: code, stderr: recentStderr });
+          // Relaunch only a crash proven to precede the turn: turn/start was
+          // never written, nothing streamed or was buffered, and no approval
+          // is open. Anything later may already have acted (U-17).
+          if (
+            !turnStartSent && codexTurnId === null && earlyNotifications.length === 0 &&
+            !state.sawStreamDelta && asks.size === 0 &&
+            verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1
+          ) {
+            // Retire this attempt first, so its late handshake rejections can
+            // neither report nor relaunch on top of the replacement.
+            abandoned = true;
+            void (async () => {
+              // The root exited, but its owned group must be confirmed gone
+              // before a replacement launches (owned teardown).
+              if (!(await terminate())) {
+                await settle(false, "shutdown_timeout");
+                return;
+              }
+              if (stopRequested) {
+                await settle(true, "cancelled");
+                return;
+              }
+              const delayMs = computeBackoff(attempt);
+              attempt++;
+              emit({ ...base(threadId, turnId), type: "turn.retrying", attempt, delayMs, reason: verdict.reason });
+              await interruptibleDelay(Math.max(1, Math.round(delayMs * retryScale)), stopSignal.signal).promise;
+              if (!stopRequested) {
+                void launchAttempt(attempt).catch(() => {});
+              } else {
+                // a Stop during the backoff is a user cancellation (STOP1)
+                await settle(true, "cancelled");
+              }
+            })().catch(() => {});
+            return;
+          }
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `codex exited ${code} before turn/completed${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+            message: `codex exited ${code}${signal ? ` (signal ${signal})` : ""} before turn/completed${
+              recentStderr
+                ? `: ${recentStderr.slice(-300)}`
+                : hadProtocolOutput && stderr.trim() ? "; no stderr after the last app-server output" : ""
+            }`,
           });
           settle(false, "exit_before_result");
         }
@@ -791,6 +849,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (typeof codexThreadId !== "string" || !codexThreadId) throw new Error("codex did not return a thread identity");
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
         awaitingTurnStart = true;
+        turnStartSent = true;
         await request("turn/start", {
           threadId: codexThreadId,
           input: [{ type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text }],
@@ -820,6 +879,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
         });
       } catch (e) {
+        // A retired attempt's late rejection (an RPC timer after a close-path
+        // relaunch) must neither report an error nor relaunch again.
+        if (abandoned) return;
         const failure = e instanceof Error ? e : { text: String(e) };
         const message = e instanceof Error ? e.message : String(e);
         const needsAuth = /(?:\b401\b|unauthorized|missing bearer|authentication required)/i.test(message);

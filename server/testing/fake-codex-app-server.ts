@@ -8,6 +8,24 @@
 //                     mcp-elicitation | form-elicitation | user-input | image |
 //                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CODEX_LAUNCH_CRASHES  N: die at thread/start (before turn/start is ever sent)
+//                     with transient stderr, exit 1, for the first N launches
+//   FAKE_CODEX_LAUNCH_KILLS    N: same phase, transient stderr then SIGKILL (a signal
+//                     exit; POSIX-shaped — win32 reports exit 1, signal null)
+//   FAKE_CODEX_LAUNCH_SILENT   N: same phase, exit 1 with no new stderr. With
+//                     FAKE_CODEX_STALE_STDERR_GATE (a gate path) it first writes
+//                     transient-looking stderr and answers initialize only once
+//                     the test saw that stderr, so the stale line is read before
+//                     a later protocol message
+//   FAKE_CODEX_PREACK_CRASH    plain | buffered: after turn/start was received and
+//                     before its ACK, (buffered: one turn notification, then)
+//                     transient stderr and exit 1
+//   FAKE_CODEX_ACK_CRASH       gate path: ACK turn/start, then once the test saw the
+//                     driver read that ACK, transient stderr and exit 1
+//   FAKE_CODEX_EXIT_MID_TURN   gate path: stale websocket-426 stderr; once the test saw
+//                     it, ACK plus one reasoning delta; then SIGKILL once
+//                     FAKE_CODEX_EXIT_MID_TURN_KILL (gate path) appears
+//                     Launch counts for these knobs go to FAKE_CODEX_STATE.
 //   FAKE_CODEX_STOP_RACE  marker file path: hold turn/start, append one line to
 //                     the marker (the launch count, and proof this phase was
 //                     reached), and answer the held request with a transient
@@ -16,10 +34,39 @@
 //                     Stop. POSIX-shaped: win32 has no SIGTERM handler.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../atomic.ts";
 
 const mode = process.env.FAKE_CODEX_MODE ?? "happy";
+
+// stdout and stderr are separate pipes, so the writer cannot order them for
+// the reader, and a fixed sleep only pretends to. A gated write waits until
+// the test, watching the driver consume the earlier stream, creates the gate
+// file. It gives up after a long bound so a broken gate fails the test rather
+// than hanging it.
+const waitForGate = (path: string | undefined, timeoutMs = 15_000): Promise<void> =>
+  new Promise((resolve) => {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if ((path !== undefined && existsSync(path)) || Date.now() - startedAt > timeoutMs) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 2);
+  });
+
+/** Records one turn launch in FAKE_CODEX_STATE; returns the prior count. */
+const countLaunch = (): number => {
+  const stateFile = process.env.FAKE_CODEX_STATE;
+  if (!stateFile) return 0;
+  let launched = 0;
+  try {
+    launched = Number(readFileSync(stateFile, "utf8")) || 0;
+  } catch {}
+  writeFileSync(stateFile, String(launched + 1));
+  return launched;
+};
+const TRANSIENT_STDERR = "Error: connection reset by peer\n";
 
 if (process.argv[2] === "--version") {
   process.stdout.write("codex-cli 0.147.0\n");
@@ -140,6 +187,14 @@ process.stdin.on("data", (chunk) => {
 
     switch (msg.method) {
       case "initialize":
+        if (process.env.FAKE_CODEX_LAUNCH_SILENT && process.env.FAKE_CODEX_STALE_STDERR_GATE) {
+          const initializeId = msg.id;
+          process.stderr.write(TRANSIENT_STDERR);
+          void waitForGate(process.env.FAKE_CODEX_STALE_STDERR_GATE).then(() => {
+            out({ jsonrpc: "2.0", id: initializeId, result: { ok: true } });
+          });
+          break;
+        }
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
         break;
       case "model/list":
@@ -176,6 +231,20 @@ process.stdin.on("data", (chunk) => {
         }
         break;
       case "thread/start":
+        if (process.env.FAKE_CODEX_LAUNCH_CRASHES || process.env.FAKE_CODEX_LAUNCH_KILLS || process.env.FAKE_CODEX_LAUNCH_SILENT) {
+          const launched = countLaunch();
+          if (launched < (Number(process.env.FAKE_CODEX_LAUNCH_CRASHES) || 0)) {
+            process.stderr.write(TRANSIENT_STDERR, () => process.exit(1));
+            break;
+          }
+          if (launched < (Number(process.env.FAKE_CODEX_LAUNCH_KILLS) || 0)) {
+            process.stderr.write(TRANSIENT_STDERR, () => process.kill(process.pid, "SIGKILL"));
+            break;
+          }
+          if (launched < (Number(process.env.FAKE_CODEX_LAUNCH_SILENT) || 0)) {
+            process.exit(1);
+          }
+        }
         out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-thread-1" }, model: "fake-codex-model" } });
         break;
       case "turn/start": {
@@ -189,6 +258,33 @@ process.stdin.on("data", (chunk) => {
             );
           });
           appendFileSync(process.env.FAKE_CODEX_STOP_RACE, "turn/start\n");
+          break;
+        }
+        if (process.env.FAKE_CODEX_PREACK_CRASH) {
+          countLaunch();
+          const crash = () => process.stderr.write(TRANSIENT_STDERR, () => process.exit(1));
+          if (process.env.FAKE_CODEX_PREACK_CRASH === "buffered") {
+            process.stdout.write(JSON.stringify(notification("item/agentMessage/delta", { itemId: "early", delta: "early" })) + "\n", crash);
+          } else crash();
+          break;
+        }
+        if (process.env.FAKE_CODEX_ACK_CRASH) {
+          countLaunch();
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: turnResult() }) + "\n");
+          void waitForGate(process.env.FAKE_CODEX_ACK_CRASH).then(() => {
+            process.stderr.write(TRANSIENT_STDERR, () => process.exit(1));
+          });
+          break;
+        }
+        if (process.env.FAKE_CODEX_EXIT_MID_TURN) {
+          countLaunch();
+          const ackId = msg.id;
+          process.stderr.write("2026-09-14T20:24:19Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required\n");
+          void waitForGate(process.env.FAKE_CODEX_EXIT_MID_TURN).then(() => {
+            out({ jsonrpc: "2.0", id: ackId, result: turnResult() });
+            notify("item/reasoning/textDelta", { itemId: "m1", delta: "still thinking" });
+            void waitForGate(process.env.FAKE_CODEX_EXIT_MID_TURN_KILL).then(() => process.kill(process.pid, "SIGKILL"));
+          });
           break;
         }
         if (mode.startsWith("parent-")) {

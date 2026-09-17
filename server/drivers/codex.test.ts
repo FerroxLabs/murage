@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_STATE;
     delete process.env.FAKE_CODEX_RETRY_SCALE;
     delete process.env.FAKE_CODEX_STOP_RACE;
+    delete process.env.FAKE_CODEX_LAUNCH_CRASHES;
+    delete process.env.FAKE_CODEX_LAUNCH_KILLS;
+    delete process.env.FAKE_CODEX_LAUNCH_SILENT;
+    delete process.env.FAKE_CODEX_STALE_STDERR_GATE;
+    delete process.env.FAKE_CODEX_PREACK_CRASH;
+    delete process.env.FAKE_CODEX_ACK_CRASH;
+    delete process.env.FAKE_CODEX_EXIT_MID_TURN;
+    delete process.env.FAKE_CODEX_EXIT_MID_TURN_KILL;
     delete process.env.OPENAI_API_KEY;
     delete process.env.BOX_TOKEN;
     delete process.env.MURAGE_TTS_KEY;
@@ -1058,6 +1066,198 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
     expect(readFileSync(marker, "utf8")).toBe("turn/start\n");
   }, 20_000);
+
+  // U07 (upstream 1220 + 1222): honest exit reports and close-path recovery.
+  describe("app-server exits", () => {
+    const launches = () => readFileSync(process.env.FAKE_CODEX_STATE!, "utf8");
+    const errorsOf = () => recorder.events.filter((e) => e.type === "runtime.error").map((e) => e.message);
+
+    /** Watches each spawned app-server's pipes from inside the spawn, so a
+     * listener runs in the same dispatch as the driver's own handler. */
+    const watchSpawns = (watch: (child: ReturnType<typeof procs.spawnCli>) => void) => {
+      const realSpawnCli = procs.spawnCli;
+      return vi.spyOn(procs, "spawnCli").mockImplementation((...args: Parameters<typeof procs.spawnCli>) => {
+        const child = realSpawnCli(...args);
+        watch(child);
+        return child;
+      });
+    };
+
+    it("recovers a transient crash before turn/start was ever sent", async () => {
+      process.env.FAKE_CODEX_LAUNCH_CRASHES = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "launch-crash");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-launch-crash", text: "hi" });
+
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true, turnId });
+      expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1]);
+      expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(errorsOf()).toEqual([]);
+      expect(launches()).toBe("2");
+    }, 20_000);
+
+    it.skipIf(process.platform === "win32")("treats a signal-killed launch as terminal even with transient stderr", async () => {
+      process.env.FAKE_CODEX_LAUNCH_KILLS = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "launch-kill");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-codex-launch-kill", text: "hi" });
+
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(errorsOf()).toHaveLength(1);
+      expect(errorsOf()[0]).toContain("(signal SIGKILL)");
+      expect(errorsOf()[0]).toContain("connection reset by peer");
+      expect(launches()).toBe("1");
+    }, 20_000);
+
+    it("never retries a silent exit off stale stderr from before later protocol output", async () => {
+      process.env.FAKE_CODEX_STATE = join(scratch, "launch-silent");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const gate = join(scratch, "stale-stderr-gate");
+      // set after create(): the catalog spawn must not hold its initialize
+      process.env.FAKE_CODEX_LAUNCH_SILENT = "1";
+      process.env.FAKE_CODEX_STALE_STDERR_GATE = gate;
+      const spawnSpy = watchSpawns((child) => {
+        child.stderr.on("data", (c: Buffer) => {
+          if (c.toString().includes("connection reset")) writeFileSync(gate, "");
+        });
+      });
+      try {
+        await instance.adapter.sendTurn({ threadId: "t-codex-launch-silent", text: "hi" });
+        const done = await recorder.until((e) => e.type === "turn.completed");
+        expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+        expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+        expect(errorsOf()).toEqual(["codex exited 1 before turn/completed"]);
+        expect(existsSync(gate)).toBe(true);
+        expect(launches()).toBe("1");
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    }, 20_000);
+
+    it.each(["plain", "buffered"])("never replays a crash after turn/start was written (%s)", async (variant) => {
+      process.env.FAKE_CODEX_PREACK_CRASH = variant;
+      process.env.FAKE_CODEX_STATE = join(scratch, `preack-${variant}`);
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      await instance.adapter.sendTurn({ threadId: `t-codex-preack-${variant}`, text: "hi" });
+
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
+      expect(errorsOf()).toHaveLength(1);
+      expect(errorsOf()[0]).toContain("connection reset by peer");
+      expect(launches()).toBe("1");
+    }, 20_000);
+
+    it("never replays a turn after its acknowledgement, quoting the crash's own stderr", async () => {
+      const gate = join(scratch, "ack-crash-gate");
+      process.env.FAKE_CODEX_ACK_CRASH = gate;
+      process.env.FAKE_CODEX_STATE = join(scratch, "ack-crash");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      const spawnSpy = watchSpawns((child) => {
+        let seen = "";
+        child.stdout.on("data", (c: Buffer) => {
+          seen += c.toString();
+          if (seen.includes(`"result":{"turn":{"id":"turn-1"`)) writeFileSync(gate, "");
+        });
+      });
+      try {
+        await create();
+        await instance.adapter.sendTurn({ threadId: "t-codex-ack-crash", text: "hi" });
+        const done = await recorder.until((e) => e.type === "turn.completed");
+        expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+        expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+        expect(errorsOf()).toEqual(["codex exited 1 before turn/completed: Error: connection reset by peer"]);
+        expect(launches()).toBe("1");
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    }, 20_000);
+
+    it("does not blame stale stderr when the app-server is killed mid-turn", async () => {
+      const stderrGate = join(scratch, "mid-turn-stderr-gate");
+      const killGate = join(scratch, "mid-turn-kill-gate");
+      process.env.FAKE_CODEX_EXIT_MID_TURN = stderrGate;
+      process.env.FAKE_CODEX_EXIT_MID_TURN_KILL = killGate;
+      process.env.FAKE_CODEX_STATE = join(scratch, "mid-turn");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      const spawnSpy = watchSpawns((child) => {
+        child.stderr.on("data", (c: Buffer) => {
+          if (c.toString().includes("426")) writeFileSync(stderrGate, "");
+        });
+      });
+      try {
+        await create();
+        await instance.adapter.sendTurn({ threadId: "t-codex-exit-mid-turn", text: "hi" });
+        await recorder.until((e) => e.type === "content.delta" && e.streamKind === "reasoning_text");
+        writeFileSync(killGate, "");
+        const done = await recorder.until((e) => e.type === "turn.completed");
+        expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+        expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+        // win32 has no signals: the kill lands as TerminateProcess, exit 1
+        const wording = process.platform === "win32" ? "codex exited 1 before turn/completed" : "(signal SIGKILL) before turn/completed";
+        expect(errorsOf()).toHaveLength(1);
+        expect(errorsOf()[0]).toContain(wording);
+        expect(errorsOf()[0]).toContain("; no stderr after the last app-server output");
+        expect(errorsOf()[0]).not.toContain("426");
+        expect(launches()).toBe("1");
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    }, 20_000);
+
+    it("a Stop during a crash recovery backoff settles at once as cancelled", async () => {
+      process.env.FAKE_CODEX_LAUNCH_CRASHES = "9";
+      process.env.FAKE_CODEX_STATE = join(scratch, "launch-crash-stop");
+      process.env.FAKE_CODEX_RETRY_SCALE = "60";
+      await create();
+      const threadId = "t-codex-crash-stop";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+      await recorder.until((e) => e.type === "turn.retrying");
+      const stoppedAt = Date.now();
+      await instance.adapter.interruptTurn(threadId);
+
+      const done = await recorder.until((e) => e.type === "turn.completed", 5_000);
+      expect(Date.now() - stoppedAt).toBeLessThan(5_000);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled", turnId });
+      expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+      expect(errorsOf()).toEqual([]);
+      expect(launches()).toBe("1");
+    }, 20_000);
+
+    it("does not relaunch after a crash until the old process group is confirmed gone", async () => {
+      process.env.FAKE_CODEX_LAUNCH_CRASHES = "9";
+      process.env.FAKE_CODEX_STATE = join(scratch, "launch-crash-unconfirmed");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const threadId = "t-codex-crash-unconfirmed";
+      const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+      try {
+        await instance.adapter.sendTurn({ threadId, text: "hi" });
+        await recorder.until((e) => e.type === "runtime.error" && e.message.includes("did not shut down"));
+        expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+        expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+        expect(instance.adapter.hasSession(threadId)).toBe(true);
+        expect(launches()).toBe("1");
+      } finally {
+        confirm.mockRestore();
+      }
+      await instance.adapter.interruptTurn(threadId);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "shutdown_timeout" });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(launches()).toBe("1");
+    }, 20_000);
+  });
 
   it("never retries after agent text already streamed (duplicate-text hazard)", async () => {
     process.env.FAKE_CODEX_TRANSIENTS = "1";
