@@ -11,6 +11,9 @@ import {createBackupRemoteHost} from "../dist-server/backup-remote-host.js";
 import {createBackupScheduleHost} from "./backup-schedule-host.mjs";
 import {createRemotePasswordStore} from "./backup-remote-password.mjs";
 import {remoteWorkDirectory} from "./backup-remote-runtime.mjs";
+// Remote backup storage fails closed without a POSIX owner uid (Windows has no
+// process.getuid), so these joins are POSIX-only; they run on macOS and Ubuntu.
+const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";
 const digest=bytes=>createHash("sha256").update(bytes).digest("hex");
 async function fixture(t,uncertain=false){
  const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-join-test-")));let schedule;t.after(()=>{schedule?.stopPolling();safeWipeSync(root);});
@@ -48,18 +51,18 @@ async function fixture(t,uncertain=false){
  const ref=(await remote.status()).remoteRef;await remote.selectRepositoryPassword(ref,1);assert.deepEqual(calls,[]);await remote.connect(ref,2);assert.deepEqual(calls,["cat"]);
  return{root,installation,local,ref,remote,createRemote,calls,captures:()=>captures};
 }
-test("built remote host joins verified schedule artifact, protected password and adapter readback",async t=>{
+test("built remote host joins verified schedule artifact, protected password and adapter readback",{skip:POSIX_ONLY},async t=>{
  const f=await fixture(t);await assert.rejects(f.remote.uploadLatest(f.ref,2,"0".repeat(64)),/JOB_CHANGED/);assert.deepEqual(f.calls,["cat"]);
  const result=await f.remote.uploadLatest(f.ref,2,f.local.receipt.jobId);assert.equal(result.state,"verified");assert.deepEqual(f.calls,["cat","cat","backup","snapshots","restore","cat"]);
  const resumed=f.createRemote();const count=f.calls.length;assert.equal((await resumed.status()).lastUpload.state,"verified");assert.equal(f.calls.length,count);assert.equal((await resumed.uploadLatest(f.ref,2,f.local.receipt.jobId)).state,"verified");assert.equal(f.calls.filter(op=>op==="backup").length,1);
  assert.equal(f.captures(),1);assert.equal(digest(readFileSync(f.local.archivePath)),f.local.receipt.sha256);assert.equal(readFileSync(path.join(f.installation,"sentinel.txt"),"utf8"),"original fixture data");
 });
-test("joined unknown upload is retained across host reconstruction without another upload",async t=>{
+test("joined unknown upload is retained across host reconstruction without another upload",{skip:POSIX_ONLY},async t=>{
  const f=await fixture(t,true);assert.equal((await f.remote.uploadLatest(f.ref,2,f.local.receipt.jobId)).state,"needs-review");assert.equal((await f.createRemote().uploadLatest(f.ref,2,f.local.receipt.jobId)).state,"needs-review");assert.equal(f.calls.filter(op=>op==="backup").length,1);assert.equal(f.captures(),1);assert.equal(digest(readFileSync(f.local.archivePath)),f.local.receipt.sha256);
  const count=f.calls.length;assert.equal((await f.createRemote().status()).lastUpload.state,"needs-review");assert.equal(f.calls.length,count);
  assert.equal((await f.createRemote().reconcileLatest(f.ref,2,f.local.receipt.jobId)).state,"verified");assert.equal(f.calls.filter(op=>op==="backup").length,1);assert.equal((await f.createRemote().status()).lastUpload.state,"verified");
 });
-test("built automatic policy survives reconstruction without uploading the historical verified backup",async t=>{
+test("built automatic policy survives reconstruction without uploading the historical verified backup",{skip:POSIX_ONLY},async t=>{
  const f=await fixture(t);const before=[...f.calls];
  assert.equal((await f.remote.runAutomaticUpload()).state,"disabled");
  await f.remote.setAutomaticUpload(f.ref,2,true);

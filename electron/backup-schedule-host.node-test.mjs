@@ -12,6 +12,7 @@ import { acquireDataDirLease } from "./data-dir-lease.mjs";
 import { createBackupScheduleHost } from "./backup-schedule-host.mjs";
 import { backupFixture,testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
+import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 const digest=value=>createHash("sha256").update(value).digest("hex");
@@ -257,12 +258,15 @@ test("scheduled capture rechecks the host before the lazy identity read",async()
   }finally{f.cleanup();}
 });
 
-test("real isolated private worker verifies an encrypted handoff under delegated ownership",{timeout:60000},async()=>{
+// The worker verifies its age tool against this host's pin, so it runs with the
+// verified host tools from MURAGE_BACKUP_TEST_AGE_DIR. Windows has no pinned age
+// build (its encrypted backups use the Windows helper suites instead).
+test("real isolated private worker verifies an encrypted handoff under delegated ownership",{timeout:60000,skip:!backupAgePinForTarget(process.platform,process.arch)&&"no pinned age build for this host"},async()=>{
   const data=backupFixture(),keys=testAgeKeys();data.db.close();const f=fixture({installation:()=>data.data});let owner;let logs="",success=false;
   const diagnostic={stages:["fixture-ready"],workerCreated:false,inputCount:0,exitCode:null,resultOk:null,resultError:null,workerErrorCode:null,privateLogDetected:false};
   try{
     writeFileSync(f.keyFile,keys.identity,{mode:0o600});const original=readFileSync(path.join(data.data,"config.json"));
-    const resources=path.join(f.root,"Resources","backup-tools","arm64");mkdirSync(resources,{recursive:true});const age=path.join(resources,"age");copyFileSync(new URL("../dist-native/backup-age/arm64/age",import.meta.url),age);
+    const resources=path.join(f.root,"Resources","backup-tools",process.arch);mkdirSync(resources,{recursive:true});const age=path.join(resources,"age");copyFileSync(keys.ageExecutable,age);
     await f.arm();diagnostic.stages.push("armed");owner=acquireDataDirLease(data.data);diagnostic.stages.push("owner-acquired");
     const next=f.create({capture:async request=>{
       diagnostic.stages.push("capture-enter");assert.throws(()=>acquireDataDirLease(data.data));diagnostic.stages.push("exclusive-owner-proved");const identity=await request.readIdentity();diagnostic.stages.push("identity-read");const entry=pathToFileURL(path.resolve("dist-server/installation-recovery-worker.js")).href;

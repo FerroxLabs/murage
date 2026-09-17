@@ -10,6 +10,7 @@ import {normalizedAgePayloadHash,AGE_PAYLOAD_SHA256,signedAgeOwnedByCurrentApp,t
 import {runInstallationRecoveryWorker} from './installation-recovery-runner.mjs';
 import {createServerChildLifecycle} from './server-child-lifecycle.mjs';
 import {captureFailureDiagnostic} from './backup-schedule-host.mjs';
+import {backupAgePinForTarget} from '../shared/backup-age-pins.mjs';
 const diagnostic=(operation='encrypt',predicate='app-verify')=>({operation,predicate,exitCode:null,timedOut:true,signal:'SIGTERM',errorCode:'ETIMEDOUT',elapsedMs:10001});
 const bytes=readFileSync(process.env.MURAGE_BACKUP_TEST_AGE_FILE??new URL('../dist-native/backup-age/arm64/age',import.meta.url));
 function fixture(work){
@@ -40,7 +41,9 @@ test('controlled signing failure reports each predicate and preserves exact comm
  assert.equal(signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable:exe,run:()=>({status:1}),report:()=>{throw Error('diagnostic failed');}}),false);
 }));
 test('unsafe/missing file refusals retain booleans and never invoke a tool',()=>fixture(({root})=>{
- let last;const report=v=>{last=v;};assert.equal(trustedBackupAgeExecutable(path.join(root,'absent'),{report}),false);assert.equal(last.predicate,'file-stat');assert.equal(last.errorCode,'ENOENT');
+ let last;const report=v=>{last=v;};
+ // Hosts without a pinned age build (Windows) refuse before touching the file.
+ if(!backupAgePinForTarget(process.platform,process.arch)){for(const file of [path.join(root,'absent'),root]){assert.equal(trustedBackupAgeExecutable(file,{report}),false);assert.equal(last.predicate,'platform-pin');}return;}assert.equal(trustedBackupAgeExecutable(path.join(root,'absent'),{report}),false);assert.equal(last.predicate,'file-stat');assert.equal(last.errorCode,'ENOENT');
  assert.equal(trustedBackupAgeExecutable(root,{report}),false);assert.equal(last.predicate,'file-type');
  const bad=path.join(root,'bad');writeFileSync(bad,'not a binary');linkSync(bad,path.join(root,'hardlink'));assert.equal(trustedBackupAgeExecutable(bad,{report}),false);assert.equal(last.predicate,'file-links');
  symlinkSync(bad,path.join(root,'symbolic'));assert.equal(trustedBackupAgeExecutable(path.join(root,'symbolic'),{report}),false);assert.equal(last.predicate,'file-type');
@@ -58,7 +61,7 @@ test('actual encryption assertion binds encrypt versus decrypt without changing 
  assert(source.includes('else assertBackupAgeTool(executable,"encrypt")'));assert(source.includes('assertBackupAgeTool(executable,"decrypt")'));
 });
 test('actual worker catch emits only validated finite attestation on matching errors',()=>{
- const source=readFileSync(new URL('../scripts/installation-recovery-worker.ts',import.meta.url),'utf8'),start=source.indexOf('} catch (error) {')+'} catch (error) {'.length,end=source.indexOf('\n}\nif (parentPort)',start);
+ const source=readFileSync(new URL('../scripts/installation-recovery-worker.ts',import.meta.url),'utf8').replace(/\r\n/g,'\n'),start=source.indexOf('} catch (error) {')+'} catch (error) {'.length,end=source.indexOf('\n}\nif (parentPort)',start);
  const run=new Function('error','normalizeBackupAgeDiagnostic','process','let reply,exitCode;'+source.slice(start,end)+';return {reply,exitCode};');
  const goodError={code:'AGE_TOOL_UNVERIFIED',backupAgeAttestation:diagnostic(),message:'SECRET',stack:'SECRET'};assert.deepEqual(run(goodError,normalizeBackupAgeDiagnostic,{platform:'darwin'}),{reply:{ok:false,error:'AGE_TOOL_UNVERIFIED',backupAgeAttestation:diagnostic()},exitCode:1});
  for(const error of [{code:'OTHER',backupAgeAttestation:diagnostic()},{code:'AGE_TOOL_UNVERIFIED',backupAgeAttestation:{...diagnostic(),stderr:'SECRET'}},{code:'AGE_TOOL_UNVERIFIED',get backupAgeAttestation(){throw Error('SECRET');}}]){const result=run(error,normalizeBackupAgeDiagnostic,{platform:'darwin'});assert.equal(result.reply.backupAgeAttestation,undefined);assert.equal(result.exitCode,1);assert(!JSON.stringify(result).includes('SECRET'));}
