@@ -9,12 +9,12 @@
   "zipSha256": "ad1a7e66ebbc725dd2ad119e5050f4fda0557259fa4a8d901b9b1a76fb03df07",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-24T00:35:01Z",
-  "nativeRoundsUsed": 30,
+  "nativeRoundsUsed": 31,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R31 denial-only case under standing completion authority on unchanged verified49cc37be signed artifact. Original observed notice/Options protocol; press only newly observed uniquely enabled exact Don\u2019t Allow (ASCII apostrophe equivalent) and preserve popup snapshot before action. No regrant/SystemSettings/DB mutation or action retry. Same20s consent and12s absence windows, one60min CI cap. Retain30 prior native attempts and accepted R30 machine proof; audio audibility remains unproved.",
+  "admission": "One R32 denial-only confirmation under standing completion authority, same verified49cc artifact and same R31 denial case. Shared pure AX tree reader handles explicit pre-action stale snapshots in at most3 attempts under each existing caller deadline; status/Inbox wrappers have no nested retries. No action replay, productbuild or outcome change. Retain31 prior attempts; reuse accepted R30fivecaseproof; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -84,19 +84,22 @@
     "enabledRequired": true,
     "actionRetry": false
   },
-  "inboxReadRefresh": {
-    "maximumAttempts": 3,
-    "error": "AX-read",
-    "code": -25202,
-    "requiresActionAttemptedFalse": true,
-    "deadline": "existing caller absolute deadline",
-    "replayActions": false
-  },
   "caseSet": "os-denied",
   "reusedNativeEvidence": {
     "grantFiveCaseRun": 35170464452,
     "fixture": "e34df9e7aedc0364bfbefb9f424df9eeeb86e913",
     "status": "PASS",
     "notRerun": true
+  },
+  "snapshotReadRefresh": {
+    "scope": "all existing pure status/Inbox/tree observations",
+    "maximumAttempts": 3,
+    "error": "AX-read",
+    "code": -25202,
+    "requiresActionAttemptedFalse": true,
+    "legacySettingsReadinessCode": -25204,
+    "deadline": "each original caller absolute deadline; default original20s tree budget",
+    "nestedRetries": false,
+    "replayActions": false
   }
 }

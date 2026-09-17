@@ -1,4 +1,4 @@
-# B35 R31: standalone OS denial only; reuse R30 grant/five-case proof.
+# B35 R32: shared bounded snapshot reader; OS denial only, R30 proof reused.
 name: Mac packaged attention machine checks
 on:
   push:

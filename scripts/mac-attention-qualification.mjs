@@ -37,20 +37,19 @@ async function admitSystemApplication(name){
  return systemPid(name);
 }
 const ax=(pid,command,options={})=>{const result=run('/usr/bin/osascript',['-l','JavaScript',path.join(DIR,'mac-attention-ax.jxa'),JSON.stringify({pid,...command})],{timeout:options.timeout??20000});let value;try{value=JSON.parse(result.stdout.trim());}catch{value={ok:false,error:'osascript',code:result.code,stderr:redactSecretsInLine(result.stderr).slice(-800)};}return value;};
-const tree=(pid,label)=>{const result=ax(pid,{op:'tree'});writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});check(result.ok,'AX_TREE_'+label);return result;};
-// A Settings transition may temporarily refuse AX messaging. Read only; never repeat a mutation.
-async function settingsTree(pid,label){
- const deadline=Date.now()+15000;let result=null,attempt=0;
- while(!stopping&&Date.now()<deadline){
-  const remaining=deadline-Date.now();if(remaining<=0)break;
-  result=ax(pid,{op:'tree',settingsReadiness:true},{timeout:remaining});
+function tree(pid,label,deadline=Date.now()+20000,{settingsReadiness=false}={}){
+ for(let attempt=1;attempt<=3;attempt++){
+  const remaining=deadline-Date.now();check(!stopping&&Number.isFinite(remaining)&&remaining>0,'AX_TREE_'+label);
+  const result=ax(pid,{op:'tree',...(settingsReadiness?{settingsReadiness:true}:{})},{timeout:remaining});
   writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
-  record('settings-tree-read',{pid,label,attempt:++attempt,result:{ok:result.ok,error:result.error??null,code:result.code??null,attribute:result.attribute??null,visited:result.visited??null,elapsedMs:result.elapsedMs??null}});
-  if(result.ok===true)return result;
-  if(result.error!=='AX-read'||result.code!==-25204)break;
-  const wait=Math.min(250,deadline-Date.now());if(wait>0)await pause(wait);
+  record('ax-snapshot-read',{pid,label,attempt,ok:result.ok,error:result.error??null,code:result.code??null,attribute:result.attribute??null,actionAttempted:result.actionAttempted??null,visited:result.visited??null,elapsedMs:result.elapsedMs??null});
+  if(result.ok)return result;
+  const stale=result.error==='AX-read'&&result.actionAttempted===false&&(result.code===-25202||(settingsReadiness&&result.code===-25204));
+  if(!stale||attempt===3||Date.now()>=deadline)check(false,'AX_TREE_'+label);
  }
- check(false,'AX_TREE_'+label);
+}
+async function settingsTree(pid,label){
+ return tree(pid,label,Date.now()+15000,{settingsReadiness:true});
 }
 const texts=t=>t.elements.flatMap(n=>[...n.names,typeof n.value==='string'?n.value:'']).filter(Boolean);
 const shot=label=>{const file=path.join(E,label+'.png');must(run('/usr/sbin/screencapture',['-x',file]),'SCREENSHOT_'+label);return path.basename(file);};
@@ -174,17 +173,7 @@ async function openPendingInbox(s){
  await press(s.pid,'Tools',['AXPopUpButton'],{tools:true,requireEnabled:true});await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
 }
 async function readPendingInbox(s,kind,deadline){
- const label='pending-'+kind;
- for(let attempt=1;attempt<=3;attempt++){
-  const remaining=deadline-Date.now();check(Number.isFinite(remaining)&&remaining>0,'AX_TREE_'+label);
-  const result=ax(s.pid,{op:'tree'},{timeout:remaining});
-  writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
-  if(result.ok)return inboxObservation(result,inboxSource(s,kind));
-  record('inbox-snapshot-read-failed',{kind,attempt,error:result.error??null,code:result.code??null,attribute:result.attribute??null,actionAttempted:result.actionAttempted??null});
-  if(result.error!=='AX-read'||result.code!==-25202||result.actionAttempted!==false||attempt===3||Date.now()>=deadline)check(false,'AX_TREE_'+label);
-  // Only refresh the stale read. Never reopen the Inbox or replay any action.
-  await pause(Math.min(100,Math.max(0,deadline-Date.now())));
- }
+ return inboxObservation(tree(s.pid,'pending-'+kind,deadline),inboxSource(s,kind));
 }
 async function pending(s,kind,ms=10000){
  // A new dialog mount clears the previous result; a settled page is a fresh read.
@@ -194,12 +183,12 @@ async function pending(s,kind,ms=10000){
  finally{await press(s.pid,'Close Inbox');}
 }
 async function exactRequestCard(s,kind){
- const action='B35_SYNTHETIC_NO_EXECUTION_'+kind+'_'+s.runId;
- await until(()=>texts(tree(s.pid,'exact-card-'+kind)).some(x=>x.includes(action)),10000,'EXACT_CARD_'+kind);
+ const action='B35_SYNTHETIC_NO_EXECUTION_'+kind+'_'+s.runId,deadline=Date.now()+10000;
+ await until(()=>texts(tree(s.pid,'exact-card-'+kind,deadline)).some(x=>x.includes(action)),Math.max(0,deadline-Date.now()),'EXACT_CARD_'+kind);
  for(const label of ['Deny','Allow once']){const control=state(s.pid,label,['AXButton']);check(control.enabled===true,'REQUEST_DECISION_ENABLED_'+label);}
 }
 
-const notice=(s,label)=>{const t=tree(systemPid('NotificationCenter'),label);return{tree:t,text:texts(t).join('\n')};};
+const notice=(s,label,deadline)=>{const t=tree(systemPid('NotificationCenter'),label,deadline);return{tree:t,text:texts(t).join('\n')};};
 async function sampleNoBanner(s,marker,kind){const samples=[];for(let i=0;i<4;i++){check(!stopping,'STOPPED');const n=notice(s,kind+'-'+i);samples.push({at:new Date().toISOString(),present:n.text.includes(marker),screenshot:shot(kind+'-'+i)});await pause(3000);}record(kind+'-absence',{marker,samples,windowMs:12000});check(samples.every(x=>!x.present),kind.toUpperCase()+'_BANNER_PRESENT');check((await pending(s,kind)).pending,'PENDING_PRESERVED_'+kind);}
 async function resolveDeny(s,kind){
  await selectBot(s,kind);await exactRequestCard(s,kind);check((await pending(s,kind)).pending,'PENDING_BEFORE_DENY_'+kind);
@@ -243,7 +232,7 @@ async function nativeConsent(s,state,deadline){
  if(state.phase==='done'||state.phase==='failed'||Date.now()>=deadline)return;
  const pid=systemPid('NotificationCenter'),remaining=()=>Math.max(1,deadline-Date.now());
  if(state.phase==='menu'){
-  const menu=ax(pid,{op:'tree'},{timeout:Math.min(3000,remaining())});writeFileSync(path.join(E,'notification-consent-menu.ax.json'),JSON.stringify(menu,null,2)+'\n',{mode:0o600});check(menu.ok,'CONSENT_MENU_READ');
+  tree(pid,'notification-consent-menu',Math.min(deadline,Date.now()+3000));
  }
  const result=ax(pid,{op:'allowNotificationPermission',consentPhase:state.phase,consentDecision:state.decision??'allow',deadline},{timeout:Math.min(3000,remaining())});
  if(result.error==='consent-notice-not-unique'&&result.count===0)return;
@@ -260,7 +249,7 @@ async function nativeConsent(s,state,deadline){
 async function denialJourney(s){
  const {marker}=await trigger(s,'banner'),consent={phase:'initial',decision:'deny'},deadline=Date.now()+20000;
  await until(async()=>{
-  const observed=notice(s,'waiting-os-denied');check(!observed.text.includes(marker),'DENIED_APPROVAL_BANNER');
+  const observed=notice(s,'waiting-os-denied',deadline);check(!observed.text.includes(marker),'DENIED_APPROVAL_BANNER');
   await nativeConsent(s,consent,deadline);check(consent.phase!=='failed','OS_DENIAL_ACTION');return consent.phase==='done';
  },Math.max(0,deadline-Date.now()),'OS_DENIAL_CONSENT');
  await sampleNoBanner(s,marker,'banner');await selectBot(s,'banner');await exactRequestCard(s,'banner');
@@ -293,13 +282,13 @@ async function journey(){
   const instances=(await api(s,'/api/instances')).instances;check(instances.length===1&&instances[0].instanceId==='attention-fixture'&&instances[0].driverKind==='claudeAgent'&&instances[0].models.options.some(x=>x.id==='claude-sonnet-5'),'SYNTHETIC_INSTANCE_IDENTITY');
   const roster=(await api(s,'/api/bots?messages=0')).bots;check(Object.values(s.bots).every(b=>roster.some(x=>x.id===b.id&&x.threadId===b.threadId)),'OWNED_DATA_DIR');
   await press(s.pid,'App settings');const t=await settingsTree(s.pid,'notification-settings');if(texts(t).some(x=>x==='Request notification permission'))await press(s.pid,'Request notification permission');
-  await until(()=>{const rendered=texts(tree(s.pid,'notification-permission-requested'));check(!rendered.some(x=>x.includes('Notification permission is blocked.')),'RENDERER_NOTIFICATION_PERMISSION_DENIED');check(!rendered.some(x=>x.includes('Notification permission controls are unavailable')),'RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE');return rendered.some(x=>x.includes('Notification permission is granted.'));},10000,'RENDERER_NOTIFICATION_PERMISSION');await press(s.pid,'Close settings');
+  const permissionDeadline=Date.now()+10000;await until(()=>{const rendered=texts(tree(s.pid,'notification-permission-requested',permissionDeadline));check(!rendered.some(x=>x.includes('Notification permission is blocked.')),'RENDERER_NOTIFICATION_PERMISSION_DENIED');check(!rendered.some(x=>x.includes('Notification permission controls are unavailable')),'RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE');return rendered.some(x=>x.includes('Notification permission is granted.'));},Math.max(0,permissionDeadline-Date.now()),'RENDERER_NOTIFICATION_PERMISSION');await press(s.pid,'Close settings');
   if(C.caseSet==='os-denied'){await denialJourney(s);return;}
   for(const kind of ['banner','private','mute','quiet','dnd']){
    check(!stopping,'SCRIPT_DEADLINE');if(kind==='private')await settings(s,{'Show notification previews':false});if(kind==='mute')await settings(s,{'Show notification previews':true,'Needs your attention':false});if(kind==='quiet')await settings(s,{'Needs your attention':true,'Quiet hours':true});if(kind==='dnd'){await settings(s,{'Quiet hours':false});await dnd(s,true);}
    const {marker,item}=await trigger(s,kind);
    if(['banner','private'].includes(kind)){
-    const consent={phase:'initial'},bannerDeadline=Date.now()+20000;const observed=await until(async()=>{const n=notice(s,'waiting-'+kind);if(n.text.includes(marker))return n;await nativeConsent(s,consent,bannerDeadline);return false;},20000,'NATIVE_BANNER_'+kind);shot('visible-'+kind);
+    const consent={phase:'initial'},bannerDeadline=Date.now()+20000;const observed=await until(async()=>{const n=notice(s,'waiting-'+kind,bannerDeadline);if(n.text.includes(marker))return n;await nativeConsent(s,consent,bannerDeadline);return false;},20000,'NATIVE_BANNER_'+kind);shot('visible-'+kind);
     if(kind==='private')check(!observed.text.includes(s.bots[kind].name)&&!observed.text.includes('B35_SYNTHETIC_NO_EXECUTION_private_'),'PRIVATE_PREVIEW');
     if(kind==='banner'){const clicked=ax(systemPid('NotificationCenter'),{op:'pressNotification',marker});record('native-click',clicked);check(clicked.ok,'NATIVE_CLICK');await until(()=>{const n=ax(s.pid,{op:'count',roles:['AXTextArea','AXTextField'],label:'Message '+s.bots[kind].name});return n.ok&&n.count===1;},10000,'CLICK_EXACT_THREAD');await exactRequestCard(s,kind);shot('native-click-exact-thread');const current=await pending(s,kind,5000);check(current.pending&&current.sourceLabel===item.sourceLabel&&!existsSync(path.join(s.control,'decision-'+kind+'.json')),'CLICK_NOT_APPROVAL');}
     record('native-banner',{kind,marker,sourceLabel:item.sourceLabel,requestId:null,visible:true});

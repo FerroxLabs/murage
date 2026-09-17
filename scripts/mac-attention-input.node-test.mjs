@@ -148,7 +148,8 @@ test('stale-read attempt cap and original shared deadline fail without an action
 function inboxSnapshotFixture(results,{cost=123}={}){
  const fn=/async function readPendingInbox\(s,kind,deadline\)\{[\s\S]*?\n\}/.exec(source)[0];
  let now=0,reads=0,observations=0;const calls=[];
- const read=runInNewContext('('+fn+')',{Date:{now:()=>now},check,E:'/evidence',path:{join:(...v)=>v.join('/')},writeFileSync(){},record(){},pause:async ms=>{now+=ms;},inboxSource:()=> 'exactDndSource',inboxObservation:(value,label)=>{assert.equal(label,'exactDndSource');observations++;return value.observation;},ax:(_pid,c,options)=>{calls.push({c,options});now+=Math.min(cost,options.timeout);return results[Math.min(reads++,results.length-1)];}});
+ const snapshot=source.slice(source.indexOf('function tree('),source.indexOf('async function settingsTree('));
+ const read=runInNewContext(snapshot+';('+fn+')',{Date:{now:()=>now},stopping:false,check,E:'/evidence',path:{join:(...v)=>v.join('/')},writeFileSync(){},record(){},pause:async ms=>{now+=ms;},inboxSource:()=> 'exactDndSource',inboxObservation:(value,label)=>{assert.equal(label,'exactDndSource');observations++;return value.observation;},ax:(_pid,c,options)=>{calls.push({c,options});now+=Math.min(cost,options.timeout);return results[Math.min(reads++,results.length-1)];}});
  return{read,calls,reads:()=>reads,observations:()=>observations,time:()=>now};
 }
 test('recorded final DND stale read refreshes only its snapshot then preserves original Inbox observation',async()=>{

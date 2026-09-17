@@ -5,11 +5,12 @@ import {runInNewContext} from 'node:vm';
 const source=readFileSync(new URL('./mac-attention-qualification.mjs',import.meta.url),'utf8');
 const jxa=readFileSync(new URL('./mac-attention-ax.jxa',import.meta.url),'utf8');
 const fn=/async function settingsTree\(pid,label\)\{[\s\S]*?\n\}/.exec(source)[0];
-const failure={ok:false,error:'AX-read',code:-25204,attribute:'AXRole',visited:1,elapsedMs:1083};
+const snapshot=source.slice(source.indexOf('function tree('),source.indexOf('async function settingsTree('));
+const failure={ok:false,actionAttempted:false,error:'AX-read',code:-25204,attribute:'AXRole',visited:1,elapsedMs:1083};
 const complete={ok:true,elements:[{role:'AXCheckBox',names:['Needs your attention'],value:1}],visited:2};
-function fixture(results,{elapsed=1083,stopping=false}={}){
+function fixture(results,{elapsed=1083,stopping=false,status=false}={}){
  let clock=0;const calls=[],records=[],writes=[];
- const read=runInNewContext('('+fn+')',{
+ const read=runInNewContext(snapshot+';'+(status?'(async(pid,label)=>tree(pid,label,10000))':'('+fn+')'),{
   Date:{now:()=>clock},stopping,
   ax:(pid,command,options)=>{calls.push({pid,command:JSON.parse(JSON.stringify(command)),options});clock+=Math.min(elapsed,options.timeout);return results[Math.min(calls.length-1,results.length-1)];},
   writeFileSync:(_path,text)=>writes.push(JSON.parse(text)),path:{join:(...x)=>x.join('/')},E:'/evidence',
@@ -24,9 +25,9 @@ test('Settings retries only the recorded read failure and returns the complete t
  assert(f.calls.every(c=>c.pid===123&&c.command.op==='tree'&&c.command.settingsReadiness===true));
  assert(f.calls[1].options.timeout<f.calls[0].options.timeout);
 });
-test('persistent read failure shares one 15 second deadline and retains each attempt',async()=>{
+test('persistent read failure stops at three within the original15 second deadline',async()=>{
  const f=fixture([failure],{elapsed:3000});await assert.rejects(f.read(123,'settings'),/AX_TREE_settings/);
- assert.equal(f.time(),15000);assert.equal(f.calls.length,f.records.length);assert.equal(f.calls.length,f.writes.length);
+ assert.equal(f.time(),9000);assert.equal(f.calls.length,3);assert.equal(f.calls.length,f.records.length);assert.equal(f.calls.length,f.writes.length);
  assert(f.calls.length>1);assert(f.calls.every(c=>c.command.op==='tree'));
 });
 test('permission, structural, malformed and other errors fail immediately',async()=>{
@@ -53,4 +54,13 @@ test('Settings actions remain single and native permission checks are retained',
  assert(source.includes("const t=await settingsTree(s.pid,'notification-settings')"));
  for(const gate of ['RENDERER_NOTIFICATION_PERMISSION_DENIED','RENDERER_NOTIFICATION_PERMISSION_UNAVAILABLE','RENDERER_NOTIFICATION_PERMISSION','PREFERENCES_CONFIRMED'])assert(source.includes(gate));
  assert(!source.includes('windowSelector'));
+});
+
+test('recorded R31 mount-stale permission status uses same reader under original10 second deadline',async()=>{
+ const stale={...failure,code:-25202,visited:551,elapsedMs:909};const f=fixture([stale,complete],{elapsed:909,status:true});assert.equal(await f.read(123,'notification-permission-requested'),complete);assert.equal(f.calls.length,2);assert(f.calls.every(x=>x.command.op==='tree'&&!x.command.settingsReadiness));assert.equal(f.calls[0].options.timeout,10000);assert.equal(f.calls[1].options.timeout,9091);
+ const deadline=fixture([stale],{elapsed:6000,status:true});await assert.rejects(deadline.read(123,'status'),/AX_TREE_status/);assert.equal(deadline.time(),10000);assert.equal(deadline.calls.length,2);
+});
+test('shared snapshot refresh refuses ambiguous action state and has no nested retries',async()=>{
+ for(const result of [{...failure,code:-25202,actionAttempted:true},{...failure,code:-25202,actionAttempted:undefined}]){const f=fixture([result,complete],{status:true});await assert.rejects(f.read(123,'status'),/AX_TREE_status/);assert.equal(f.calls.length,1);}
+ const inbox=source.slice(source.indexOf('async function readPendingInbox('),source.indexOf('async function pending('));assert(!inbox.includes('for('));assert(!fn.includes('while('));assert(inbox.includes("tree(s.pid,'pending-'+kind,deadline)"));assert(source.includes("tree(s.pid,'notification-permission-requested',permissionDeadline)"));
 });
