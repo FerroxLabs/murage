@@ -58,6 +58,39 @@ const WORKER = `
   if (process.env.LEASE_TEST_PID_EPERM) process.kill = () => {
     throw Object.assign(new Error('not permitted'), {code:'EPERM'});
   };
+  // Windows creation-identity seam: only the PowerShell path is simulated.
+  // Answers are keyed by queried PID ("self" = this worker); absent keys fail.
+  const probes = [];
+  if (process.env.LEASE_TEST_WIN32) Object.defineProperty(process, 'platform', { value: 'win32' });
+  const seam = process.env.LEASE_TEST_PS === undefined ? {} : { probes };
+  if (process.env.LEASE_TEST_PS !== undefined) {
+    const table = JSON.parse(process.env.LEASE_TEST_PS);
+    const answer = (mode, path, args, options) => {
+      const script = Buffer.from(String(args.at(-1)), 'base64').toString('utf16le');
+      const pid = Number(/GetProcessById\\((\\d+)\\)/.exec(script)?.[1]);
+      probes.push({ mode, path, flags: args.slice(0, 3), pid, timeout: options?.timeout, maxBuffer: options?.maxBuffer, windowsHide: options?.windowsHide });
+      const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
+      if (entry === undefined || entry === 'throw') throw Object.assign(new Error('probe failed'), { code: 'ETIMEDOUT' });
+      return entry;
+    };
+    const powershell = (path) => String(path).toLowerCase().endsWith('powershell.exe');
+    const syncExec = cp.execFileSync;
+    cp.execFileSync = (path, args, options) => powershell(path) ? answer('sync', path, args, options) : syncExec(path, args, options);
+    const asyncExec = cp.execFile;
+    cp.execFile = (path, args, options, callback) => {
+      if (!powershell(path)) return asyncExec(path, args, options, callback);
+      const hold = process.env.LEASE_TEST_PS_HOLD;
+      const run = () => {
+        let output;
+        try { output = answer('async', path, args, options); } catch (error) { callback(error, ''); return; }
+        callback(null, output);
+        if (hold) setImmediate(() => fs.writeFileSync(hold + '.done', 'settled'));
+      };
+      const wait = () => !hold || fs.existsSync(hold) ? run() : setTimeout(wait, 5);
+      setImmediate(wait);
+      return { unref() {}, stdout: { unref() {} }, stderr: { unref() {} } };
+    };
+  }
   let pause;
   let paused = false;
   let attempts = 0;
@@ -96,20 +129,22 @@ const WORKER = `
       if (message.command === 'pause') { pause = message.pause; paused = false; process.send({event:'paused-configured'}); return; }
       if (message.command === 'acquire') {
         lease = mod.acquireDataDirLeaseForProcess(process.env.LEASE_TEST_DATA_DIR);
-        process.send({event:'acquired', pid:process.pid, delegated:lease.delegated, consumed:process.env[${JSON.stringify(PRIVATE_ENV)}] === undefined});
+        process.send({event:'acquired', pid:process.pid, delegated:lease.delegated, consumed:process.env[${JSON.stringify(PRIVATE_ENV)}] === undefined, ...seam});
       } else if (message.command === 'capability') {
         process.send({event:'capability', environment:lease.utilityServerLeaseEnvironment()});
       } else if (message.command === 'release') {
-        process.send({event:'released', released:lease.release()});
+        process.send({event:'released', released:lease.release(), ...seam});
+      } else if (message.command === 'inspect') {
+        process.send({event:'inspect', result:{...mod.inspectDataDirLease(process.env.LEASE_TEST_DATA_DIR)}, ...seam});
       } else if (message.command === 'generic-child') {
         const result = spawnSync(process.execPath, ['--eval', 'process.stdout.write(process.env.${PRIVATE_ENV} === undefined ? "absent" : "present")'], {env:process.env,encoding:'utf8'});
         process.send({event:'generic-child', inherited:result.stdout !== 'absent'});
       } else if (message.command === 'exit') process.exit(0);
     } catch (error) {
-      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts});
+      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts, ...seam});
     }
   });
-  process.send({event:'ready'});
+  process.send({event:'ready', pid:process.pid});
 `;
 
 function worker(f, environment = {}) {
@@ -168,8 +203,14 @@ const record = (pid, extra = {}) => ({ version: 1, pid, host: hostname(), token:
 const writeRecord = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
 const errorCode = (code) => (error) => error.name === "DataDirLeaseError" && error.code === code;
 
+const sleepers = new Set();
 test.afterEach(async () => {
   for (const item of [...workers]) await stop(item);
+  for (const item of [...sleepers]) {
+    if (item.child.exitCode === null && item.child.signalCode === null) item.child.kill("SIGKILL");
+    await item.exited;
+    sleepers.delete(item);
+  }
   for (const root of roots.splice(0)) safeWipeSync(root);
 });
 
@@ -759,4 +800,284 @@ test("changed boot metadata invalidates an old release handle", () => {
   writeRecord(f.leasePath, changed);
   assert.throws(() => lease.release(), errorCode("LEASE_NOT_OWNED"));
   assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), changed);
+});
+
+// ---- Windows same-boot PID reuse (creation identity), simulated on any host ----
+// A disposable worker reports win32 and answers only its PowerShell probe.
+// The "reused" PID always belongs to a sleeper this test spawned itself.
+const SYSTEM_ROOT = "C:\\Windows";
+const windows = (f, answers, extra = {}) => worker(f, { LEASE_TEST_WIN32: "1", SystemRoot: SYSTEM_ROOT, LEASE_TEST_PS: JSON.stringify(answers), ...extra });
+const identityOf = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
+const writeIdentity = (recordPath, owner, start, extra = {}) => {
+  const value = { version: 1, pid: owner.pid, token: owner.token, start, ...extra };
+  writeFileSync(identityOf(recordPath, owner), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  return value;
+};
+const syncProbes = (outcome) => outcome.probes.filter((probe) => probe.mode === "sync");
+
+// Only this test-owned child is ever signalled, by the shared afterEach.
+async function sleeper() {
+  const child = spawn(process.execPath, ["--eval", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const exited = new Promise((resolve) => child.once("close", resolve));
+  sleepers.add({ child, exited });
+  await until(() => Boolean(child.pid), "sleeper pid");
+  return child;
+}
+const stillRunning = (child) => child.exitCode === null && child.signalCode === null && (() => { try { process.kill(child.pid, 0); return true; } catch { return false; } })();
+
+test("Windows identity: a live true owner with matching creation identity stays exclusive", async () => {
+  const f = fixture();
+  const holder = await sleeper();
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  const identity = writeIdentity(f.leasePath, owner, "133712345678901234");
+  const contender = windows(f, { [holder.pid]: `${holder.pid}:133712345678901234` });
+  const outcome = await contender.command("acquire");
+  assert.equal(outcome.code, "LEASE_BUSY");
+  const probes = syncProbes(outcome);
+  assert.ok(probes.length >= 1);
+  for (const probe of probes) {
+    assert.equal(probe.pid, holder.pid);
+    assert.equal(probe.path, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    assert.deepEqual(probe.flags, ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    assert.equal(probe.timeout, 5000);
+    assert.equal(probe.maxBuffer, 64);
+    assert.equal(probe.windowsHide, true);
+  }
+  assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+  assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), identity);
+  assert.equal(stillRunning(holder), true);
+});
+
+test("Windows identity: a dead owner is reclaimed without any creation-time probe", async () => {
+  const f = fixture();
+  const owner = record(await deadPid());
+  writeRecord(f.leasePath, owner);
+  writeIdentity(f.leasePath, owner, "133712345678901234");
+  const contender = windows(f, {});
+  const outcome = await contender.command("acquire");
+  assert.equal(outcome.event, "acquired");
+  assert.equal(syncProbes(outcome).length, 0);
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
+  assert.equal((await contender.command("release")).released, true);
+});
+
+test("Windows identity: a same-boot reused PID is reclaimed without touching the unrelated process", async () => {
+  const f = fixture();
+  const unrelated = await sleeper();
+  const stale = record(unrelated.pid);
+  writeRecord(f.leasePath, stale);
+  writeIdentity(f.leasePath, stale, "133700000000000001");
+  const contender = windows(f, { [unrelated.pid]: `${unrelated.pid}:133700000000000002` });
+  const ready = await contender.event("ready");
+  const outcome = await contender.command("acquire");
+  assert.equal(outcome.event, "acquired");
+  // One real query; the proven mismatch is reused by the retirement recheck.
+  assert.equal(syncProbes(outcome).length, 1);
+  const current = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal(current.pid, ready.pid);
+  assert.notEqual(current.token, stale.token);
+  assert.equal(existsSync(identityOf(f.leasePath, stale)), false);
+  assert.equal(stillRunning(unrelated), true);
+  assert.equal((await contender.command("release")).released, true);
+  assert.equal(stillRunning(unrelated), true);
+});
+
+for (const [name, reply] of [
+  ["probe throws or times out", "throw"],
+  ["probe prints nothing", ""],
+  ["probe prints garbage", "Access is denied."],
+  ["probe answers another PID", "PID+1:133700000000000002"],
+  ["probe value has a leading zero", "PID:0133700000000000002"],
+  ["probe value exceeds FILETIME", "PID:99999999999999999999"],
+  ["probe output exceeds its bound", `PID:133700000000000002${" ".repeat(80)}`],
+]) {
+  test(`Windows identity fails closed when the ${name}`, async () => {
+    const f = fixture();
+    const holder = await sleeper();
+    const owner = record(holder.pid);
+    writeRecord(f.leasePath, owner);
+    const identity = writeIdentity(f.leasePath, owner, "133700000000000001");
+    const answer = reply === "throw" ? "throw" : reply.replace("PID+1", String(holder.pid + 1)).replace("PID", String(holder.pid));
+    const contender = windows(f, { [holder.pid]: answer });
+    const outcome = await contender.command("acquire");
+    assert.equal(outcome.code, "LEASE_BUSY");
+    assert.ok(syncProbes(outcome).length >= 1);
+    assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+    assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), identity);
+    assert.equal(stillRunning(holder), true);
+  });
+}
+
+test("Windows identity: legacy and invalid identities keep PID exclusion without probing", async () => {
+  const f = fixture();
+  const holder = await sleeper();
+  const answers = { [holder.pid]: `${holder.pid}:133700000000000002` };
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  const legacy = windows(f, answers);
+  const outcome = await legacy.command("acquire");
+  assert.equal(outcome.code, "LEASE_BUSY");
+  assert.equal(syncProbes(outcome).length, 0);
+  const path = identityOf(f.leasePath, owner);
+  const valid = { version: 1, pid: holder.pid, token: owner.token, start: "133700000000000001" };
+  const external = join(f.root, "external-identity");
+  writeFileSync(external, JSON.stringify(valid), { mode: 0o600 });
+  for (const plant of [
+    () => writeFileSync(path, JSON.stringify({ ...valid, token: randomUUID() })),
+    () => writeFileSync(path, JSON.stringify({ ...valid, pid: holder.pid + 1 })),
+    () => writeFileSync(path, JSON.stringify({ ...valid, start: "0" })),
+    () => writeFileSync(path, JSON.stringify({ ...valid, start: Number(valid.start) })),
+    () => writeFileSync(path, JSON.stringify({ ...valid, extra: true })),
+    () => writeFileSync(path, "not json"),
+    () => writeFileSync(path, " ".repeat(4097)),
+    () => symlinkSync(external, path, process.platform === "win32" ? "file" : undefined),
+  ]) {
+    rmSync(path, { force: true });
+    plant();
+    const before = lstatSync(path);
+    const planted = before.isSymbolicLink() ? null : readFileSync(path, "utf8");
+    const contender = windows(f, answers);
+    const result = await contender.command("acquire");
+    assert.equal(result.code, "LEASE_BUSY");
+    assert.equal(syncProbes(result).length, 0);
+    if (planted === null) assert.equal(lstatSync(path).isSymbolicLink(), true);
+    else assert.equal(readFileSync(path, "utf8"), planted);
+    assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+    await stop(contender);
+  }
+  assert.equal(stillRunning(holder), true);
+});
+
+test("Windows identity: FILETIME values are compared exactly beyond double precision", async () => {
+  const f = fixture();
+  const holder = await sleeper();
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  writeIdentity(f.leasePath, owner, "9223372036854775807");
+  const same = windows(f, { [holder.pid]: `${holder.pid}:9223372036854775807` });
+  assert.equal((await same.command("acquire")).code, "LEASE_BUSY");
+  rmSync(identityOf(f.leasePath, owner));
+  // 2^53 + 1 and 2^53 are equal as JavaScript numbers but are different processes.
+  writeIdentity(f.leasePath, owner, "9007199254740993");
+  const reused = windows(f, { [holder.pid]: `${holder.pid}:9007199254740992` });
+  assert.equal((await reused.command("acquire")).event, "acquired");
+  assert.equal((await reused.command("release")).released, true);
+  assert.equal(stillRunning(holder), true);
+});
+
+test("Windows identity: owners publish their exact identity asynchronously and remove it on release", async () => {
+  const f = fixture();
+  const start = "133711112222333344";
+  const holder = windows(f, { self: `SELF_PID:${start}` });
+  const ready = await holder.event("ready");
+  const acquired = await holder.command("acquire");
+  assert.equal(acquired.event, "acquired");
+  assert.equal(syncProbes(acquired).length, 0);
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  // The primary record format is unchanged, so older readers stay compatible.
+  assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
+  assert.equal(owner.pid, ready.pid);
+  await until(() => existsSync(identityOf(f.leasePath, owner)), "published identity");
+  assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), { version: 1, pid: ready.pid, token: owner.token, start });
+  // The published identity matches the live owner, so a contender stays out.
+  const contender = windows(f, { [ready.pid]: `${ready.pid}:${start}` });
+  const refused = await contender.command("acquire");
+  assert.equal(refused.code, "LEASE_BUSY");
+  assert.equal(syncProbes(refused).length >= 1, true);
+  const released = await holder.command("release");
+  assert.equal(released.released, true);
+  assert.equal(existsSync(f.leasePath), false);
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
+  assert.equal(released.probes.filter((probe) => probe.mode === "async").length, 1);
+});
+
+test("Windows identity: a release that wins the race with the identity probe leaves no identity", async () => {
+  const f = fixture();
+  const gate = join(f.root, "identity-probe.gate");
+  const holder = windows(f, { self: "SELF_PID:133711112222333344" }, { LEASE_TEST_PS_HOLD: gate });
+  assert.equal((await holder.command("acquire")).event, "acquired");
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.equal((await holder.command("release")).released, true);
+  writeFileSync(gate, "continue");
+  await until(() => existsSync(`${gate}.done`), "identity probe settled");
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
+  assert.deepEqual(readdirSync(f.root).filter((name) => name.includes(".identity-")), []);
+});
+
+test("Windows identity: non-Windows owners neither probe nor publish identities", async () => {
+  const f = fixture();
+  const holder = worker(f, { LEASE_TEST_PS: JSON.stringify({ self: "SELF_PID:133711112222333344" }) });
+  const acquired = await holder.command("acquire");
+  assert.equal(acquired.event, "acquired");
+  const released = await holder.command("release");
+  assert.equal(released.released, true);
+  assert.deepEqual(released.probes, []);
+  assert.deepEqual(readdirSync(f.root).filter((name) => name.includes(".identity-")), []);
+}, { skip: process.platform === "win32" });
+
+test("Windows identity: contenders against a reused-PID record elect exactly one owner", async () => {
+  const f = fixture();
+  const unrelated = await sleeper();
+  const stale = record(unrelated.pid);
+  writeRecord(f.leasePath, stale);
+  writeIdentity(f.leasePath, stale, "133700000000000001");
+  const answers = { [unrelated.pid]: `${unrelated.pid}:133700000000000002`, self: "SELF_PID:133799999999999999" };
+  const contenders = Array.from({ length: 8 }, () => windows(f, answers));
+  await Promise.all(contenders.map((item) => item.event("ready")));
+  const outcomes = await Promise.all(contenders.map((item) => item.command("acquire")));
+  assert.equal(outcomes.filter((outcome) => outcome.event === "acquired").length, 1);
+  assert.equal(outcomes.filter((outcome) => outcome.event === "error").length, 7);
+  for (const outcome of outcomes.filter((item) => item.event === "error")) {
+    assert.ok(["LEASE_BUSY", "LEASE_RECOVERY_BUSY"].includes(outcome.code), outcome.code);
+  }
+  const winner = contenders[outcomes.findIndex((outcome) => outcome.event === "acquired")];
+  assert.equal((await winner.command("release")).released, true);
+  assert.equal(stillRunning(unrelated), true);
+});
+
+test("Windows identity: a reused-PID child record no longer blocks the primary; delegation validation adds no probe", async () => {
+  const f = fixture();
+  const unrelated = await sleeper();
+  const staleChild = record(unrelated.pid);
+  writeRecord(f.childLeasePath, staleChild);
+  writeIdentity(f.childLeasePath, staleChild, "133700000000000001");
+  const answers = { [unrelated.pid]: `${unrelated.pid}:133700000000000002`, self: "SELF_PID:133799999999999999" };
+  const parent = windows(f, answers);
+  const parentReady = await parent.event("ready");
+  assert.equal((await parent.command("acquire")).event, "acquired");
+  // The primary guard only disregards the disproved child; the next child claim retires it.
+  assert.deepEqual(JSON.parse(readFileSync(f.childLeasePath, "utf8")), staleChild);
+  const { environment } = await parent.command("capability");
+  const child = windows(f, answers, environment);
+  const delegated = await child.command("acquire");
+  assert.equal(delegated.event, "acquired");
+  assert.equal(delegated.delegated, true);
+  assert.equal(syncProbes(delegated).some((probe) => probe.pid === parentReady.pid), false);
+  assert.ok(syncProbes(delegated).every((probe) => probe.pid === unrelated.pid));
+  assert.notEqual(JSON.parse(readFileSync(f.childLeasePath, "utf8")).token, staleChild.token);
+  assert.equal(existsSync(identityOf(f.childLeasePath, staleChild)), false);
+  assert.equal((await child.command("release")).released, true);
+  assert.equal((await parent.command("release")).released, true);
+  assert.equal(stillRunning(unrelated), true);
+});
+
+test("Windows identity: inspection mirrors acquisition without changing records", async () => {
+  const f = fixture();
+  const holder = await sleeper();
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  writeIdentity(f.leasePath, owner, "133700000000000001");
+  const snapshot = () => readdirSync(f.root).sort().map((name) => [name, lstatSync(join(f.root, name)).isFile() ? readFileSync(join(f.root, name), "utf8") : null]);
+  const before = snapshot();
+  const matching = windows(f, { [holder.pid]: `${holder.pid}:133700000000000001` });
+  const blocked = await matching.command("inspect");
+  assert.equal(blocked.result.status, "blocked");
+  assert.equal(blocked.result.code, "LEASE_BUSY");
+  const reused = windows(f, { [holder.pid]: `${holder.pid}:133700000000000002` });
+  const available = await reused.command("inspect");
+  assert.equal(available.result.status, "available");
+  assert.equal(syncProbes(available).length, 1);
+  assert.deepEqual(snapshot(), before);
+  assert.equal(stillRunning(holder), true);
 });

@@ -5,15 +5,17 @@
 // Murage adaptations: stable sibling anchors, canonical aliases, strict bounded
 // no-follow reads, sanitized errors, bounded acquisition, and sealed release.
 // Boot-session detection adapted from upstream PR #937 at b6a27330560c.
+// Windows same-boot PID reuse concept adapted from upstream PR #1324 at
+// 7c82592ff8b1; Murage binds an exact creation identity instead of wall time.
 // This helper never creates, migrates, renames or replaces the installation.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
   openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { hostname, uptime } from "node:os";
-import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep, win32 } from "node:path";
 
 const CHILD_LEASE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
 const NO_CAPABILITY = Symbol("no private lease capability");
@@ -51,7 +53,9 @@ function uptimeMs() {
 // A different known boot, or a backwards since-boot clock when boot identity
 // is unavailable, proves death. Wall time is never evidence. Unknown probes
 // retain PID exclusion; notably failed uptime must not become zero.
-function ownerIsAlive(owner) {
+// With recordPath, a live Windows PID is also checked against the owner's
+// published creation identity; reapers and delegation checks pass none.
+function ownerIsAlive(owner, recordPath) {
   const boot = bootSession();
   if (boot !== null && typeof owner.boot === "string") {
     if (owner.boot !== boot) return false;
@@ -59,7 +63,114 @@ function ownerIsAlive(owner) {
     const current = uptimeMs();
     if (current !== null && current < owner.uptime) return false;
   }
-  return processIsAlive(owner.pid);
+  if (!processIsAlive(owner.pid)) return false;
+  return recordPath === undefined || !creationIdentityDisproves(owner, recordPath);
+}
+
+// Windows reuses PIDs within one boot, so a live PID alone cannot prove a
+// crashed owner alive. The kernel creation FILETIME of a process never
+// changes, so the exact value its owner published is clock- and DST-free
+// evidence. Only a successful, well-formed, different answer proves death;
+// every unavailable, slow, denied or malformed probe keeps PID exclusion.
+const WINDOWS_START = /^[1-9][0-9]{0,19}$/;
+const MAX_FILETIME = 0x7fffffffffffffffn;
+const IDENTITY_KEYS = ["version", "pid", "token", "start"];
+const IDENTITY_OUTPUT_BYTES = 64;
+const CHECK_PROBE_TIMEOUT_MS = 5_000;
+const SELF_PROBE_TIMEOUT_MS = 10_000;
+const MAX_DISPROVED = 64;
+const disproved = new Set();
+const validStart = (value) => typeof value === "string" && WINDOWS_START.test(value) && BigInt(value) <= MAX_FILETIME;
+const identityPath = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
+function isIdentity(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === IDENTITY_KEYS.length && IDENTITY_KEYS.every((key) => Object.hasOwn(value, key))
+    && value.version === 1 && isPid(value.pid) && typeof value.token === "string" && UUID.test(value.token) && validStart(value.start);
+}
+
+function windowsProcessStartQuery(pid) {
+  const root = process.env.SystemRoot;
+  if (!isPid(pid) || typeof root !== "string" || !/^[A-Za-z]:\\[^\0\r\n"]*$/.test(root)) return null;
+  // Same trusted Windows PowerShell 5.1 shape as the browser signature probe.
+  const script = String.raw`$env:PSModulePath=$PSHOME+'\Modules'; $ErrorActionPreference='Stop'; `
+    + `$p=[System.Diagnostics.Process]::GetProcessById(${pid}); [Console]::Out.Write(([string]$p.Id)+':'+([string]($p.StartTime.ToFileTimeUtc())))`;
+  return {
+    command: win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+  };
+}
+
+function parseProcessStart(pid, output) {
+  if (typeof output !== "string" || output.length > IDENTITY_OUTPUT_BYTES) return null;
+  const match = /^([1-9][0-9]{0,9}):([0-9]+)$/.exec(output.replace(/^\uFEFF/, "").trim());
+  return match && Number(match[1]) === pid && validStart(match[2]) ? match[2] : null;
+}
+
+function probeProcessStartSync(pid) {
+  const query = windowsProcessStartQuery(pid);
+  if (!query) return null;
+  try {
+    return parseProcessStart(pid, execFileSync(query.command, query.args, {
+      encoding: "utf8", timeout: CHECK_PROBE_TIMEOUT_MS, maxBuffer: IDENTITY_OUTPUT_BYTES, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+    }));
+  } catch { return null; }
+}
+
+let selfStart;
+function probeOwnStart() {
+  selfStart ??= new Promise((settle) => {
+    const query = windowsProcessStartQuery(process.pid);
+    if (!query) return settle(null);
+    try {
+      const child = execFile(query.command, query.args, {
+        encoding: "utf8", timeout: SELF_PROBE_TIMEOUT_MS, maxBuffer: IDENTITY_OUTPUT_BYTES, windowsHide: true,
+      }, (error, stdout) => settle(error ? null : parseProcessStart(process.pid, stdout)));
+      // Identity is an optimization for later recovery; never hold exit.
+      child?.unref?.();
+      child?.stdout?.unref?.();
+      child?.stderr?.unref?.();
+    } catch { settle(null); }
+  });
+  return selfStart;
+}
+
+function readIdentity(recordPath, owner) {
+  try {
+    const identity = readRecord(identityPath(recordPath, owner), undefined, isIdentity)?.owner;
+    return identity && identity.pid === owner.pid && identity.token === owner.token ? identity : null;
+  } catch { return null; }
+}
+
+function creationIdentityDisproves(owner, recordPath) {
+  if (process.platform !== "win32") return false;
+  const identity = readIdentity(recordPath, owner);
+  if (!identity) return false;
+  const key = `${identity.pid}:${identity.token}:${identity.start}`;
+  if (disproved.has(key)) return true;
+  const current = probeProcessStartSync(owner.pid);
+  if (current === null || current === identity.start) return false;
+  if (disproved.size >= MAX_DISPROVED) disproved.clear();
+  disproved.add(key);
+  return true;
+}
+
+/** Publish this process's creation identity for its exact, still-held record
+ * without blocking startup. Absence is safe: checkers keep PID exclusion. */
+function recordOwnIdentity(recordPath, owner, isReleased) {
+  if (process.platform !== "win32" || owner.pid !== process.pid) return;
+  void probeOwnStart().then((start) => {
+    try {
+      if (start === null || isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) return;
+      publishRecord(identityPath(recordPath, owner), { version: 1, pid: owner.pid, token: owner.token, start });
+      // A release that raced the publication must not leave a live-looking identity.
+      if (isReleased()) removeIdentity(recordPath, owner);
+    } catch { /* Missing identity keeps the PID-only protocol. */ }
+  }, () => {});
+}
+
+function removeIdentity(recordPath, owner) {
+  if (!readIdentity(recordPath, owner)) return;
+  try { unlinkSync(identityPath(recordPath, owner)); } catch { /* inert, token-scoped leftover */ }
 }
 
 const MESSAGES = {
@@ -207,7 +318,7 @@ const sameOwner = (a, b) => Boolean(a && b && a.pid === b.pid && a.host === b.ho
   && a.boot === b.boot && a.uptime === b.uptime);
 
 /** No follow, no unbounded allocation, no special-file open, no raw causes. */
-function readRecord(path, reaperTarget) {
+function readRecord(path, reaperTarget, validate = (value) => isOwner(value, reaperTarget)) {
   let before;
   try { before = lstatSync(path); }
   catch (error) { if (absent(error)) return null; throw fail("LEASE_UNREADABLE"); }
@@ -233,7 +344,7 @@ function readRecord(path, reaperTarget) {
     let value;
     try { value = JSON.parse(buffer.subarray(0, length).toString("utf8")); }
     catch { throw fail("LEASE_INVALID"); }
-    if (!isOwner(value, reaperTarget)) throw fail("LEASE_INVALID");
+    if (!validate(value)) throw fail("LEASE_INVALID");
     return { owner: value, stat: final };
   } catch (error) {
     if (error instanceof DataDirLeaseError) throw error;
@@ -317,15 +428,16 @@ function retireDeadOwner(path, expected) {
   const current = readRecord(path)?.owner;
   if (!current || !sameOwner(current, expected)) return;
   if (current.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
-  if (ownerIsAlive(current)) throw fail("LEASE_BUSY");
+  if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
   removeOwnedRecord(path, expected);
+  removeIdentity(path, expected);
 }
 
 function assertNoLiveChild(paths) {
   const child = readRecord(paths.childLeasePath)?.owner;
   if (!child) return;
   if (child.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
-  if (ownerIsAlive(child)) throw fail("LEASE_CHILD_BUSY");
+  if (ownerIsAlive(child, paths.childLeasePath)) throw fail("LEASE_CHILD_BUSY");
 }
 
 /** Diagnostic snapshot only: "available" never grants ownership. Acquisition
@@ -353,12 +465,12 @@ export function inspectDataDirLease(dataDir) {
     const child = read(paths.childLeasePath, "child");
     if (child) {
       if (child.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
-      if (ownerIsAlive(child)) return result("blocked", "LEASE_CHILD_BUSY");
+      if (ownerIsAlive(child, paths.childLeasePath)) return result("blocked", "LEASE_CHILD_BUSY");
     }
     const primary = read(paths.leasePath, "primary");
     if (primary) {
       if (primary.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
-      if (ownerIsAlive(primary)) return result("blocked", "LEASE_BUSY");
+      if (ownerIsAlive(primary, paths.leasePath)) return result("blocked", "LEASE_BUSY");
       let path = `${paths.leasePath}.reap-${primary.token}`;
       for (let generation = 0; generation < MAX_REAPER_GENERATIONS; generation++) {
         const reaper = read(path, "reaper", primary.token);
@@ -390,7 +502,7 @@ function claim(path, guard = () => {}) {
     const current = readRecord(path)?.owner;
     if (!current) continue;
     if (current.host !== owner.host) throw fail("LEASE_FOREIGN_HOST");
-    if (ownerIsAlive(current)) throw fail("LEASE_BUSY");
+    if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
     retireDeadOwner(path, current);
   }
   throw fail("LEASE_RECOVERY_LIMIT");
@@ -410,6 +522,7 @@ export function acquireDataDirLease(dataDir, options) {
   const paths = prepareAnchor(dataDir);
   const owner = claim(paths.leasePath, () => assertNoLiveChild(paths));
   let released = false;
+  recordOwnIdentity(paths.leasePath, owner, () => released);
   return Object.freeze({
     ownerPid: owner.pid,
     delegated: false,
@@ -425,6 +538,7 @@ export function acquireDataDirLease(dataDir, options) {
         assertNoLiveChild(paths);
         removeOwnedRecord(paths.leasePath, owner);
         released = true;
+        removeIdentity(paths.leasePath, owner);
       } finally {
         // Safe to unseal after success (no matching primary remains) or a
         // refused release (this same primary still excludes other owners).
@@ -468,6 +582,7 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
   try { validateParent(); }
   catch (error) { removeOwnedRecord(paths.childLeasePath, owner); throw error; }
   let released = false;
+  recordOwnIdentity(paths.childLeasePath, owner, () => released);
   return Object.freeze({
     ownerPid: owner.pid,
     delegated: true,
@@ -475,6 +590,7 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
       if (released) return false;
       removeOwnedRecord(paths.childLeasePath, owner);
       released = true;
+      removeIdentity(paths.childLeasePath, owner);
       return true;
     },
   });
