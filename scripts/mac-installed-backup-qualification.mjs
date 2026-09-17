@@ -230,9 +230,11 @@ if(cmd.op==='time'){
   var currentFields=[];visited=0;overflow=false;
   var currentWindows=read(app,'AXWindows')||[];
   for(var wi=0;wi<currentWindows.length;wi++)walk(currentWindows[wi],function(e){return read(e,'AXRole')==='AXTimeField'&&read(e,'AXTitle')===cmd.label;},currentFields,0);
-  if(overflow||currentFields.length!==1)throw{error:'time-field',count:currentFields.length};
+  if(overflow)throw{error:'time-tree-limit'};
+  if(currentFields.length!==1)throw{error:'time-field',count:currentFields.length};
   var current=[];visited=0;walk(currentFields[0],function(e){return read(e,'AXRole')==='AXIncrementor'&&read(e,'AXTitle')===title;},current,0);
-  if(overflow||current.length!==1)throw{error:'time-segment',count:current.length};
+  if(overflow)throw{error:'time-tree-limit'};
+  if(current.length!==1)throw{error:'time-segment',count:current.length};
   return current[0];
  }
  function settle(fn,label){while(Date.now()<entryDeadline){var value=fn();if(value)return value;delay(.1);}throw{error:label};}
@@ -248,8 +250,16 @@ if(cmd.op==='time'){
   if(visibility.actions.indexOf('AXScrollToVisible')<0)throw{error:'time-scroll-not-advertised',code:visibility.actionsCode};
   visibility.scrollCode=$.AXUIElementPerformAction(fields[0],$('AXScrollToVisible'));
   if(visibility.scrollCode!==0)throw{error:'time-scroll',code:visibility.scrollCode};
+  // AXScrollToVisible may briefly remove the field from the published AX tree.
+  // Reobserve only; scrolling and input are never repeated to obtain readiness.
+  visibility.reacquisitionReads=0;
+  var readyAfterScroll=settle(function(){
+   visibility.reacquisitionReads++;
+   try{return fresh(parts[0].title);}
+   catch(error){if(error.error==='time-field'&&error.count===0)return null;throw error;}
+  },'time-scroll-readback');
   for(var j=0;j<parts.length;j++){
-   var part=parts[j],current=fresh(part.title),before=read(current,'AXValue'),state={title:part.title,before:before,expected:part.value,typed:false};entry.push(state);
+   var part=parts[j],current=j===0?readyAfterScroll:fresh(part.title),before=read(current,'AXValue'),state={title:part.title,before:before,expected:part.value,typed:false};entry.push(state);
    if(before===part.value){state.skipped=true;continue;}
    if(Date.now()>=entryDeadline)throw{error:'time-entry-deadline'};
    state.focusCode=$.AXUIElementSetAttributeValue(current,$('AXFocused'),$(true));
