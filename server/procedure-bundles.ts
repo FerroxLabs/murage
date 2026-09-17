@@ -129,7 +129,11 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   inspect(root);
   if(!isPublished)writeFileSync(published,pin.bundleId,{flag:"wx",mode:0o400});
   else if(regularBytes(published).toString()!==pin.bundleId)fail();
-  if(native){
+  // Native discovery dirs exist only when a skill is linked into them, as
+  // skills.ts does: an empty app-created `.agents/skills` would otherwise be
+  // scanned as a trust-sensitive source of every private workspace and raise
+  // the folder-trust card on a bot's first Fuigo turn (folder-trust-api.test.ts).
+  if(native&&bundle.imported.length){
     for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
       const directory=join(desk,dir);ownedDirectory(directory);
       for(const skill of bundle.imported){
