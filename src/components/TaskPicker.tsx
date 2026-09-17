@@ -5,7 +5,7 @@
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Download, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
@@ -49,6 +49,12 @@ export function filterTasks<T extends { title: string }>(tasks: readonly T[], qu
   return [...prefix, ...substring];
 }
 
+/** Pinned tasks first; inside each group the caller's order (newest first)
+ * is kept, so unpinning puts a task straight back in its recency slot. */
+export function orderPickerTasks<T extends { pinned?: boolean }>(tasks: readonly T[]): T[] {
+  return [...tasks.filter((task) => task.pinned), ...tasks.filter((task) => !task.pinned)];
+}
+
 /** Quiet per-task token tally — input+output combined, because one honest
  * total reads faster than a split; the split lives in the hover title. */
 function TaskUsage({ usage }: { usage: Task["usage"] }) {
@@ -63,7 +69,7 @@ function TaskUsage({ usage }: { usage: Task["usage"] }) {
   );
 }
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "busy" | "unread"> & { usage?: Task["usage"] };
+type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "busy" | "unread" | "pinned"> & { usage?: Task["usage"] };
 
 function ConversationTaskPicker({
   threadId,
@@ -73,6 +79,7 @@ function ConversationTaskPicker({
   onSwitch,
   onRename,
   onDelete,
+  onTogglePin,
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -81,6 +88,8 @@ function ConversationTaskPicker({
   onSwitch: (threadId: string) => void;
   onRename: (threadId: string, title: string) => void;
   onDelete: (threadId: string) => void;
+  /** Bots only for now; a channel's task switcher has no pin. */
+  onTogglePin?: (threadId: string, pinned: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -202,7 +211,7 @@ function ConversationTaskPicker({
     u && currentLabel
       ? `Switch task · ${currentLabel} (${u.input.toLocaleString()} in · ${u.output.toLocaleString()} out)`
       : "Switch task";
-  const visible = filterTasks(tasks, query);
+  const visible = filterTasks(orderPickerTasks(tasks), query);
   const looking = query.trim();
 
   return (
@@ -346,6 +355,24 @@ function ConversationTaskPicker({
                       <Pencil size={13} />
                     </button>
                   )}
+                  {onTogglePin && renaming !== task.threadId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearDismiss();
+                        onTogglePin(task.threadId, !task.pinned);
+                      }}
+                      aria-label={task.pinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
+                      aria-pressed={Boolean(task.pinned)}
+                      title={task.pinned ? "Unpin this task" : "Pin this task to the top"}
+                      className={cn(
+                        "rounded p-1 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
+                        task.pinned ? "text-accent" : "text-ink-secondary opacity-0",
+                      )}
+                    >
+                      <Pin size={13} className={task.pinned ? "fill-current" : undefined} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onDelete(task.threadId)}
@@ -399,6 +426,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
+      onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
     />
   );
 }

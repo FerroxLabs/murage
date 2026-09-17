@@ -4,6 +4,7 @@ import {
   TASK_PICKER_DISMISS_MS,
   TASK_RENAME_HINT,
   filterTasks,
+  orderPickerTasks,
   taskPickerPointerIntent,
 } from "./TaskPicker";
 
@@ -63,5 +64,29 @@ describe("filterTasks", () => {
 
   it("returns nothing when nothing matches", () => {
     expect(filterTasks(tasks, "zzzz")).toEqual([]);
+  });
+});
+
+describe("orderPickerTasks", () => {
+  const tasks = [
+    { threadId: "c", title: "Newest", createdAt: 3 },
+    { threadId: "b", title: "Pinned report", createdAt: 2, pinned: true },
+    { threadId: "a", title: "Oldest pinned", createdAt: 1, pinned: true },
+  ];
+
+  it("lists pinned tasks first and keeps the existing order inside each group", () => {
+    expect(orderPickerTasks(tasks).map((task) => task.threadId)).toEqual(["b", "a", "c"]);
+    const single: { threadId: string; title: string; pinned?: boolean }[] = [{ threadId: "x", title: "x" }];
+    expect(orderPickerTasks(single)).toEqual(single);
+  });
+
+  it("returns an unpinned task to its recency slot", () => {
+    const unpinned = tasks.map((task) => (task.threadId === "b" ? { ...task, pinned: undefined } : task));
+    expect(orderPickerTasks(unpinned).map((task) => task.threadId)).toEqual(["a", "c", "b"]);
+  });
+
+  it("still filters pinned tasks by search", () => {
+    expect(filterTasks(orderPickerTasks(tasks), "newest").map((task) => task.threadId)).toEqual(["c"]);
+    expect(filterTasks(orderPickerTasks(tasks), "pinned").map((task) => task.threadId)).toEqual(["b", "a"]);
   });
 });

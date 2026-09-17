@@ -40,4 +40,30 @@ describe("SidebarSectionHeader", () => {
     expect(html).toContain("2 unread");
     expect(html).toContain("1 working");
   });
+
+  it("offers a team's instructions editor from its header, and only where a team was given one", () => {
+    const withEditor = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, {
+        name: "Operations",
+        collapsed: false,
+        onToggle: () => {},
+        onEditInstructions: () => {},
+        reorderable: true,
+        dragging: false,
+      }),
+    );
+    expect(withEditor).toContain('aria-label="Edit Operations team instructions"');
+    expect(withEditor).toMatch(/<button[^>]*aria-label="Edit Operations team instructions"/);
+
+    const pinned = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, {
+        name: "Pinned",
+        collapsed: false,
+        onToggle: () => {},
+        reorderable: true,
+        dragging: false,
+      }),
+    );
+    expect(pinned).not.toContain("team instructions");
+  });
 });

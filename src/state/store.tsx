@@ -260,6 +260,8 @@ export interface Task {
   /** runtime only: waiting for another thread's folder, computer or browser */
   waitingFor?: TaskResourceWait;
   pinnedMessageId?: string;
+  /** Listed first in the task switcher; absent means not pinned. */
+  pinned?: boolean;
   /** what this task has spent, banked once per settled turn */
   usage?: TaskUsage;
   /** folder this task's turns run in, pinned on its first turn; null =
@@ -761,6 +763,7 @@ export type Action =
   | { type: "switchTask"; botId: string; threadId: string }
   | { type: "taskSwitched"; bot: Bot }
   | { type: "renameTask"; botId: string; threadId: string; title: string }
+  | { type: "pinTask"; botId: string; threadId: string; pinned: boolean }
   | { type: "deleteTask"; botId: string; threadId: string }
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
@@ -1530,6 +1533,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "switchGroupTask":
     case "deleteGroupTask":
       return state;
+    case "pinTask":
+      return updateBot(state, action.botId, (bot) => ({
+        ...bot,
+        tasks: (bot.tasks ?? []).map((task) =>
+          task.threadId === action.threadId ? { ...task, pinned: action.pinned || undefined } : task,
+        ),
+      }));
     case "renameTask":
       return updateBot(state, action.botId, (bot) => ({
         ...bot,
@@ -2253,6 +2263,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "POST" })
             .then((r: any) => {if(r?.bot){dispatch({ type: "taskSwitched", bot: r.bot });void api(`/api/bots/${action.botId}/read`,{method:"POST",body:JSON.stringify({threadId:action.threadId})}).catch(showError);}})
             .catch(showError);
+          break;
+        case "pinTask":
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ pinned: action.pinned }),
+          }).catch(showError);
           break;
         case "renameTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, {

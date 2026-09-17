@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, GripVertical } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
 
 import { cn } from "@/lib/cn";
@@ -17,6 +17,7 @@ export function SidebarSectionHeader({
   onDragStart,
   onDragEnd,
   onMove,
+  onEditInstructions,
 }: {
   name: string;
   collapsed: boolean;
@@ -27,6 +28,8 @@ export function SidebarSectionHeader({
   onDragStart?: (event: DragEvent<HTMLSpanElement>) => void;
   onDragEnd?: () => void;
   onMove?: (direction: -1 | 1) => void;
+  /** Teams only: opens the same instructions editor as the Team map. */
+  onEditInstructions?: () => void;
 }) {
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const attentionLabel = attention ? sidebarAttentionLabel(attention) : "";
@@ -95,6 +98,17 @@ export function SidebarSectionHeader({
           </span>
           <span className="h-px flex-1 bg-hairline/40" />
         </div>
+      )}
+      {onEditInstructions && (
+        <button
+          type="button"
+          onClick={onEditInstructions}
+          aria-label={`Edit ${name} team instructions`}
+          title="Team instructions"
+          className="flex size-6 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
+        >
+          <BookOpen size={12} />
+        </button>
       )}
       {reorderable && (
         <span

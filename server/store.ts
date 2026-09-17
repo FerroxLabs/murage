@@ -294,6 +294,9 @@ export interface TaskRecord {
   unread?: boolean;
   rewound?: boolean;
   pinnedMessageId?: string;
+  /** Listed first in the task switcher. Absent means not pinned; `false` is
+   *  never written, so older builds read the same record unchanged. */
+  pinned?: true;
   /** Runtime only. Never resume a running process after restart. */
   activity?: BotActivity;
   busy?: boolean;
@@ -2160,16 +2163,18 @@ export class Store {
     return holder.procedurePins[botId]!;
   }
 
-  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>):TaskRecord|null {
+  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
-    const next={...task,...structuredClone(patch)};
+    const {pinned,...rest}=patch;
+    const next:TaskRecord={...task,...structuredClone(rest)};
+    if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
     if(patch.title!==undefined)next.title=patch.title.trim().slice(0,80)||UNTITLED_TASK;
     if(patch.modelSelection&&patch.modelSelection.connectionId!==task.modelSelection?.connectionId)next.resumeCursors={};
     const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
     const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
     const candidate={...bot,...mirrors,tasks,unread:tasks.some(task=>task.unread)};
     this.saveBots(this.bots.map(current=>current===bot?candidate:current));
-    Object.assign(task,next);Object.assign(bot,mirrors,{unread:candidate.unread});
+    Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,{unread:candidate.unread});
     this.emit({type:"bot",botId});return task;
   }
 
