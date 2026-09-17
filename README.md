@@ -29,9 +29,11 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 | Windows · x64 | **[Download for Windows](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-setup.exe)** |
 | Ubuntu 24.04 · x64 | **[Download .deb](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-amd64.deb)** · [AppImage](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.AppImage) |
 
-Mac downloads are signed and notarized. Windows downloads are signed. Ubuntu installation and upgrade checks passed for this release. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
+Mac downloads are signed and notarized. Windows downloads are signed. See the release notes for platform verification and known limitations. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
 
-**Fuigo 1.0.19 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+**Fuigo is bundled. Installed desktop builds require no Node.js, npm, pnpm or separate Fuigo installation.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+
+If an official desktop build says “Fuigo CLI not found” or asks you to install Fuigo through npm, that is a bundled-engine detection or installation problem, not a normal prerequisite. Report your Murage version, operating system and installer type. Do not include API keys.
 
 ## A real brief. A working team.
 
@@ -141,7 +143,7 @@ Telegram group routing and additional inbound messaging channels remain future w
 
 ## Fuigo built in. Multi-vendor by design.
 
-**Fuigo 1.0.19 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
+**Fuigo is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
 
 Multi-vendor choice is part of the product, not an add-on. Use Fuigo, installed engines such as **Claude Code** and **Codex**, custom ACP agents, or compatible API endpoints. Choose an engine and model per agent, mix them in a team, and keep Murage-owned conversations and memory around that work. Each engine retains its supported capabilities and permission requirements.
 
@@ -163,11 +165,14 @@ Murage also includes a local MCP server for other clients to list the team, send
 
 ## Before you choose a setup
 
+- Reported engine errors `-32603` and unexpected exit `1073807364` remain under investigation. The reproduced Claude background-task notification bug was fixed, but that does not establish a fix for every reported engine error.
+- An intermittent Mac shutdown delay during credential-write drain remains a known limitation. Later signed native checks exited cleanly; the original delay and native credential persistence were not conclusively resolved. See the [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest).
+
 | Area | Current boundary |
 |---|---|
-| Windows browser | The embedded browser is disabled because of an upstream Electron sandbox issue. |
+| Windows browser | See [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for Windows verification and known limitations. |
 | Ubuntu desktop control | The app runs on GNOME Xorg and Wayland; local computer control is restricted to Xorg. Linux dictation and ARM64 installers are unavailable. |
-| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime in this release. |
+| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime. |
 | Background work | Murage's host must remain available for routines and Telegram. This release is not an always-on hosted service. |
 | Memory scale | Verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred. |
 | Cross-device memory | No automatic memory synchronization between separate installations or profiles. |

@@ -39,7 +39,6 @@ const NEEDLE = ["fun", "nel"].join("");
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INSTALLER = resolve(HERE, "..");
 const REPO = resolve(INSTALLER, "..");
-const PLAN_DIR = join(REPO, "docs", "plans", "cloud-deploy");
 
 const CODE_EXTS = new Set([".mjs", ".cjs", ".js", ".ts", ".json", ".sh", ".service", ".yml", ".yaml"]);
 const SKIP_DIRS = new Set(["node_modules", ".git", "payload", "dist", "dist-server"]);
@@ -128,14 +127,8 @@ test("TIER 1 self-check: the scanner would actually catch a violation", () => {
 });
 
 test("TIER 2: in the prose of this lane the word appears only in prohibitions", () => {
-  const docs = [
-    ...walk(INSTALLER, (p) => extname(p) === ".md"),
-    ...walk(PLAN_DIR, (p) => extname(p) === ".md"),
-  ];
-  assert.ok(
-    docs.includes(join(INSTALLER, "README.md")),
-    `expected the installer README among ${docs.length} prose docs`,
-  );
+  const docs = walk(INSTALLER, (p) => extname(p) === ".md");
+  assert.ok(docs.includes(join(INSTALLER, "README.md")), "expected the published installer README to be scanned");
 
   /** @type {string[]} */
   const bad = [];

@@ -38,6 +38,21 @@ app.whenReady().then(async () => {
   };
   try {
     manager.ensure("readiness", "");
+    // ensure starts an asynchronous about:blank load. Complete fixture setup
+    // before measuring the requested navigation; otherwise the first sample
+    // includes a competing initial load and renderer startup.
+    await new Promise((resolve, reject) => {
+      const contents = view.webContents;
+      if (contents.getURL() === "about:blank" && !contents.isLoading()) return resolve();
+      const done = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        contents.removeListener("did-stop-loading", done);
+        reject(new Error("initial about:blank load did not finish"));
+      }, 5000);
+      contents.once("did-stop-loading", done);
+    });
+    assert.equal(view.webContents.getURL(), "about:blank");
+    assert.equal(view.webContents.isLoading(), false);
     manager.setHumanControl("readiness", false, "");
     const registered = await fetch(`${base}/v1/capabilities/register`, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -64,6 +79,8 @@ app.whenReady().then(async () => {
       const returnedMs = Date.now() - start;
       const state = await view.webContents.executeJavaScript(`({readyState:document.readyState,links:document.links.length,renderedAt:window.renderedAt ?? null})`);
       const loading = view.webContents.isLoading();
+      // Retain the observation even if an assertion below fails in CI.
+      process.stdout.write(JSON.stringify({ mode, returnedMs, lifecycle: events, loading, state, readiness: first.readiness }) + "\n");
       assert.equal(loading, false);
       assert.equal(state.readyState, "complete");
       assert.ok(events.some(event => event.name === "did-finish-load"));
