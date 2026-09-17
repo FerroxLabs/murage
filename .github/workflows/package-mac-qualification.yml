@@ -7,6 +7,11 @@ on:
     branches: [qualification/mac-artifact-20260914]
   workflow_dispatch:
     inputs:
+      preflight_only:
+        description: Compile notification addon only; no package or signing
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: Full reviewed commit SHA; must equal the workflow commit
         required: true
@@ -18,6 +23,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   mac:
+    if: ${{ inputs.preflight_only != true }}
     runs-on: macos-14
     timeout-minutes: 90
     defaults:
@@ -171,4 +177,52 @@ jobs:
             release/*-arm64.dmg
             release/*-arm64.zip
           if-no-files-found: error
+          retention-days: 7
+
+  notification-auth-compile:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.preflight_only == true }}
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+      - name: Admit exact source and compile both Mac architectures
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(uname -m)" = arm64
+          test "$(id -un)" = runner
+          test "$(node --version)" = v24.20.0
+          mkdir -m 700 "$RUNNER_TEMP/notification-auth-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/notification-auth-evidence/source-sha.txt"
+          node scripts/build-notification-authorization.mjs
+          cp dist-native/notification-authorization/arm64/build.json "$RUNNER_TEMP/notification-auth-evidence/arm64-build.json"
+          cp dist-native/notification-authorization/x64/build.json "$RUNNER_TEMP/notification-auth-evidence/x64-build.json"
+          lipo -verify_arch arm64 dist-native/notification-authorization/arm64/notification-authorization.node
+          lipo -verify_arch x86_64 dist-native/notification-authorization/x64/notification-authorization.node
+      - name: Load arm64 exports without invoking notification APIs
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs - <<'NODE'
+          const fs = require('node:fs');
+          const binding = require('./dist-native/notification-authorization/arm64/notification-authorization.node');
+          if (typeof binding.status !== 'function' || typeof binding.request !== 'function') throw Error('NATIVE_EXPORTS_MISSING');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/notification-auth-evidence/export-load.json', JSON.stringify({loaded: true, node: process.version, arch: process.arch, statusExport: true, requestExport: true, authorizationMethodsCalled: false, osPermissionRequested: false}) + '\n');
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mac-notification-auth-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/notification-auth-evidence/
+            dist-native/notification-authorization/*/notification-authorization.node
+          if-no-files-found: warn
           retention-days: 7
