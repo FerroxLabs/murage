@@ -26,7 +26,8 @@ const css = readFileSync(join(root, "src/styles.css"), "utf8").replace(/\/\*[\s\
  *  'border-radius')` or names a fixture model id is asserting against the
  *  app, not styling it. Neither kind is reachable from `src/main.tsx`. */
 function isTestFile(entry: string): boolean {
-  return /\.(test|spec)\.tsx?$/.test(entry);
+  // node --test suites under src/e2e (*.offline.node-test.ts) are tests too.
+  return /\.(test|spec|node-test)\.tsx?$/.test(entry);
 }
 
 function sourceFiles(): string[] {

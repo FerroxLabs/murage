@@ -293,9 +293,16 @@ describe("5. the desktop is untouched", () => {
     // something, or a `desktop === false` / `desktop ?` branch, is still a
     // leak.
     const EMPTY_LIST_SPREAD = /\.\.\.\(desktop === true \? \[[^\]]*\] : \[\]\)/g;
-    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(2);
+    // Inbox, Files and Pending approvals.
+    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(3);
+    // A prop has the same non-rendering shape: `={desktop === true ? value :
+    // undefined}` passes nothing off the desktop, and the More menu renders
+    // the pending-approval count only when it is defined. Pinned to the one
+    // known use so a new branch still has to be reviewed here.
+    const UNDEFINED_PROP = /=\{desktop === true \? [^?:{}]+ : undefined\}/g;
+    expect(sidebar.match(UNDEFINED_PROP)).toEqual(["={desktop === true ? approvals.count : undefined}"]);
     for (const [name, source] of gated) {
-      const withoutEmptySpreads = source.replace(EMPTY_LIST_SPREAD, "");
+      const withoutEmptySpreads = source.replace(EMPTY_LIST_SPREAD, "").replace(source === sidebar ? UNDEFINED_PROP : /$^/g, "");
       expect(withoutEmptySpreads, name).not.toMatch(/desktop === true \? /);
       expect(withoutEmptySpreads, name).not.toMatch(/desktop === false \? /);
       expect(withoutEmptySpreads, name).not.toMatch(/desktop \?/);
