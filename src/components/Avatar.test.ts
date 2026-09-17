@@ -25,6 +25,9 @@ describe("BotAvatar shapes for a mascot", () => {
       expect(markup).toContain(`data-avatar-shape="${crop}"`);
       expect(markup).toContain(`border-radius:${radius}`);
       expect(markup).toContain("bg-raised");
+      // raised is also the profile card (light) and a selected row's fill, so
+      // the tile needs its own edge or the shape is invisible there
+      expect(markup).toContain("shadow-[inset_0_0_0_1px_var(--color-hairline)]");
       expect(markup).not.toContain("<img");
       expect(markup).toContain("Vega");
     }
