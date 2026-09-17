@@ -806,6 +806,20 @@ test("changed boot metadata invalidates an old release handle", () => {
 // A disposable worker reports win32 and answers only its PowerShell probe.
 // The "reused" PID always belongs to a sleeper this test spawned itself.
 const SYSTEM_ROOT = "C:\\Windows";
+// A simulated-win32 worker case-folds the data directory before hashing its
+// lease name, as Windows does; this POSIX parent does not. On a case-sensitive
+// host a mixed-case temp name would give the two different lease paths, so
+// these cases use a lowercase root (Darwin folds too; real Windows matches).
+function windowsFixture(name = "data") {
+  const base = tmpdir();
+  const parent = base === base.toLowerCase() || ["darwin", "win32"].includes(process.platform) ? base : "/tmp";
+  const root = join(parent, `murage-data-lease-${randomUUID()}`);
+  mkdirSync(root, { mode: 0o700 });
+  roots.push(root);
+  const dataDir = join(root, name);
+  mkdirSync(dataDir, { recursive: true });
+  return { root, dataDir, ...dataDirLeasePaths(dataDir) };
+}
 const windows = (f, answers, extra = {}) => worker(f, { LEASE_TEST_WIN32: "1", SystemRoot: SYSTEM_ROOT, LEASE_TEST_PS: JSON.stringify(answers), ...extra });
 const identityOf = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 const writeIdentity = (recordPath, owner, start, extra = {}) => {
@@ -826,7 +840,7 @@ async function sleeper() {
 const stillRunning = (child) => child.exitCode === null && child.signalCode === null && (() => { try { process.kill(child.pid, 0); return true; } catch { return false; } })();
 
 test("Windows identity: a live true owner with matching creation identity stays exclusive", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const holder = await sleeper();
   const owner = record(holder.pid);
   writeRecord(f.leasePath, owner);
@@ -850,7 +864,7 @@ test("Windows identity: a live true owner with matching creation identity stays 
 });
 
 test("Windows identity: a dead owner is reclaimed without any creation-time probe", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const owner = record(await deadPid());
   writeRecord(f.leasePath, owner);
   writeIdentity(f.leasePath, owner, "133712345678901234");
@@ -863,7 +877,7 @@ test("Windows identity: a dead owner is reclaimed without any creation-time prob
 });
 
 test("Windows identity: a same-boot reused PID is reclaimed without touching the unrelated process", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const unrelated = await sleeper();
   const stale = record(unrelated.pid);
   writeRecord(f.leasePath, stale);
@@ -893,7 +907,7 @@ for (const [name, reply] of [
   ["probe output exceeds its bound", `PID:133700000000000002${" ".repeat(80)}`],
 ]) {
   test(`Windows identity fails closed when the ${name}`, async () => {
-    const f = fixture();
+    const f = windowsFixture();
     const holder = await sleeper();
     const owner = record(holder.pid);
     writeRecord(f.leasePath, owner);
@@ -910,7 +924,7 @@ for (const [name, reply] of [
 }
 
 test("Windows identity: legacy and invalid identities keep PID exclusion without probing", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const holder = await sleeper();
   const answers = { [holder.pid]: `${holder.pid}:133700000000000002` };
   const owner = record(holder.pid);
@@ -950,7 +964,7 @@ test("Windows identity: legacy and invalid identities keep PID exclusion without
 });
 
 test("Windows identity: FILETIME values are compared exactly beyond double precision", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const holder = await sleeper();
   const owner = record(holder.pid);
   writeRecord(f.leasePath, owner);
@@ -967,7 +981,7 @@ test("Windows identity: FILETIME values are compared exactly beyond double preci
 });
 
 test("Windows identity: owners publish their exact identity asynchronously and remove it on release", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const start = "133711112222333344";
   const holder = windows(f, { self: `SELF_PID:${start}` });
   const ready = await holder.event("ready");
@@ -993,7 +1007,7 @@ test("Windows identity: owners publish their exact identity asynchronously and r
 });
 
 test("Windows identity: a release that wins the race with the identity probe leaves no identity", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const gate = join(f.root, "identity-probe.gate");
   const holder = windows(f, { self: "SELF_PID:133711112222333344" }, { LEASE_TEST_PS_HOLD: gate });
   assert.equal((await holder.command("acquire")).event, "acquired");
@@ -1006,7 +1020,7 @@ test("Windows identity: a release that wins the race with the identity probe lea
 });
 
 test("Windows identity: non-Windows owners neither probe nor publish identities", { skip: process.platform === "win32" }, async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const holder = worker(f, { LEASE_TEST_PS: JSON.stringify({ self: "SELF_PID:133711112222333344" }) });
   const acquired = await holder.command("acquire");
   assert.equal(acquired.event, "acquired");
@@ -1017,7 +1031,7 @@ test("Windows identity: non-Windows owners neither probe nor publish identities"
 });
 
 test("Windows identity: contenders against a reused-PID record elect exactly one owner", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const unrelated = await sleeper();
   const stale = record(unrelated.pid);
   writeRecord(f.leasePath, stale);
@@ -1037,7 +1051,7 @@ test("Windows identity: contenders against a reused-PID record elect exactly one
 });
 
 test("Windows identity: a reused-PID child record no longer blocks the primary; delegation validation adds no probe", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const unrelated = await sleeper();
   const staleChild = record(unrelated.pid);
   writeRecord(f.childLeasePath, staleChild);
@@ -1063,7 +1077,7 @@ test("Windows identity: a reused-PID child record no longer blocks the primary; 
 });
 
 test("Windows identity: inspection mirrors acquisition without changing records", async () => {
-  const f = fixture();
+  const f = windowsFixture();
   const holder = await sleeper();
   const owner = record(holder.pid);
   writeRecord(f.leasePath, owner);
