@@ -92,14 +92,17 @@ it("legacy null CWD receives a separate durable file desk without moving the res
   await checkFiles(bot, bot.threadId, 1);
 }, 30_000);
 
-it("default room dispatch publishes in its member/thread desk and keeps the engine bot CWD", async () => {
+// A new room conversation runs each member engine in that member's
+// per-conversation workspace (index.ts ensureTaskWorkspace); only rooms with a
+// procedure pin from a legacy pinned folder keep the whole-bot workspace.
+it("default room dispatch publishes in its member/thread desk and runs the engine in that desk's workspace", async () => {
   const bot = await createBot("B11 room member");
   const { group } = await api<{ group: { id: string; threadId: string } }>("POST", "/api/groups", { name: "B11 room", memberIds: [bot.id], setup: { bulletin: "Use ~/.sable/scratch for older work", defaultResponder: { kind: "member", botId: bot.id } } });
   await api("POST", `/api/groups/${group.id}/messages`, { threadId: group.threadId, text: "Create HTML, MD and TXT files named b11-room" });
   await checkFiles(bot, group.threadId, 1);
   const observed = observations().find(item => item.name === "b11-room")!;
-  expect(observed.cwd).toBe(join(realpathSync.native(fixture.info.dataDir), "workspaces", bot.id));
-  expect(observed.destination).toBe(join(observed.cwd, "threads", group.threadId, "outputs"));
+  expect(observed.cwd).toBe(join(realpathSync.native(fixture.info.dataDir), "workspaces", bot.id, "threads", group.threadId));
+  expect(observed.destination).toBe(join(observed.cwd, "outputs"));
 }, 20_000);
 
 it("custom root uses the same destination and explicit relative artifact registration", async () => {
