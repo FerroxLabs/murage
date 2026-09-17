@@ -35,7 +35,8 @@ describe.skipIf(process.platform==="win32")("memory refusal after an unknown sub
     const threadId=group?.threadId??bot.threadId;
     await api("POST",room?`/api/groups/${group.id}/messages`:`/api/bots/${bot.id}/messages`,{threadId,text:"perform exactly one fixture action"});
     await expect.poll(()=>existsSync(`${gate}.waiting`),{timeout:15000}).toBe(true);
-    await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Revoke during setup"});
+    // Revoke during setup: a team move changes authority (a single fresh owner task no longer does, memory/policy.ts).
+    await api("PATCH",`/api/bots/${bot.id}`,{section:"Revoke during setup"});
     writeFileSync(gate,"");
     await expect.poll(async()=>{
       const state=await api("GET","/api/bots?messages=0");
