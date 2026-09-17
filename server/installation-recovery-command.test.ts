@@ -4,9 +4,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
+import { MEMORY_SCHEMA_V1, migrateMemorySchema } from "./memory/schema.ts";
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const roots: string[] = [];
@@ -94,4 +96,29 @@ it("a delegated recovery child can backup, restore and roll back while the prima
     expect(readFileSync(join(f.data, "config.json"))).toEqual(original);
     expect(() => acquireDataDirLease(f.data)).toThrow();
   } finally { owner.release(); }
+});
+
+it("downgrades a stopped installation's memory schema to v1 and refuses a running one", async () => {
+  const f = fixture(), file = join(f.data, "messages.db");
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
+  db.exec(MEMORY_SCHEMA_V1); db.exec("INSERT INTO memory_meta VALUES(1,1,'00000000-0000-4000-8000-000000000000',0,0,0,'active');");
+  migrateMemorySchema(db); db.exec("INSERT INTO messages VALUES('t','m',1,'user','text','never-print-this-canary chat','{}');"); db.close();
+  const missing = await run(["memory-downgrade", "--data-dir", join(f.root, "nowhere")]).catch(error => error);
+  expect(missing.stderr).toContain("MEMORY_DATABASE_MISSING");
+  const owner = acquireDataDirLease(f.data);
+  const running = await run(["memory-downgrade", "--data-dir", f.data]).catch(error => error);
+  owner.release();
+  expect(running.stderr).toContain("LEASE");
+  const first = await run(["memory-downgrade", "--data-dir", f.data]);
+  expect(first.stdout + first.stderr).not.toContain("never-print-this-canary");
+  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 2, to: 1 });
+  expect(JSON.parse((await run(["memory-downgrade", "--data-dir", f.data])).stdout)).toMatchObject({ ok: true, status: "already-v1" });
+  const check = new DatabaseSync(file);
+  try {
+    expect(check.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(1);
+    expect(check.prepare("SELECT count(*) n FROM sqlite_schema WHERE name IN ('memory_record_details','memory_learning_config')").get()?.n).toBe(0);
+    expect(check.prepare("SELECT text FROM messages").get()?.text).toContain("chat");
+  } finally { check.close(); }
+  expect(() => acquireDataDirLease(f.data).release()).not.toThrow();
 });

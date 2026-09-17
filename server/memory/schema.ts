@@ -210,3 +210,29 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
+
+/** Exact inverse of the v1 -> v2 branch above, for reinstalling a 0.1.x
+ * build: drops the two learning tables and two triggers and restores the
+ * frozen v1 memory_meta text. Chats and memory rows written after the upgrade
+ * survive; learning details and the learning policy are discarded, and the
+ * next 0.1.54+ start re-runs the same migration. Caller owns no transaction. */
+export function downgradeMemorySchema(db: DatabaseSync): { status: "downgraded" | "already-v1"; from: number; to: 1 } {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  validateMemorySchema(db);
+  const from = Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version);
+  if (from === 1) return { status: "already-v1", from, to: 1 };
+  if (from !== MEMORY_SCHEMA_VERSION) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`DROP TRIGGER memory_record_details_insert; DROP TRIGGER memory_record_details_state;
+      DROP TABLE memory_record_details; DROP TABLE memory_learning_config;
+      ALTER TABLE memory_meta RENAME TO memory_meta_v2;`);
+    db.exec(MEMORY_SCHEMA_V1); // CREATE IF NOT EXISTS: only memory_meta (v1 text) is recreated
+    db.exec(`INSERT INTO memory_meta SELECT id,1,installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta_v2;
+      DROP TABLE memory_meta_v2;`);
+    if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version !== 1) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+    validateMemorySchema(db);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  return { status: "downgraded", from, to: 1 };
+}

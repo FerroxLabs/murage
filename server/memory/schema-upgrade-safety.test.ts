@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -82,5 +82,40 @@ describe("H1 pre-migration snapshot", () => {
     expect(f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(before);
     expect(f.db.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({ schema_version: 1, mode: "capture" });
     expect(validateAs0153(f.db).size).toBeGreaterThan(12);
+  });
+});
+
+describe("H2 downgrade", () => {
+  it("v1 -> upgrade -> new rows -> downgrade is accepted by the 0.1.53 validator with every row intact", () => {
+    const f = legacyInstallation("active");
+    migrateMemorySchema(f.db, "off", { snapshotPath: f.snapshot });
+    f.db.exec("INSERT INTO messages VALUES('thread','m2',2,'user','text','after upgrade','{}');");
+    f.db.exec("INSERT INTO memory_records VALUES('later',1,'scope','fact','Learned after upgrade','owner-statement','active',0,2,NULL,NULL,2);");
+    expect(f.db.prepare("SELECT count(*) n FROM memory_record_details").get()?.n).toBe(2);
+    expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: 2, to: 1 });
+    expect(validateAs0153(f.db).size).toBeGreaterThan(12);
+    expect(validateMemorySchema(f.db).has("memory_record_details")).toBe(false);
+    expect(f.db.prepare("SELECT schema_version,installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta").get()).toMatchObject({ schema_version: 1, policy_revision: 7, deletion_epoch: 8, data_revision: 9, mode: "active" });
+    expect(f.db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='trigger'").get()?.n).toBe(0);
+    expect(f.db.prepare("SELECT text FROM messages ORDER BY at").all().map(row => row.text)).toEqual(["before upgrade", "after upgrade"]);
+    expect(f.db.prepare("SELECT id,text FROM memory_records ORDER BY id").all()).toEqual([{ id: "fact", text: "Original preference" }, { id: "later", text: "Learned after upgrade" }]);
+    expect(downgradeMemorySchema(f.db)).toEqual({ status: "already-v1", from: 1, to: 1 });
+    // The next 0.1.54 start re-migrates the downgraded file exactly as it did the first time.
+    migrateMemorySchema(f.db, "off", { snapshotPath: f.snapshot });
+    expect(f.db.prepare("SELECT count(*) n FROM memory_record_details").get()?.n).toBe(2);
+  });
+  it("refuses an unknown schema and rolls back when the inverse cannot complete", () => {
+    const f = legacyInstallation();
+    migrateMemorySchema(f.db);
+    f.db.exec("CREATE TABLE memory_future(id INTEGER);");
+    expect(() => downgradeMemorySchema(f.db)).toThrow("MEMORY_SCHEMA_UNSUPPORTED");
+    f.db.exec("DROP TABLE memory_future;");
+    const before = f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all();
+    const exec = f.db.exec.bind(f.db);
+    f.db.exec = (sql: string) => { if (sql.includes("DROP TABLE memory_meta_v2")) throw new Error("injected downgrade failure"); return exec(sql); };
+    expect(() => downgradeMemorySchema(f.db)).toThrow("injected downgrade failure");
+    f.db.exec = exec;
+    expect(f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(before);
+    expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(2);
   });
 });

@@ -58,6 +58,22 @@ Use Murage's installation backup and reviewed restore flow. Backups retain autho
 
 Preserve a verified backup before migration or recovery. Do not open a migrated memory database with an older incompatible build or delete recovery markers to bypass review. For a reversible feature change, select Off or Paused in the compatible version.
 
+### Going back to 0.1.53 after the memory upgrade
+
+The first start of 0.1.54 or later upgrades the memory tables inside `messages.db` (schema v1 to v2). Before it does, it writes a consistent copy of the untouched v1 file to `messages.pre-memory-v2.db` next to `messages.db` (mode 0600). If that copy cannot be written, the upgrade does not run and startup stops with `MEMORY_SCHEMA_SNAPSHOT_FAILED: <reason>`; free the space or fix the permission and start again. The copy is left out of installation backups and is never deleted automatically; remove it yourself once you are sure you will not go back.
+
+A 0.1.53 build refuses to start on an upgraded `messages.db`. To reinstall 0.1.53 and keep everything you did since the upgrade, run the downgrade step with Murage fully quit (it takes the same exclusive lease as the app and refuses while Murage is open):
+
+```sh
+# macOS
+ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
+  /Applications/Murage.app/Contents/Resources/server/installation-recovery.js \
+  memory-downgrade --data-dir ~/.murage
+# any platform with Node 22+: node <Resources>/server/installation-recovery.js memory-downgrade --data-dir <data dir>
+```
+
+It prints `{"ok":true,"operation":"memory-downgrade","status":"downgraded","from":2,"to":1}` (or `"already-v1"`). Chats and memory rows stay; only the v2 learning details and the learning policy settings are dropped, and the next 0.1.54 start upgrades again. Restoring `messages.pre-memory-v2.db` over `messages.db` by hand is the alternative, but it loses everything after the upgrade; if you do that, delete `messages.db-wal`, `messages.db-shm` and `memory-index.db` first so nothing stale is replayed (the index is rebuilt).
+
 Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
 
 ### Fuigo memory ownership

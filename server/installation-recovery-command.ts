@@ -8,8 +8,9 @@ import { reviewInstallation, activateInstallation } from "./installation-activat
 import { writeInstallationDamagedExport } from "./installation-damaged-export.ts";
 import { writeEncryptedInstallationBackup, inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { resolveWindowsBackupRuntime } from "./installation-backup-encryption.ts";
+import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 
-export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
+export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
 
 async function identityFromStdin(): Promise<string> {
   let identity="";
@@ -79,6 +80,9 @@ export async function installationRecoveryCommand(args: string[], input: { readI
   }
   if (command === "rollback" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "rollback", ...rollbackInstallationRestore(options.get("--data-dir")!) };
+  }
+  if (command === "memory-downgrade" && options.size === 1 && options.has("--data-dir")) {
+    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!) };
   }
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "review", ...reviewInstallation(options.get("--data-dir")!) };
