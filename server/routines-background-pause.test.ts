@@ -29,7 +29,7 @@ it("rejects new webhook work but keeps accepted receipts and channel owner reque
   expect(f.manager.findWebhookDelivery("hook","delivery")).toMatchObject({id:accepted.id,status:"queued",prompt:"Accepted original"});
   expect(f.manager.enqueueWebhook({...input,prompt:"Retry cannot rewrite receipt"})).toMatchObject({id:accepted.id,prompt:"Accepted original"});
   expect(()=>f.manager.enqueueWebhook({...input,deliveryId:"new"})).toThrow("Automatic work is paused");expect(f.manager.listRuns()).toHaveLength(1);
-  f.manager.enqueueWebhook({...input,botId:"channel-bot",deliveryId:"owner-message",telegramConnectionId:"paired-owner"});await f.manager.tick();
+  f.manager.enqueueWebhook({...input,botId:"channel-bot",deliveryId:"owner-message",telegramConnectionId:"paired-owner",humanPrincipal:{personId:"workspace-owner",bindingId:"local",revision:1}});await f.manager.tick();
   await vi.waitFor(()=>expect(f.started).toEqual(["channel"]));expect(f.interrupt).not.toHaveBeenCalled();
 });
 it("manual work remains available and existing active time limits continue while paused",async()=>{

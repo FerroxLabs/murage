@@ -22,6 +22,11 @@ vi.mock("./prepare-fuigo.mjs", () => ({
   verifyFuigoExecutable: vi.fn(),
 }));
 vi.mock("./prepare-browser.mjs", () => ({ verifyBrowserBundle: vi.fn() }));
+// The GEPA runtime is required before signing (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED);
+// its bundle verification has its own suite (server/gepa-resource.test.ts).
+vi.mock("../server/gepa-resource.ts", () => ({ verifyGepaBundle: vi.fn() }));
+import { verifyGepaBundle } from "../server/gepa-resource.ts";
+const GEPA_RECEIPT = "a".repeat(64);
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
 vi.mock("../server/browser-windows-identity.ts", async importOriginal => ({
   ...await importOriginal(),
@@ -91,12 +96,13 @@ function fixture() {
     fs.appendFileSync(file, " signed fixture");
     return true;
   });
-  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
+  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf, config: { extraMetadata: { murageGepaManifests: { "win32-x64": GEPA_RECEIPT } } } } } };
 }
 
 it("verifies pinned inventory before signing engines and updater helper", async () => {
   const { context, executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf } = fixture();
   await afterPack(context);
+  expect(verifyGepaBundle).toHaveBeenCalledWith(path.join(context.appOutDir, "resources", "gepa-worker"), "win32-x64", GEPA_RECEIPT);
   expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, recovery, backupHelper, helper]);
   expect(fs.readFileSync(recovery, "utf8")).toBe("recovery fixture signed fixture");
   expect(fs.readFileSync(browser.engine, "utf8")).toBe("pinned browser engine signed fixture");
