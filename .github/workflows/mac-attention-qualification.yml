@@ -1,4 +1,4 @@
-# B35 R29: fresh Tools identity after Deny; same artifact and original criteria.
+# B35 R30: bounded stale Inbox read refresh; same artifact and original criteria.
 name: Mac packaged attention machine checks
 on:
   push:

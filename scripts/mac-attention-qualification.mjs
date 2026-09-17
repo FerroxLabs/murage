@@ -173,11 +173,24 @@ async function openPendingInbox(s){
  tree(s.pid,'tools-selector');
  await press(s.pid,'Tools',['AXPopUpButton'],{tools:true,requireEnabled:true});await press(s.pid,'Pending approvals',['AXMenuItem'],{prefix:true});
 }
-async function readPendingInbox(s,kind){return inboxObservation(tree(s.pid,'pending-'+kind),inboxSource(s,kind));}
+async function readPendingInbox(s,kind,deadline){
+ const label='pending-'+kind;
+ for(let attempt=1;attempt<=3;attempt++){
+  const remaining=deadline-Date.now();check(Number.isFinite(remaining)&&remaining>0,'AX_TREE_'+label);
+  const result=ax(s.pid,{op:'tree'},{timeout:remaining});
+  writeFileSync(path.join(E,label+'.ax.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
+  if(result.ok)return inboxObservation(result,inboxSource(s,kind));
+  record('inbox-snapshot-read-failed',{kind,attempt,error:result.error??null,code:result.code??null,attribute:result.attribute??null,actionAttempted:result.actionAttempted??null});
+  if(result.error!=='AX-read'||result.code!==-25202||result.actionAttempted!==false||attempt===3||Date.now()>=deadline)check(false,'AX_TREE_'+label);
+  // Only refresh the stale read. Never reopen the Inbox or replay any action.
+  await pause(Math.min(100,Math.max(0,deadline-Date.now())));
+ }
+}
 async function pending(s,kind,ms=10000){
  // A new dialog mount clears the previous result; a settled page is a fresh read.
  await openPendingInbox(s);
- try{return await until(()=>readPendingInbox(s,kind),ms,'INBOX_SETTLED_'+kind);}
+ const deadline=Date.now()+ms;
+ try{return await until(()=>readPendingInbox(s,kind,deadline),Math.max(0,deadline-Date.now()),'INBOX_SETTLED_'+kind);}
  finally{await press(s.pid,'Close Inbox');}
 }
 async function exactRequestCard(s,kind){
@@ -217,11 +230,11 @@ async function trigger(s,kind){
   const received=await until(async()=>receivedTrigger(before,triggerMessages(await api(s,'/api/threads/'+b.threadId+'/messages')),expected),Math.max(0,startedDeadline-Date.now()),'RECEIVED_TRIGGER_'+kind);record('received-trigger',{kind,threadId:b.threadId,message:received});
   await until(()=>existsSync(path.join(s.control,'started-'+kind+'.json')),Math.max(0,startedDeadline-Date.now()),'SYNTHETIC_STARTED_'+kind);await selectBot(s,'observer');
   // Open while the peer is held, before the post-release notification window.
-  await openPendingInbox(s);const beforeRelease=await until(()=>readPendingInbox(s,kind),10000,'INBOX_BEFORE_RELEASE_'+kind);check(!beforeRelease.pending,'PENDING_PREEXISTS_'+kind);
+  await openPendingInbox(s);const beforeReleaseDeadline=Date.now()+10000,beforeRelease=await until(()=>readPendingInbox(s,kind,beforeReleaseDeadline),Math.max(0,beforeReleaseDeadline-Date.now()),'INBOX_BEFORE_RELEASE_'+kind);check(!beforeRelease.pending,'PENDING_PREEXISTS_'+kind);
   if(kind==='banner')notificationObserver=await startNotificationObserver({port:s.port,botId:b.id,threadId:b.threadId,record});
   writeFileSync(path.join(s.control,'release-'+kind),'release',{flag:'wx',mode:0o600});
   const pendingDeadline=Date.now()+15000;
-  const item=await until(async()=>{await press(s.pid,'Refresh');const observed=await until(()=>readPendingInbox(s,kind),Math.max(0,pendingDeadline-Date.now()),'INBOX_REFRESHED_'+kind);return observed.pending?observed:null;},Math.max(0,pendingDeadline-Date.now()),'CANONICAL_PENDING_'+kind);
+  const item=await until(async()=>{await press(s.pid,'Refresh');const observed=await until(()=>readPendingInbox(s,kind,pendingDeadline),Math.max(0,pendingDeadline-Date.now()),'INBOX_REFRESHED_'+kind);return observed.pending?observed:null;},Math.max(0,pendingDeadline-Date.now()),'CANONICAL_PENDING_'+kind);
   await press(s.pid,'Close Inbox');record('canonical-request',{kind,botId:b.id,threadId:b.threadId,item,identity:'unique source row; exact action is checked on the conversation card'});return{marker,item};
  }catch(error){try{await triggerFailureEvidence(s,kind);}catch{}throw error;}
 }

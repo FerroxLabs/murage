@@ -144,3 +144,25 @@ test('stale-read attempt cap and original shared deadline fail without an action
  const stale={ok:false,error:'AX-read',code:-25202,attribute:'AXRole',actionAttempted:false};const attempts=stalePressFixture([stale]);await assert.rejects(attempts.press(123,'Observer'),/PRESS_Observer/);assert.equal(attempts.reads(),3);assert.equal(attempts.actions(),0);
  const deadline=stalePressFixture([stale],{readCost:9000});await assert.rejects(deadline.press(123,'Observer'),/PRESS_Observer/);assert.equal(deadline.time(),15000);assert.equal(deadline.reads(),2);assert.equal(deadline.actions(),0);
 });
+
+function inboxSnapshotFixture(results,{cost=123}={}){
+ const fn=/async function readPendingInbox\(s,kind,deadline\)\{[\s\S]*?\n\}/.exec(source)[0];
+ let now=0,reads=0,observations=0;const calls=[];
+ const read=runInNewContext('('+fn+')',{Date:{now:()=>now},check,E:'/evidence',path:{join:(...v)=>v.join('/')},writeFileSync(){},record(){},pause:async ms=>{now+=ms;},inboxSource:()=> 'exactDndSource',inboxObservation:(value,label)=>{assert.equal(label,'exactDndSource');observations++;return value.observation;},ax:(_pid,c,options)=>{calls.push({c,options});now+=Math.min(cost,options.timeout);return results[Math.min(reads++,results.length-1)];}});
+ return{read,calls,reads:()=>reads,observations:()=>observations,time:()=>now};
+}
+test('recorded final DND stale read refreshes only its snapshot then preserves original Inbox observation',async()=>{
+ const stale={ok:false,error:'AX-read',code:-25202,attribute:'AXRole',actionAttempted:false};
+ const expected={settled:true,pending:true,sourceLabel:'exactDndSource'};
+ const f=inboxSnapshotFixture([stale,{ok:true,observation:expected}]);assert.equal(await f.read({pid:123},'dnd',10000),expected);assert.equal(f.reads(),2);assert.equal(f.observations(),1);assert(f.calls.every(x=>x.c.op==='tree'));assert(f.calls[1].options.timeout<f.calls[0].options.timeout);
+});
+test('Inbox snapshot refuses nonstale or ambiguous errors without action or retry',async()=>{
+ for(const value of [{ok:false,error:'AX-read',code:-25204,actionAttempted:false},{ok:false,error:'AX-read',code:-25202,actionAttempted:true},{ok:false,error:'AX-read',code:-25202},{ok:false,error:'osascript',code:null}]){
+  const f=inboxSnapshotFixture([value,{ok:true,observation:{pending:true}}]);await assert.rejects(f.read({pid:123},'dnd',10000),/AX_TREE_pending-dnd/);assert.equal(f.reads(),1);assert.equal(f.observations(),0);
+ }
+});
+test('Inbox stale snapshot cap and existing caller deadline fail without manufacturing pending evidence',async()=>{
+ const stale={ok:false,error:'AX-read',code:-25202,actionAttempted:false};
+ const cap=inboxSnapshotFixture([stale]);await assert.rejects(cap.read({pid:123},'dnd',10000),/AX_TREE_pending-dnd/);assert.equal(cap.reads(),3);assert.equal(cap.observations(),0);
+ const deadline=inboxSnapshotFixture([stale],{cost:6000});await assert.rejects(deadline.read({pid:123},'dnd',10000),/AX_TREE_pending-dnd/);assert.equal(deadline.reads(),2);assert.equal(deadline.time(),10000);assert.equal(deadline.observations(),0);
+});

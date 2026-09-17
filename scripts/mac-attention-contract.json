@@ -9,12 +9,12 @@
   "zipSha256": "ad1a7e66ebbc725dd2ad119e5050f4fda0557259fa4a8d901b9b1a76fb03df07",
   "team": "PX6SP9GPWJ",
   "expiresAt": "2026-09-24T00:35:01Z",
-  "nativeRoundsUsed": 28,
+  "nativeRoundsUsed": 29,
   "maximumAdditionalNativeRuns": 1,
   "proposedJobMinutes": 60,
   "scriptMinutes": 35,
   "retentionDays": 7,
-  "admission": "One R29 confirmation under standing corrective authority on the same verified49cc37be signed artifact. Correct only the observed post-Deny count-dependent Tools selector race: fresh exact Tools grammar, AXPopUpButton uniqueness and enabled readback before its single action. Original pending-resolution/first-approval/click/privacy/mute/quiet/DND criteria and deadlines unchanged; retain all28 prior native runs and R28 first-approval proof; one60minute push-triggered run.",
+  "admission": "One R30 confirmation under standing corrective authority on the same verified49cc37be artifact. Refresh only explicit read-only stale Inbox AX snapshots, at most3 attempts under existing caller deadlines. No menu/action replay, no timeout or pending/card/privacy/mute/quiet/DND criterion change; retain all29 prior runs and accepted R29 native coverage; one60minute push-triggered run.",
   "ownership": "B35 fixture and contract only; signed product, B20 cycle and other worktrees unchanged",
   "reusedSourcePins": {
     "scripts/mac-installed-backup-qualification-lib.mjs": "b876de401a6c917d83a0785e3a5dbd743468cf336804667fa9b61a33461204e2",
@@ -83,5 +83,13 @@
     "uniqueRequired": true,
     "enabledRequired": true,
     "actionRetry": false
+  },
+  "inboxReadRefresh": {
+    "maximumAttempts": 3,
+    "error": "AX-read",
+    "code": -25202,
+    "requiresActionAttemptedFalse": true,
+    "deadline": "existing caller absolute deadline",
+    "replayActions": false
   }
 }
