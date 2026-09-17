@@ -284,8 +284,9 @@ ObjC.bindFunction('AXUIElementPerformAction',['int',['id','id']]);
 ObjC.bindFunction('AXUIElementSetMessagingTimeout',['int',['id','float']]);
 ObjC.bindFunction('AXUIElementIsAttributeSettable',['int',['id','id','unsigned char *']]);
 ObjC.bindFunction('CFEqual',['bool',['id','id']]);
-var queryStarted=Date.now(),visited=0,queryWindows=0;
-function bounded(){if(Date.now()-queryStarted>12000)throw{error:'AX-query-deadline',visited:visited};}
+var queryStarted=Date.now(),visited=0,queryWindows=0,actionAttempted=false;
+function respond(value){value.actionAttempted=actionAttempted;return JSON.stringify(value);}
+function bounded(){if(Date.now()-queryStarted>12000||(Number.isFinite(cmd.readDeadline)&&Date.now()>=cmd.readDeadline))throw{error:'AX-query-deadline',visited:visited};}
 function readAX(e,k,required){bounded();var value=Ref(),code=$.AXUIElementCopyAttributeValue(e,$(k),value);if(code===0)return ObjC.deepUnwrap(value[0]);if(!required&&(code===-25205||code===-25212))return null;throw{error:'AX-read',attribute:k,code:code,visited:visited};}
 function names(e){return ['AXTitle','AXDescription'].map(function(k){return readAX(e,k,false);}).filter(function(v){return typeof v==='string'&&v.length;});}
 function role(e){return readAX(e,'AXRole',true);}
@@ -328,11 +329,11 @@ try{
    }
   });
   var observed={count:confirmations.length,windows:queryWindows,visited:visited,backend:'AXUIElement',context:'exact-native-backup-message-destination-detail',webAreasExcluded:true};
-  if(confirmations.length!==1)return JSON.stringify({ok:cmd.action==='observe',error:cmd.action==='press'?'confirmation-not-unique':null,count:confirmations.length,observed:observed});
+  if(confirmations.length!==1)return respond({ok:cmd.action==='observe',error:cmd.action==='press'?'confirmation-not-unique':null,count:confirmations.length,observed:observed});
   var selected=confirmations[0];observed.containerRole=selected.containerRole;observed.enabled=readAX(selected.element,'AXEnabled',true)===true;
-  if(cmd.action==='observe')return JSON.stringify({ok:true,count:1,enabled:observed.enabled,observed:observed});
-  if(!observed.enabled)return JSON.stringify({ok:false,error:'confirmation-disabled',observed:observed});
-  var confirmationCode=$.AXUIElementPerformAction(selected.element,$('AXPress'));return JSON.stringify({ok:confirmationCode===0,code:confirmationCode,observed:observed});
+  if(cmd.action==='observe')return respond({ok:true,count:1,enabled:observed.enabled,observed:observed});
+  if(!observed.enabled)return respond({ok:false,error:'confirmation-disabled',observed:observed});
+  actionAttempted=true;var confirmationCode=$.AXUIElementPerformAction(selected.element,$('AXPress'));return respond({ok:confirmationCode===0,code:confirmationCode,observed:observed});
  }
  if(cmd.op==='pickPath'){
   if(typeof cmd.path!=='string'||cmd.path.charAt(0)!=='/'||/[\r\n\u0000]/.test(cmd.path))throw{error:'picker-path'};
@@ -378,50 +379,65 @@ try{
    function verifySaveName(){if(actionButton!=='Save')return;var fields=snapshot().filter(function(e){return role(e)==='AXTextField'&&readAX(e,'AXValue',false)===cmd.expectedName;});if(fields.length!==1)throw{error:'picker-save-name-readback',count:fields.length};observed.filenameReadback=cmd.expectedName;}
    verifySaveName();
    var before=snapshot();
-   se.keystroke('g',{using:['command down','shift down']});
+   actionAttempted=true;se.keystroke('g',{using:['command down','shift down']});
    // The shortcut starts an asynchronous native Go-to dialog. Never type into the underlying picker.
    var pathField=awaitState(function(){var e=focus();return e&&['AXTextField','AXComboBox'].indexOf(role(e))>=0&&!before.some(function(old){return sameElement(old,e);})?e:false;},'picker-go-to-focus');
    observed.pathRole=role(pathField);observed.pathNames=names(pathField);
    var settable=Ref(),settableCode=$.AXUIElementIsAttributeSettable(pathField,$('AXValue'),settable);
    observed.pathSettableCode=settableCode;observed.pathSettable=settableCode===0?Boolean(settable[0]):false;
    if(settableCode!==0||!observed.pathSettable)throw{error:'picker-path-not-settable',code:settableCode};
-   observed.pathSetCode=$.AXUIElementSetAttributeValue(pathField,$('AXValue'),$(cmd.path));
+   actionAttempted=true;observed.pathSetCode=$.AXUIElementSetAttributeValue(pathField,$('AXValue'),$(cmd.path));
    if(observed.pathSetCode!==0)throw{error:'picker-path-set',code:observed.pathSetCode};
    awaitState(function(){var value=readAX(pathField,'AXValue',false);observed.pathReadback=value;return value===cmd.path;},'picker-path-readback');
    if(!sameElement(pathField,focus()))throw{error:'picker-path-focus-changed'};
-   se.keyCode(36);
+   actionAttempted=true;se.keyCode(36);
    awaitState(function(){return !inTree(pathField);},'picker-go-to-dismissed');
    var ready=awaitState(function(){var buttons=openButtons();return buttons.length===1&&readAX(buttons[0],'AXEnabled',true)===true?buttons[0]:false;},'picker-open-enabled');
    verifySaveName();
-   var pressed=$.AXUIElementPerformAction(ready,$('AXPress'));observed.pressCode=pressed;
+   actionAttempted=true;var pressed=$.AXUIElementPerformAction(ready,$('AXPress'));observed.pressCode=pressed;
    if(pressed!==0)throw{error:'picker-open-press',code:pressed};
    // A successful AXPress alone does not prove the dialog accepted its selection.
    awaitState(function(){return !inTree(panel);},'picker-dismissed');
-   return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed,goToDismissed:true,pickerDismissed:true,elapsedMs:Date.now()-queryStarted});
-  }catch(error){return JSON.stringify({ok:false,error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed,visited:visited,elapsedMs:Date.now()-queryStarted});}
+   return respond({ok:true,backend:'AXUIElement',observed:observed,goToDismissed:true,pickerDismissed:true,elapsedMs:Date.now()-queryStarted});
+  }catch(error){return respond({ok:false,error:error.error||'picker-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed,visited:visited,elapsedMs:Date.now()-queryStarted});}
  }
- if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return JSON.stringify({ok:true,count:list.length,truncated:list.length>lim,elements:out,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
- if(cmd.op==='count'){var found=matches();return JSON.stringify({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
- if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return JSON.stringify({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return JSON.stringify({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
- if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length,visited:visited});
-  if(cmd.op==='press'){if(cmd.requireEnabled&&readAX(m[0],'AXEnabled',true)!==true)return JSON.stringify({ok:false,error:'AX-disabled',enabled:false});var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return JSON.stringify({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
+ if(cmd.op==='tree'){var list=all(),out=[],lim=cmd.limit||4000;for(var t=0;t<list.length&&out.length<lim;t++)out.push({role:role(list[t]),names:names(list[t]).map(function(n){return n.slice(0,200);})});return respond({ok:true,count:list.length,truncated:list.length>lim,elements:out,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='count'){var found=matches();return respond({ok:true,count:found.length,windows:queryWindows,visited:visited,backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+ if(cmd.op==='value'||cmd.op==='state'){var v=matches();if(v.length!==1)return respond({ok:false,error:'match',count:v.length,visited:visited});var x=readAX(v[0],'AXValue',false);return respond({ok:true,value:x,enabled:cmd.op==='state'?readAX(v[0],'AXEnabled',true):null,backend:'AXUIElement'});}
+ if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return respond({ok:false,error:'match',count:m.length,visited:visited});
+  if(cmd.op==='press'){if(cmd.requireEnabled&&readAX(m[0],'AXEnabled',true)!==true)return respond({ok:false,error:'AX-disabled',enabled:false});var control=cmd.observeControl?{role:role(m[0]),names:names(m[0]),enabled:readAX(m[0],'AXEnabled',false),pid:cmd.pid}:null;actionAttempted=true;var code=$.AXUIElementPerformAction(m[0],$('AXPress'));return respond({ok:code===0,code:code,backend:'AXUIElement',observedControl:control});}
   if(!$.AXIsProcessTrusted())throw{error:'AX-client-not-trusted'};
   var observed={requested:cmd.text,role:role(m[0]),enabled:readAX(m[0],'AXEnabled',true),readback:null};
-  if(typeof cmd.text!=='string'||!cmd.text.length||['AXTextField','AXIncrementor'].indexOf(observed.role)<0||observed.enabled!==true)return JSON.stringify({ok:false,error:'AX-input-control',observed:observed});
+  if(typeof cmd.text!=='string'||!cmd.text.length||['AXTextField','AXIncrementor'].indexOf(observed.role)<0||observed.enabled!==true)return respond({ok:false,error:'AX-input-control',observed:observed});
   var settable=Ref();observed.settableCode=$.AXUIElementIsAttributeSettable(m[0],$('AXValue'),settable);observed.settable=observed.settableCode===0&&Boolean(settable[0]);
-  if(!observed.settable)return JSON.stringify({ok:false,error:'AX-input-not-settable',observed:observed});
-  observed.setCode=$.AXUIElementSetAttributeValue(m[0],$('AXValue'),$(cmd.text));
-  if(observed.setCode!==0)return JSON.stringify({ok:false,error:'AX-input-set',observed:observed});
+  if(!observed.settable)return respond({ok:false,error:'AX-input-not-settable',observed:observed});
+  actionAttempted=true;observed.setCode=$.AXUIElementSetAttributeValue(m[0],$('AXValue'),$(cmd.text));
+  if(observed.setCode!==0)return respond({ok:false,error:'AX-input-set',observed:observed});
   try{for(;;){bounded();observed.readback=readAX(m[0],'AXValue',true);var actual=observed.readback;
    var matched=cmd.numeric===true?(typeof actual==='string'||typeof actual==='number')&&String(actual).trim().length>0&&isFinite(Number(actual))&&isFinite(Number(cmd.text))&&Number(actual)===Number(cmd.text):actual===cmd.text;
-   if(matched)return JSON.stringify({ok:true,backend:'AXUIElement',observed:observed});delay(.1);
-  }}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-input-readback',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed});}
+   if(matched)return respond({ok:true,backend:'AXUIElement',observed:observed});delay(.1);
+  }}catch(error){return respond({ok:false,error:error.error||'AX-input-readback',attribute:error.attribute||null,code:error.code===undefined?null:error.code,observed:observed});}
  }
- if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
-}catch(error){return JSON.stringify({ok:false,error:error.error||'AX-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted,backend:'AXUIElement'});}
+ if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var value=readAX(e,'AXValue',false);return [value===null?'':String(value)].concat(names(e)).join(' ');});return respond({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);}),backend:'AXUIElement',elapsedMs:Date.now()-queryStarted});}
+}catch(error){return respond({ok:false,error:error.error||'AX-exception',attribute:error.attribute||null,code:error.code===undefined?null:error.code,visited:visited,elapsedMs:Date.now()-queryStarted,backend:'AXUIElement'});}
 if(cmd.op==='quit'){p.frontmost=true;delay(0.3);se.keystroke('q',{using:'command down'});return JSON.stringify({ok:true});}
 return JSON.stringify({ok:false,error:'op'});}`;
-function ax(s,cmd){const file=path.join(s.private,"ax.js");writeAtomic(file,JXA);const r=run("/usr/bin/osascript",["-l","JavaScript",file,JSON.stringify(cmd)],{timeout:90000});try{return JSON.parse(r.stdout.trim());}catch{return{ok:false,error:"osascript",code:r.code,signal:r.signal,timedOut:r.timedOut,commandError:r.error,stderr:redactSecretsInLine(r.stderr).slice(-2000)};}}
+function ax(s,cmd){
+  const file=path.join(s.private,"ax.js");writeAtomic(file,JXA);
+  const retryReads=["tree","count","value","state","texts","press","focusType","confirmEncryptedBackup"].includes(cmd.op),deadline=Date.now()+12000;
+  let attempts=0,last;
+  for(;;){
+    const remaining=deadline-Date.now();
+    if(retryReads&&remaining<=0)return{...last,readAttempts:attempts,readRetryDeadlineReached:true};
+    const command=retryReads?{...cmd,readDeadline:deadline}:cmd;
+    const r=run("/usr/bin/osascript",["-l","JavaScript",file,JSON.stringify(command)],{timeout:retryReads?Math.max(1,remaining):90000});attempts++;
+    try{last=JSON.parse(r.stdout.trim());}catch{return{ok:false,error:"osascript",code:r.code,signal:r.signal,timedOut:r.timedOut,commandError:r.error,stderr:redactSecretsInLine(r.stderr).slice(-2000),readAttempts:attempts};}
+    // Only a pre-action AX read failure may reacquire a fresh exact tree.
+    // A reported or uncertain mutation is never replayed.
+    if(!retryReads||last.ok||last.actionAttempted!==false||last.error!=="AX-read"||![-25202,-25204].includes(last.code))return{...last,readAttempts:attempts};
+    record({step:"ax-pre-action-read-retry",op:cmd.op,pid:cmd.pid,attempt:attempts,result:last});
+  }
+}
 async function step(label,fn){
   try{const result=await fn();record({step:label,ok:true,...(result===undefined?{}:{result})});return result;}
   catch(error){const shot=path.join(E,`${phase}-${label}.png`.replace(/[^A-Za-z0-9.-]/g,"_"));run("/usr/sbin/screencapture",["-x",shot]);throw Object.assign(error,{label:error.label??label,screenshot:path.basename(shot)});}
