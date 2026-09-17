@@ -309,7 +309,9 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # The GEPA runtime build adds about 3 minutes; package-linux.yml runs the
+    # same sequence in about 16.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -323,13 +325,22 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
+          build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
       - run: pnpm install --frozen-lockfile
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
       - name: Prove overlay-free X11 input routing
         run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+      # after-pack refuses a package without the GEPA runtime and its manifest
+      # receipt (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED); mirror package-linux.yml.
+      - name: Build and verify pinned GEPA runtime
+        run: |
+          export SOURCE_SHA="$(git rev-parse HEAD)"
+          python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
-        run: pnpm package:linux:offline
+        run: |
+          gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
+          pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
       - run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner
         run: |
