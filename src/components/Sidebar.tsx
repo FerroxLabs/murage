@@ -39,6 +39,8 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { SectionContextDialog } from "./SectionContextDialog";
+import { sidebarBotRowTone, sidebarGroupRowTone, sidebarNavRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 
@@ -427,7 +429,7 @@ function GroupListItem({
       className={cn(
         "relative flex w-full items-center rounded-xl text-left",
         density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
-        selected ? "bg-raised" : "hover:bg-raised/50",
+        sidebarGroupRowTone(selected),
       )}
       title={density === "icons" ? group.name : undefined}
       aria-label={density === "icons" ? group.name : undefined}
@@ -1006,19 +1008,9 @@ function BotListItem({
         ? "gap-2 px-2 py-1.5"
         : "gap-2 px-3 py-2.5",
     !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
-    // Role colour is independent of selection: Chief stays orange, leaders
-    // get a blue outline, and selected non-Chief rows keep the raised fill.
-    botRole(bot) === "chief"
-      ? selected
-        ? "border-accent/40 bg-accent/15"
-        : "border-accent/25 bg-accent/5 hover:bg-accent/10"
-      : botRole(bot) === "leader"
-        ? selected
-          ? "border-team-lead/45 bg-raised"
-          : "border-team-lead/30 hover:bg-raised/50"
-      : selected
-        ? "border-transparent bg-raised"
-        : "border-transparent hover:bg-raised/50",
+    // Role colour at rest (Chief orange, leader blue); the open row gets the
+    // gold selected edge from sidebar-row-tone whatever its role.
+    sidebarBotRowTone(botRole(bot), selected),
   );
   const body = (
     <>
@@ -1397,6 +1389,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const botDragRef = useRef<Bot | null>(null);
   const [botDropSectionId, setBotDropSectionId] = useState<string | null>(null);
   const botMoveInFlight = useRef(false);
+  const [instructionsEditor, setInstructionsEditor] = useState<{ section: string; label: string } | null>(null);
   const sectionDragRef = useRef<{
     from: string | null;
     over: { id: string; place: SectionDropPlace } | null;
@@ -1720,6 +1713,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     try {
       const result = await moveSidebarBot<Bot>(bot, plan, (path, init) => api(path, init));
       if (result.ok) {
+        // A team's natural slot follows its newest bot, so filing a newer bot
+        // under a team made the whole team jump past the others. Keep the
+        // order the person was looking at when they dropped.
+        commitSectionOrder(sectionIds);
         for (const moved of result.bots) dispatch({ type: "botPatched", bot: moved });
         setTeamFeedback({ error: false, text: result.text });
         setReorderAnnouncement(result.text);
@@ -2043,6 +2040,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     }}
                     onDragEnd={resetSectionDrag}
                     onMove={(direction) => moveSidebarSection(id, direction)}
+                    onEditInstructions={
+                      sectionName ? () => setInstructionsEditor({ section: sectionName, label: sectionName }) : undefined
+                    }
                   />
                 )}
                 {!collapsed && (
@@ -2111,7 +2111,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               className={cn(
                 "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
                 density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-                state.activeView === "team-map" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+                sidebarNavRowTone(state.activeView === "team-map"),
               )}
             >
               <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
@@ -2266,6 +2266,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
+      {instructionsEditor && (
+        <SectionContextDialog
+          section={instructionsEditor.section}
+          label={instructionsEditor.label}
+          onClose={() => setInstructionsEditor(null)}
+        />
+      )}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}

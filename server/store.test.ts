@@ -59,6 +59,24 @@ describe("Store", () => {
     expect(seeded).not.toContain(String.fromCodePoint(0x2013));
   });
 
+  it("persists a pinned task across a restart and forgets the flag when unpinned", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const firstThreadId = bot.threadId;
+    const second = store.createTask(bot.id, "Second")!;
+
+    expect(store.patchTask(bot.id, second.threadId, { pinned: true })?.pinned).toBe(true);
+    const reloaded = new Store(selection);
+    expect(reloaded.tasks(bot.id).find((task) => task.threadId === second.threadId)?.pinned).toBe(true);
+    expect(reloaded.tasks(bot.id).find((task) => task.threadId === firstThreadId)?.pinned).toBeUndefined();
+
+    reloaded.patchTask(bot.id, second.threadId, { pinned: false });
+    expect(Object.hasOwn(reloaded.tasks(bot.id).find((task) => task.threadId === second.threadId)!, "pinned")).toBe(false);
+    const unpinned = new Store(selection).tasks(bot.id).find((task) => task.threadId === second.threadId)!;
+    // Absent is the only way "not pinned" is written, so older builds read the same record.
+    expect(Object.hasOwn(unpinned, "pinned")).toBe(false);
+  });
+
   it("dismisses a legacy onboarding card when the user talks, and leaves live asks", () => {
     const store = new Store(selection);
     const bot = store.createBot({}, { seedMessages: false });

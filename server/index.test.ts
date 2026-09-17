@@ -7403,6 +7403,52 @@ describe("section context API", () => {
     expect(oversized.status).toBe(400);
     expect(oversized.body.error).toContain("24KB");
   });
+
+  it("edits a team's instructions after the team was created and keeps the saved copy on reload", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await api("POST", "/api/sidebar-sections", { name: "Creator Studio", botIds: [bot.id] })).status).toBe(200);
+      const created = await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "Draft scripts first." });
+      expect(created.status).toBe(200);
+
+      const edited = await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "Publish on Tuesdays." });
+      expect(edited.body).toMatchObject({ section: "Creator Studio", text: "Publish on Tuesdays." });
+      expect((await api("GET", "/api/section-context?section=Creator%20Studio")).body.text).toBe("Publish on Tuesdays.");
+
+      // A failed edit leaves the saved instructions alone.
+      expect((await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", {})).status).toBe(400);
+      expect((await desktopApi("PUT", `/api/section-context?section=${"S".repeat(61)}`, { text: "x" })).status).toBe(400);
+      expect((await desktopApi("PUT", "/api/section-context?section=Creator%20Studio", { text: "x".repeat(24_001) })).status).toBe(400);
+      expect((await api("GET", "/api/section-context?section=Creator%20Studio")).body.text).toBe("Publish on Tuesdays.");
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+});
+
+describe("task pin API", () => {
+  it("pins and unpins a bot task, keeps it on reload, and rejects a non-boolean", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const task = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Quarterly plan" })).body;
+      const threadId: string = task.bot?.threadId ?? task.task?.threadId;
+      expect(threadId).toEqual(expect.any(String));
+
+      const pinned = await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: true });
+      expect(pinned.status).toBe(200);
+      expect(pinned.body.task).toMatchObject({ threadId, pinned: true });
+      const reloaded = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+      expect(reloaded.tasks.find((candidate: { threadId: string }) => candidate.threadId === threadId)?.pinned).toBe(true);
+
+      expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: "yes" })).status).toBe(400);
+
+      const unpinned = await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { pinned: false });
+      expect(unpinned.status).toBe(200);
+      expect(unpinned.body.task.pinned).toBeUndefined();
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
 });
 
 // The memory routes expose plain files in the bot's workspace. The

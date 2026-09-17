@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -5,6 +6,8 @@ import {
   BOT_CHATS_SECTION_ID,
   CHANNELS_SECTION_ID,
   PINNED_SECTION_ID,
+  mergeSectionOrder,
+  orderedSidebarSections,
   userSectionId,
 } from "./sidebar-layout";
 import {
@@ -86,5 +89,28 @@ describe("moveSidebarBot", () => {
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({ section: null });
     expect(result).toEqual({ ok: true, bots: [moved], text: "Scout moved to Bots" });
+  });
+});
+
+describe("team order across a bot drop", () => {
+  const sales = userSectionId("Sales");
+  const research = userSectionId("Research");
+
+  it("would jump a team past another when a newer bot joins it, with no saved order", () => {
+    // Natural order follows each team's newest bot: Sales first, then Research.
+    const before = [CHANNELS_SECTION_ID, sales, research, BOTS_SECTION_ID];
+    // The newest bot joins Research, so Research now leads the natural order.
+    const natural = [CHANNELS_SECTION_ID, research, sales, BOTS_SECTION_ID];
+    expect(orderedSidebarSections(natural, [])).not.toEqual(before);
+    // Freezing the order on screen at drop time keeps every team in place.
+    expect(orderedSidebarSections(natural, mergeSectionOrder([], before))).toEqual(before);
+  });
+
+  it("is frozen by the sidebar on a successful drop, before the moved bot is patched in", () => {
+    const source = readFileSync(new URL("../components/Sidebar.tsx", import.meta.url), "utf8");
+    const drop = source.slice(source.indexOf("const dropBot"), source.indexOf("const dropSection"));
+    const freeze = drop.indexOf("commitSectionOrder(sectionIds)");
+    expect(freeze).toBeGreaterThan(drop.indexOf("if (result.ok)"));
+    expect(freeze).toBeLessThan(drop.indexOf('type: "botPatched"'));
   });
 });

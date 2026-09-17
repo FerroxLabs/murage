@@ -227,6 +227,8 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
 const BOT_AVATAR_RADIUS = { mascot: "0", circle: "50%", rounded: "22%", square: "0" } satisfies Record<BotAvatarCrop, string>;
 /** How much of a shaped tile the mascot fills, leaving room for the corners. */
 const MASCOT_IN_TILE = 0.78;
+/** Inset, so the edge never changes the avatar's footprint. */
+const MASCOT_TILE_EDGE = "shadow-[inset_0_0_0_1px_var(--color-hairline)]";
 
 export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarProps) {
   const profile = botAvatarProfile(bot);
@@ -248,10 +250,14 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
     if (profile.avatarCrop === "mascot") return mascot;
     // A shape chosen without an image still has to show: the mascot sits in a
     // tile cut to that shape, the same frame an uploaded image would get.
+    // The fill alone is invisible wherever it lands on the raised tone (the
+    // profile card in light, a selected sidebar row in both skins), so the
+    // tile also carries an inset hairline that draws the shape without
+    // growing the box.
     return (
       <span
         data-avatar-shape={profile.avatarCrop}
-        className="inline-flex shrink-0 items-center justify-center overflow-hidden bg-raised"
+        className={`inline-flex shrink-0 items-center justify-center overflow-hidden bg-raised ${MASCOT_TILE_EDGE}`}
         style={{ width: size, height: size, borderRadius: radius }}
       >
         {mascot}

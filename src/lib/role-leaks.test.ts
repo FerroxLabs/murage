@@ -78,8 +78,12 @@ describe("the org chart has one reader", () => {
     // cannot come back by someone re-reading the raw flag for convenience.
     const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8").replace(/\r\n/g, "\n");
 
-    // The accent row belongs to the Chief alone.
-    expect(sidebar).toContain('botRole(bot) === "chief"\n      ? selected');
+    // The accent row belongs to the Chief alone. The row tone moved into its
+    // own module with the selected-row edge; the sidebar still hands it the
+    // role from botRole(), never the raw flag.
+    const rowTone = readFileSync(join(root, "lib/sidebar-row-tone.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(sidebar).toContain("sidebarBotRowTone(botRole(bot), selected)");
+    expect(rowTone).toContain('if (role === "chief") {\n    return selected ?');
     // The menu is named for the role held, not for the field.
     expect(sidebar).toContain("`Remove ${BOT_ROLE_TITLE[role]}`");
     expect(sidebar).toContain('"Make Team leader"');
