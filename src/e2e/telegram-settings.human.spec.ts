@@ -42,13 +42,14 @@ test('Receiver conflict Retry restores pairing without exposing Retry for other 
 });
 test('Telegram token, pairing, refresh and revoke remain deliberate with recoverable failures',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
-  let state={configured:false,enabled:false,paired:false,pending:false,uncertain:false,connecting:false,pairingExpired:false};let pairs=0;let fail=false;let statusReads=0;let revokes=0;
+  // pending/uncertain are delivery COUNTS, as the server sends them (server/telegram-channel.ts status()); the status parser refuses a body with booleans there.
+  let state={configured:false,enabled:false,paired:false,pending:0,uncertain:0,connecting:false,pairingExpired:false};let pairs=0;let fail=false;let statusReads=0;let revokes=0;
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture'}}));
   await page.route('**/api/config',route=>{state.configured=true;return route.fulfill({json:{}});});
   await page.route('**/api/telegram/status',route=>{statusReads++;return route.fulfill({json:state});});
-  await page.route('**/api/telegram/pair',route=>{pairs++;if(fail)return route.fulfill({status:503,json:{error:'private-token-canary'}});state.pending=true;state.enabled=true;return route.fulfill({json:{code:'PAIR1234',expiresAt:Date.now()+60000,username:'FixtureBot',botIdentityId:'123'}});});
-  await page.route('**/api/telegram/revoke',route=>{revokes++;state={...state,enabled:false,paired:false,pending:false,pairingExpired:false};return route.fulfill({json:{}});});
+  await page.route('**/api/telegram/pair',route=>{pairs++;if(fail)return route.fulfill({status:503,json:{error:'private-token-canary'}});state.pending=1;state.enabled=true;return route.fulfill({json:{code:'PAIR1234',expiresAt:Date.now()+60000,username:'FixtureBot',botIdentityId:'123'}});});
+  await page.route('**/api/telegram/revoke',route=>{revokes++;state={...state,enabled:false,paired:false,pending:0,pairingExpired:false};return route.fulfill({json:{}});});
   await page.goto(`${origin}/__telegram`);
   await expect(page.getByRole('link',{name:'BotFather',exact:true})).toHaveAttribute('href','https://t.me/BotFather');
   await page.getByLabel('Bot token',{exact:true}).fill('fake-token');await page.getByRole('button',{name:'Save token'}).click();
@@ -67,9 +68,13 @@ test('Telegram token, pairing, refresh and revoke remain deliberate with recover
   await expect(page.getByText('/pair PAIR1234')).toBeVisible();
   expect(revokes).toBe(1);expect(pairs).toBe(2);
   await page.screenshot({path:testInfo.outputPath('telegram-settings-mobile.png'),fullPage:true});
-  state={...state,paired:true,pending:false};
+  state={...state,paired:true,pending:0};
   await expect(page.getByText('Paired',{exact:true})).toBeVisible();await expect(page.getByText('/pair PAIR1234')).toHaveCount(0);
-  const readsAfterPair=statusReads;await page.waitForTimeout(2300);expect(statusReads).toBe(readsAfterPair);
+  // A saved connection keeps a health poll after pairing (shouldPollTelegramStatus: a paired bot can still be
+  // taken by another receiver or have its token rejected), so the settled screen is re-read, not frozen. The
+  // spec used to assert the opposite (`expect(statusReads).toBe(readsAfterPair)` after 2.3 s).
+  const readsAfterPair=statusReads;await expect.poll(()=>statusReads,{timeout:5000}).toBeGreaterThan(readsAfterPair);
+  await expect(page.getByText('Paired',{exact:true})).toBeVisible();await expect(page.getByText('/pair PAIR1234')).toHaveCount(0);
   await page.setViewportSize({width:1000,height:900});
   await page.screenshot({path:testInfo.outputPath('telegram-settings-desktop.png'),fullPage:true});
   await page.getByRole('button',{name:'Revoke',exact:true}).click();await expect(page.getByLabel('Bot token',{exact:true})).toBeEnabled();

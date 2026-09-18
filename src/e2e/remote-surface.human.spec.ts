@@ -27,9 +27,12 @@ import { openSidebar } from "./fixtures";
 // narrow desktop window, and it must still get its gate.
 test.use({ viewport: { width: 390, height: 844 } });
 
-/** The welcome / email gate, by the words on it. */
-const WELCOME = /Welcome to Murage/;
-const EMAIL_CAPTURE = /Tell us who you are/;
+/** The desktop's first-run screen, by the words on it. It used to be an
+ * email gate headed "Welcome to Murage" / "Tell us who you are"; it is now an
+ * outcome picker whose eyebrow is set in capitals ("WELCOME TO MURAGE"), with
+ * the name and email behind "Add your details (optional)". */
+const WELCOME = /welcome to murage/i;
+const EMAIL_CAPTURE = /What would you like to do\?/;
 /** The phone-setup wizard, by its heading and by the two denials. */
 const PHONE_WIZARD = /Open Murage in your browser/;
 const DENIALS = [/not found/, /not listening yet/];
@@ -52,7 +55,22 @@ async function answerRemote(page: import("@playwright/test").Page): Promise<void
   });
 }
 
+/** Serve the app the answer a brand-new workspace gets: no bots, no rooms.
+ * The shared rig is seeded, and the first-run screen correctly stands aside
+ * for an established workspace (Onboarding's checkWorkspace), so without this
+ * neither test would be looking at a first run at all. Both tests get it, so
+ * the door stays the only difference between them. */
+async function answerEmptyWorkspace(page: import("@playwright/test").Page): Promise<void> {
+  await page.route("**/api/bots?messages=0", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json().catch(() => ({}));
+    await route.fulfill({ response, json: { ...body, bots: [], groups: [] } });
+  });
+}
+
 test("a phone is never asked to introduce itself, or to set itself up", async ({ page }) => {
+  await answerEmptyWorkspace(page);
   await answerRemote(page);
   await page.goto("/");
 
@@ -81,10 +99,14 @@ test("the desktop still gets its first-run gate, at the same width", async ({ pa
   // which is what the developer's own machine and the packaged app both are.
   // Same empty localStorage, same 390px viewport — the ONLY difference from
   // the test above is the door. Narrow is not remote.
+  await answerEmptyWorkspace(page);
   await page.goto("/");
 
   await expect(page.getByText(WELCOME)).toBeVisible();
   await expect(page.getByText(EMAIL_CAPTURE)).toBeVisible();
+  // The name and email moved behind an optional disclosure; opening it is
+  // still the same desktop-only gate.
+  await page.getByRole("button", { name: "Add your details (optional)" }).click();
   await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Maybe later" })).toBeVisible();
