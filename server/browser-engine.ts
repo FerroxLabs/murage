@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
 import { verifyPackagedMacBrowser } from "./browser-macos-identity.ts";
+import { isUserChromeEndpoint } from "./user-chrome.ts";
 import { DATA_DIR } from "./config.ts";
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 
@@ -170,12 +171,23 @@ export function browserSessionId(botId: string, partitionId: string, realmId: st
   return partitionId === "guest" ? `guest-${randomUUID()}` : `murage-${digest}`;
 }
 
+/** Session for a bot attached to the owner's own Chrome. Tagged apart from
+ * browserSessionId's ["profile", p] / ["bot", id] slots, so it can never name
+ * (or restore) an isolated profile's session. */
+export function userChromeSessionId(botId: string, realmId: string): string {
+  if (!realmId) throw new Error("Browser session requires an installation authentication realm");
+  return `murage-uc-${createHash("sha256").update(JSON.stringify([realmId, ["user-chrome", botId]])).digest("hex").slice(0, 32)}`;
+}
+
 /** Child-only home is necessary: pinned agent-browser stores saved state in
  * ~/.agent-browser; it has no AGENT_BROWSER_HOME override. Namespace alone
  * would still write outside the installation. No parent env is modified. */
 export function agentBrowserIntegration(input: {
   binaryPath: string; session: string; encryptionKey: string; dataDir: string; realmId: string;
   persistent?: boolean; env?: NodeJS.ProcessEnv;
+  /** The owner's running Chrome (server/user-chrome.ts). Only ever passed
+   * explicitly by the caller; AGENT_BROWSER_CDP is never inherited. */
+  attachCdpUrl?: string;
 }): AgentBrowserSpec {
   // Pinned upstream silently adds --no-sandbox in root/container environments.
   // Refuse those hosts rather than weakening Murage's production sandbox.
@@ -205,6 +217,17 @@ export function agentBrowserIntegration(input: {
     AGENT_BROWSER_NO_WEBMCP: "1",
     AGENT_BROWSER_IDLE_TIMEOUT_MS: "60000",
   };
+  if (input.attachCdpUrl !== undefined) {
+    if (!isUserChromeEndpoint(input.attachCdpUrl)) throw new Error("Invalid Chrome connection");
+    env.AGENT_BROWSER_CDP = input.attachCdpUrl;
+    // Its own tab: unpinned, the engine drives whichever tab is active.
+    env.AGENT_BROWSER_PIN_TAB = "1";
+    // Never export the owner's whole cookie jar into Murage's restore store.
+    env.AGENT_BROWSER_RESTORE_SAVE = "never";
+    // Chrome asks the owner to Allow every new connection; do not reconnect
+    // after each minute of quiet. Closing the session never closes Chrome.
+    env.AGENT_BROWSER_IDLE_TIMEOUT_MS = "1800000";
+  }
   if (env.AGENT_BROWSER_RESTORE_SAVE === "auto") env.AGENT_BROWSER_RESTORE = input.session;
   const inherited = input.env ?? process.env;
   for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"]) if (inherited[key]) env[key] = inherited[key]!;

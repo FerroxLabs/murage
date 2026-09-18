@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const macAdmission = vi.hoisted(() => vi.fn());
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
-import { agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
+import { agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
@@ -133,6 +133,36 @@ describe("protected browser state", () => {
     const guest = agentBrowserIntegration({ ...input, session: browserSessionId("a", "guest", "realm") });
     expect(guest.env.AGENT_BROWSER_RESTORE_SAVE).toBe("never");
     expect(guest.env.AGENT_BROWSER_RESTORE).toBeUndefined();
+  });
+  it("attaches to the owner's Chrome only when asked, in its own tab, without saving its cookies", () => {
+    const dataDir = temporary();
+    const endpoint = "ws://127.0.0.1:9222/devtools/browser/4c1b0f0e-9a2d-4e8f-b1c3-5d6e7f8a9b0c";
+    const input = { dataDir, realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: userChromeSessionId("a", "realm"), env: { PATH: "/bin", AGENT_BROWSER_CDP: "http://ambient.invalid:9222" } };
+    const isolated = agentBrowserIntegration(input);
+    scratch.push(isolated.env.AGENT_BROWSER_SOCKET_DIR!);
+    // The ambient environment never redirects a bot's browser.
+    expect(isolated.env.AGENT_BROWSER_CDP).toBeUndefined();
+    expect(isolated.env.AGENT_BROWSER_PIN_TAB).toBeUndefined();
+    const attached = agentBrowserIntegration({ ...input, attachCdpUrl: endpoint });
+    expect(attached.env.AGENT_BROWSER_CDP).toBe(endpoint);
+    expect(attached.env.AGENT_BROWSER_PIN_TAB).toBe("1");
+    expect(attached.env.AGENT_BROWSER_RESTORE_SAVE).toBe("never");
+    expect(attached.env.AGENT_BROWSER_RESTORE).toBeUndefined();
+    // Chrome asks the owner to Allow each new connection: no one-minute idle reconnects.
+    expect(isolated.env.AGENT_BROWSER_IDLE_TIMEOUT_MS).toBe("60000");
+    expect(attached.env.AGENT_BROWSER_IDLE_TIMEOUT_MS).toBe("1800000");
+    for (const bad of ["9222", "http://127.0.0.1:9222", "ws://10.0.0.5:9222/devtools/browser/x", ""]) {
+      expect(() => agentBrowserIntegration({ ...input, attachCdpUrl: bad }), bad).toThrow(/Chrome connection/u);
+    }
+  });
+  it("keys the owner's-Chrome session apart from every isolated session of the same bot", () => {
+    const key = userChromeSessionId("a", "realm");
+    expect(key).toMatch(/^murage-uc-[a-f0-9]{32}$/u);
+    expect(key).toBe(userChromeSessionId("a", "realm"));
+    expect(key).not.toBe(userChromeSessionId("b", "realm"));
+    expect(key).not.toBe(userChromeSessionId("a", "restored"));
+    for (const partition of ["", "user-chrome", "a"]) expect(key).not.toBe(browserSessionId("a", partition, "realm"));
+    expect(() => userChromeSessionId("a", "")).toThrow(/realm/u);
   });
 });
 

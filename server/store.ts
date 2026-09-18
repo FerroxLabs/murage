@@ -619,6 +619,10 @@ export interface BotRecord {
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
+  /** Owner opt-in: this bot's browser attaches to the owner's own running
+   * Chrome (signed in as them) instead of an isolated profile. Absent = off.
+   * At most one bot holds it; server/index.ts enforces that on every change. */
+  useMyChrome?: true;
   /** Public, package-authored playbooks installed for this bot. They carry
    * process guidance only—never executable code, credentials, or grants. */
   playbooks?: InstalledPlaybook[];
@@ -847,6 +851,7 @@ export class Store {
     let botsMigrated = false;
     const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
+    let userChromeSeen = false;
     let groupsMigrated = false;
     for (const b of this.bots) {
       // transient state never survives a restart — and if a previous
@@ -862,6 +867,12 @@ export class Store {
           botsMigrated = true;
         }
       }
+      // Only an exact true, and only for one bot, survives a hand edit.
+      if (b.useMyChrome !== undefined && (b.useMyChrome !== true || userChromeSeen)) {
+        delete b.useMyChrome;
+        botsMigrated = true;
+      }
+      if (b.useMyChrome) userChromeSeen = true;
       if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
         botsMigrated = true;

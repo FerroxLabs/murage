@@ -151,7 +151,8 @@ import * as composio from "./composio.ts";
 import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
-import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { readUserChromeEndpoint, USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
@@ -808,6 +809,7 @@ const unifiedBrowserBindings = new Map<string, { key: string; spec: AgentBrowser
 const guestBrowserBindings = new Map<string, string>();
 async function unifiedBrowserBinding(botId: string, profile: string | undefined) {
   const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  if (store.bot(botId)?.useMyChrome) return userChromeBinding(botId, realmId);
   const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
   // Tag the identity slot the way browserSessionId already tags its own
   // (server/browser-engine.ts:169). Untagged, the middle slot held a
@@ -828,8 +830,36 @@ async function unifiedBrowserBinding(botId: string, profile: string | undefined)
   unifiedBrowser.register(session, spec);
   const binding = { key: session, spec }; unifiedBrowserBindings.set(identity, binding); return binding;
 }
+// "Use my Chrome": one opted-in bot attaches to the owner's running Chrome.
+// Its memo slot is tagged ["user-chrome", botId] and its session comes from
+// userChromeSessionId, so it can never share a key, a restore file or a
+// cookie jar with an isolated ["bot"] / ["profile"] binding above. Only one
+// bot may hold the opt-in (PATCH /api/bots/:id), and binding re-checks that.
+async function userChromeBinding(botId: string, realmId: string) {
+  if (store.bots.some((other) => other.id !== botId && other.useMyChrome)) throw Object.assign(new Error("Another bot is already using your Chrome"), { status: 409 });
+  const endpoint = readUserChromeEndpoint();
+  if (!endpoint) throw Object.assign(new Error(USER_CHROME_SETUP_MESSAGE), { status: 409, userChromeNotReady: true });
+  const identity = JSON.stringify([realmId, ["user-chrome", botId], false]);
+  const existing = unifiedBrowserBindings.get(identity);
+  if (existing?.spec.env.AGENT_BROWSER_CDP === endpoint) return existing;
+  // Chrome restarted since the last binding: its browser WebSocket changed.
+  if (existing) await forgetUserChromeBrowser(botId);
+  const engine = browserEngineStatus();
+  if (engine.kind !== "ready") throw new Error(engine.reason);
+  const session = userChromeSessionId(botId, realmId);
+  const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath, session, encryptionKey: browserEngineEncryptionKey(DATA_DIR), dataDir: DATA_DIR, realmId, attachCdpUrl: endpoint });
+  await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
+  unifiedBrowser.register(session, spec);
+  const binding = { key: session, spec }; unifiedBrowserBindings.set(identity, binding); return binding;
+}
+async function forgetUserChromeBrowser(botId: string) {
+  const key = userChromeSessionId(botId, restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation");
+  for (const [identity, binding] of unifiedBrowserBindings) if (binding.key === key) unifiedBrowserBindings.delete(identity);
+  try { await unifiedBrowser.forget(key); } catch { /* never bound */ }
+}
 function unifiedBrowserKey(bot: BotRecord): string | null {
   const realm = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  if (bot.useMyChrome) return userChromeSessionId(bot.id, realm);
   const partition = bot.browserProfile === "guest" ? "guest" : (bot.browserProfile ? browserProfilePartitionTarget(cfg, bot.browserProfile)?.partitionId ?? "" : "");
   return partition === "guest" ? guestBrowserBindings.get(bot.id) ?? null : browserSessionId(bot.id, partition, realm);
 }
@@ -1179,7 +1209,13 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
 
 async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId: string = randomUUID()) {
   if (browserEngineStatus().kind !== "ready") return null;
-  const binding = await unifiedBrowserBinding(botId, profile);
+  // Chrome closed or its remote debugging off: the turn runs without a
+  // browser rather than failing; the Browser panel says how to turn it on.
+  const binding = await unifiedBrowserBinding(botId, profile).catch((error: unknown) => {
+    if (error && typeof error === "object" && "userChromeNotReady" in error) return null;
+    throw error;
+  });
+  if (!binding) return null;
   if (!stillValid()) return null;
   await releaseBrowserCapabilityForThread(threadId);
   if (!stillValid()) return null;
@@ -12119,6 +12155,20 @@ const server = createServer(async (req, res) => {
         }
         patch.browser = body.browser;
       }
+      // "Use my Chrome": attach this bot to the owner's running Chrome. Off by
+      // default, and never two bots at once — they would act as the owner in
+      // the same signed-in browser, each able to see the other's tabs.
+      if (body.useMyChrome !== undefined) {
+        if (typeof body.useMyChrome !== "boolean") return json(res, 400, { error: "useMyChrome must be true or false" });
+        if (existingBot && body.useMyChrome !== (existingBot.useMyChrome === true)) {
+          if (existingBot.busy) return json(res, 409, { error: "stop this bot's turn before changing its browser" });
+          if (unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing browsers" });
+          const holder = body.useMyChrome ? store.bots.find((other) => other.id !== existingBot.id && other.useMyChrome) : undefined;
+          if (holder) return json(res, 409, { error: `${holder.name} is already using your Chrome. Only one bot can use it at a time; switch ${holder.name} back to its own browser first.` });
+          if (!body.useMyChrome) await forgetUserChromeBrowser(existingBot.id);
+        }
+        patch.useMyChrome = body.useMyChrome ? true : undefined;
+      }
       // which named browser session this bot uses; null/"" = its own
       if (body.browserProfile !== undefined) {
         const requestedProfile = body.browserProfile === null || body.browserProfile === ""
@@ -12473,6 +12523,7 @@ const server = createServer(async (req, res) => {
         discardDelegations(commsBus, bot.threadId, bot.id);
         computerControl.forget(bot.id);
         computerControlRevision.delete(bot.id);
+        if (bot.useMyChrome) await forgetUserChromeBrowser(bot.id);
         const target = perBotLocalVmTarget(bot.id);
         localVmIdles.get(target.key)?.cancel();
         localVmIdles.delete(target.key);
