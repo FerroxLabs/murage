@@ -65,6 +65,7 @@ import {
   readLoadedContext,
 } from "./local-server-probe.ts";
 import { removeLocalHostInjections } from "./local-inject-cleanup.ts";
+import { checkLocalServerUrl } from "./local-address-guard.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -83,6 +84,8 @@ function fail(code: LocalModelsErrorCode, error: string): DelegatedResult {
 
 const ADDRESS_ERRORS: Partial<Record<LocalModelsErrorCode, string>> = {
   "https-required": "Use https for this address. Plain http is only allowed for this computer, your home network or your tailnet.",
+  "unresolved-address":
+    "Murage could not find that name on your network. Check the spelling, that the machine is on and, for a tailnet name, that Tailscale is connected. Its IP address works too.",
   "credentials-in-address": "Put the key in the API key field, not in the address.",
   "unsupported-scheme": "The address must start with http:// or https://.",
   "invalid-address": "That address is not valid. Try something like 192.168.1.20:8080.",
@@ -189,6 +192,8 @@ export function createLocalModelsRoute(options: LocalModelsRouteOptions = {}) {
     if (!body) return fail("invalid-request", "Send the server address as JSON.");
     const address = normalizeLocalServerAddress(body.address);
     if (!address.ok) return fail(address.code, ADDRESS_ERRORS[address.code] ?? "That address is not valid.");
+    const reach = await checkLocalServerUrl(address.apiBase);
+    if (!reach.ok) return fail(reach.code, ADDRESS_ERRORS[reach.code] ?? "That address is not valid.");
     if (body.name !== undefined && body.name !== "" && !isValidLocalServerName(body.name)) {
       return fail("invalid-name", "Use a name of up to 60 characters.");
     }
@@ -247,6 +252,8 @@ export function createLocalModelsRoute(options: LocalModelsRouteOptions = {}) {
       if (duplicateOf(address.apiBase, servers, id)) {
         return fail("duplicate-server", "Murage already checks this address.");
       }
+      const reach = await checkLocalServerUrl(address.apiBase);
+      if (!reach.ok) return fail(reach.code, ADDRESS_ERRORS[reach.code] ?? "That address is not valid.");
       next.apiBase = address.apiBase;
     }
     if (body.apiKey !== undefined) {
@@ -282,6 +289,8 @@ export function createLocalModelsRoute(options: LocalModelsRouteOptions = {}) {
     const body = await readJsonBody(request);
     if (!body || !isValidLocalModelId(body.model)) return fail("invalid-model", "Choose a model to test.");
     const model = body.model;
+    const reach = await checkLocalServerUrl(host.baseUrl);
+    if (!reach.ok) return fail(reach.code, ADDRESS_ERRORS[reach.code] ?? "That address is not valid.");
     const key = `${host.id}::${model}`;
     if (running.has(key)) return fail("busy", "This model is already being tested.");
     running.add(key);

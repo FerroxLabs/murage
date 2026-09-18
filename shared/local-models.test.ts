@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_MIN_CONTEXT_TOKENS,
+  classifyIpAddress,
   classifyLocalHostname,
   contextPreflight,
   isValidLocalModelId,
@@ -30,6 +31,11 @@ describe("local server address rule (spec A1)", () => {
     ["http://172.31.255.1:8080", "http://172.31.255.1:8080/v1", "private"],
     ["http://100.64.0.1:8080", "http://100.64.0.1:8080/v1", "tailnet"],
     ["http://100.127.255.254:18080", "http://100.127.255.254:18080/v1", "tailnet"],
+    ["http://gpubox:11434/v1", "http://gpubox:11434/v1", "local-name"],
+    ["http://gpubox.tail0000.ts.net:11434", "http://gpubox.tail0000.ts.net:11434/v1", "local-name"],
+    ["nas.local:8080", "http://nas.local:8080/v1", "local-name"],
+    ["http://[fd7a:115c:a1e0::5]:8080", "http://[fd7a:115c:a1e0::5]:8080/v1", "tailnet"],
+    ["http://[fd12:3456::1]:8080", "http://[fd12:3456::1]:8080/v1", "private"],
     ["https://gpu.example.com/proxy", "https://gpu.example.com/proxy/v1", "public"],
     ["https://gpu.example.com/proxy/v1", "https://gpu.example.com/proxy/v1", "public"],
   ] as const)("accepts %s as %s (%s)", (typed, apiBase, addressClass) => {
@@ -43,7 +49,11 @@ describe("local server address rule (spec A1)", () => {
     ["http://8.8.8.8:8080", "https-required"],
     ["http://172.32.0.1:8080", "https-required"],
     ["http://100.128.0.1:8080", "https-required"],
-    ["http://seanbeast:8080", "https-required"],
+    ["http://gpu_box:8080", "https-required"],
+    ["http://ts.net:8080", "https-required"],
+    ["http://gpubox.example.net:8080", "https-required"],
+    ["http://[2001:db8::1]:8080", "https-required"],
+    ["http://[::ffff:8.8.8.8]:8080", "https-required"],
     ["http://user:pass@127.0.0.1:8080", "credentials-in-address"],
     ["ftp://127.0.0.1/v1", "unsupported-scheme"],
     ["file:///etc/passwd", "unsupported-scheme"],
@@ -60,7 +70,36 @@ describe("local server address rule (spec A1)", () => {
     expect(classifyLocalHostname("127.8.9.10")).toBe("loopback");
     expect(classifyLocalHostname("100.63.255.255")).toBe("public");
     expect(classifyLocalHostname("192.169.0.1")).toBe("public");
-    expect(classifyLocalHostname("fd7a:115c:a1e0::1")).toBe("public");
+    expect(classifyLocalHostname("fd7a:115c:a1e0::1")).toBe("tailnet");
+    expect(classifyLocalHostname("[::1]")).toBe("loopback");
+  });
+
+  it("marks names that look local as candidates the server must resolve", () => {
+    for (const name of ["gpubox", "gpubox.", "gpubox.tail0000.ts.net", "nas.local", "router.lan", "db.internal", "printer.home.arpa"]) {
+      expect(classifyLocalHostname(name), name).toBe("local-name");
+    }
+    for (const name of ["example.com", "gpubox.example.net", "ts.net", "123", "bad_name", "evil.local.example.com"]) {
+      expect(classifyLocalHostname(name), name).not.toBe("local-name");
+    }
+    // "local" alone is a single label, so it is a candidate like any bare name.
+    expect(classifyLocalHostname("local")).toBe("local-name");
+  });
+
+  it("classifies resolved IP addresses, v4 and v6", () => {
+    expect(classifyIpAddress("169.254.10.1")).toBe("private");
+    // The cloud metadata address hands out credentials to anything that asks,
+    // so it never counts as somebody's own machine.
+    expect(classifyIpAddress("169.254.169.254")).toBe("public");
+    expect(classifyIpAddress("100.100.100.100")).toBe("tailnet");
+    expect(classifyIpAddress("::1")).toBe("loopback");
+    expect(classifyIpAddress("::ffff:192.168.1.2")).toBe("private");
+    expect(classifyIpAddress("::ffff:8.8.8.8")).toBe("public");
+    expect(classifyIpAddress("fd7a:115c:a1e0:ab12::1")).toBe("tailnet");
+    expect(classifyIpAddress("fc00::1")).toBe("private");
+    expect(classifyIpAddress("fe80::1")).toBe("private");
+    expect(classifyIpAddress("2606:4700::1111")).toBe("public");
+    expect(classifyIpAddress("1::2::3")).toBe("public");
+    expect(classifyIpAddress("gpubox")).toBe("public");
   });
 
   it("validates names and keys before they reach any engine config", () => {

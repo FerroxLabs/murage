@@ -5,8 +5,10 @@
 // arbitrary base URL being written into a CLI's config. A user-added server
 // extends that allowlist, so every entry is RE-VALIDATED ON EVERY READ with
 // the same rule the add route enforces (http only for loopback / RFC1918 /
-// tailnet, https otherwise, no credentials in the URL). A hand-edited file
-// that breaks the rule does not reach any engine writer: the entry is dropped.
+// tailnet or a local-looking name, https otherwise, no credentials in the
+// URL). A hand-edited file that breaks the rule does not reach any engine
+// writer: the entry is dropped. A local name is additionally resolved before
+// every request Murage sends to it (local-address-guard.ts).
 //
 // Custody. The optional API key is kept in this 0600 file, like the other
 // file-fallback credentials in config.json, and is never echoed back over

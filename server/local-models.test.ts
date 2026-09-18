@@ -30,6 +30,7 @@ import {
   probeLocalInjects,
 } from "./drivers/local-inject.ts";
 import { ensurePiInjectModel } from "./drivers/pi.ts";
+import { setLocalNameLookupForTests, type LocalNameLookup } from "./local-address-guard.ts";
 import { configureLocalServerStore, readLocalServers } from "./local-servers.ts";
 import { createLocalModelsRoute } from "./local-models.ts";
 import { detectLocalServerKind, probeHost } from "./local-server-probe.ts";
@@ -219,6 +220,84 @@ describe("Local models list and add (spec V1, A1)", () => {
     const result = await route()(request("POST", "/api/local-models/servers", { address: "192.168.77.5:8080", kind: "vllm" }));
     expect(result.status).toBe(201);
     expect((result.body as { server: LocalServerView }).server).toMatchObject({ kind: "vllm", status: "not-answering", models: [], hasKey: false });
+  });
+});
+
+describe("Local models by network name (Tailscale MagicDNS, mDNS, LAN names)", () => {
+  // The name resolves through an injected resolver; the fetch below sends a
+  // request for `http://<name>:<port>` to the fake server on loopback, so no
+  // real DNS or network is involved.
+  const table: Record<string, string[]> = {};
+  const lookup: LocalNameLookup = async (hostname) => {
+    const addresses = table[hostname];
+    if (!addresses) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), { code: "ENOTFOUND" });
+    return addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }));
+  };
+  const named = (name: string): typeof fetch => (input, init) => {
+    const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(href);
+    if (url.hostname === name) url.hostname = "127.0.0.1";
+    return guardedFetch(url.href, init);
+  };
+  const namedRoute = (name: string) => createLocalModelsRoute({ fetchImpl: named(name), env, probeTimeoutMs: 5_000 });
+  beforeEach(() => setLocalNameLookupForTests(lookup));
+  afterEach(() => {
+    setLocalNameLookupForTests(null);
+    for (const key of Object.keys(table)) delete table[key];
+  });
+
+  it("adds a single-label tailnet name that resolves only to tailnet addresses and lists its models", async () => {
+    const llama = await llamaServer();
+    const port = new URL(llama.root).port;
+    table.gpubox = ["100.101.102.103", "fd7a:115c:a1e0::1234"];
+    const result = await namedRoute("gpubox")(request("POST", "/api/local-models/servers", { address: `http://gpubox:${port}/v1` }));
+    expect(result.status).toBe(201);
+    const { server } = result.body as { server: LocalServerView };
+    expect(server).toMatchObject({ kind: "llamacpp", address: `http://gpubox:${port}/v1`, status: "running" });
+    expect(server.models.map((model) => model.model)).toEqual([MODEL]);
+  });
+
+  it("refuses a name that resolves to any public address, and one that does not resolve", async () => {
+    const llama = await llamaServer();
+    const port = new URL(llama.root).port;
+    table["gpubox.tail0000.ts.net"] = ["100.101.102.103", "203.0.113.9"];
+    const mixed = await namedRoute("gpubox.tail0000.ts.net")(
+      request("POST", "/api/local-models/servers", { address: `http://gpubox.tail0000.ts.net:${port}` }),
+    );
+    expect(mixed).toMatchObject({ status: 400, body: { code: "https-required" } });
+    const missing = await namedRoute("nas.local")(request("POST", "/api/local-models/servers", { address: `http://nas.local:${port}` }));
+    expect(missing).toMatchObject({ status: 400, body: { code: "unresolved-address" } });
+    expect((missing.body as { error: string }).error).toMatch(/could not find that name/);
+    expect(llama.calls).toEqual([]);
+    expect(readLocalServers()).toEqual([]);
+  });
+
+  it("refuses an edit to a name that resolves publicly", async () => {
+    const llama = await llamaServer();
+    const server = await addSeanBeast(llama.root);
+    table["router.lan"] = ["198.51.100.7"];
+    const result = await route()(request("PATCH", `/api/local-models/servers/${server.id}`, { address: "http://router.lan:8080" }));
+    expect(result).toMatchObject({ status: 400, body: { code: "https-required" } });
+    expect(readLocalServers()[0]!.apiBase).toBe(`${llama.root}/v1`);
+  });
+
+  it("stops sending requests when a stored name later resolves to a public address (DNS rebinding)", async () => {
+    const llama = await llamaServer();
+    const port = new URL(llama.root).port;
+    table.gpubox = ["192.168.1.40"];
+    const namedFetch = named("gpubox");
+    const added = await namedRoute("gpubox")(request("POST", "/api/local-models/servers", { address: `http://gpubox:${port}`, apiKey: KEY }));
+    expect(added.status).toBe(201);
+    const { server } = added.body as { server: LocalServerView };
+
+    table.gpubox = ["192.168.1.40", "203.0.113.9"];
+    const before = llama.calls.length;
+    const listed = (await namedRoute("gpubox")(request("GET", "/api/local-models"))).body as LocalModelsListResponse;
+    expect(listed.servers.find((row) => row.id === server.id)).toMatchObject({ status: "not-answering", models: [] });
+    expect((await probeLocalInjects(env(), namedFetch)).some((row) => row.host === server.id)).toBe(false);
+    const tested = await namedRoute("gpubox")(request("POST", `/api/local-models/servers/${server.id}/test`, { model: MODEL }));
+    expect(tested).toMatchObject({ status: 400, body: { code: "https-required" } });
+    expect(llama.calls.length).toBe(before);
   });
 });
 
