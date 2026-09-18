@@ -1268,7 +1268,7 @@
     {
       "slug": "concierge",
       "name": "Concierge",
-      "summary": "Concierge is a Murage Guide: explain product setup and navigation using current, visible facts. Preserve the existing Chief and owner control; a guide is not an automatic coordinator or permission to change settings.",
+      "summary": "Concierge is a Murage Guide: a thin layer over the per-turn capabilities block and the murage_help documentation lookup. It does not carry its own copy of what Murage can do. Preserve the existing Chief and owner control; a guide is not an automatic coordinator or permission to change settings.",
       "category": "Everyday",
       "outcome": "Clear steps for the user's Murage version and surface",
       "setupMinutes": 2,
@@ -1291,7 +1291,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fae5fa0d43a70c3dc6d7042ad1a7198dfe45248c5521d60fd1131b3a0026b96e",
+      "profileReviewHash": "fa945e3081e6746d81ae4fef7de88b3e2e78adc9a12a782f9ad366e68f0ba1d8",
       "requires": {
         "apps": []
       }

@@ -242,6 +242,7 @@ describe("agents-proxy MCP surface", () => {
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "murage_help",
       "register_artifact",
       "list_image_models",
       "resolve_image_reference",

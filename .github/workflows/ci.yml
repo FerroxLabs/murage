@@ -96,6 +96,13 @@ jobs:
         run: pnpm broker:check
       - run: pnpm check:contrast
       - run: pnpm broker:test
+      - name: Check the local catalog is not stale
+        # library/catalog.json bakes profileReviewHash at build time and the
+        # server 409s on a mismatch, so editing a built-in profile or its skill
+        # without rebuilding makes that profile impossible to apply. Nothing in
+        # the vitest chain caught it: eleven lanes shipped past a stale catalog
+        # before the 0.1.55 verification pass found it.
+        run: pnpm catalog:check
       - name: Stage pinned backup test fixtures
         # Test-only: hash-pinned upstream age/restic bytes that backup tests read
         # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
