@@ -180,7 +180,7 @@ function cleanInput(input: WebhookTriggerInput): CleanWebhookInput {
   const botId = input.botId.trim();
   const runOn = input.runOn ?? "ember";
   if (!name) fail(400, "Give the webhook a name");
-  if (!botId) fail(400, "Choose a EMBER");
+  if (!botId) fail(400, "Choose a bot");
   if (runOn !== "ember" && runOn !== "cloud") fail(400, "Choose where this webhook runs");
   const eventTypes = Array.from(new Set(
     (input.eventTypes ?? [])
@@ -306,7 +306,7 @@ export class WebhookManager {
 
   create(input: JsonValue): CreatedWebhook {
     const clean = cleanInput(parseTriggerInput(input));
-    if (this.options.botState(clean.botId) === "missing") fail(400, "That EMBER no longer exists");
+    if (this.options.botState(clean.botId) === "missing") fail(400, "That bot no longer exists");
     const now = this.now();
     const secret = newSecret();
     const trigger: StoredWebhookTrigger = {
@@ -337,7 +337,7 @@ export class WebhookManager {
       verificationPending: patch.verificationPending ?? trigger.verificationPending,
       eventTypes: patch.eventTypes ?? trigger.eventTypes,
     });
-    if (this.options.botState(clean.botId) === "missing") fail(400, "That EMBER no longer exists");
+    if (this.options.botState(clean.botId) === "missing") fail(400, "That bot no longer exists");
     Object.assign(trigger, clean, { updatedAt: this.now() });
     if (!clean.eventTypes?.length) delete trigger.eventTypes;
     if (patch.enabled === false) {
@@ -378,7 +378,7 @@ export class WebhookManager {
       if (trigger.botId !== botId || !trigger.enabled) continue;
       trigger.enabled = false;
       trigger.updatedAt = this.now();
-      this.options.cancelQueued?.(trigger.id, "The assigned EMBER was deleted");
+      this.options.cancelQueued?.(trigger.id, "The bot this webhook sends to was deleted");
       this.emit(trigger);
       changed = true;
     }
@@ -425,7 +425,7 @@ export class WebhookManager {
 
   private dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
     if (!trigger.enabled) fail(409, "This webhook is paused");
-    if (this.options.botState(trigger.botId) === "missing") fail(410, "The assigned EMBER no longer exists");
+    if (this.options.botState(trigger.botId) === "missing") fail(410, "The bot this webhook sends to no longer exists");
 
     const allowed = trigger.eventTypes ?? [];
     if (allowed.length > 0 && (!event.eventName || !allowed.includes(event.eventName))) {
@@ -524,7 +524,7 @@ export class WebhookManager {
       outcome: "captured",
       statusCode: 202,
       deliveryId,
-      reason: "Test event captured; enable the webhook to start EMBER tasks",
+      reason: "Test event captured; turn the webhook on to start bot tasks",
     });
     this.save();
     this.emit(trigger);

@@ -87,7 +87,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
-      if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.murage/config.json');
+      if (!token) throw new Error("Cloud VM is not connected yet. Add your Box key in App Settings → Tools & Connections.");
       if (!boxId) {
         throw new Error("this bot has no computer yet — open the Computer panel and provision one");
       }
@@ -238,7 +238,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: 'no Box token — add {"box":{"token":"…"}} to ~/.murage/config.json' };
+        return { state: "unavailable", reason: "No Box key yet — add one in App Settings → Tools & Connections." };
       }
       try {
         await api("/me");

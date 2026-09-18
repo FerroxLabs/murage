@@ -219,7 +219,7 @@ export async function boxStatus(cfg: AppConfig, botId: string) {
  */
 export async function provisionBox(cfg: AppConfig, botId: string, botName: string) {
   if (!boxConfigured(cfg)) {
-    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.murage/config.json');
+    throw new Error("Cloud VM is not connected yet. Add your Box key in App Settings → Tools & Connections.");
   }
   const vmName = await boxNameFor(botId);
   let box = await findBox(cfg, botId);

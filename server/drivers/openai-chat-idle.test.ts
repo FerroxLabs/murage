@@ -173,7 +173,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(idleFor).toBeGreaterThanOrEqual(IDLE_MS);
     expect(replies(events)).toEqual(["partial "]);
-    expect(errors(events)).toEqual([`Loopback stream timed out after ${IDLE_MS}ms without provider progress`]);
+    expect(errors(events)).toEqual(['The model server stopped sending this answer before it was finished.']);
     expect(requests).toBe(1);
   });
 
@@ -185,7 +185,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "error" });
     expect(settledMs).toBeGreaterThanOrEqual(IDLE_MS - 5);
-    expect(errors(events)).toEqual([`Loopback timed out after ${IDLE_MS}ms without provider progress`]);
+    expect(errors(events)).toEqual(['The model server did not answer in time. If a large model is still loading, try again in a moment.']);
     expect(replies(events)).toEqual([]);
     expect(requests).toBe(1);
   });
@@ -217,7 +217,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     expect(idleFor).toBeGreaterThanOrEqual(IDLE_MS);
     // keepalive bytes kept arriving every 100ms across the whole idle window
     expect(keepalivesAtTimeout).toBeGreaterThanOrEqual(Math.floor(IDLE_MS / 100) - 1);
-    expect(errors(events)).toEqual([`Loopback stream timed out after ${IDLE_MS}ms without provider progress`]);
+    expect(errors(events)).toEqual(['The model server stopped sending this answer before it was finished.']);
     expect(requests).toBe(1);
   });
 
@@ -268,7 +268,8 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     expect(stopMs).toBeLessThan(5_000);
     expect(completions(recorder.events)).toHaveLength(1);
     expect(errors(recorder.events)).toEqual([]);
-    expect(replies(recorder.events)).toEqual([]);
+    // F6: the words the person already watched arrive are kept when they stop.
+    expect(replies(recorder.events)).toEqual(["working "]);
     expect(requests).toBe(1);
   });
 
@@ -283,7 +284,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error?.name).not.toBe("AbortError");
-    expect(error?.message).toBe(`Loopback timed out after ${IDLE_MS}ms without provider progress`);
+    expect(error?.message).toBe('The model server did not answer in time. If a large model is still loading, try again in a moment.');
     expect(performance.now() - started).toBeGreaterThanOrEqual(IDLE_MS - 5);
     expect(requests).toBe(1);
   });
@@ -296,7 +297,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     const { completed, events } = await runTurn(create(), "t-http-error-stall");
 
     expect(completed).toMatchObject({ ok: false, stopReason: "error" });
-    expect(errors(events)).toEqual(["Loopback HTTP 400"]);
+    expect(errors(events)).toEqual(["The model server would not accept this request."]);
     expect(requests).toBe(1);
   });
 
@@ -309,7 +310,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual(["cut off"]);
-    expect(errors(events)).toEqual(["Loopback stream ended before the provider signalled completion"]);
+    expect(errors(events)).toEqual(['The model server stopped before it finished this answer.']);
     expect(requests).toBe(1);
   });
 });

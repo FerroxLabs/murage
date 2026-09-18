@@ -22,3 +22,13 @@ export function turnSucceeded(event: TerminalTurn): boolean {
 export function turnOutcome(event: TerminalTurn): "completed" | "cancelled" | "failed" {
   return turnStopped(event) ? "cancelled" : event.ok ? "completed" : "failed";
 }
+
+/** The transcript line for a turn the person stopped. It is an activity note,
+ * not an error: stopping is a normal thing to do. Whatever had already
+ * streamed is kept above it (F6). */
+export const TURN_STOPPED_NOTE = "Stopped by you";
+
+/** The transcript line for a turn that was still running when Murage closed.
+ * Routines, memory turns and team goals have always had one of these; a 1:1
+ * turn had nothing, so the thread just ended on the person's message (F7). */
+export const TURN_INTERRUPTED_NOTE = "Murage closed while this was running, so there is no answer. Send it again when you want one.";

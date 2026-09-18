@@ -72,18 +72,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     access: "custom",
   },
   models: DEFAULT_MODELS,
+  // No installer and no terminal sign-in: this engine only needs a key, which
+  // is pasted in App Settings → Models. The setup card falls back to the guide
+  // link rather than asking anyone to edit a file by hand.
   install: {
     docsUrl: "https://openrouter.ai/keys",
-    signInCommand:
-      "add {\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}} to ~/.murage/config.json (or set OPENAI_COMPAT_API_KEY)",
-    command: {
-      darwin:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.murage/config.json under openaiCompat.key",
-      linux:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.murage/config.json under openaiCompat.key",
-      win32:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to %USERPROFILE%\\.murage\\config.json under openaiCompat.key",
-    },
   },
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
@@ -206,8 +199,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           : {}),
       }),
       httpErrorLabel: "upstream",
-      missingKeyError: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
-      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
+      missingKeyError: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
+      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "No API key yet — add one in App Settings → Models.",
       // Idle budget, renewed by stream progress (U02): not a total deadline.
       timeoutMs: 180_000,
       reasoning: true,

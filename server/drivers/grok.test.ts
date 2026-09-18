@@ -177,7 +177,7 @@ describe("GrokDriver turns (fake fetch)", () => {
       text: "cut off mid",
     });
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({
-      message: "xAI stream ended before the provider signalled completion",
+      message: 'The model server stopped before it finished this answer.',
     });
     expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(0);
     expect(calls).toBe(1);

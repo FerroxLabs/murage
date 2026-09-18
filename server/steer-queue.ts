@@ -7,9 +7,14 @@
 // The queue is memory-only and is NOT in `messages[]` while the current
 // turn is running: appending immediately would make the queued line the
 // active leaf, so remaining tool/assistant events of *this* turn would
-// hang off a user line the model has not seen. Restart loses the queue
-// (same as delegations / approvals). The composer shows a pending chip
-// until drain appends the words.
+// hang off a user line the model has not seen. The composer shows a pending
+// chip until drain appends the words.
+//
+// The queue used to be lost on restart with no trace at all — the person's
+// words simply vanished (F7). It is now mirrored to disk on every change, so
+// a restart can put them back where the person left them. The mirror is a
+// convenience copy: a missing or unreadable file only costs the queue, never
+// the app.
 //
 // Unlike the delegation drain, an interrupted or failed turn does NOT
 // discard this queue: delegations are a bot's fan-out (dropping them on
@@ -38,6 +43,40 @@ interface QueueEntry {
 
 const queues = new Map<string, QueueEntry>(); // threadId → waiting sends
 
+/** Set by the server so every change is mirrored to disk. Tests leave it
+ * unset and keep the old memory-only behaviour. */
+let mirror: ((entries: Array<[string, QueueEntry]>) => void) | null = null;
+
+export function setSteerQueueMirror(write: ((entries: Array<[string, QueueEntry]>) => void) | null): void {
+  mirror = write;
+}
+
+function saveQueues(): void {
+  try { mirror?.(Array.from(queues)); } catch { /* the queue is not worth failing a send over */ }
+}
+
+/** Put a mirrored queue back after a restart. Returns the entries, newest
+ * thread last, so the caller can decide what to do with them. */
+export function restoreSteerQueues(entries: Array<[string, QueueEntry]>): void {
+  for (const [threadId, entry] of entries) {
+    if (!threadId || !entry || typeof entry.botId !== "string" || !Array.isArray(entry.items) || entry.items.length === 0) continue;
+    queues.set(threadId, {
+      botId: entry.botId,
+      items: entry.items
+        .filter((item) => item && typeof item.text === "string" && typeof item.messageId === "string")
+        .map((item) => ({
+          messageId: item.messageId,
+          text: item.text,
+          prompt: typeof item.prompt === "string" ? item.prompt : item.text,
+          ...(item.replyToId ? { replyToId: item.replyToId } : {}),
+          ...(item.sendId ? { sendId: item.sendId } : {}),
+        })),
+    });
+  }
+}
+
+export type SteerQueueEntries = Array<[string, QueueEntry]>;
+
 export interface QueuedSteer {
   id: string;
 }
@@ -62,6 +101,7 @@ export function queueSteeredMessage(
     sendId: options.sendId,
   });
   queues.set(threadId, entry);
+  saveQueues();
   return { id };
 }
 
@@ -88,12 +128,14 @@ export function drainSteeredMessages(
     if (!bot) {
       // the bot was deleted while messages waited — nothing left to steer
       queues.delete(threadId);
+      saveQueues();
       continue;
     }
     if (store.taskByThread ? store.taskByThread(bot.id,threadId)?.busy : bot.busy) continue;
     // committed to draining: the entry leaves the map before anything runs,
     // so a settle racing another settle can never fire the same queue twice
     queues.delete(threadId);
+    saveQueues();
     const appended: Message[] = [];
     for (const item of entry.items) {
       // queueId is the pending-chip identity from the 202; append still
@@ -145,6 +187,7 @@ export function cancelSteeredMessage(botId: string, messageId: string): boolean 
     if (items.length === entry.items.length) continue;
     if (items.length === 0) queues.delete(threadId);
     else queues.set(threadId, { botId: entry.botId, items });
+    saveQueues();
     return true;
   }
   return false;

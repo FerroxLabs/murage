@@ -79,7 +79,16 @@ type FailureInput = Error | CliExit | FailureText | null;
 
 const messageOf = (err: FailureInput): string => {
   if (!err) return "";
-  if (err instanceof Error) return `${err.message}${err.cause ? ` ${String(err.cause)}` : ""}`;
+  if (err instanceof Error) {
+    // A driver that keeps its engine-shaped line out of the person's way (so
+    // the chat card can show a plain sentence) puts it on `details`. The
+    // classifier must still see it, or rewording a message would silently turn
+    // a retryable provider hiccup into a dead turn.
+    const detail = (err as { details?: unknown }).details;
+    return [err.message, typeof detail === "string" ? detail : "", err.cause ? String(err.cause) : ""]
+      .filter(Boolean)
+      .join(" ");
+  }
   if ("text" in err) return err.text;
   return [err.stderr ?? "", ""].join(" ").trim();
 };
@@ -91,8 +100,36 @@ const messageOf = (err: FailureInput): string => {
  * reported its own protocol-level failure. A signal kill (negative code) is
  * never retried either.
  */
+/** A status the driver recorded structurally (`error.data.http_status`).
+ * Reading it beats reading prose: the chat card's copy is written for people
+ * and must be free to change without silently turning a retryable 429 into a
+ * dead turn. */
+const httpStatusOf = (err: FailureInput): number | undefined => {
+  const data = err && typeof err === "object" ? (err as { data?: unknown }).data : undefined;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const status = (data as { http_status?: unknown }).http_status;
+  return typeof status === "number" ? status : undefined;
+};
+
+const classifyHttpStatus = (status: number): ErrorClassification | undefined => {
+  // Same verdicts the text patterns gave before, read from the status instead.
+  if (status === 429) return { transient: true, reason: "rate_limited" };
+  if (status === 408) return { transient: true, reason: "timeout" };
+  if (status >= 500) return { transient: true, reason: "server_error" };
+  if (status === 401 || status === 403) return { transient: false, reason: "auth" };
+  if (status === 402) return { transient: false, reason: "quota" };
+  if (status === 404) return { transient: false, reason: "not_found" };
+  if (status === 400 || status === 422) return { transient: false, reason: "invalid_request" };
+  return undefined;
+};
+
 export function classifyError(err: FailureInput): ErrorClassification {
   const text = messageOf(err);
+  const status = httpStatusOf(err);
+  if (status !== undefined && !isProviderSafetyBlock(text)) {
+    const byStatus = classifyHttpStatus(status);
+    if (byStatus) return byStatus;
+  }
   // Preserve an explicit process interruption, even with prior safety text.
   if (err && "exitCode" in err && err.exitCode !== null && err.exitCode < 0) {
     return { transient: false, reason: "interrupted" };

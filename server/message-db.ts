@@ -211,6 +211,23 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
+/** Threads whose visible conversation ends on a user message. After a restart
+ * these are the 1:1 turns that were running when the process died: the person
+ * asked, and nothing ever answered. Routines, memory turns and room goals all
+ * get a restart marker; a direct turn had none, so the transcript simply
+ * showed two user messages in a row (F7). Keyed off the branch head, so the
+ * boot sweep costs one row per thread instead of a transcript load. */
+export function threadsEndingOnUserMessage(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT s.thread_id AS thread_id, m.json AS json FROM thread_state s " +
+        "JOIN messages m ON m.thread_id = s.thread_id AND m.id = s.active_leaf_id " +
+        "WHERE m.role = 'user' AND m.kind = 'text'",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
 /** Provider question cards still waiting on an answer (0.1.52 ASK2). An
  * engine's wait lives only in memory, so after a restart every one of these
  * is unanswerable where it stands; the boot sweep marks them Expired so a
