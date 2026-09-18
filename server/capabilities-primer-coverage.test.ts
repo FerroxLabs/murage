@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { INTEGRATION_FACTS, capabilitiesPrimer, type IntegrationKey } from "./capabilities-primer.ts";
+import { INTEGRATION_FACTS, capabilitiesPrimer, type IntegrationFact, type IntegrationKey } from "./capabilities-primer.ts";
 
 /** Top-level keys of the `integrations?: { … }` block in contracts.ts. */
 function integrationKeysFromContract(): string[] {
@@ -51,12 +51,33 @@ describe("integration coverage", () => {
 
   it("puts every present clause into the block when that integration mounts", () => {
     for (const key of Object.keys(INTEGRATION_FACTS) as IntegrationKey[]) {
+      // peers: 1 — `peers: 0` selects the no-peer variant for any integration
+      // that declares one, which is a different clause on purpose.
+      const text = capabilitiesPrimer({
+        engine: "Test", toolAccess: "direct", imageInput: "unknown",
+        mounted: { [key]: true }, memory: "off", imageProvider: false,
+        folder: "none", peers: 1, canAskOwner: true,
+      });
+      expect(text, `${key} mounted but never mentioned`).toContain(INTEGRATION_FACTS[key].present);
+    }
+  });
+
+  it("puts the no-peer variant into the block instead, when one is declared", () => {
+    // The variant exists so a block never claims a peer it then denies. If it
+    // were declared and never reached, the contradiction would be back.
+    for (const key of Object.keys(INTEGRATION_FACTS) as IntegrationKey[]) {
+      // `satisfies` narrows each row to its own literal, so read the
+      // declared shape rather than the union to see the optional field.
+      const fact: IntegrationFact = INTEGRATION_FACTS[key];
+      const variant = fact.presentWithoutPeers;
+      if (variant === undefined) continue;
       const text = capabilitiesPrimer({
         engine: "Test", toolAccess: "direct", imageInput: "unknown",
         mounted: { [key]: true }, memory: "off", imageProvider: false,
         folder: "none", peers: 0, canAskOwner: true,
       });
-      expect(text, `${key} mounted but never mentioned`).toContain(INTEGRATION_FACTS[key].present);
+      expect(text, `${key} declares a no-peer clause that is never used`).toContain(variant);
+      expect(text, `${key} used both clauses`).not.toContain(INTEGRATION_FACTS[key].present);
     }
   });
 
