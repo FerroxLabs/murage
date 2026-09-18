@@ -178,7 +178,7 @@ test.afterEach(() => {
   pageErrors.length = 0;
 });
 
-async function open(page: Page, { query = "", skin = "dark" as (typeof SKINS)[number] } = {}) {
+async function open(page: Page, { query = "", skin = "dark" as (typeof SKINS)[number], surface = "desktop" as "desktop" | "remote" } = {}) {
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
@@ -186,7 +186,7 @@ async function open(page: Page, { query = "", skin = "dark" as (typeof SKINS)[nu
   // Nothing may reach a real harness. The catch-all is registered first so
   // the specific answers below win.
   await page.route("**/api/**", (route) => route.fulfill({ json: {} }));
-  await page.route("**/api/config", (route) => route.fulfill({ json: { surface: "desktop", features: {} } }));
+  await page.route("**/api/config", (route) => route.fulfill({ json: { surface, features: {} } }));
   await page.route("**/api/desktop-secret", (route) => route.fulfill({ json: { secret: "fixture-secret" } }));
   // A wide window throughout: every narrowing below is the COLUMN, which is
   // what an open sidebar or computer panel actually does.
@@ -583,7 +583,10 @@ test("a task with no folder of its own falls back to the bot's, and says which",
 });
 
 test("resizing changes no state: not the task, not the turn, not an open memory edit", async ({ page }) => {
-  await open(page);
+  // On the desktop surface Memory now opens as its own page from the sidebar
+  // (MemoryLauncher dispatches murage:open-memory), so the modal memory edit
+  // this test protects exists only on a remote surface. Was: await open(page);
+  await open(page, { surface: "remote" });
   // The layout at each width with nothing open, to compare against below.
   const closedLayouts = new Map<number, string>();
   for (const width of [...[...WIDTHS].reverse(), 280, 240, 200]) {

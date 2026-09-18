@@ -133,7 +133,10 @@ async function openApp(page: Page) {
 }
 async function selectBot(page: Page, who: Bot) {
   const sidebar = await openSidebar(page);
-  await sidebar.getByRole("button", { name: new RegExp(`^${who.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().click();
+  // The row's name is its own hit target (sidebar hit areas), so a person
+  // clicks the name, which selects the row. Was:
+  //   await sidebar.getByRole("button", { name: new RegExp(`^${who.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().click();
+  await sidebar.getByText(who.name, { exact: true }).first().click();
   await expect(composer(page, who)).toBeVisible();
   await settleIntake(page, who);
 }

@@ -9,10 +9,11 @@
 // connection, so the only truthful screen is the "No supported image
 // connections" message. This spec pins all three states a person can reach:
 //   1. keyless: no connection, and no capability is claimed;
-//   2. a Flux Router key added in Settings → Models: creates images only,
-//      with the server's reason editing is unavailable;
+//   2. a Flux Router key added in Settings → Models: creates and edits, with
+//      the shared reference cap (Flux image models gained reference edits;
+//      they used to state "creates images only" with a reason);
 //   3. an OpenAI image key: creates and edits, with the shared reference cap,
-//      and switching connections switches the statement.
+//      and switching connections switches the connection and model.
 // No request leaves the machine: the suite preload answers the OpenAI image
 // origin, and a spec-local preload fails every Flux Router request offline.
 import { test, expect, type Locator, type Page } from "@playwright/test";
@@ -135,7 +136,7 @@ test("a keyless install has no image connection, and claims no model capability"
   await shot(images, "01-keyless-no-image-connection");
 });
 
-test("a Flux Router key added in Settings → Models makes Image generation state creates-only with the reason", async ({ page }) => {
+test("a Flux Router key added in Settings → Models makes Image generation state create-and-edit", async ({ page }) => {
   await openApp(page);
   const settings = await openSettings(page, "Models");
   const field = settings.getByLabel("Flux Router key", { exact: true });
@@ -148,12 +149,18 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
   // The smoke's exact check, now against an install that has a connection.
   await expect(images.getByText(CAPABILITY).first()).toBeVisible({ timeout: 30_000 });
   await expect(images.getByRole("combobox", { name: "Image connection" })).toHaveValue("flux");
-  await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image-gpt2");
+  // Flux's catalog default is flux-image, and every Flux image model now
+  // edits with the shared reference cap (server/image-generation.ts staticCatalog).
+  // Was:
+  //   toHaveValue("flux-image-gpt2");
+  //   toHaveAttribute("data-image-capability", "generates");
+  //   toHaveText("Creates images only. Flux Router offers image generation only. It has no reference-edit contract.");
+  await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image");
   const line = images.locator("[data-image-capability]");
-  await expect(line).toHaveAttribute("data-image-capability", "generates");
-  await expect(line).toHaveText("Creates images only. Flux Router offers image generation only. It has no reference-edit contract.");
+  await expect(line).toHaveAttribute("data-image-capability", "edits");
+  await expect(line).toHaveText("Creates and edits images. Up to 4 reference images per edit.");
   await expect(images.getByText("No supported image connections are available.", { exact: false })).toHaveCount(0);
-  await shot(images, "02-flux-creates-only");
+  await shot(images, "02-flux-creates-and-edits");
 });
 
 test("an OpenAI image key states create-and-edit, and switching connections switches the statement", async ({ page }) => {
@@ -171,9 +178,15 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   await expect(images.getByText("Image settings saved.")).toBeVisible();
   await shot(images, "03-openai-creates-and-edits");
 
+  await expect(images.getByText(/^Images use OpenAI image key\. /)).toBeVisible();
   await connection.selectOption({ label: "Flux Router" });
-  await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image-gpt2");
-  await expect(line).toHaveAttribute("data-image-capability", "generates");
-  await expect(line).toHaveText(/^Creates images only\. /);
+  // Both connections now create and edit, so the switch shows in the model
+  // and the connection named for charges. Was:
+  //   toHaveValue("flux-image-gpt2");
+  //   toHaveAttribute("data-image-capability", "generates");
+  //   toHaveText(/^Creates images only\. /);
+  await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image");
+  await expect(line).toHaveAttribute("data-image-capability", "edits");
+  await expect(images.getByText(/^Images use Flux Router\. /)).toBeVisible();
   await shot(images, "04-switched-back-to-flux");
 });

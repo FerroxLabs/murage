@@ -15,7 +15,10 @@ export default defineConfig({
   testDir: "./src/e2e",
   // Live engine/credential/spend admission belongs to the dedicated B08 config.
   // It must not become an automatic provider run or 36 NOT RUN failures in CI.
-  testIgnore: ["**/b08-template-behavior.human.spec.ts"],
+  // B09/B10 are the same kind of live family run, each with its own config
+  // (b09-core-families.config.ts, b10-specialist-packs.config.ts); under this
+  // config their admission refuses and every case fails.
+  testIgnore: ["**/b08-template-behavior.human.spec.ts", "**/b09-core-families.human.spec.ts", "**/b10-specialist-packs.human.spec.ts"],
   // Screenshots, traces and reports land under MURAGE_E2E_DATA_DIR, the same
   // place the per-spec configs put theirs, never Playwright's default
   // test-results/ inside the checkout (CLAC3 verifier). Set the variable to

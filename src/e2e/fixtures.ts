@@ -32,7 +32,9 @@ export const test = base.extend<{ app: Page }>({
 export async function openSidebar(page: Page): Promise<Locator> {
   const menu = page.getByRole("button", { name: "Open bot list" });
   // md:hidden — present in the DOM at every width, visible only on phones.
-  if (await menu.isVisible()) {
+  // An already-open drawer covers its own toggle, so a second call (a spec
+  // that reads the sidebar twice without closing it) must not click again.
+  if (await menu.isVisible() && (await menu.getAttribute("aria-expanded")) !== "true") {
     await menu.click();
     await expect(menu).toHaveAttribute("aria-expanded", "true");
   }

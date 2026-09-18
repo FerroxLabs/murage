@@ -379,6 +379,27 @@ describe("scoped Ubuntu human confirmation", () => {
       for (const step of job.steps ?? []) expect(String(step.with?.path ?? ""), step.name).not.toMatch(/(^|\n)\s*test-results\s*($|\n)/);
     }
   });
+
+  // The full suite outgrew one 30-minute job on one worker, so it is split
+  // with Playwright's --shard. A matrix that disagrees with the shard total
+  // would silently skip (or repeat) part of the suite and still go green.
+  it("shards the full human suite so every shard runs and each spec runs once", () => {
+    const ci = load("ci.yml");
+    const job = ci.jobs.human;
+    const shards = job.strategy.matrix.human_shard;
+    expect(shards.length).toBeGreaterThan(1);
+    expect(shards).toEqual(Array.from({ length: shards.length }, (_, index) => index + 1));
+    // One red shard must not cancel the others: their results are the evidence.
+    expect(job.strategy["fail-fast"]).toBe(false);
+    const step = job.steps.find(item => item.name === "Run human specs");
+    expect(step.env.HUMAN_SHARD).toBe(`\${{ matrix.human_shard }}/${shards.length}`);
+    expect(step.run).toBe('pnpm test:human --shard="$HUMAN_SHARD"');
+    expect(job.name).toContain(`\${{ matrix.human_shard }}/${shards.length}`);
+    // upload-artifact refuses a second artifact with the same name in a run.
+    expect(job.steps.find(item => item.name === "Upload human spec traces on failure").with.name).toContain("${{ matrix.human_shard }}");
+    expect(ci.jobs.required.needs).toContain("human");
+    expect(ci.jobs.required.steps[0].env.HUMAN).toBe("${{ needs.human.result }}");
+  });
 });
 
 describe("no upstream identity ships in .github/", () => {

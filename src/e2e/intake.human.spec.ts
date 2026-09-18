@@ -119,7 +119,19 @@ const fitsTheViewport = async (page: Page) => {
   // The question and the way out are both still reachable, whatever came back.
   await expect(card(page).getByText(QUESTION)).toBeVisible();
   await expect(page.getByRole("button", { name: "Hide this question" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Collapse agent profile" })).toBeInViewport();
+  // The profile is the Bot settings dialog now (not the old side panel), so
+  // its way out is the dialog's close button. Was:
+  //   await expect(page.getByRole("button", { name: "Collapse agent profile" })).toBeInViewport();
+  await expect(page.getByRole("dialog", { name: "Bot settings" }).getByRole("button", { name: "Close bot settings", exact: true })).toBeInViewport();
+};
+
+/** Bot settings shows one section at a time: buttons on a wide screen, a
+ *  "Section" select below 640px. */
+const openSettingsSection = async (page: Page, label: string) => {
+  const dialog = page.getByRole("dialog", { name: "Bot settings" });
+  const select = dialog.getByRole("combobox", { name: "Section", exact: true });
+  if (await select.isVisible()) await select.selectOption({ label });
+  else await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button", { name: label, exact: true }).click();
 };
 
 test.describe("a brand new bot's deliberate profile setup", () => {
@@ -135,8 +147,11 @@ test.describe("a brand new bot's deliberate profile setup", () => {
     await expect(card(app).getByText(/Nothing in the library clearly matches/)).toBeVisible();
     // One action, and it is not a dead end.
     await expect(card(app).getByRole("button", { name: "Browse the library" })).toBeVisible();
-    const invite = app.getByRole("complementary", { name: "Let your bots pick the right model" });
-    if (await invite.isVisible()) await invite.getByRole("button", { name: "Not now", exact: true }).last().click();
+    // The card now sits in the modal Bot settings dialog, above the model
+    // invite, and everything outside the modal is inert, so there is nothing
+    // to dismiss first. Was:
+    //   const invite = app.getByRole("complementary", { name: "Let your bots pick the right model" });
+    //   if (await invite.isVisible()) await invite.getByRole("button", { name: "Not now", exact: true }).last().click();
     await fitsTheViewport(app);
     await app.screenshot({ path: testInfo.outputPath("intake-profile-fit.png") });
   });
@@ -318,12 +333,16 @@ test.describe("setup is somewhere you go and ask for it", () => {
       await app.getByRole("button", { name: "Set up", exact: true }).click();
       await expect(app.getByText(/1 skill it already has/)).toBeVisible();
       await app.getByRole("button", { name: "Cancel", exact: true }).click();
+      // Skills live in their own Bot settings section since the profile became
+      // a sectioned dialog; the old side panel showed them under Set up.
+      await openSettingsSection(app, "Skills");
       const remove = app.getByRole("button", { name: "Remove chart-analysis" });
       await expect(remove).toBeVisible({ timeout: 15_000 });
       await remove.click();
       await expect(remove).toHaveCount(0, { timeout: 15_000 });
 
       // The profile entry reflects the new count without leaving the page.
+      await openSettingsSection(app, "Overview");
       await app.getByRole("button", { name: "Set up", exact: true }).click();
       await expect(card(app)).toBeVisible();
       await expect(app.getByText("E2E Intake Returns is already set up", { exact: true })).toHaveCount(0);

@@ -236,11 +236,14 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
 
-  // Later answers are refused without reaching the engine.
+  // Later answers never reach the engine. A repeat on a settled card now
+  // reports the first decision instead of claiming the action failed
+  // (server/index.ts, the settled-card check before respondToRequest). Was:
+  //   expect(answer.body).toEqual({ ok: true, outcome: "unavailable" });
   for (const late of ["allow", "deny"] as const) {
     const answer = await harness.request("POST", `/api/threads/${item.link.threadId}/respond`, { requestId, behavior: late });
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-    expect(answer.body).toEqual({ ok: true, outcome: "unavailable" });
+    expect(answer.body).toEqual({ ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
   }
   await page.waitForTimeout(1_500);
   expect(engine("child-decision")).toHaveLength(before.decided + 1);

@@ -138,9 +138,13 @@ test("room goal intent follows its draft through task switching and reload", asy
   await expect(goal).toHaveAttribute("aria-pressed", "false");
 });
 
+// Bot read state is per task since threads were bound to the selected task,
+// so the bot route names the task it marks. Was:
+//   ["Mark bot unread", "/api/bots/bot-a/read", { unread: true }],
+//   ["Select bot", "/api/bots/bot-a/read", {}],
 for (const [button, path, body] of [
-  ["Mark bot unread", "/api/bots/bot-a/read", { unread: true }],
-  ["Select bot", "/api/bots/bot-a/read", {}],
+  ["Mark bot unread", "/api/bots/bot-a/read", { unread: true, threadId: bot.threadId }],
+  ["Select bot", "/api/bots/bot-a/read", { threadId: bot.threadId }],
   ["Select room", "/api/groups/room-a/read", {}],
 ] as const) {
   test(`remote ${button} uses the narrow read-state route`, async ({ page }) => {

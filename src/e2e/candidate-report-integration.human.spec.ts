@@ -65,7 +65,10 @@ test("selected report survives Inbox historical navigation, download and same-pr
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
   await page.goto(origin, { waitUntil: "domcontentloaded" });
-  await (await openSidebar(page)).getByRole("button", { name: /^Joined proof bot/ }).first().click();
+  // The row's name is its own hit target (sidebar hit areas), so a person
+  // clicks the name, which selects the row. Was:
+  //   await (await openSidebar(page)).getByRole("button", { name: /^Joined proof bot/ }).first().click();
+  await (await openSidebar(page)).getByText("Joined proof bot", { exact: true }).first().click();
   await choose(page, "Report A", first);
   await expect(page.getByRole("button", { name: /^Thread model:/ })).toHaveAttribute("aria-label", `Thread model: ${modelLabel}`);
   expect((await state()).tasks.find((task: any) => task.threadId === first).modelSelection).toMatchObject({ instanceId: "verification", model: modelId });

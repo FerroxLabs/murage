@@ -46,10 +46,13 @@ test("cold Flux discovery reveals pinned chat with exact selection and preserves
   await expect.poll(()=>refreshes).toBe(1);await expect(menu.getByRole("button",{name:"Refresh models"})).toBeDisabled();
   release();
   const search=menu.getByRole("textbox",{name:"Search models"});await search.fill("flux-pinned-fixture-chat");
-  const pinned=menu.locator('[data-model-choice]').filter({hasText:"flux-pinned-fixture-chat"});await expect(pinned).toBeVisible();
+  // Rows show a model's display name, not its raw id, since the picker stopped
+  // showing raw ids (shared/model-label.ts); search still matches the id. Was:
+  //   filter({hasText:"flux-pinned-fixture-chat"}) and filter({hasText:"flux-image-fixture-media"})
+  const pinned=menu.locator('[data-model-choice]').filter({hasText:"Flux Pinned Fixture Chat"});await expect(pinned).toBeVisible();
   await page.screenshot({path:info.outputPath("expanded-flux-catalog.png")});
   await pinned.click();await expect(page.getByTestId("selection")).toHaveText(JSON.stringify({instanceId:"claude",connectionId:"legacy-flux",model:"flux-pinned-fixture-chat"}));
-  await trigger.click();await search.fill("flux-image-fixture-media");await expect(menu.locator('[data-model-choice]').filter({hasText:"flux-image-fixture-media"})).toHaveCount(0);await expect(menu.getByText("No models to choose here yet",{exact:false})).toBeVisible();
+  await trigger.click();await search.fill("flux-image-fixture-media");await expect(menu.locator('[data-model-choice]').filter({hasText:"Flux Image Fixture Media"})).toHaveCount(0);await expect(menu.getByText("No models to choose here yet",{exact:false})).toBeVisible();
   await search.fill("flux-pinned-fixture-chat");fail=true;await menu.getByRole("button",{name:"Refresh models"}).click();
   await expect.poll(()=>refreshes).toBe(2);await expect(pinned).toBeVisible();
   await expect(menu.getByRole("alert")).toBeVisible();
