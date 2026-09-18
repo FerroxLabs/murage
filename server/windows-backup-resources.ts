@@ -57,7 +57,11 @@ export interface WindowsBackupResourceDependencies {
 }
 const defaults: WindowsBackupResourceDependencies = {
   platform: process.platform, arch: process.arch,
-  lstat: path => lstatSync(path, { bigint: true }), realpath: realpathSync,
+  // Native realpath: this module only runs on Windows, and the JavaScript one
+  // keeps the spelling it was given — so an 8.3 path such as
+  // C:\PROGRA~1\Murage\resources\backup-tools compared equal to itself and
+  // passed the "already canonical, no junction on the way" check below.
+  lstat: path => lstatSync(path, { bigint: true }), realpath: realpathSync.native,
   observeFile: observeWindowsBackupFile,
   verifySignatures: files => verifyWindowsBrowserSignatures(files, process.env.SystemRoot),
 };

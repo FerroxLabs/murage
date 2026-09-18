@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { homedir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -115,7 +115,15 @@ function fingerprint(root: string) {
 }
 function installationRoot(dataDir: string) {
   const paths = dataDirLeasePaths(dataDir), root = paths.canonicalDataDir;
-  for (const broad of [homedir(), process.cwd()]) { const resolved = resolve(broad); if (resolved === root || resolved.startsWith(root + sep)) fail("BROAD_RESTORE_TARGET_REFUSED"); }
+  // Canonicalize both sides, as installation-restore.ts does for the same
+  // refusal: `root` is already a per-component realpath, so a merely resolved
+  // home or cwd — a symlinked $HOME, or a spelling the filesystem folds, such
+  // as a different case on Windows or macOS — never matched it and the guard
+  // waved through a restore that would have run over the user's home tree.
+  for (const broad of [homedir(), process.cwd()]) {
+    const resolved = dataDirLeasePaths(broad).canonicalDataDir;
+    if (resolved === root || resolved.startsWith(root + sep)) fail("BROAD_RESTORE_TARGET_REFUSED");
+  }
   if (entry(paths.leasePath + ".restore.json")) fail("INTERRUPTED_RESTORE_REQUIRES_ROLLBACK");
   return root;
 }

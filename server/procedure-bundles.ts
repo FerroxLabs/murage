@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, INDEX_MAX_BYTES, INDEX_MAX_SKILLS, nativeLinkPointsToSkill } from "./skills.ts";
@@ -21,8 +21,13 @@ const digest=(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("h
 const fail=():never=>{throw new Error("Pinned procedures are unavailable or changed; no replacement instructions were used");};
 const safeId=(id:string)=>/^[\w-]+$/.test(id);
 function ownedDirectory(path:string):void {
+  // `relative()` emits the platform's own separator, so testing for "/" let a
+  // Windows escape through: relative("C:\\...\\.murage","D:\\elsewhere") is
+  // "D:\\elsewhere", which starts with neither ".." nor "/". isAbsolute catches
+  // that cross-drive result and every rooted one; the ".." test is spelled with
+  // a separator so an ordinary directory named "..data" is not refused.
   const rel=relative(DATA_DIR,path);
-  if(rel.startsWith("..")||rel.startsWith("/"))fail();
+  if(isAbsolute(rel)||rel===".."||rel.startsWith(".."+sep)||rel.startsWith("../"))fail();
   let at=DATA_DIR;
   for(const part of rel.split(/[\\/]/).filter(Boolean)){
     at=join(at,part);

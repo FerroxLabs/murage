@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable,trustedBackupAgeExecutableAsync,backupToolIdentity } from "./backup-age-attestation.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
+import { pathWithin } from "../shared/path-identity.mjs";
 export const BACKUP_MODE_ARGUMENT = "--murage-backup-mode";
 // Same verified binary as shared/backup-age-pin.ts; a test pins this boundary.
 export const BACKUP_AGE_SHA256 = AGE_ORIGINAL_SHA256;
@@ -106,8 +107,14 @@ export function createBackupModeController(host) {
 /** Only a host-chosen independent file, never a renderer path or OS keychain. */
 export function readBackupIdentity(file, installation) {
   if(lstatSync(file).isSymbolicLink())throw new Error("BACKUP_IDENTITY_INVALID");
-  const resolved = realpathSync(file), root = realpathSync(installation);
-  if (resolved === root || resolved.startsWith(root + path.sep)) throw new Error("BACKUP_IDENTITY_MUST_BE_INDEPENDENT");
+  // The identity is the only key that can decrypt these backups, so it must
+  // not live inside the installation the backups exist to replace. Resolve
+  // natively: the JavaScript realpath follows links but keeps the spelling it
+  // was given, so a differently cased or 8.3-aliased pick
+  // (C:\Users\SEAN~1\.murage\key.txt against C:\Users\Sean\.murage) read as
+  // independent and the key was filed inside the thing it unlocks.
+  const resolved = realpathSync.native(file), root = realpathSync.native(installation);
+  if (pathWithin(root, resolved)) throw new Error("BACKUP_IDENTITY_MUST_BE_INDEPENDENT");
   const before = lstatSync(resolved);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 4096) throw new Error("BACKUP_IDENTITY_INVALID");
   const fd = openSync(resolved, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));

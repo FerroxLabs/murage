@@ -7,6 +7,7 @@ import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renam
 import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { realpathSync } from "node:fs";
+import { samePath } from "../../shared/path-identity.mjs";
 import { z } from "zod";
 import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
@@ -93,6 +94,50 @@ function reindex(id:string,version:number){
   database().prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(id,version);
   database().exec("UPDATE memory_meta SET data_revision=data_revision+1");
 }
+/** Re-key a project scope stored under an older, non-canonical spelling of
+ * `path` so the memories bound to it keep surfacing.
+ *
+ * Before the native realpath landed, `~/documents/app` and `~/Documents/app`
+ * produced two owner_keys for one folder. Adopting the existing row is what
+ * keeps this fix from orphaning the scope a user already has: without it the
+ * lookup would miss, a second scope would be created, and their memories would
+ * quietly stop appearing. Project scopes are one per bound folder, so the scan
+ * is over a handful of rows.
+ *
+ * If a canonically keyed scope already exists the user has both, and merging
+ * two scopes' records is not a rename — leave the older row alone rather than
+ * collide on it or silently fold one set of memories into another. */
+function adoptRespelledProjectScope(path:string):void {
+  const db=database();
+  if(db.prepare("SELECT 1 FROM memory_scopes WHERE kind='project' AND owner_key=?").get(path))return;
+  for(const row of db.prepare("SELECT id,owner_key FROM memory_scopes WHERE kind='project'").all()){
+    const owner=String(row.owner_key);
+    if(owner===path)continue;
+    if(!sameStoredFolder(owner,path))continue;
+    db.prepare("UPDATE memory_scopes SET owner_key=?,revision=revision+1 WHERE id=?").run(path,String(row.id));
+    return;
+  }
+}
+
+/** Whether a stored owner_key names the same folder as the freshly canonical
+ * `path`.
+ *
+ * `samePath` settles what is left of a spelling once BOTH sides have been
+ * through `realpathSync.native` — which is the one thing a stored key has not
+ * been, because it predates that call. So the filesystem, not the string, is
+ * the authority here: resolve the stored key too. That is what answers the
+ * case this migration exists for, since `samePath` folds case only on Windows
+ * and the macOS re-spelling (`~/documents/app` for `~/Documents/app`) is a
+ * case difference on a case-insensitive volume.
+ *
+ * A stored key whose folder is gone cannot be resolved; fall back to comparing
+ * the spelling, which still catches a trailing separator or a Windows re-
+ * casing. Resolution never widens the match: two spellings resolve alike only
+ * when the filesystem says they are one folder. */
+function sameStoredFolder(owner:string,path:string):boolean {
+  try{return samePath(realpathSync.native(owner),path);}catch{return samePath(owner,path);}
+}
+
 function validSubject(roster:MemoryRoster,type:"bot"|"room",id:string){
   if(!(type==="bot"?roster.bots:roster.groups).some(subject=>subject.id===id))throw new Error("MEMORY_SUBJECT_UNKNOWN");
 }
@@ -237,7 +282,12 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="bind"){validSubject(roster,input.subjectType,input.subjectId);bindMemoryScope(ticket,input.scopeId,input.subjectType,input.subjectId);return {ok:true};}
   if(input.action==="project"){
     validSubject(roster,input.subjectType,input.subjectId);if(!isAbsolute(input.path))throw new Error("MEMORY_PROJECT_PATH_REQUIRED");
-    const path=realpathSync(input.path);if(!lstatSync(path).isDirectory())throw new Error("MEMORY_PROJECT_DIRECTORY_REQUIRED");
+    // Native realpath: the JavaScript one follows links but keeps the spelling
+    // it was given, so on Windows and on a case-insensitive macOS volume the
+    // same folder produced a different owner_key per spelling — two project
+    // scopes for one folder, and memories that silently stopped surfacing.
+    const path=realpathSync.native(input.path);if(!lstatSync(path).isDirectory())throw new Error("MEMORY_PROJECT_DIRECTORY_REQUIRED");
+    adoptRespelledProjectScope(path);
     const scopeId=ensureScope("project",path);bindMemoryScope(ticket,scopeId,input.subjectType,input.subjectId);return {scopeId,path};
   }
   if(input.action==="configure"){

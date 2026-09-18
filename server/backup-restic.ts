@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, writeFileSync, writeSync, type BigIntStats } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { backupReceiptSchema, backupReferenceSchema, type BackupReceipt } from "../shared/backup-schedule.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { resticChildEnvironment,resticS3CredentialsSchema,resticS3Repository,resticS3TargetSchema,type ResticS3Credentials,type ResticS3Run,type ResticS3Target } from "./backup-restic-target.ts";
 import {trustedBackupResticExecutableAsync} from "../electron/backup-restic-attestation.mjs";
+import {pathOverlaps} from "../shared/path-identity.mjs";
 export type { ResticS3Credentials,ResticS3Target } from "./backup-restic-target.ts";
 
 export {RESTIC_ORIGINAL_SHA256} from "../shared/backup-restic-pin.mjs";
@@ -77,6 +78,23 @@ export function resticRunner(executable:string,signal?:AbortSignal):ResticRunner
   };
 }
 
+/** The canonical spelling of a path that may not exist yet — workDirectory is
+ * created lazily by lock(), so neither side is guaranteed to be on disk here.
+ * Resolve the deepest ancestor that does exist with the native realpath, which
+ * settles links, casing and 8.3 aliases, then re-append the components below
+ * it. Resolving only the whole path would give up on links the moment a leaf
+ * was missing, and `<symlink to workDirectory>/repo` would read as a separate
+ * tree. */
+const canonical=(path:string)=>{
+  let head=resolve(path);const tail:string[]=[];
+  for(;;){
+    try{const real=realpathSync.native(head);return tail.length?join(real,...tail):real;}catch{/* not there yet: try its parent */}
+    const parent=dirname(head);
+    if(parent===head)return resolve(path);
+    tail.unshift(basename(head));head=parent;
+  }
+};
+
 /** Verified ciphertext storage; S3 requires explicit host-owned connection. */
 export class BackupRestic {
   private options:BackupResticOptions;
@@ -88,7 +106,15 @@ export class BackupRestic {
     if(!isAbsolute(options.workDirectory)||options.workDirectory.startsWith("\\\\"))throw new Error("RESTIC_LOCAL_PATH_REQUIRED");
     if(typeof options.repository==="string"){
       if(!isAbsolute(options.repository)||options.repository.startsWith("\\\\"))throw new Error("RESTIC_LOCAL_PATH_REQUIRED");
-      if(resolve(options.repository)===resolve(options.workDirectory))throw new Error("RESTIC_SEPARATE_DIRECTORIES_REQUIRED");
+      // Not just "different strings": either nesting ruins the repository.
+      // Murage writes receipts, restic-target.json and mkdtemp'd restore trees
+      // into workDirectory, so a repository beneath it collects Murage's
+      // scratch as repository content, and a workDirectory beneath the
+      // repository drops that scratch inside a live restic repository. The old
+      // check compared two resolve()d strings, so `<workDirectory>/repo`
+      // passed cleanly — and so did a symlink, a differing case on Windows or
+      // macOS, or an 8.3 alias, none of which resolve() settles.
+      if(pathOverlaps(canonical(options.repository),canonical(options.workDirectory)))throw new Error("RESTIC_SEPARATE_DIRECTORIES_REQUIRED");
     }else{try{this.target=Object.freeze(resticS3TargetSchema.parse(options.repository));}catch{throw Error("RESTIC_S3_TARGET_INVALID");}}
     this.options={...options,repository:this.target??options.repository};this.run=options.runner??resticRunner(options.executable,options.attestationSignal);
   }

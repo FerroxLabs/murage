@@ -1,7 +1,7 @@
 import {fileURLToPath} from "node:url";
-import { constants,copyFileSync,fstatSync,mkdtempSync,openSync,readFileSync,readdirSync,readSync,realpathSync,renameSync,truncateSync,writeFileSync } from "node:fs";
+import { constants,copyFileSync,fstatSync,mkdirSync,mkdtempSync,openSync,readFileSync,readdirSync,readSync,realpathSync,renameSync,symlinkSync,truncateSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join,sep } from "node:path";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { afterEach,expect,it,vi } from "vitest";
 import { safeWipeSync } from "./testing/safe-wipe.mjs";
@@ -27,6 +27,30 @@ it("an interrupted journal is retained for review rather than recaptured",async(
 });
 it("rejects changed archive and remote repository before any runner action",async()=>{
  const run=vi.fn<ResticRunner>();const f=fixture(run);writeFileSync(f.input,"changed");await expect(f.adapter.store(f.input,f.receipt)).rejects.toThrow("VERIFIED_ARCHIVE");expect(run).not.toHaveBeenCalled();expect(()=>new BackupRestic({...f.options,repository:"s3:private-bucket"})).toThrow("LOCAL_PATH");
+});
+it("refuses a repository and work directory that share a tree, however spelled",()=>{
+ // Murage writes receipts, restic-target.json and mkdtemp'd restore trees into
+ // workDirectory. Either nesting puts that scratch inside a live restic
+ // repository, or the repository inside Murage's scratch. The old check
+ // compared two resolve()d strings, so only the exact-equal case was caught.
+ const f=fixture();const work=f.options.workDirectory;
+ const overlapping=[
+  {repository:join(work,"repo"),workDirectory:work},   // repository under the work directory
+  {repository:f.root,workDirectory:work},              // work directory under the repository
+  {repository:work,workDirectory:work},                // the same directory
+  {repository:work+sep,workDirectory:work},            // ...spelled with a trailing separator
+ ];
+ for(const override of overlapping){
+  expect(()=>new BackupRestic({...f.options,...override})).toThrow("SEPARATE_DIRECTORIES");
+ }
+ // A sibling whose name merely starts with the other's is a different tree and
+ // must still be allowed, or a legitimate layout becomes unusable.
+ expect(()=>new BackupRestic({...f.options,repository:work+"-repository",workDirectory:work})).not.toThrow();
+ // A symlinked spelling of the work directory is the same tree; the old check
+ // compared strings the JavaScript realpath never settled.
+ mkdirSync(work,{recursive:true});
+ const alias=join(f.root,"work-alias");symlinkSync(work,alias,process.platform==="win32"?"junction":"dir");
+ expect(()=>new BackupRestic({...f.options,repository:join(alias,"repo"),workDirectory:work})).toThrow("SEPARATE_DIRECTORIES");
 });
 function restoredFixture(afterRestore?:(path:string)=>void){
  const id="d".repeat(64),bytes=Buffer.alloc(3*65536+17,37);let restoredPath="";

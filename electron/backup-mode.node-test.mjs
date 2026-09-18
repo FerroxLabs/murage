@@ -58,6 +58,9 @@ test("actual staged binary matches the packaged lookup and unsupported targets n
     assert.deepEqual(manifest.linux.extraResources.find(entry=>entry.to==="backup-tools"),{from:"dist-native/backup-age-linux",to:"backup-tools",filter:["${arch}/age","LICENSE"]});
     for(const section of [manifest,manifest.win])assert.equal(section.extraResources.some(entry=>entry.to==="backup-tools"),false);
     assert.ok(manifest.files.includes("shared/backup-age-pins.mjs"));
+    // `files` is an allow-list, so every shared module electron/ imports has
+    // to be named here or the packaged app throws on import at startup.
+    assert.ok(manifest.files.includes("shared/path-identity.mjs"));
     const scripts=JSON.parse(readFileSync(new URL("../package.json",import.meta.url),"utf8")).scripts;
     assert.ok(scripts["package:prepare"].startsWith("node scripts/prepare-backup-age.mjs && "));
     for(const name of ["package:linux","package:linux:offline","package:linux:dir"])assert.ok(scripts[name].startsWith("pnpm prepare:backup-age:linux && "));

@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation } from "./installation-restore.ts";
 import { reviewInstallation, activateInstallation } from "./installation-activation.ts";
@@ -94,3 +94,21 @@ it("the actual harness opens reviewed history with every engine disabled", async
     await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("owned fixture did not exit")), 10_000))]);
   }
 }, 20_000);
+
+it("refuses to review a root that contains the working directory reached through an alias", () => {
+  // The same refusal installation-restore.ts makes, and the same hole: `root`
+  // is a per-component realpath, so a cwd that is only resolve()d — behind a
+  // symlink, or spelled in a casing the filesystem folds — never matched it
+  // and a review of the user's whole home or checkout went ahead.
+  const root = mkdtempSync(join(tmpdir(), "murage-activation-alias-")); roots.push(root);
+  const working = join(root, "working"), alias = join(root, "alias");
+  mkdirSync(working);
+  writeFileSync(join(working, "keep.txt"), "untouched");
+  symlinkSync(working, alias, process.platform === "win32" ? "junction" : "dir");
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue(alias);
+  try {
+    expect(() => reviewInstallation(root))
+      .toThrowError(expect.objectContaining({ code: "BROAD_RESTORE_TARGET_REFUSED" }));
+    expect(readFileSync(join(working, "keep.txt"), "utf8")).toBe("untouched");
+  } finally { cwd.mockRestore(); }
+});

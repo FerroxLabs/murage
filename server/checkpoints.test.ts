@@ -5,10 +5,10 @@
 // user's own git repo in the folder is never touched, and dangerous folders
 // (home) are refused outright.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { join, parse, resolve, sep } from "node:path";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "./testing/cleanup.ts";
 
@@ -262,10 +262,143 @@ describe("refusals", () => {
     expect(await checkpointsEnabled(bot, linkedHome)).toBe(false);
   });
 
+  it("refuses the home folder and the filesystem root spelled with a trailing separator", () => {
+    // resolve() drops the trailing separator, and samePath drops it again for
+    // any spelling resolve leaves alone — either way "$HOME/" is still $HOME.
+    expect(refusalReason(homedir() + sep)).toBe("checkpoints are not taken in the home folder");
+    const root = parse(resolve(tmpdir())).root;
+    expect(refusalReason(root)).toBe("checkpoints are not taken at the filesystem root");
+  });
+
+  it("allows an unrelated folder that merely sits near a protected one", () => {
+    // The guard must refuse the protected folders and nothing else: a folder
+    // whose name only starts with one ("Documents-archive") is the user's own
+    // project and has to keep its checkpoints.
+    const near = mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-unrelated-"));
+    scratchDirs.push(near);
+    expect(refusalReason(near)).toBeNull();
+    const lookalike = join(near, "Documents-archive");
+    mkdirSync(lookalike);
+    expect(refusalReason(lookalike)).toBeNull();
+  });
+
   it("lists nothing (and creates nothing) for a folder never snapshotted", async () => {
     const { bot, cwd } = workspace();
     expect(await listCheckpoints(bot, cwd)).toEqual([]);
     const shadow = join(process.env.MURAGE_DATA_DIR!, "checkpoints", bot);
     expect(existsSync(shadow)).toBe(false);
   });
+});
+
+describe("folder identity", () => {
+  // The shadow repo is keyed on a digest of the path string, so the spelling
+  // has to settle before the digest is taken. It did not: one folder reached
+  // by two spellings opened two repos, so a re-spelled folder answered "no
+  // checkpoints exist" over a history that was sitting right there, and two
+  // turns in it took two different locks over one work tree — with a restore's
+  // `git clean -fd` on the other side of that missing lock.
+  it("keeps one shadow repo for a folder reached by two spellings", async () => {
+    const { bot, cwd } = workspace();
+    const project = join(cwd, "Project");
+    mkdirSync(project);
+    const respelled = join(cwd, "project");
+    if (!existsSync(respelled)) return; // case-sensitive volume: a real second folder
+
+    writeFileSync(join(project, "a.txt"), "one");
+    const checkpoint = await snapshot(bot, project, "turn 1");
+    expect(checkpoint).toMatch(/^[0-9a-f]{40}$/);
+    expect((await listCheckpoints(bot, respelled)).map((c) => c.hash)).toEqual([checkpoint]);
+
+    writeFileSync(join(project, "a.txt"), "two");
+    expect(await restore(bot, respelled, checkpoint!)).toEqual({ ok: true });
+    expect(readFileSync(join(project, "a.txt"), "utf8")).toBe("one");
+  });
+});
+
+// Windows names one folder several ways. These run everywhere, because a
+// refusal that only holds on the reviewer's Mac is no refusal at all: the
+// platform is stubbed and the fixture home is built under the real, already
+// canonical temp path, so nothing here depends on the host's own casing.
+describe("Windows spellings of a protected folder", () => {
+  const realPlatform = process.platform;
+  const realHome = process.env.HOME;
+  const realUserProfile = process.env.USERPROFILE;
+
+  function asPlatform(platform: string): void {
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  }
+
+  afterEach(() => {
+    asPlatform(realPlatform);
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
+  });
+
+  /** A fixture home os.homedir() will answer with, canonical from the start. */
+  function fakeHome(): string {
+    const home = realpathSync.native(
+      mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-home-")),
+    );
+    scratchDirs.push(home);
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    expect(homedir()).toBe(home);
+    return home;
+  }
+
+  it("refuses a protected folder whose case does not match the guard's", () => {
+    const home = fakeHome();
+    // On disk in lower case; the guard's list says "Documents". Before the
+    // fix the two strings differed and refusalReason answered null — a turn
+    // in the user's Documents would have been snapshotted, and a restore
+    // would have run `git clean -fd` over it.
+    const documents = join(home, "documents");
+    mkdirSync(documents);
+    const downloads = join(home, "DOWNLOADS");
+    mkdirSync(downloads);
+
+    asPlatform("win32");
+    expect(refusalReason(home)).toBe("checkpoints are not taken in the home folder");
+    expect(refusalReason(home + sep)).toBe("checkpoints are not taken in the home folder");
+    expect(refusalReason(documents)).toBe("checkpoints are not taken in the Documents folder");
+    expect(refusalReason(downloads)).toBe("checkpoints are not taken in the Downloads folder");
+  });
+
+  it("still refuses a link into the fixture home and still allows an unrelated folder", () => {
+    const home = fakeHome();
+    const elsewhere = mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-project-"));
+    scratchDirs.push(elsewhere);
+    const linkedHome = join(elsewhere, "linked-home");
+    symlinkSync(home, linkedHome, realPlatform === "win32" ? "junction" : "dir");
+
+    asPlatform("win32");
+    // Case folding must not cost the symlink protection...
+    expect(refusalReason(linkedHome)).toBe("checkpoints are not taken in the home folder");
+    // ...nor start refusing folders that are nobody's personal folder.
+    expect(refusalReason(elsewhere)).toBeNull();
+  });
+
+  // Not a Windows-only hazard, and this one runs on the real platform: macOS
+  // volumes are case-insensitive by default, so "~/documents" opens the very
+  // folder the guard names "Documents". The JavaScript realpath handed back
+  // the spelling it was given, the two strings differed, and the folder was
+  // allowed — on the shipping Mac build, not a hypothetical Windows one. The
+  // native realpath answers in the filesystem's own casing, which settles it
+  // without any case folding.
+  it("resolves a protected folder's real casing on a case-insensitive volume", () => {
+    const home = fakeHome();
+    mkdirSync(join(home, "Documents"));
+    const lower = join(home, "documents");
+    if (existsSync(lower)) {
+      expect(refusalReason(lower)).toBe("checkpoints are not taken in the Documents folder");
+    } else {
+      // A case-sensitive volume: "documents" really is a different folder, and
+      // refusing the user's own project there would be the bug.
+      mkdirSync(lower);
+      expect(refusalReason(lower)).toBeNull();
+    }
+  });
+
 });
