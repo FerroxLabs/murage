@@ -564,15 +564,24 @@ function imageReferenceSource(value: unknown): unknown {
   return { kind: "invalid" };
 }
 
+/** A 200 whose body carries an `error` is a failed tool call. Handing it back
+ * unflagged told the model the job was done — so "denied by user" and "depth
+ * exhausted" read as success and it moved on. The body still travels, because
+ * the rest of it is often what says what to do next. */
+function jsonToolResult(result: Json): { text: string; isError?: boolean } {
+  const failed = jsonRecord(result) && result.error !== undefined && result.error !== null && result.error !== false;
+  return { text: JSON.stringify(result), ...(failed ? { isError: true } : {}) };
+}
+
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
   if (name === "register_artifact") {
     const result = await api("/api/internal/register-artifact", { method: "POST", body: JSON.stringify({ relativePath: args.relative_path, ...(args.name === undefined ? {} : { name: args.name }) }) });
-    return { text: JSON.stringify(result) };
+    return jsonToolResult(result);
   }
-  if (name === "list_image_models") return { text: JSON.stringify(await api("/api/internal/image-models")) };
+  if (name === "list_image_models") return jsonToolResult(await api("/api/internal/image-models"));
   if (name === "resolve_image_reference") {
     const sources = Array.isArray(args.sources) ? args.sources.map(imageReferenceSource) : args.sources;
-    return { text: JSON.stringify(await api("/api/internal/resolve-image-reference", { method: "POST", body: JSON.stringify({ sources }) })) };
+    return jsonToolResult(await api("/api/internal/resolve-image-reference", { method: "POST", body: JSON.stringify({ sources }) }));
   }
   if (name === "generate_image") {
     // The harness holds this request open while the owner's approval card
@@ -583,7 +592,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       requestId: args.request_id, prompt: args.prompt, operation: args.operation, connectionId: args.connection_id,
       model: args.model, quality: args.quality, size: args.size, referenceIds: args.reference_ids,
     }) });
-    return { text: JSON.stringify(result) };
+    return jsonToolResult(result);
   }
 
   if (name === "get_permission_status" || name === "request_bot_access") {
@@ -591,7 +600,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const result = await api(name === "get_permission_status" ? "/api/internal/permission-status" : "/api/internal/access-request", {
       method: "POST", body: JSON.stringify({ ...fields, targetBotId: bot_id, ...(allow_writes !== undefined ? { allowWrites: allow_writes } : {}) }),
     });
-    return { text: JSON.stringify(result) };
+    return jsonToolResult(result);
   }
   const managementAction = ({ get_bot: "get", update_bot: "update", archive_bot: "archive", restore_bot: "restore", move_bot: "move", set_team_lead: "set-lead" } as Record<string, string>)[name];
   if (managementAction) {
@@ -601,7 +610,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       ...(model_selection !== undefined ? { modelSelection: model_selection } : {}),
       ...(organization_revision !== undefined ? { organizationRevision: organization_revision } : {}),
     }) });
-    return { text: JSON.stringify(result) };
+    return jsonToolResult(result);
   }
   if (name === "web_search") {
     if (!jsonRecord(args) || Object.keys(args).some(key => !["query", "max_results"].includes(key))

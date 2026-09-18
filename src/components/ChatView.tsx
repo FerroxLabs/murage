@@ -45,6 +45,7 @@ import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -794,22 +795,47 @@ function ActivityChip({ message }: { message: Message }) {
     );
   }
   const failed = tool.ok === false;
+  // The engine's own reason for the failure. Its first line reads as the
+  // explanation; anything longer goes in Technical details, the same place
+  // every other failure in the transcript keeps it.
+  const detail = failed ? tool.errorDetails?.trim() || undefined : undefined;
+  const reason = detail ? toolFailureSummary(detail) : undefined;
   return (
     <div className="flex justify-start">
-      <div
-        data-testid="tool-chip"
-        className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
-      >
-        <span className="shrink-0">
-          {tool.ok === undefined ? (
-            <WorkingDots size={3.5} />
-          ) : failed ? (
-            <X size={13} />
-          ) : (
-            <Check size={13} className="text-success" />
+      <div className="flex min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full flex-col items-start gap-1">
+        <div
+          data-testid="tool-chip"
+          className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
+        >
+          <span className="shrink-0">
+            {tool.ok === undefined ? (
+              <WorkingDots size={3.5} />
+            ) : failed ? (
+              <X size={13} />
+            ) : (
+              <Check size={13} className="text-success" />
+            )}
+          </span>
+          <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
+          {/* not mono: the argument reads as prose beside the tool's name, and
+              inherits the chip's colour so a failed call stays one piece */}
+          {tool.summary && (
+            <span data-testid="tool-chip-summary" className="min-w-0 truncate">
+              {tool.summary}
+            </span>
           )}
-        </span>
-        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
+        </div>
+        {reason && (
+          <div className="min-w-0 max-w-full px-1 text-[12px] leading-relaxed text-ink-secondary">
+            <p data-testid="tool-chip-reason" className="whitespace-pre-wrap break-words">{reason}</p>
+            {detail && detail !== reason && (
+              <details className="mt-1 text-[11px]">
+                <summary className="w-fit cursor-pointer rounded py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">Technical details</summary>
+                <pre data-testid="tool-chip-detail" className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px]">{detail}</pre>
+              </details>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

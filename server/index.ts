@@ -3124,7 +3124,9 @@ bus.subscribe((event: RuntimeEvent) => {
           const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
           toolName = existing?.name ?? "tool";
           store.patchMessage(event.threadId, messageId, {
-            tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
+            // a failed tool that says only its name leaves the user guessing,
+            // so the engine's reason rides along to the chip
+            tool: { name: toolName, ok: event.ok, spoken: existing?.spoken, summary: existing?.summary, errorDetails: event.ok ? undefined : event.detail },
           });
           toolMessageByItem.delete(itemKey);
         }
@@ -3155,7 +3157,7 @@ bus.subscribe((event: RuntimeEvent) => {
         const message = pushMessage({
           role: "bot",
           kind: "activity",
-          tool: { name, spoken: narrateTool(name) ?? undefined },
+          tool: { name, spoken: narrateTool(name) ?? undefined, summary: event.summary },
         });
         if (event.itemId) toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
       }

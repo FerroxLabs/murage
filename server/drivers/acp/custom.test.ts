@@ -121,6 +121,29 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
   });
 
+  it("names the tool the bot actually ran, not the wrapper it went through", async () => {
+    process.env.FAKE_ACP_MODE = "wrapped-tool";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-wrapped", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
+    // the engine called it `use_tool`; the person needs the inner tool
+    expect(started).toMatchObject({ title: "memory_search", summary: "quarterly plan" });
+  });
+
+  it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
+    process.env.FAKE_ACP_MODE = "wrapped-tool";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-failed-tool", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const done = recorder.events.find((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool")!;
+    expect(done).toMatchObject({ ok: false });
+    expect((done as { detail?: string }).detail).toContain("Memory is not available for this turn.");
+    expect((done as { detail?: string }).detail).toContain("search timed out after 5s");
+  });
+
   it("reports available with a working CLI and no sign-in requirement", async () => {
     await create();
     const snapshot = await instance.snapshot();

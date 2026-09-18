@@ -11,12 +11,16 @@ let nextId = 1;
 let status = 200;
 let response = JSON.stringify({ hits: [], degradedReason: "lexical-only" });
 let requests: Array<{ path: string; method: string; auth: string | undefined; body: Json }> = [];
+/** Hold the stub's reply past the proxy's own deadline, to prove the two
+ * failures are told apart. */
+let holdMs = 0;
+let rpcTimeoutMs = 5000;
 const pending = new Map<number, (value: Json) => void>();
 
 function rpc(method: string, params?: unknown): Promise<Json> {
   return new Promise((resolve, reject) => {
     const id = nextId++;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timeout`)); }, 5000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timeout`)); }, rpcTimeoutMs);
     pending.set(id, value => { clearTimeout(timer); resolve(value); });
     child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
@@ -43,8 +47,8 @@ beforeAll(async () => {
     req.on("data", chunk => { body += chunk; });
     req.on("end", () => {
       requests.push({ path: req.url ?? "", method: req.method ?? "", auth: req.headers.authorization, body: JSON.parse(body) });
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(response);
+      const reply = () => { res.writeHead(status, { "content-type": "application/json" }); res.end(response); };
+      if (holdMs) setTimeout(reply, holdMs); else reply();
     });
   });
   await new Promise<void>(resolve => stub.listen(0, "127.0.0.1", resolve));
@@ -68,7 +72,7 @@ beforeAll(async () => {
   });
 });
 
-beforeEach(() => { requests = []; status = 200; response = JSON.stringify({ hits: [], degradedReason: "lexical-only" }); });
+beforeEach(() => { requests = []; status = 200; holdMs = 0; rpcTimeoutMs = 5000; response = JSON.stringify({ hits: [], degradedReason: "lexical-only" }); });
 afterAll(async () => {
   if (child && child.exitCode === null && child.signalCode === null) {
     const closed = new Promise<void>(resolve => child.once("exit", () => resolve()));
@@ -139,6 +143,28 @@ it("rejects caller authority claims and oversized or malformed arguments before 
   for (const [name, args] of cases) expect((await call(name, args)).result.isError).toBe(true);
   expect((await call("http_proxy", { url: "http://example.invalid" })).error.code).toBe(-32602);
   expect(requests).toEqual([]);
+});
+
+it("says which argument a refused memory call got wrong, so the model can correct it", async () => {
+  const tooLong = await call("memory_search", { query: "ok", cursor: "x".repeat(161) });
+  expect(tooLong.result.isError).toBe(true);
+  const text = tooLong.result.content[0].text as string;
+  expect(text).toContain("cursor");
+  expect(text).not.toBe("INVALID_MEMORY_ARGUMENTS");
+  // the point of naming it: a bare code left the model retrying blind
+  const missing = await call("memory_get", { handles: [{ id: "r" }] });
+  expect(missing.result.content[0].text).toContain("handles");
+  const unknownField = await call("memory_search", { query: "ok", botId: "other" });
+  expect(unknownField.result.content[0].text.toLowerCase()).toContain("botid");
+  expect(requests).toEqual([]);
+});
+
+it("distinguishes memory taking too long from memory not being there", async () => {
+  holdMs = 8000; rpcTimeoutMs = 20000; // the stub holds the reply past the search deadline
+  const reply = await call("memory_search", { query: "backups" });
+  expect(reply.result.isError).toBe(true);
+  expect(reply.result.content[0].text).toContain("5 seconds");
+  expect(reply.result.content[0].text).not.toContain("MEMORY_REQUEST_FAILED");
 });
 
 it("preserves API failure and degraded results without claiming success", async () => {

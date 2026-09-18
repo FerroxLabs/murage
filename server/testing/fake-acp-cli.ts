@@ -9,6 +9,8 @@
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//                     | wrapped-tool  one tool call made through a "use a tool"
+//                     wrapper, failing with a reason in its content
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -452,6 +454,16 @@ function playTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-1", title: "run" } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-1", status: "completed" } } });
+}
+
+/** A wrapper-tool turn: the engine exposes one "use a tool" tool and passes
+ * the real call through in its arguments, then fails it with a reason. Both
+ * halves are what a chip has to survive — the wrapper name and the reason. */
+function playWrappedToolTurn() {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-w", title: "use_tool",
+    rawInput: { tool_name: "murage-memory-1f83c2b455279a599bd7__memory_search", tool_input: { query: "quarterly plan" } } } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-w", status: "failed",
+    content: [{ type: "content", content: { type: "text", text: "Memory is not available for this turn.\nsearch timed out after 5s" } }] } } });
 }
 
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
@@ -1048,6 +1060,7 @@ function handle(msg: any) {
           },
         });
       } else if (mode === "interleave") playInterleaveTurn();
+      else if (mode === "wrapped-tool") playWrappedToolTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with

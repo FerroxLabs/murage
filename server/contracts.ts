@@ -113,9 +113,14 @@ export type RuntimeEvent = RuntimeEventBase &
          * delta, a thread total, a per-step figure) and must never be summed. */
         usage?: { input: number; output: number; cachedInput?: number };
       }
-    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string }
+    /** `summary` is a short human read of the tool's arguments, for engines
+     * that hide the real call inside a wrapper tool — without it every chip
+     * in the transcript is the same wrapper name. */
+    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string; summary?: string }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
-    | { type: "item.completed"; itemType: "tool"; ok: boolean }
+    /** `detail` is why the tool failed, as the engine reported it. It reaches
+     * the person, not only the model's context. */
+    | { type: "item.completed"; itemType: "tool"; ok: boolean; detail?: string }
     | { type: "item.completed"; itemType: "assistant_text"; text: string }
     /** Provider-generated raster bytes. This event is folded into the
      * private attachment store and is never forwarded to renderer SSE: a
