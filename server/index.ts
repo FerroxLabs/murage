@@ -67,7 +67,7 @@ import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
-import { sendsInlineImages } from "./turn-image-dispatch.ts";
+import { imageDelivery, IMAGE_DELIVERY_PROMPT, type ImageDelivery } from "./turn-image-dispatch.ts";
 import { TurnImages, turnImageAudience } from "./turn-images.ts";
 import {
   chooseIntakeProfile,
@@ -2328,8 +2328,9 @@ function routedModelAcceptsImages(route: { connectionId: string; model: string }
   } catch { return undefined; }
 }
 
-/** Whether THIS turn should carry the picture itself rather than only the
- * `<attached-image path=…>` tag the composer writes into the text.
+/** How THIS turn delivers a picture: the bytes themselves, only the
+ * `<attached-image path=…>` tag the composer writes into the text, or
+ * neither because the bot could not see it anyway.
  *
  * Two independent facts, and both have to hold:
  *  - the DRIVER puts the bytes in its own prompt (`capabilities.imagesInline`).
@@ -2350,11 +2351,11 @@ function routedModelAcceptsImages(route: { connectionId: string; model: string }
  * and the agents server's `reference_ids` resolve against, and dropping it
  * for inline engines would break image editing for exactly the engines that
  * just gained inline vision. */
-function inlineTurnImagesEnabled(
-  instance: { adapter: { capabilities: { imagesInline?: boolean } } },
+function turnImageDelivery(
+  instance: { adapter: { capabilities: { images?: boolean; imagesInline?: boolean } } },
   providerRoute: { connectionId: string; model: string } | undefined,
-): boolean {
-  return sendsInlineImages(instance.adapter.capabilities.imagesInline, routedModelAcceptsImages(providerRoute));
+): ImageDelivery {
+  return imageDelivery(instance.adapter.capabilities, routedModelAcceptsImages(providerRoute));
 }
 
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
@@ -4784,16 +4785,17 @@ async function startTurn(
       // read_file (a text-only model then 400'd on the image part), hunted the
       // disk for an OpenAI key and called the vendor itself. Say it once.
       // "when your model accepts images" was a hedge written while exactly one
-      // engine was sent the picture. The turn now knows which it is, so say it
-      // outright: a bot told it can already see an image it was never sent
-      // describes one it is guessing at, and a bot told to open the file when
-      // the picture is right there in its prompt wastes a tool call and a
-      // permission prompt on it.
+      // engine was sent the picture. The turn knows which of THREE cases it is
+      // and says so outright (turn-image-dispatch.ts): shown the picture, sent
+      // a path to open, or unable to see it at all. The third is not the
+      // second — the first cut of this said "open that path" to a text-only
+      // model, which is the read_file-then-400 above, and put it in the same
+      // prompt as the primer's "ask for a description". The primer's image
+      // line and this one are held to one answer by
+      // server/turn-image-prompt-agreement.test.ts.
       const imagePrompt = integrations.agents
         ? " To create or edit an image, use generate_image; list_image_models shows the configured connections and models. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with resolve_image_reference." +
-          (inlineTurnImagesEnabled(instance, providerRoute)
-            ? " Images attached to this turn are already in front of you: look at them directly and do not open image files with shell or file-read tools to see them."
-            : " You are not shown attached images directly — an attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.") +
+          IMAGE_DELIVERY_PROMPT[turnImageDelivery(instance, providerRoute)] +
           " Never search the computer for provider API keys, and never call an image provider directly."
         : "";
       const routinePrompt = integrations.agents
@@ -4915,7 +4917,7 @@ async function startTurn(
       // (drivers/acp/fuigo.ts DRIVER_KIND is "fuigoAgent"), so no inline image
       // reached any model at all (thread e4454625); 0.1.54 fixed the spelling
       // and 0.1.55 removes the single-engine gate behind it.
-      const incomingImages = inlineTurnImagesEnabled(instance, providerRoute) ? await turnImages.read(threadId, bot.id, text) : undefined;
+      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline" ? await turnImages.read(threadId, bot.id, text) : undefined;
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
@@ -6412,7 +6414,7 @@ async function runGroupMemberTurn(
       const imageSelectionText = latestUser?.text ?? "";
       // Same rule as the direct path: engine capability AND model vision, not
       // one hard-coded driver kind.
-      const incomingImages = inlineTurnImagesEnabled(instance, providerRoute) ? await turnImages.read(threadId, bot.id, imageSelectionText) : undefined;
+      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline" ? await turnImages.read(threadId, bot.id, imageSelectionText) : undefined;
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
