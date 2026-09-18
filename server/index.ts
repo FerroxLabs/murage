@@ -989,6 +989,14 @@ async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resourc
   if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
   if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
 }
+/** A queued routine admitted past the three-thread limit waits here, visibly
+ * and holding nothing, before any setup side effect; Stop ends the wait. */
+async function acquireDirectTurnSlot(run:DirectThreadRun<BotRecord>):Promise<void>{
+  let waited=false;
+  const granted=await directRuns.awaitSlot(run,()=>{waited=true;store.setTaskWaiting(run.botId,run.threadId,{resource:"thread-slot"});});
+  if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
+  if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for a free thread");
+}
 function resourceWaitKind(resource:string,screenUse:"computer"|"browser"):TaskResourceWaitKind{
   if(resource.startsWith("workspace:"))return "working-folder";
   if(resource.startsWith("computer:"))return "computer";
@@ -4328,6 +4336,9 @@ async function startTurn(
      * memory context was revoked before the provider accepted it (see the
      * catch below). Never taken from a request body. */
     memoryRedispatch?: boolean;
+    /** Server-owned (routine dispatch only): at the three-thread limit, queue
+     * visibly for a free thread slot instead of refusing. */
+    waitForThreadSlot?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -4352,7 +4363,7 @@ async function startTurn(
     });
   }
   if (directThreadBusy(botId,threadId)||activeGroupTurnForBot(botId)) throw Object.assign(new Error("this thread or its group is already working"), { status: 409 });
-  if(directRuns.forBot(botId).length>=MAX_CONCURRENT_BOT_THREADS)throw Object.assign(new Error("this bot is already working on three threads"),{status:409,code:"thread_limit"});
+  if(!opts?.waitForThreadSlot&&directRuns.forBot(botId).length>=MAX_CONCURRENT_BOT_THREADS)throw Object.assign(new Error("this bot is already working on three threads"),{status:409,code:"thread_limit"});
   // a webhook turn, or one inherited from a bot already running unattended
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
@@ -4485,7 +4496,7 @@ async function startTurn(
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
-  const run=directRuns.admit(bot.id,threadId,bot);
+  const run=directRuns.admit(bot.id,threadId,bot,[],{queueForSlot:opts?.waitForThreadSlot===true});
   const dispatchClaimId = run.generation;
   beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
@@ -4498,6 +4509,7 @@ async function startTurn(
     let acceptedTurnCleanupFailed=false;
     const submissionBoundary = new TurnSubmissionBoundary();
     try {
+      await acquireDirectTurnSlot(run);
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       let browser: Awaited<ReturnType<typeof browserIntegration>> = null;
       const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
@@ -5359,10 +5371,15 @@ routines = new RoutineManager({
     if(!principal)throw new Error("HUMAN_LINK_REQUIRED");
     return humanTask(store,botId,principal);
   },
+  // A routine waits for the bot's group turn (a bot speaks in one room turn
+  // at a time) but not for its other threads: it takes a free thread slot, or
+  // queues visibly for one inside startTurn, like chat turns queue for shared
+  // resources.
   botState: (botId) => {
     const bot = store.bot(botId);
-    return !bot ? "missing" : backupRestartAdmission.held() || bot.busy ? "busy" : "ready";
+    return !bot ? "missing" : backupRestartAdmission.held() || activeGroupTurnForBot(botId) ? "busy" : "ready";
   },
+  threadBusy: (botId, threadId) => directThreadBusy(botId, threadId),
   goalState: (groupId, coordinatorBotId) => {
     const group = store.group(groupId);
     const coordinator = store.bot(coordinatorBotId);
@@ -5386,7 +5403,7 @@ routines = new RoutineManager({
   },
   createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>
-    startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError, eventId })
+    startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError, eventId, waitForThreadSlot: true })
       .then(() => undefined),
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
@@ -12347,13 +12364,14 @@ const server = createServer(async (req, res) => {
       const swept = await Promise.allSettled(
         onHostComputer
           .map(async (bot) => {
-            const routineRun = routines!.activeBotRunForBot(bot.id);
-            if (routineRun) {
+            // Every routine on this bot: several can share its thread slots.
+            const routineRuns = routines!.activeBotRunsForBot(bot.id);
+            for (const routineRun of routineRuns) {
               cancelDirectTurnDispatch(bot.id, routineRun.threadId);
               if (routineRun.threadId) await releaseBrowserCapabilityForThread(routineRun.threadId);
               await routines!.cancelRun(routineRun.id);
-              return;
             }
+            if (routineRuns.length) return;
             const instance = registry.get(bot.modelSelection.instanceId);
             const groupTurn = activeGroupTurnForBot(bot.id);
             if (groupTurn) {
@@ -13307,8 +13325,8 @@ const server = createServer(async (req, res) => {
       const busyChannel=activeGroupTurnForBot(bot.id);
       if(!busyChannel||(body.threadId!==undefined&&body.threadId!==busyChannel.threadId)){
         const selected=requestedDirectBot(bot.id,body.threadId),threadId=selected.threadId;
-        const routine=routines!.activeBotRunForBot(bot.id);
-        if(routine?.threadId===threadId){cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id);return json(res,200,{ok:true});}
+        const routine=routines!.activeBotRunForThread(bot.id,threadId);
+        if(routine){cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id);return json(res,200,{ok:true});}
         try{await interruptDirectThread(bot.id,threadId);}
         catch(error){
           const stop=error as {code?:unknown;message?:string};

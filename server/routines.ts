@@ -237,6 +237,9 @@ export interface RoutineManagerOptions {
    * is what lets the server number and replay them. */
   emit?: (payload: Record<string, unknown>) => void;
   botState: (botId: string) => "ready" | "busy" | "missing";
+  /** A shared channel conversation can be busy with other work while its bot
+   * still has a free thread slot; its next message waits for the conversation. */
+  threadBusy?: (botId: string, threadId: string) => boolean;
   goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
   /** Telegram messages continue the bot's current conversation. */
@@ -701,6 +704,26 @@ export class RoutineManager {
         ["running", "waiting"].includes(candidate.status),
     );
     return run ? cloneRun(run) : null;
+  }
+
+  /** Several routines can share a bot's thread slots; Stop must resolve the
+   * run by the exact thread it names, never by "the bot's routine". */
+  activeBotRunForThread(botId: string, threadId: string): RoutineRun | null {
+    const run = this.runs.find(
+      (candidate) => candidate.target === "bot" &&
+        candidate.botId === botId &&
+        candidate.threadId === threadId &&
+        ["running", "waiting"].includes(candidate.status),
+    );
+    return run ? cloneRun(run) : null;
+  }
+
+  activeBotRunsForBot(botId: string): RoutineRun[] {
+    return this.runs
+      .filter((candidate) => candidate.target === "bot" &&
+        candidate.botId === botId &&
+        ["running", "waiting"].includes(candidate.status))
+      .map(cloneRun);
   }
 
   routineRequestReceipt(requestId: string): RoutineRequestReceipt | null {
@@ -1367,8 +1390,8 @@ export class RoutineManager {
             : sharedChannel ? "Could not find the conversation for this channel" : "Could not create a task for this run");
           continue;
         }
-        if (sharedChannel && this.runs.some((active) => active.threadId === task.threadId &&
-          ["running", "waiting"].includes(active.status))) continue;
+        if (sharedChannel && (this.runs.some((active) => active.threadId === task.threadId &&
+          ["running", "waiting"].includes(active.status)) || this.options.threadBusy?.(run.botId, task.threadId))) continue;
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";

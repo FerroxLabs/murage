@@ -13,6 +13,11 @@ describe("resourceWaitLabel", () => {
       .toBe("Waiting for 'Research' to finish using the browser profile");
   });
 
+  it("says a queued routine is waiting for a free thread slot", () => {
+    expect(resourceWaitLabel({ resource: "thread-slot" }))
+      .toBe("Waiting for a free slot — this bot is already working on three threads");
+  });
+
   it("stays generic without a visible title and for unknown kinds", () => {
     expect(resourceWaitLabel({ resource: "shared" })).toBe("Waiting for another thread to finish using the computer, browser or working folder");
     expect(resourceWaitLabel({ resource: "computer", holderTitle: "  " })).toBe("Waiting for another thread to finish using the computer");

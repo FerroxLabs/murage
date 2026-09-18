@@ -56,7 +56,7 @@ const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secre
 // larger than any OS pipe buffer makes the driver's write report refusal.
 const PRE_ACCEPT_PROMPT = "x".repeat(1000 * 1024);
 
-interface BotView { id: string; threadId: string; busy: boolean; tasks?: Array<{ activity?: string }> }
+interface BotView { id: string; threadId: string; busy: boolean; tasks?: Array<{ threadId?: string; activity?: string; waitingFor?: { resource: string } }> }
 interface MessageView { id: string; role: string; kind: string; text?: string; turnId?: string; tool?: { name: string; ok?: boolean } }
 interface RoutineRunView { id: string; status: string; triggerSource?: string; botId: string; threadId?: string; output?: string; error?: string }
 interface Reply { status: number; body: any }
@@ -326,10 +326,13 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       const relaunch = await readJsonFileWhenReady<{ pid: number }>(retryDump, 20_000);
       expect(readFileSync(retryLaunches, "utf8")).toBe("2");
       expect(await busy(bot.id)).toBe(true);
-      // The owner's message arrives while the turn runs: queued behind the
-      // busy bot, on the bot's own conversation.
+      // The owner's message arrives while the turn runs: it takes a free
+      // thread slot in its own conversation and waits, visibly, for the
+      // project folder the running turn is writing in.
       telegramArrives(telegramMessage(2, "status please"));
-      await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 15_000, interval: 100 }).toEqual(["queued"]);
+      await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 15_000, interval: 100 }).toEqual(["running"]);
+      const [waitingRun] = await channelRuns();
+      await expect.poll(async () => (await botView(bot.id))?.tasks?.find((task) => task.threadId === waitingRun!.threadId)?.waitingFor?.resource, { timeout: 15_000, interval: 100 }).toBe("working-folder");
       // A live turn refuses the owner's save at once: the writer lease is
       // held for the whole turn, relaunch included.
       const opened = await desktopApi("GET", `/api/workspace-files/read?${scopeQuery}&path=notes.md`);
@@ -350,8 +353,8 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       expect(saved.status).toBe(200);
       expect(saved.body).toMatchObject({ requestId: "save-after-retry", previousRevision: opened.body.revision, relativePath: "notes.md" });
       expect(readFileSync(note, "utf8")).toBe(EDIT);
-      // The queued channel delivery dispatches on the idle bot and its reply
-      // reaches the owner's chat.
+      // The waiting channel delivery ran once the folder was free, and its
+      // reply reaches the owner's chat.
       await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 30_000, interval: 100 }).toEqual(["completed"]);
       const [delivered] = await channelRuns();
       expect(delivered).toMatchObject({ output: "hello from fake claude" });

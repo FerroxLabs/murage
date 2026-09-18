@@ -290,6 +290,8 @@
   "runtimeError.waiting.browser.unnamed": "Waiting for another thread to finish using the browser profile",
   "runtimeError.waiting.shared.named": "Waiting for '{title}' to finish using the computer, browser or working folder",
   "runtimeError.waiting.shared.unnamed": "Waiting for another thread to finish using the computer, browser or working folder",
+  "runtimeError.waiting.thread-slot.named": "Waiting for a free slot — this bot is already working on three threads",
+  "runtimeError.waiting.thread-slot.unnamed": "Waiting for a free slot — this bot is already working on three threads",
   "runtimeError.engineKind.empty_response": "The model returned an empty reply, and retrying did not help. This is usually temporary: retry, or choose another model.",
   "runtimeError.engineKind.idle_timeout": "The model stopped responding, so the engine stopped waiting. Retry, or choose another model.",
   "runtimeError.engineKind.cancelled": "The request was cancelled before the model finished.",

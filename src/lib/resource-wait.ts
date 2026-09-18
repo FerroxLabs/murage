@@ -1,13 +1,14 @@
 import { t } from "./i18n";
 
 /** Runtime-only marker the harness puts on a busy task while it waits for
- * another thread to release a shared folder, computer or browser profile. */
+ * another thread to release a shared folder, computer or browser profile, or
+ * (a queued routine) for one of the bot's three thread slots. */
 export type TaskResourceWait = {
-  resource: "working-folder" | "computer" | "browser" | "shared";
+  resource: "working-folder" | "computer" | "browser" | "shared" | "thread-slot";
   holderTitle?: string;
 };
 
-const KINDS = new Set<TaskResourceWait["resource"]>(["working-folder", "computer", "browser", "shared"]);
+const KINDS = new Set<TaskResourceWait["resource"]>(["working-folder", "computer", "browser", "shared", "thread-slot"]);
 
 /** The presence-row label for a waiting turn, or undefined when the task is
  * not waiting. Unknown kinds from a newer server read as "shared". */
