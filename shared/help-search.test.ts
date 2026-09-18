@@ -22,6 +22,17 @@ const CORPUS: readonly HelpEntry[] = [
     text: "Murage shows a permission request inline and records the outcome. Do not paste API keys into chat.",
   },
   {
+    // The decoy: it owns the rare word "webhook" and nothing else, the way
+    // "Call mode" owns "call" in the real docs. A section matching one rare
+    // word loudly must not beat one matching the whole question.
+    id: "decoy#webhook", title: "Webhook notes",
+    description: "", heading: "Webhook",
+    breadcrumb: "Murage docs → Decoy",
+    where: "Murage docs → Decoy",
+    url: "https://murage.app/docs/decoy#webhook",
+    text: "Webhook webhook webhook.",
+  },
+  {
     id: "features/voice#memory", title: "Voice and memory",
     description: "Inspect what agents remember.", heading: "Memory",
     breadcrumb: "Murage docs → Features → Voice and memory",
@@ -36,6 +47,11 @@ describe("help search", () => {
     expect(searchHelp("how do I schedule a recurring job", { corpus: CORPUS })[0].id).toBe("features/automation#routines");
     expect(searchHelp("can you remember what I told you", { corpus: CORPUS })[0].id).toBe("features/voice#memory");
     expect(searchHelp("do I have to approve things", { corpus: CORPUS })[0].id).toBe("security/permissions#approval-cards");
+  });
+
+  it("prefers the section that covers more of the question over one loud rare word", () => {
+    const results = searchHelp("webhook that runs a routine on a schedule", { corpus: CORPUS });
+    expect(results[0].id).toBe("features/automation#routines");
   });
 
   it("folds the endings product prose varies", () => {
@@ -66,8 +82,8 @@ describe("help search", () => {
 
   it("lists every documented topic once when there is no question", () => {
     const topics = helpTopics(CORPUS);
-    expect(topics).toHaveLength(3);
-    expect(new Set(topics).size).toBe(3);
+    expect(topics).toHaveLength(4);
+    expect(new Set(topics).size).toBe(4);
     expect(topics[0]).toContain("Routines and webhooks");
   });
 
