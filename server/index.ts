@@ -12423,47 +12423,78 @@ const server = createServer(async (req, res) => {
       // RPC gate, so the panic control cannot drift away from the thing it
       // is meant to be able to stop.
       const onHostComputer = store.bots.filter((bot) => botUsesHostComputer(bot.computer));
-      const swept = await Promise.allSettled(
-        onHostComputer
-          .map(async (bot) => {
-            // Every routine on this bot: several can share its thread slots.
-            const routineRuns = routines!.activeBotRunsForBot(bot.id);
-            for (const routineRun of routineRuns) {
-              cancelDirectTurnDispatch(bot.id, routineRun.threadId);
-              if (routineRun.threadId) await releaseBrowserCapabilityForThread(routineRun.threadId);
-              await routines!.cancelRun(routineRun.id);
-            }
-            if (routineRuns.length) return;
-            const instance = registry.get(bot.modelSelection.instanceId);
-            const groupTurn = activeGroupTurnForBot(bot.id);
-            if (groupTurn) {
-              cancelGroupTurnOperations(groupTurn.group.id, groupTurn.threadId);
-              await releaseBrowserCapabilityForThread(groupTurn.threadId);
-              // Confirmed like a direct stop below: an engine that refuses,
-              // or answers that its child has not closed, is not "stopped".
-              const confirmed = await Promise.resolve(instance?.adapter.interruptTurn(groupTurn.threadId))
-                .then(stopCloseConfirmed, () => false);
-              closeOpenApprovals(groupTurn.threadId);
-              if (confirmed === false) throw new Error("provider stop is unconfirmed");
-              return;
-            }
-            // The per-bot Stop's own close-confirmed path: an unconfirmed stop
-            // keeps the turn and its leases, tells the thread, and throws —
-            // which lands this bot in `failed` rather than `stopped`.
-            await interruptDirectThread(bot.id, bot.threadId);
-          }),
-      );
-      // Say what was actually covered. The old answer was a bare `{ ok: true }`
-      // whatever happened, which is how a sweep that skipped every Auto bot
-      // could report success for a year; and `Promise.allSettled` drops the
-      // reason a particular bot's stop threw. `stopped` is the set this call
-      // took responsibility for and `failed` the ones it could not finish, so
-      // a caller can tell "nothing was running" from "something is still on
+      // Every THREAD, not every bot's primary one: a bot runs up to three
+      // threads at once (chats and routines), and any of them can be the one
+      // on this screen. `hostComputerThreads` is what the host RPC authorizes
+      // against, so every thread holding a grant is a target whatever its
+      // bot's setting says now; so is every busy thread of a bot on this
+      // computer, since those are queued for the same screen.
+      const targets = new Map<string, string>();
+      const target = (threadId: string, botId: string) => { if (!targets.has(threadId)) targets.set(threadId, botId); };
+      for (const [threadId, entry] of hostComputerThreads) target(threadId, entry.botId);
+      const queuedRoutines: RoutineRun[] = [];
+      for (const bot of onHostComputer) {
+        for (const run of routines!.activeBotRunsForBot(bot.id)) {
+          if (run.threadId) target(run.threadId, bot.id); else queuedRoutines.push(run);
+        }
+        const groupTurn = activeGroupTurnForBot(bot.id);
+        if (groupTurn) target(groupTurn.threadId, bot.id);
+        for (const { threadId } of store.tasks(bot.id)) {
+          if (directThreadBusy(bot.id, threadId) || directTurnDispatchClaims.get(threadId)?.botId === bot.id) target(threadId, bot.id);
+        }
+      }
+      // Each branch cancels its dispatch before its first await, so every
+      // thread is cancelled before any of them releases the screen to a
+      // thread still queued for it.
+      const stopThread = async (threadId: string, botId: string) => {
+        const held = hostComputerThreads.get(threadId);
+        try {
+          const routineRun = routines!.activeBotRunForThread(botId, threadId);
+          if (routineRun) {
+            cancelDirectTurnDispatch(botId, threadId);
+            await releaseBrowserCapabilityForThread(threadId);
+            await routines!.cancelRun(routineRun.id);
+            // cancelRun's own interrupt swallows an unconfirmed stop; the
+            // close-confirmed path answers for it, and is a no-op once stopped.
+            await interruptDirectThread(botId, threadId);
+            return;
+          }
+          const groupTurn = activeGroupTurnForBot(botId);
+          if (groupTurn?.threadId === threadId) {
+            cancelGroupTurnOperations(groupTurn.group.id, threadId);
+            await releaseBrowserCapabilityForThread(threadId);
+            // Confirmed like a direct stop: an engine that refuses, or answers
+            // that its child has not closed, is not "stopped".
+            const instance = registry.get(store.bot(botId)?.modelSelection.instanceId ?? "");
+            const confirmed = await Promise.resolve(instance?.adapter.interruptTurn(threadId))
+              .then(stopCloseConfirmed, () => false);
+            closeOpenApprovals(threadId);
+            if (confirmed === false) throw new Error("provider stop is unconfirmed");
+            return;
+          }
+          // The per-bot Stop's own close-confirmed path: an unconfirmed stop
+          // keeps the turn and its leases, tells the thread, and throws.
+          await interruptDirectThread(botId, threadId);
+        } finally {
+          // Whatever path ran, the grant this sweep found is dead.
+          if (held && hostComputerThreads.get(threadId) === held) hostComputerThreads.delete(threadId);
+        }
+      };
+      const threads = [...targets];
+      const swept = await Promise.allSettled([
+        ...threads.map(([threadId, botId]) => stopThread(threadId, botId)),
+        ...queuedRoutines.map((run) => routines!.cancelRun(run.id)),
+      ]);
+      // Say what was actually covered, per thread. `stopped` is every thread
+      // this call stopped and `failed` every one it could not confirm, so a
+      // caller can tell "nothing was running" from "something is still on
       // your screen". Still 200: the Linux panel disables the driver itself
-      // straight after this call (src/components/LinuxLocalControl.tsx:38),
-      // and a throw there would abandon that far more important step.
-      const failed = onHostComputer.filter((_, index) => swept[index].status === "rejected").map((bot) => bot.id);
-      const stopped = onHostComputer.filter((bot) => !failed.includes(bot.id)).map((bot) => bot.id);
+      // straight after this call (src/components/LinuxLocalControl.tsx), and a
+      // throw there would abandon that far more important step.
+      const stopped: Array<{ botId: string; threadId: string }> = [];
+      const failed: Array<{ botId: string; threadId?: string; runId?: string }> = [];
+      threads.forEach(([threadId, botId], index) => (swept[index].status === "rejected" ? failed : stopped).push({ botId, threadId }));
+      queuedRoutines.forEach((run, index) => { if (swept[threads.length + index].status === "rejected") failed.push({ botId: run.botId, runId: run.id }); });
       return json(res, 200, failed.length === 0 ? { ok: true, stopped } : { ok: false, stopped, failed });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);

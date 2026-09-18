@@ -4959,7 +4959,7 @@ describe("harness HTTP API", () => {
       body: { error: "content-type must be application/json" },
     });
     const stopped = await desktopApi("POST", "/api/local-computer/interrupt", {});
-    // `stopped` names every bot this machine's screen was exposed to, which
+    // `stopped` names every thread this call stopped on this machine's screen, which
     // on macOS includes every bot that never chose a computer — the sweep and
     // the host RPC gate now ask one predicate (botUsesHostComputer), so the
     // panic control can no longer skip the default bot and still say ok.

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { emergencyStopWarning } from "@/lib/emergency-stop";
 import { api } from "@/state/store";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
@@ -33,13 +34,18 @@ export function LinuxLocalControl() {
     if (!window.muragebox?.localControl) return;
     setPending(action);
     setError(null);
+    // The stop answers 200 even when a task did not confirm it stopped, so
+    // the driver is still disabled; the person is told in one line.
+    let stopWarning: string | null = null;
     try {
       if (action === "disable" || action === "retry") {
-        await api("/api/local-computer/interrupt", { method: "POST" });
+        stopWarning = emergencyStopWarning(await api("/api/local-computer/interrupt", { method: "POST" }));
+        if (stopWarning) setError(stopWarning);
       }
       await window.muragebox.localControl[action]();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(stopWarning ? `${stopWarning} ${message}` : message);
     } finally {
       setPending(null);
     }
