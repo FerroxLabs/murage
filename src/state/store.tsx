@@ -255,6 +255,8 @@ export interface Task {
   createdAt: number;
   modelSelection?: ModelSelection;
   autoApprove?: boolean;
+  /** Full access for this task (only while autoApprove is on) */
+  fullAccess?: boolean;
   alwaysAllow?: string[];
   unread?: boolean;
   busy?: boolean;
@@ -318,6 +320,10 @@ export interface Bot {
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
   autoApprove?: boolean;
+  /** Full access, above Auto: no approval cards for turns the owner starts */
+  fullAccess?: boolean;
+  /** set by the server once the owner confirmed the one-time Full access warning */
+  fullAccessAcknowledgedAt?: number;
   /** optional model review for otherwise undecided, attended approvals */
   autoReview?: "off" | "shadow" | "enforce";
   /** tools this bot may always use without asking */
@@ -788,7 +794,7 @@ export type Action =
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "setModel"; botId: string; threadId?: string; selection: ModelSelection }
-  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean} }
+  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean} }
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
@@ -810,7 +816,7 @@ export type Action =
 export function viewedTaskBot(bot: Bot): Bot {
   const task=bot.tasks?.find(task=>task.threadId===bot.threadId);
   if(!task)return bot;
-  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId};
+  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId};
 }
 export function withThreadUnread(bot:Bot,threadId:string,unread:boolean):Bot {
   if(!bot.tasks?.length)return {...bot,unread};

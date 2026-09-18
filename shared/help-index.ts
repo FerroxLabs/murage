@@ -319,6 +319,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "When an engine supports approvals, Murage surfaces the request instead of hiding it in terminal output. Read the requested action and scope before approving it. Denying an action sends control back to the agent so it can choose a safer path."
   },
   {
+    "id": "features/approvals-and-inspector#ask-auto-and-full-access",
+    "title": "Approvals and inspector",
+    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
+    "heading": "Ask, Auto and Full access",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#ask-auto-and-full-access",
+    "text": "Choose how a conversation is approved from the chip beside the composer:\n- Ask shows a card for each action that needs your permission.\n- Auto keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.\n- Full access does not ask before running commands, reading credentials or personal files, or contacting other bots. It can be switched on only in the desktop app, and the first time for each bot you confirm a warning.\n\nSome things still ask under Full access. A turn started by a webhook or a routine asks as it would under Auto, because someone other than you wrote that input or nobody is watching it.…"
+  },
+  {
     "id": "features/approvals-and-inspector#inspector",
     "title": "Approvals and inspector",
     "description": "Stay in control when agents ask questions, request access, or perform risky work.",

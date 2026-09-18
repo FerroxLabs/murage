@@ -203,7 +203,15 @@ export function approvalKey(tool: string, summary: string, scope?: "local-comput
 
 export interface AutoApprover {
   autoApprove?: boolean;
+  /** Full access, the level above Auto. It counts only while `autoApprove`
+   * is on too, so every path that switches Auto off ends it as well. */
+  fullAccess?: boolean;
   alwaysAllow?: string[];
+}
+
+/** Is this bot (or task) on Full access? */
+export function hasFullAccess(bot: AutoApprover | null | undefined): boolean {
+  return bot?.autoApprove === true && bot.fullAccess === true;
 }
 
 /** Why a verdict landed the way it did. `unattended-block` exists only in
@@ -212,6 +220,7 @@ export interface AutoApprover {
 export type AutoVerdictSource =
   | "always-allow"
   | "auto-mode"
+  | "full-access"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
@@ -261,12 +270,23 @@ export function autoVerdict(
      * even though it is filed as a permission (Pi `select`, whose title is
      * extension-composed text and so cannot be matched by name) */
     question?: boolean;
+    /** the turn belongs to a routine run (scheduled, manual, webhook or
+     * channel trigger) rather than to someone typing to the bot */
+    automated?: boolean;
   },
 ): AutoVerdict {
   // A question outranks everything, including the unattended and host
   // blocks: no mode, grant or turn origin lets the machine answer it. It
   // names no rule — no grant was consulted, and none could apply.
   if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
+  // Full access raises no card at all — not the destructive or sensitive
+  // guards, not the host-control guard — for a turn the owner started. A turn
+  // started by a webhook, a channel event or a routine carries input someone
+  // else wrote (or nobody is watching it), so it is judged exactly as Auto
+  // would judge it, below.
+  if (hasFullAccess(bot) && !context?.unattended && !context?.automated) {
+    return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
+  }
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
@@ -324,6 +344,8 @@ export function autoDecision(
     scope?: "local-computer";
     /** the driver's trusted signal that this ask is a question */
     question?: boolean;
+    /** the turn belongs to a routine run */
+    automated?: boolean;
   },
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
