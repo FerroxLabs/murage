@@ -40,6 +40,20 @@ fs.writeFileSync(binary, [
   '',
 ].join('\\n'), { mode: 0o755 });
 process.env.MURAGE_AGENT_BROWSER_PATH = binary;
+// Windows cannot execute a script as a program, and the real engine there is
+// a native .exe. The same fake engine, written for node, stands in for it:
+// only the spawn of this one fake path is routed through node below, and the
+// binary file above is still what the server resolves, stamps and re-checks.
+const windows = process.platform === 'win32';
+const engineScript = path.join(dataDir, 'fake-agent-browser.mjs');
+if (windows) fs.writeFileSync(engineScript, [
+  "import { appendFileSync, readFileSync } from 'node:fs';",
+  "if (process.argv[2] !== '--version') process.exit(1);",
+  'appendFileSync(' + JSON.stringify(spawns) + ", 'spawn' + String.fromCharCode(10));",
+  'if (readFileSync(' + JSON.stringify(mode) + ", 'utf8').trim() === 'hang') setTimeout(() => {}, 30_000);",
+  "else console.log('agent-browser ${AGENT_BROWSER_VERSION}');",
+  '',
+].join(String.fromCharCode(10)));
 const file = path.join(dataDir, 'config.json');
 const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
 cfg.features = { browser: true };
@@ -55,9 +69,18 @@ registerHooks({ load(url, context, nextLoad) {
   \` };
   if (url.endsWith('/browser-engine.ts')) {
     const source = fs.readFileSync(new URL(url), 'utf8');
-    return { format: 'module-typescript', shortCircuit: true,
-      source: source.replace(/AGENT_BROWSER_VERIFY_TIMEOUT_MS = [0-9_]+/, 'AGENT_BROWSER_VERIFY_TIMEOUT_MS = 750')
-        .replace(/runEngine\\(binary, \\["--version"\\], env, 5000\\)/, 'runEngine(binary, ["--version"], env, 750)') };
+    // A node start on a loaded Windows runner can take most of a 750 ms
+    // budget; the hanging engine still sleeps far past either budget.
+    const budget = windows ? '5000' : '750';
+    let patched = source.replace(/AGENT_BROWSER_VERIFY_TIMEOUT_MS = [0-9_]+/, 'AGENT_BROWSER_VERIFY_TIMEOUT_MS = ' + budget)
+      .replace(/runEngine\\(binary, \\["--version"\\], env, 5000\\)/, 'runEngine(binary, ["--version"], env, ' + budget + ')');
+    if (windows) {
+      const anchor = 'const child = spawn(binary, args, {';
+      if (!patched.includes(anchor)) throw new Error('Browser engine spawn fixture anchor changed');
+      const fake = 'resolve(binary) === resolve(' + JSON.stringify(binary) + ')';
+      patched = patched.replace(anchor, 'const child = spawn(' + fake + ' ? process.execPath : binary, ' + fake + ' ? [' + JSON.stringify(engineScript) + ', ...args] : args, {');
+    }
+    return { format: 'module-typescript', shortCircuit: true, source: patched };
   }
   return nextLoad(url, context);
 } });
