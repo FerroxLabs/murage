@@ -729,11 +729,15 @@ export function stripRoutingEnv(env: Record<string, string | undefined>): void {
 export function saveConfig(patch: ConfigWritePatch): void {
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
-  try {
-    const parsed = jsonObjectSchema.safeParse(parseJson(readFileSync(p, "utf8")));
-    if (parsed.success) disk = parsed.data;
-  } catch {
-    /* first write */
+  // Only a genuinely missing file is a first write. A file that exists but
+  // cannot be read, or is not a JSON object, holds settings we cannot see;
+  // writing a fresh file over it would silently drop them. Refuse the save
+  // and leave the bytes exactly as they are, the same way loadConfig does.
+  const saved = readPersistedJson(p, path => readFileSync(path, "utf8"));
+  if (saved !== undefined) {
+    const parsed = jsonObjectSchema.safeParse(saved);
+    if (!parsed.success) throw new PersistedStateRecoveryError(p, "invalid-shape");
+    disk = parsed.data;
   }
   const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional() }).parse(patch);
   // A write is the durable migration point. Preserve every other raw key in
