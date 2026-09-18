@@ -16,6 +16,7 @@ import {
   localEnginesFor,
   localServerDisplayLabel,
   normalizeLocalServerAddress,
+  plainHttpCandidate,
   type LocalToolTestResult,
 } from "./local-models.ts";
 import { engineToolSupport } from "./provider-engine.ts";
@@ -86,20 +87,86 @@ describe("local server address rule (spec A1)", () => {
   });
 
   it("classifies resolved IP addresses, v4 and v6", () => {
-    expect(classifyIpAddress("169.254.10.1")).toBe("private");
-    // The cloud metadata address hands out credentials to anything that asks,
-    // so it never counts as somebody's own machine.
-    expect(classifyIpAddress("169.254.169.254")).toBe("public");
+    // Link-local is autoconfiguration space, not somebody's network.
+    expect(classifyIpAddress("169.254.10.1")).toBe("public");
     expect(classifyIpAddress("100.100.100.100")).toBe("tailnet");
     expect(classifyIpAddress("::1")).toBe("loopback");
     expect(classifyIpAddress("::ffff:192.168.1.2")).toBe("private");
     expect(classifyIpAddress("::ffff:8.8.8.8")).toBe("public");
     expect(classifyIpAddress("fd7a:115c:a1e0:ab12::1")).toBe("tailnet");
     expect(classifyIpAddress("fc00::1")).toBe("private");
-    expect(classifyIpAddress("fe80::1")).toBe("private");
+    expect(classifyIpAddress("fe80::1")).toBe("public");
     expect(classifyIpAddress("2606:4700::1111")).toBe("public");
     expect(classifyIpAddress("1::2::3")).toBe("public");
     expect(classifyIpAddress("gpubox")).toBe("public");
+  });
+
+  // A cloud instance-metadata / credential endpoint answers plain http to
+  // whatever asks and hands back the instance's cloud credentials. None of
+  // them is ever a user's model server, so none of them may be classified
+  // local — at 0.1.54 they were all `public`, and 0.1.55 widened link-local,
+  // ULA and CGNAT until eight of them became plain-http candidates again.
+  const METADATA_ENDPOINTS = [
+    ["169.254.169.254", "AWS/GCP/Azure/Oracle/DigitalOcean/Hetzner/IBM/OpenStack IMDS"],
+    ["169.254.170.2", "AWS ECS task-role credentials"],
+    ["169.254.170.23", "AWS ECS/EKS task metadata v4"],
+    ["169.254.169.253", "AWS VPC DNS"],
+    ["169.254.169.123", "AWS Time Sync"],
+    ["169.254.0.23", "Tencent Cloud metadata"],
+    ["169.254.255.254", "legacy/Oracle metadata"],
+    ["169.254.0.1", "link-local, nothing but autoconfiguration lives here"],
+    ["169.254.1.1", "link-local"],
+    ["169.254.255.255", "link-local"],
+    ["100.100.100.200", "Alibaba Cloud ECS metadata (inside the CGNAT range)"],
+    ["fd00:ec2::254", "AWS IMDS over IPv6 (inside the ULA range)"],
+    ["fd00:ec2::23", "AWS ECS task metadata over IPv6"],
+    ["[fd00:ec2::254]", "AWS IMDS over IPv6, bracketed"],
+    ["fe80::a9fe:a9fe", "IPv6 link-local"],
+    ["fe80::1", "IPv6 link-local"],
+    ["::ffff:169.254.169.254", "IMDS smuggled through an IPv4-mapped v6 literal"],
+    ["::ffff:169.254.170.2", "ECS credentials through an IPv4-mapped v6 literal"],
+    ["::ffff:100.100.100.200", "Alibaba metadata through an IPv4-mapped v6 literal"],
+  ] as const;
+
+  it.each(METADATA_ENDPOINTS)("never classifies %s as local (%s)", (address) => {
+    expect(classifyIpAddress(address), address).toBe("public");
+    expect(classifyLocalHostname(address), address).toBe("public");
+    expect(plainHttpCandidate(classifyIpAddress(address)), address).toBe(false);
+  });
+
+  it.each(METADATA_ENDPOINTS)("refuses plain http to %s (%s)", (address) => {
+    const host = address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
+    expect(normalizeLocalServerAddress(`http://${host}:11434`), address).toEqual({ ok: false, code: "https-required" });
+    expect(normalizeLocalServerAddress(`${host}:11434`), address).toEqual({ ok: false, code: "https-required" });
+  });
+
+  it("refuses the names a cloud gives its own metadata service", () => {
+    for (const name of ["metadata.google.internal", "METADATA.GOOGLE.INTERNAL", "metadata.google.internal.", "metadata"]) {
+      expect(classifyLocalHostname(name), name).toBe("public");
+      expect(normalizeLocalServerAddress(`http://${name}:80`), name).toEqual({ ok: false, code: "https-required" });
+    }
+  });
+
+  // The ranges that DO hold real machines keep plain http: closing them would
+  // break the Tailscale and ULA setups lane W/X shipped for.
+  it("keeps the ranges a real model server plausibly lives on", () => {
+    expect(classifyIpAddress("100.64.0.1")).toBe("tailnet");
+    expect(classifyIpAddress("100.100.100.199")).toBe("tailnet");
+    expect(classifyIpAddress("100.100.100.201")).toBe("tailnet");
+    expect(classifyIpAddress("100.100.99.200")).toBe("tailnet");
+    expect(classifyIpAddress("100.127.255.254")).toBe("tailnet");
+    expect(classifyIpAddress("fd12:3456::1")).toBe("private");
+    expect(classifyIpAddress("fd00:ec3::254")).toBe("private");
+    expect(classifyIpAddress("fd01:ec2::254")).toBe("private");
+    expect(classifyIpAddress("fd7a:115c:a1e0::5")).toBe("tailnet");
+    expect(classifyIpAddress("192.168.1.20")).toBe("private");
+    expect(classifyIpAddress("10.0.0.5")).toBe("private");
+    expect(classifyIpAddress("172.16.4.2")).toBe("private");
+    expect(classifyIpAddress("127.0.0.1")).toBe("loopback");
+    expect(classifyLocalHostname("gpubox")).toBe("local-name");
+    expect(classifyLocalHostname("nas.local")).toBe("local-name");
+    expect(classifyLocalHostname("db.internal")).toBe("local-name");
+    expect(classifyLocalHostname("gpubox.tail0000.ts.net")).toBe("local-name");
   });
 
   it("validates names and keys before they reach any engine config", () => {

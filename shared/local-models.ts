@@ -76,8 +76,14 @@ export const LOCAL_DETECTION_TARGETS: readonly LocalDetectionTarget[] = [
 
 // ── address validation (spec A1) ──────────────────────────────────────────
 
-/** loopback / RFC1918 / link-local / tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48)
+/** loopback / RFC1918 / IPv6 ULA / tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48)
  *  may use plain http; every other address must be https.
+ *
+ *  Link-local (169.254.0.0/16, fe80::/10) is deliberately NOT local here: it is
+ *  autoconfiguration space, and what answers there on a cloud instance is the
+ *  metadata / credential service. The same goes for the metadata addresses that
+ *  sit inside otherwise-legitimate ranges (100.100.100.200, fd00:ec2::/32) —
+ *  see `classifyIpv4` / `classifyIpAddress`.
  *
  *  `local-name` is a hostname that looks like it belongs to this network — a
  *  single label (`gpubox`, a Tailscale MagicDNS short name), `*.ts.net`,
@@ -98,14 +104,24 @@ function ipv4Octets(hostname: string): [number, number, number, number] | null {
 function classifyIpv4(octets: readonly [number, number, number, number]): LocalAddressClass {
   const [a, b, c, d] = octets;
   if (a === 127) return "loopback";
-  // The cloud instance-metadata address answers on every major provider and
-  // hands out credentials to whatever asks. It is link-local, but it is never
-  // somebody's model server, so it never earns plain http.
-  if (a === 169 && b === 254 && c === 169 && d === 254) return "public";
+  // 169.254.0.0/16 is IPv4 autoconfiguration space, and what actually answers
+  // there on a cloud instance is the metadata / credential service, which
+  // hands out cloud credentials to whatever asks: AWS IMDS (169.254.169.254),
+  // the ECS/EKS task-role credential endpoints (169.254.170.2, 169.254.170.23),
+  // AWS VPC DNS (.169.253) and time (.169.123), Tencent (169.254.0.23), and
+  // the same .169.254 address on GCP, Azure, Oracle, DigitalOcean, Hetzner,
+  // IBM and OpenStack. Nobody runs a model server on an autoconfiguration
+  // address, so the whole range is `public` and plain http is refused — the
+  // classification 0.1.54 gave it. Narrowing this to single addresses is what
+  // let the credential endpoints through in 0.1.55.
+  if (a === 169 && b === 254) return "public";
   if (a === 10) return "private";
   if (a === 172 && b >= 16 && b <= 31) return "private";
   if (a === 192 && b === 168) return "private";
-  if (a === 169 && b === 254) return "private";
+  // Alibaba Cloud's metadata service sits inside the CGNAT range Tailscale
+  // hands out from, so the range keeps its plain http and this one documented
+  // address is carved out of it.
+  if (a === 100 && b === 100 && c === 100 && d === 200) return "public";
   if (a === 100 && b >= 64 && b <= 127) return "tailnet";
   return "public";
 }
@@ -154,17 +170,45 @@ export function classifyIpAddress(address: string): LocalAddressClass {
     return classifyIpv4([g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff]);
   }
   if (g0 === 0xfd7a && g1 === 0x115c && g2 === 0xa1e0) return "tailnet";
+  // AWS reserves fd00:ec2::/32 inside the ULA range for its metadata services:
+  // IMDS over IPv6 answers at fd00:ec2::254 and the ECS task metadata/credential
+  // endpoint at fd00:ec2::23. Carved out; the rest of fc00::/7 keeps plain http
+  // because real machines do live on a ULA prefix.
+  if (g0 === 0xfd00 && g1 === 0x0ec2) return "public";
   if ((g0 & 0xfe00) === 0xfc00) return "private"; // ULA fc00::/7
-  if ((g0 & 0xffc0) === 0xfe80) return "private"; // link-local fe80::/10
+  // fe80::/10 is left `public`, as at 0.1.54. It is autoconfiguration space:
+  // the IPv6 faces of the metadata services live there, and a link-local
+  // address is not even reachable without a zone index (`%en0`), which
+  // `ipv6Groups` refuses — so no reachable model server is lost by refusing it.
   return "public";
+}
+
+/** An IPv6 link-local literal (fe80::/10). Nothing can be sent to one without
+ *  a zone index (`%en0`), which this module's parser refuses, so it is never a
+ *  usable address — but getaddrinfo returns them freely for `.local` mDNS
+ *  names alongside the LAN address that does work. The resolution check drops
+ *  them rather than reading them as evidence either way
+ *  (server/local-address-guard.ts). */
+export function isIpv6LinkLocal(address: string): boolean {
+  const text = address.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1").split("%")[0] ?? "";
+  if (!text.includes(":")) return false;
+  const groups = ipv6Groups(text);
+  return !!groups && (groups[0]! & 0xffc0) === 0xfe80;
 }
 
 const LOCAL_NAME_SUFFIXES = [".ts.net", ".local", ".lan", ".internal", ".home.arpa"] as const;
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
+/** Names a cloud hands its own metadata service. They end in `.internal`, so
+ *  the suffix rule would otherwise call them local and the resolution check
+ *  would be the only thing standing between an API key and GCP's credential
+ *  endpoint. They are never a model server, so they are refused by name too. */
+const METADATA_HOSTNAMES: readonly string[] = ["metadata.google.internal", "metadata"];
+
 export function classifyLocalHostname(hostname: string): LocalAddressClass {
   const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host === "localhost") return "loopback";
+  if (METADATA_HOSTNAMES.includes(host)) return "public";
   if (host.includes(":") || ipv4Octets(host)) return classifyIpAddress(host);
   if (!host || host.length > 253) return "public";
   const labels = host.split(".");

@@ -28,6 +28,8 @@ import {
   resolveInjectId,
 } from "./local-inject.ts";
 import { BUILT_IN_LOCAL_HOST_IDS, localPickerModel } from "../../shared/local-models.ts";
+import { setLocalNameLookupForTests } from "../local-address-guard.ts";
+import { configureLocalServerStore } from "../local-servers.ts";
 
 const scratchDirs: string[] = [];
 
@@ -296,9 +298,9 @@ describe("applyClaudeInject", () => {
 });
 
 describe("codexLocalProviderArgs", () => {
-  it("configures custom providers through env keys without putting credentials on argv", () => {
+  it("configures custom providers through env keys without putting credentials on argv", async () => {
     const env: Record<string, string | undefined> = { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" };
-    const args = codexLocalProviderArgs(env, "unsloth::local-model");
+    const args = await codexLocalProviderArgs(env, "unsloth::local-model");
     const rendered = JSON.stringify(args);
     expect(rendered).toContain("model_providers.unsloth.base_url");
     expect(rendered).toContain("MURAGE_LOCAL_UNSLOTH_API_KEY");
@@ -1177,5 +1179,68 @@ describe("live Custom lists on every local CLI harness", () => {
       globalThis.fetch = previous;
       for (const instance of instances) await instance.dispose();
     }
+  });
+});
+
+// codexLocalProviderArgs hands the Codex child a base_url and the key that
+// goes with it, and Codex — not Murage — makes the request. So this is the
+// last place the address can be checked, and a `local-name` that has started
+// resolving to a cloud metadata endpoint has to lose its provider table here.
+describe("codexLocalProviderArgs address guard", () => {
+  const withStore = async (resolvesTo: string, run: (hostId: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-codex-guard-"));
+    scratchDirs.push(dir);
+    const hostId = "srv_guardcase01";
+    mkdirSync(join(dir, "local-models"), { recursive: true });
+    writeFileSync(
+      join(dir, "local-models", "local-servers.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: hostId,
+            name: "gpubox",
+            kind: "llamacpp",
+            apiBase: "http://gpubox:8080/v1",
+            apiKey: "sk-guard-secret",
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+    );
+    configureLocalServerStore(dir);
+    setLocalNameLookupForTests(async () => [{ address: resolvesTo, family: resolvesTo.includes(":") ? 6 : 4 }]);
+    try {
+      await run(hostId);
+    } finally {
+      setLocalNameLookupForTests(null);
+      configureLocalServerStore(null);
+    }
+  };
+
+  it.each([
+    ["169.254.169.254", "IMDS"],
+    ["169.254.170.2", "ECS task-role credentials"],
+    ["100.100.100.200", "Alibaba Cloud metadata"],
+    ["fd00:ec2::254", "AWS IMDS over IPv6"],
+    ["93.184.216.34", "any public address"],
+  ])("emits no provider table when the name resolves to %s (%s)", async (address) => {
+    await withStore(address, async (hostId) => {
+      const env: Record<string, string | undefined> = {};
+      const args = await codexLocalProviderArgs(env, `${hostId}::qwen3`);
+      expect(args).toEqual([]);
+      expect(JSON.stringify(env)).not.toContain("sk-guard-secret");
+      expect(Object.keys(env)).toEqual([]);
+    });
+  });
+
+  it("emits the provider table when the name resolves to this network", async () => {
+    await withStore("192.168.1.20", async (hostId) => {
+      const env: Record<string, string | undefined> = {};
+      const args = await codexLocalProviderArgs(env, `${hostId}::qwen3`);
+      expect(JSON.stringify(args)).toContain(`model_providers.${hostId}.base_url`);
+      expect(JSON.stringify(args)).not.toContain("sk-guard-secret");
+      expect(env[`MURAGE_LOCAL_${hostId.toUpperCase()}_API_KEY`]).toBe("sk-guard-secret");
+    });
   });
 });

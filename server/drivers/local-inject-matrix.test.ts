@@ -186,14 +186,14 @@ describe("OpenAI / Anthropic env dialects", () => {
 });
 
 describe("Codex provider dialect", () => {
-  it("does not emit argv for reserved ollama / lmstudio providers", () => {
-    expect(codexLocalProviderArgs({}, "ollama::llama3.1:70b")).toEqual([]);
-    expect(codexLocalProviderArgs({}, "lmstudio::qwen2.5-coder:32b")).toEqual([]);
+  it("does not emit argv for reserved ollama / lmstudio providers", async () => {
+    expect(await codexLocalProviderArgs({}, "ollama::llama3.1:70b")).toEqual([]);
+    expect(await codexLocalProviderArgs({}, "lmstudio::qwen2.5-coder:32b")).toEqual([]);
   });
 
-  it.each(["omlx", "exo", "unsloth"] as const)("emits a -c provider for %s without putting the secret on argv", (hostId) => {
+  it.each(["omlx", "exo", "unsloth"] as const)("emits a -c provider for %s without putting the secret on argv", async (hostId) => {
     const env: Record<string, string | undefined> = { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" };
-    const args = codexLocalProviderArgs(env, encodeInjectId(hostId, "gemma-4-31b-it-bf16"));
+    const args = await codexLocalProviderArgs(env, encodeInjectId(hostId, "gemma-4-31b-it-bf16"));
     const rendered = JSON.stringify(args);
     expect(rendered).toContain(`model_providers.${hostId}.base_url`);
     expect(rendered).not.toContain("unsloth-secret");

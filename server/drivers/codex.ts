@@ -214,7 +214,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
         const appServerArgs = [
           "app-server",
-          ...(providerBinding ? [] : codexLocalProviderArgs(env, turn.model)),
+          ...(providerBinding ? [] : await codexLocalProviderArgs(env, turn.model)),
           ...(flux?.args ?? []),
           ...(providerBinding?.args ?? []),
           // Codex has no metadata for a `flux-*` id and falls back to a

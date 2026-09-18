@@ -11,6 +11,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
+import { checkLocalServerUrl } from "../local-address-guard.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
@@ -84,6 +85,21 @@ export interface LocalChatEndpoint {
 
 /** Where one request goes: a provider connection route or a local server. */
 type ChatEndpoint = Pick<ProviderTurnRoute, "baseUrl" | "apiKey"> & { preset: string };
+
+/** Why a request was never sent. Names the host so the user can fix it, and
+ *  nothing else: the URL's own text never reaches the message, so a key that
+ *  somehow rode in the path cannot leak through the refusal. */
+function addressRefusal(label: string, endpoint: string, code: "https-required" | "unresolved-address"): string {
+  let host = "that address";
+  try {
+    host = new URL(endpoint).host;
+  } catch {
+    // keep the placeholder
+  }
+  return code === "https-required"
+    ? `${label}: refusing to send the API key to ${host} over plain http. Use https, or an address on this machine or your own network — a cloud metadata address is never a model server.`
+    : `${label}: ${host} no longer resolves to an address on this network, so the request was not sent.`;
+}
 
 /** Why a streamed reply is not a successful completion. `invalid_body`
  * separates "the address answered with something that is not a completion"
@@ -353,7 +369,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
     const redact = (value: string) => (secret ? value.replaceAll(secret, "[redacted]") : value);
-    const response = await fetch(`${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`, {
+    // This request carries the API key in an Authorization header, so it is
+    // held to the same address rule as everything else Murage sends to a local
+    // server: no plain http to a public address, and a `local-name` is resolved
+    // again right here, so a name that has started pointing at a cloud
+    // metadata endpoint (DNS rebinding, a changed record) gets no key.
+    // https URLs answer from the shared rule without any lookup, so every
+    // hosted provider route pays nothing for this.
+    const endpoint = `${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`;
+    const reach = await checkLocalServerUrl(endpoint);
+    if (!reach.ok) throw new Error(addressRefusal(label, endpoint, reach.code));
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: JSON.stringify(options.requestBody(model, messages, stream)),
