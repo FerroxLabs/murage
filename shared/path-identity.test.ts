@@ -89,6 +89,23 @@ describe("off Windows", () => {
     expect(pathOverlaps("/work", "/workshop")).toBe(false);
   });
 
+  it("answers about the platform it is told, not the one it is running on", () => {
+    // protected-folders.ts builds a Windows list on a Mac, so the rules have to
+    // be selectable. Deliberately stubbed to the WRONG platform here: if the
+    // argument were ignored these would all fall back to POSIX rules and fail.
+    asPlatform("darwin");
+    expect(samePath("C:\\Users\\Me", "c:\\users\\me", "win32")).toBe(true);
+    expect(samePath("C:/Users/Me", "C:\\Users\\Me", "win32")).toBe(true);
+    expect(oneSpelling("C:\\Users\\Me\\", "win32")).toBe("c:\\users\\me");
+    expect(pathWithin("C:\\Users\\Me", "c:\\users\\me\\Documents", "win32")).toBe(true);
+    expect(pathWithin("C:\\Users\\Me", "C:\\Users\\Meredith", "win32")).toBe(false);
+    expect(pathOverlaps("c:\\work\\repo", "C:\\Work", "win32")).toBe(true);
+    asPlatform("win32");
+    // ...and the other way: a POSIX answer on a Windows host stays case-sensitive
+    expect(samePath("/home/Me", "/home/me", "darwin")).toBe(false);
+    expect(pathWithin("/home/Me", "/home/Me/Documents", "linux")).toBe(true);
+  });
+
   it("refuses to treat an empty or relative path as containing anything", () => {
     asPlatform("linux");
     expect(pathWithin("", "/home")).toBe(false);

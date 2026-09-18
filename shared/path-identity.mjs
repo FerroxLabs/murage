@@ -17,6 +17,11 @@
 // what is left of the spelling; it never touches the filesystem, so it can say
 // nothing about links.
 //
+// Every function takes an optional `platform` (defaulting to the host's) so a
+// test can exercise Windows spellings on a Mac and a caller that already knows
+// which platform's rules apply — protected-folders.ts builds a list for a
+// stubbed platform — can say so instead of being answered about this one.
+//
 // Case is folded only on Windows. On a case-insensitive macOS volume the native
 // realpath has already returned the filesystem's own casing, so folding there
 // would only make genuinely distinct folders collide on a case-sensitive one.
@@ -28,9 +33,9 @@
 
 /** The one spelling of `path` its filesystem would recognize. Compare these,
  * never the raw strings. */
-export function oneSpelling(path) {
+export function oneSpelling(path, platform = process.platform) {
   if (typeof path !== "string" || path === "") return path;
-  const windows = process.platform === "win32";
+  const windows = platform === "win32";
   let out = path;
   if (windows) {
     // The extended-length prefixes name the same place. Strip before anything
@@ -59,19 +64,19 @@ function rootLength(path, windows, sep) {
 
 /** Whether `a` and `b` name the same path. Canonicalize both with
  * `realpathSync.native` first: this settles spelling, not links. */
-export function samePath(a, b) {
-  return oneSpelling(a) === oneSpelling(b);
+export function samePath(a, b, platform = process.platform) {
+  return oneSpelling(a, platform) === oneSpelling(b, platform);
 }
 
 /** Whether `child` IS `parent` or sits beneath it. A separator is always
  * required between the two, so a sibling whose name merely starts with the
  * parent's ("…/Documents-archive" under "…/Documents") is not contained.
  * Canonicalize both with `realpathSync.native` first. */
-export function pathWithin(parent, child) {
-  const top = oneSpelling(parent), inner = oneSpelling(child);
+export function pathWithin(parent, child, platform = process.platform) {
+  const top = oneSpelling(parent, platform), inner = oneSpelling(child, platform);
   if (!top || !inner) return false;
   if (top === inner) return true;
-  const sep = process.platform === "win32" ? "\\" : "/";
+  const sep = platform === "win32" ? "\\" : "/";
   // A root already ends in its own separator; anything else needs one added.
   return inner.startsWith(top.endsWith(sep) ? top : top + sep);
 }
@@ -79,6 +84,6 @@ export function pathWithin(parent, child) {
 /** Whether either path contains the other — the shape a guard needs when both
  * nestings are wrong, such as a backup repository and the scratch directory
  * that must not share a tree. */
-export function pathOverlaps(a, b) {
-  return pathWithin(a, b) || pathWithin(b, a);
+export function pathOverlaps(a, b, platform = process.platform) {
+  return pathWithin(a, b, platform) || pathWithin(b, a, platform);
 }
