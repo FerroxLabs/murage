@@ -7,7 +7,7 @@ import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-function harness() {
+function harness(threadBusy?: RoutineManagerOptions["threadBusy"]) {
   const dir = mkdtempSync(join(tmpdir(), "murage-telegram-thread-"));
   dirs.push(dir);
   let busy = true;
@@ -23,7 +23,7 @@ function harness() {
   const interruptTurn = vi.fn(async () => {});
   const manager = new RoutineManager({
     file: join(dir, "routines.json"), botState: () => busy ? "busy" : "ready",
-    createTask, channelThread, startTurn, interruptTurn,
+    createTask, channelThread, startTurn, interruptTurn, threadBusy,
   });
   const enqueue = (id: string, channel = true) => manager.enqueueWebhook({
     webhookId: "telegram-hook", webhookName: "Sable", botId: "sable", prompt: id,
@@ -95,6 +95,22 @@ it("fails closed when the current channel conversation is unavailable", async ()
   expect(h.manager.findWebhookDelivery("telegram-hook", "message")?.status).toBe("failed");
   expect(h.createTask).not.toHaveBeenCalled();
   expect(h.startTurn).not.toHaveBeenCalled();
+});
+
+it("keeps a channel message queued while other work holds its shared conversation", async () => {
+  // The bot itself may be ready (a free thread slot) while its channel
+  // conversation is busy with a non-routine turn; the message waits for it.
+  let conversationBusy = true;
+  const h = harness((botId, threadId) => botId === "sable" && threadId === "sable-primary" && conversationBusy);
+  h.enqueue("message");
+  h.ready();
+  await h.tick();
+  expect(h.startTurn).not.toHaveBeenCalled();
+  expect(h.manager.findWebhookDelivery("telegram-hook", "message")?.status).toBe("queued");
+  conversationBusy = false;
+  await h.tick();
+  expect(h.startTurn).toHaveBeenCalledTimes(1);
+  expect(h.manager.findWebhookDelivery("telegram-hook", "message")?.status).toBe("running");
 });
 
 it("retains ordinary webhook task creation", async () => {

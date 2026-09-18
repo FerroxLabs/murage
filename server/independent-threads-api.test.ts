@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { openSse } from "./testing/sse.ts";
 
 const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
 const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
@@ -146,6 +147,118 @@ it("a routine run that needs a busy working folder waits and then runs instead o
     expect((await messages((await routineTask()).threadId)).some(message=>message.tool?.name?.includes("Another thread is using"))).toBe(false);
   } finally { await api("DELETE",`/api/routines/${routine.id}`); }
 },30000);
+// ── routines use a free thread slot instead of waiting for an idle bot ──
+const dumped=(label:string)=>[false,true].some(second=>{try{return JSON.stringify(dump(second).prompt).includes(label);}catch{return false;}});
+const routineRun=async(runId:string)=>(await api("GET","/api/routines")).body.runs.find((run:any)=>run.id===runId);
+async function routineOn(botId:string,name:string,prompt:string){
+  const routine=(await api("POST","/api/routines",{name,prompt,botId,schedule:{type:"interval",everyMinutes:60,anchorAt:Date.now()+3_600_000},enabled:false})).body.routine;
+  expect(routine?.id).toBeTruthy();
+  const started=await api("POST",`/api/routines/${routine.id}/run`);expect(started.status).toBe(201);
+  const task=async()=>(await botState(botId)).tasks.find((item:any)=>item.title===name);
+  return {routine,runId:started.body.run.id as string,task};
+}
+it("starts a due routine in a free thread slot while another thread on its bot is working",async()=>{
+  const bot=await create();
+  await hold(bot.id,bot.first,"slot-chat-holder");
+  const {routine,runId,task}=await routineOn(bot.id,"Free slot routine","__fixture_hold_authority__ free-slot-routine");
+  try{
+    await expect.poll(()=>dumped("free-slot-routine"),{timeout:10000}).toBe(true);
+    expect((await task())).toMatchObject({busy:true});expect((await task()).waitingFor).toBeUndefined();
+    expect((await routineRun(runId)).status).toBe("running");
+    expect((await taskState(bot.id,bot.first)).busy).toBe(true);
+  }finally{
+    await api("POST",`/api/routine-runs/${runId}/cancel`);await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+    await api("DELETE",`/api/routines/${routine.id}`);
+  }
+},30000);
+it("queues a routine visibly for a free slot while three threads run, then runs it with its record and notification",async()=>{
+  const bot=await create();
+  expect((await api("PATCH",`/api/bots/${bot.id}`,{notifications:true})).status).toBe(200);
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third slot"})).body.task;
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  await hold(bot.id,bot.first,"full-first");await hold(bot.id,bot.second,"full-second",true);await hold(bot.id,third.threadId,"full-third");
+  const stream=await openSse(`${fixture.info.url}/api/events`);
+  const {routine,runId,task}=await routineOn(bot.id,"Slot waiter routine","slot-waiter-routine-prompt");
+  try{
+    await stream.until(frame=>frame.kind==="hello");
+    // Barrier: the waiting marker is published once the routine's turn is queued for a slot.
+    await expect.poll(async()=>(await task())?.waitingFor,{timeout:10000}).toEqual({resource:"thread-slot"});
+    expect(await task()).toMatchObject({busy:true,activity:"working"});
+    expect(dumped("slot-waiter-routine-prompt")).toBe(false);
+    expect((await messages((await task()).threadId)).some(message=>message.tool?.ok===false)).toBe(false);
+    // A waiting routine holds its place: a new chat cannot take the next slot ahead of it.
+    const fifth=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Fifth"})).body.task;
+    expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fifth.threadId,text:"must not jump the queue"})).status).toBe(409);
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
+    await expect.poll(async()=>(await routineRun(runId))?.status,{timeout:10000}).toBe("completed");
+    expect(dumped("slot-waiter-routine-prompt")).toBe(true);
+    const run=await routineRun(runId);
+    expect(run).toMatchObject({threadId:(await task()).threadId});expect(run.finishedAt).toBeGreaterThanOrEqual(run.startedAt);expect(run.error).toBeUndefined();
+    expect((await task()).waitingFor).toBeUndefined();
+    const done=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.botId===bot.id&&frame.notification.kind==="done",10000);
+    expect(done.notification.threadId).toBe((await task()).threadId);
+    expect(stream.frames.some(frame=>frame.kind==="notify"&&frame.notification?.kind==="routine-failed"&&frame.notification.botId===bot.id)).toBe(false);
+  }finally{
+    stream.close();
+    for(const threadId of [bot.first,bot.second,third.threadId])await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId});
+    await api("DELETE",`/api/routines/${routine.id}`);
+  }
+},40000);
+it("delivers the approval card of a routine that waited for a slot to its own thread and the owner",async()=>{
+  const bot=await create();
+  expect((await api("PATCH",`/api/bots/${bot.id}`,{notifications:true})).status).toBe(200);
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third approval slot"})).body.task;
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  await hold(bot.id,bot.first,"approval-slot-first");await hold(bot.id,bot.second,"approval-slot-second",true);await hold(bot.id,third.threadId,"approval-slot-third");
+  const stream=await openSse(`${fixture.info.url}/api/events`);
+  const {routine,runId,task}=await routineOn(bot.id,"Approval slot routine","__fixture_hold_authority__ approval-slot-routine");
+  try{
+    await stream.until(frame=>frame.kind==="hello");
+    await expect.poll(async()=>(await task())?.waitingFor?.resource,{timeout:10000}).toBe("thread-slot");
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:third.threadId})).status).toBe(200);
+    await expect.poll(()=>dumped("approval-slot-routine"),{timeout:10000}).toBe(true);
+    const routineDump=[dump(),dump(true)].find(item=>JSON.stringify(item.prompt).includes("approval-slot-routine"));
+    const socket=connect(routineDump.mcpConfig.mcpServers.muragebox.args.at(-1));sockets.push(socket);await once(socket,"connect");
+    socket.write(JSON.stringify({t:"ask",id:"routine-ask",tool:"Bash",input:{command:"rm ./NEVER_EXECUTED_ROUTINE_FIXTURE"}})+"\n");
+    const routineThread=(await task()).threadId;
+    const frame=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.kind==="approval"&&frame.notification.botId===bot.id,10000);
+    expect(frame.notification.threadId).toBe(routineThread);
+    const card=(await messages(routineThread)).find(message=>message.card?.requestId&&!message.card.answered);
+    expect(card?.card.requestId).toBe(frame.notification.requestId);
+    await expect.poll(async()=>(await routineRun(runId))?.status,{timeout:5000}).toBe("waiting");
+    for(const threadId of [bot.first,bot.second])expect((await messages(threadId)).some(message=>message.card?.requestId===card.card.requestId)).toBe(false);
+  }finally{
+    stream.close();
+    await api("POST",`/api/routine-runs/${runId}/cancel`);
+    for(const threadId of [bot.first,bot.second])await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId});
+    await api("DELETE",`/api/routines/${routine.id}`);
+  }
+},40000);
+it("stops only the routine turn whose thread was stopped when several routines share a bot",async()=>{
+  const bot=await create();
+  await hold(bot.id,bot.first,"stop-chat-holder");
+  const one=await routineOn(bot.id,"Stop routine one","__fixture_hold_authority__ stop-routine-one");
+  await expect.poll(()=>dumped("stop-routine-one"),{timeout:10000}).toBe(true);
+  const two=await routineOn(bot.id,"Stop routine two","__fixture_hold_authority__ stop-routine-two");
+  try{
+    await expect.poll(()=>dumped("stop-routine-two"),{timeout:10000}).toBe(true);
+    const oneThread=(await one.task()).threadId,twoThread=(await two.task()).threadId;
+    // The newer routine: an older active routine on the same bot must not capture this Stop.
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:twoThread})).status).toBe(200);
+    await expect.poll(async()=>(await routineRun(two.runId))?.status,{timeout:10000}).toBe("cancelled");
+    await expect.poll(async()=>(await taskState(bot.id,twoThread)).busy,{timeout:10000}).toBe(false);
+    expect((await routineRun(one.runId)).status).toBe("running");
+    expect((await taskState(bot.id,oneThread)).busy).toBe(true);
+    expect((await taskState(bot.id,bot.first)).busy).toBe(true);
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:oneThread})).status).toBe(200);
+    await expect.poll(async()=>(await routineRun(one.runId))?.status,{timeout:10000}).toBe("cancelled");
+    expect((await taskState(bot.id,bot.first)).busy).toBe(true);
+  }finally{
+    for(const run of [one,two])await api("POST",`/api/routine-runs/${run.runId}/cancel`);
+    await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+    for(const run of [one,two])await api("DELETE",`/api/routines/${run.routine.id}`);
+  }
+},40000);
 it("keeps a stopped ACP thread's working folder until its engine process has closed",async()=>{
   const created=(await api("POST","/api/bots",{name:"Close-confirmed stop fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
   expect((await api("PATCH",`/api/bots/${created.id}`,{computer:"off",browser:false,composio:false})).status).toBe(200);

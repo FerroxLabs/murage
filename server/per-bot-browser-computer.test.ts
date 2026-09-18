@@ -454,6 +454,63 @@ it("makes a second bot on the SAME browser profile wait for it rather than cross
   }
 }, 90_000);
 
+const LOCAL_MOUNTS = shouldMountLocalComputer({ requested: "local", hostPlatform: process.platform, providerSupportsLocal: true });
+it.each([
+  { label: "screen", patch: { computer: "local", browser: false }, waits: "computer", runs: LOCAL_MOUNTS },
+  { label: "browser", patch: { computer: "off" }, waits: "browser", runs: true },
+])("queues a routine due while its own bot holds the $label, then runs it instead of failing", async ({ label, patch, waits, runs }) => {
+  if (!runs) return;
+  const bot = await makeBot(`Routine ${label} holder`, "verification", patch);
+  const name = `Routine ${label} waiter`;
+  const routine = (await api("POST", "/api/routines", { name, prompt: `__fixture_hold_authority__ routine-${label}-waiter`, botId: bot.id, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 }, enabled: false })).body.routine;
+  let runId = "";
+  try {
+    await startTurn(bot, `routine-${label}-holder`, false);
+    const started = await api("POST", `/api/routines/${routine.id}/run`);
+    expect(started.status).toBe(201); runId = started.body.run.id;
+    const routineTask = async () => (await state(bot.id))?.tasks?.find((item: any) => item.title === name);
+    const runRecord = async () => (await api("GET", "/api/routines")).body.runs.find((run: any) => run.id === runId);
+    // The routine takes a free thread slot and then waits, visibly, for the
+    // screen/browser its own bot's chat is holding.
+    await expect.poll(async () => (await routineTask())?.waitingFor?.resource, { timeout: 20_000 }).toBe(waits);
+    expect(JSON.stringify(dump(false)?.prompt ?? "")).not.toContain(`routine-${label}-waiter`);
+    expect((await runRecord()).status).toBe("running");
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+    await expect.poll(() => JSON.stringify(dump(false)?.prompt ?? ""), { timeout: 20_000 }).toContain(`routine-${label}-waiter`);
+    expect((await routineTask()).waitingFor).toBeUndefined();
+    expect((await runRecord())).toMatchObject({ status: "running" });
+    expect((await runRecord()).error).toBeUndefined();
+  } finally {
+    if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+    await api("DELETE", `/api/routines/${routine.id}`).catch(() => undefined);
+  }
+}, 90_000);
+
+it.runIf(LOCAL_MOUNTS)("the stop-my-computer sweep cancels every routine sharing a host-computer bot, running or queued", async () => {
+  const bot = await makeBot("Routine sweep", "verification", { computer: "local", browser: false });
+  const made: string[] = [], runIds: string[] = [];
+  const runRecord = async (runId: string) => (await api("GET", "/api/routines")).body.runs.find((run: any) => run.id === runId);
+  try {
+    for (const label of ["one", "two"]) {
+      const routine = (await api("POST", "/api/routines", { name: `Sweep routine ${label}`, prompt: `__fixture_hold_authority__ sweep-routine-${label}`, botId: bot.id, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 }, enabled: false })).body.routine;
+      made.push(routine.id);
+      const started = await api("POST", `/api/routines/${routine.id}/run`);
+      expect(started.status).toBe(201); runIds.push(started.body.run.id);
+      if (label === "one") await expect.poll(() => JSON.stringify(dump(false)?.prompt ?? ""), { timeout: 20_000 }).toContain("sweep-routine-one");
+    }
+    // The second routine is admitted to a free slot and queues for the screen.
+    await expect.poll(async () => (await state(bot.id))?.tasks?.find((item: any) => item.title === "Sweep routine two")?.waitingFor?.resource, { timeout: 20_000 }).toBe("computer");
+    const swept = await api("POST", "/api/local-computer/interrupt", {});
+    expect(swept.status).toBe(200);
+    for (const runId of runIds) await expect.poll(async () => (await runRecord(runId))?.status, { timeout: 10_000 }).toBe("cancelled");
+    expect(JSON.stringify(dump(false)?.prompt ?? "")).not.toContain("sweep-routine-two");
+  } finally {
+    for (const runId of runIds) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
+    for (const id of made) await api("DELETE", `/api/routines/${id}`).catch(() => undefined);
+  }
+}, 90_000);
+
 // ---------------------------------------------------------------------------
 // 5. Capability honesty — does the block match what the bot actually has?
 // ---------------------------------------------------------------------------

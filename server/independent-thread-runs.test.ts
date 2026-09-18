@@ -193,3 +193,58 @@ it("keeps the three-thread limit for waiting runs and ignores unrelated releases
   for (const run of waits.slice(1)) runs.cancel(run);
   expect(await Promise.all(pending.slice(1))).toEqual([false, false]);
 });
+
+// ── queued automation waits for a free thread slot ───────────────────────
+it("queues an automation run past the three-thread limit and serves slots first-in first-out", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const held = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
+  const first = runs.admit("bot", "routine-1", {}, [], { queueForSlot: true });
+  const second = runs.admit("bot", "routine-2", {}, [], { queueForSlot: true });
+  const shown: string[] = [];
+  const firstSlot = runs.awaitSlot(first, () => shown.push("routine-1"));
+  const secondSlot = runs.awaitSlot(second, () => shown.push("routine-2"));
+  expect(shown).toEqual(["routine-1", "routine-2"]);
+  expect((await settled(firstSlot)).done).toBe(false);
+  // A direct chat cannot take a slot ahead of a queued automation run.
+  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  // Another bot's release frees nothing here.
+  runs.release(runs.admit("other", "elsewhere", {}));
+  expect((await settled(firstSlot)).done).toBe(false);
+  runs.release(held[0]);
+  expect(await firstSlot).toBe(true);
+  expect((await settled(secondSlot)).done).toBe(false);
+  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  runs.release(held[1]);
+  expect(await secondSlot).toBe(true);
+  runs.release(held[2]);
+  expect(runs.admit("bot", "chat", {}).threadId).toBe("chat");
+});
+it("grants a slot at once while one is free and never waits a run admitted with a slot", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  runs.admit("bot", "a", {});
+  const routine = runs.admit("bot", "routine", {}, [], { queueForSlot: true });
+  let shown = false;
+  expect(await runs.awaitSlot(routine, () => { shown = true; })).toBe(true);
+  expect(shown).toBe(false);
+  const direct = runs.admit("bot", "b", {});
+  expect(await runs.awaitSlot(direct)).toBe(true);
+});
+it("stopping or releasing a run queued for a slot resolves false and hands the slot on", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const held = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
+  const stopped = runs.admit("bot", "stopped", {}, [], { queueForSlot: true });
+  const reloaded = runs.admit("bot", "reloaded", {}, [], { queueForSlot: true });
+  const next = runs.admit("bot", "next", {}, [], { queueForSlot: true });
+  const stoppedSlot = runs.awaitSlot(stopped), reloadedSlot = runs.awaitSlot(reloaded), nextSlot = runs.awaitSlot(next);
+  expect(runs.cancel(stopped)).toBe(true);
+  expect(await stoppedSlot).toBe(false);
+  expect(runs.release(reloaded)).toBe(true);
+  expect(await reloadedSlot).toBe(false);
+  expect((await settled(nextSlot)).done).toBe(false);
+  // Releasing a run that never held a slot frees none; the next real release goes to the next waiter.
+  runs.release(stopped);
+  expect((await settled(nextSlot)).done).toBe(false);
+  runs.release(held[0]);
+  expect(await nextSlot).toBe(true);
+  expect(await runs.awaitSlot(stopped)).toBe(false);
+});

@@ -29,10 +29,19 @@ export class IndependentThreadRuns<T> {
   private readonly waiters: ResourceWaiter[] = [];
   private pumping = false;
   private pumpAgain = false;
+  /** Generations admitted past the three-thread limit that do not yet hold a
+   * thread slot, and the FIFO of those waiting for one. */
+  private readonly slotless = new Set<string>();
+  private readonly slotWaiters: { owner: TurnOwner; botId: string; resolve: (granted: boolean) => void }[] = [];
 
-  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = []): DirectThreadRun<T> {
+  /** `queueForSlot` (queued automation only): at the limit, admit without a
+   * thread slot instead of refusing; the caller must `awaitSlot` before any
+   * setup. A direct send counts every admitted run, so it never overtakes a
+   * queued one. */
+  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean } = {}): DirectThreadRun<T> {
     if (this.runs.has(threadId)) throw conflict("thread_busy", "This thread is already running or stopping.");
-    if ([...this.runs.values()].filter(run => run.botId === botId).length >= MAX_CONCURRENT_BOT_THREADS) {
+    const needsSlot = this.forBot(botId).length >= MAX_CONCURRENT_BOT_THREADS;
+    if (needsSlot && !options.queueForSlot) {
       throw conflict("thread_limit", "This bot is already running three threads. Wait for one to finish.");
     }
     const copied = structuredClone(snapshot);
@@ -40,7 +49,22 @@ export class IndependentThreadRuns<T> {
     if (!this.resources.claimAll(resources, owner)) throw conflict("resource_busy", "Another thread is using this browser, computer or working folder.");
     const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup" });
     this.runs.set(threadId, run);
+    if (needsSlot) this.slotless.add(owner.generation);
     return run;
+  }
+
+  /** Resolves true once this run holds a thread slot (at once when it was
+   * admitted with one), false when it is stopped, released or replaced first.
+   * `onWait` fires once, synchronously, only when the run has to wait. */
+  awaitSlot(owner: TurnOwner, onWait?: () => void): Promise<boolean> {
+    if (!this.claimable(owner)) return Promise.resolve(false);
+    if (!this.slotless.has(owner.generation)) return Promise.resolve(true);
+    const botId = this.runs.get(owner.threadId)!.botId;
+    return new Promise<boolean>((resolve) => {
+      this.slotWaiters.push({ owner, botId, resolve });
+      onWait?.();
+      this.pump();
+    });
   }
 
   get(threadId: string): DirectThreadRun<T> | undefined { return this.runs.get(threadId); }
@@ -114,6 +138,7 @@ export class IndependentThreadRuns<T> {
     if (!this.current(owner)) return false;
     this.resources.release(owner);
     this.runs.delete(owner.threadId);
+    this.slotless.delete(owner.generation);
     this.pump();
     return true;
   }
@@ -146,6 +171,18 @@ export class IndependentThreadRuns<T> {
   }
 
   private pumpOnce(): void {
+    for (let index = 0; index < this.slotWaiters.length;) {
+      const waiter = this.slotWaiters[index];
+      if (!this.claimable(waiter.owner)) {
+        this.slotWaiters.splice(index, 1);waiter.resolve(false);continue;
+      }
+      const holding = this.forBot(waiter.botId).filter(run => !this.slotless.has(run.generation)).length;
+      if (holding < MAX_CONCURRENT_BOT_THREADS) {
+        this.slotless.delete(waiter.owner.generation);
+        this.slotWaiters.splice(index, 1);waiter.resolve(true);continue;
+      }
+      index++;
+    }
     for (let index = 0; index < this.waiters.length;) {
       const waiter = this.waiters[index];
       if (!this.claimable(waiter.owner)) {

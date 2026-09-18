@@ -304,7 +304,8 @@ export interface TaskRecord {
   activity?: BotActivity;
   busy?: boolean;
   /** Runtime only: this busy task is waiting for another thread to release a
-   * shared working folder, computer or browser profile before it starts. */
+   * shared working folder, computer or browser profile, or (a queued routine)
+   * for a free thread slot, before it starts. */
   waitingFor?: TaskResourceWait;
   /** which instance dispatched the most recent turn. A cursor alone can't
    * say whether an engine's session is current — another engine may have
@@ -321,7 +322,7 @@ export interface TaskRecord {
   cwd?: string | null;
 }
 
-export type TaskResourceWaitKind = "working-folder" | "computer" | "browser" | "shared";
+export type TaskResourceWaitKind = "working-folder" | "computer" | "browser" | "shared" | "thread-slot";
 export interface TaskResourceWait {
   resource: TaskResourceWaitKind;
   /** Title of the thread being waited for, only when the viewer may see it. */
