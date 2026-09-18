@@ -1,37 +1,74 @@
 // The live "Thinking" row. Same shape as the other component tests here: a
-// node environment, markup through `renderToStaticMarkup`.
+// node environment, markup through `renderToStaticMarkup`, and the open/fold
+// rule as a pure function because a click cannot be rendered without a DOM.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { LiveThinking, THINKING_TAIL_CHARS, thinkingTail } from "./LiveThinking";
+import { LiveThinking, LiveThinkingText, THINKING_TAIL_CHARS, thinkingFoldAfter, thinkingTail } from "./LiveThinking";
 
-const render = (text: string, answering: boolean) => renderToStaticMarkup(createElement(LiveThinking, { text, answering }));
+const render = (text: string, answering: boolean, defaultOpen?: boolean) =>
+  renderToStaticMarkup(createElement(LiveThinking, { text, answering, defaultOpen }));
+const renderText = (text: string) => renderToStaticMarkup(createElement(LiveThinkingText, { text }));
 
 describe("LiveThinking", () => {
-  it("shows the reasoning, open, while the model is only thinking", () => {
+  it("appears collapsed while the model is thinking", () => {
     const html = render("Weighing the two options", false);
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).toContain(">Thinking<");
+    expect(html).not.toContain("Weighing the two options");
+  });
+
+  it("shows the reasoning once opened", () => {
+    const html = render("Weighing the two options", false, true);
+    expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('data-testid="live-thinking-text"');
     expect(html).toContain("Weighing the two options");
   });
 
-  it("folds away once the answer starts arriving", () => {
+  it("says Thought, collapsed, once the answer is streaming", () => {
     const html = render("Weighing the two options", true);
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain(">Thought<");
     expect(html).not.toContain("Weighing the two options");
   });
 
-  it("keeps the streaming text out of the transcript's live announcements", () => {
-    expect(render("step one", false)).toMatch(/aria-live="off"[^>]*data-testid="live-thinking-text"|data-testid="live-thinking-text"[^>]*aria-live="off"/);
-  });
-
   it("offers no copy control: thinking is not message text", () => {
-    const html = render("private scratch work", false);
+    const html = render("private scratch work", false, true);
+    expect(html).toContain("private scratch work");
     expect(html).not.toContain("Copy message");
     expect(html).not.toContain('data-testid="msg-bubble"');
+  });
+});
+
+describe("thinkingFoldAfter", () => {
+  it("opens and closes on a click", () => {
+    const closed = { open: false, answering: false };
+    const opened = thinkingFoldAfter(closed, { type: "toggle" });
+    expect(opened).toEqual({ open: true, answering: false });
+    expect(thinkingFoldAfter(opened, { type: "toggle" })).toEqual(closed);
+  });
+
+  it("folds an opened row when the answer starts, and lets it be opened again", () => {
+    const folded = thinkingFoldAfter({ open: true, answering: false }, { type: "answering", value: true });
+    expect(folded).toEqual({ open: false, answering: true });
+    expect(thinkingFoldAfter(folded, { type: "toggle" })).toEqual({ open: true, answering: true });
+  });
+
+  it("does not fold again while the answer keeps streaming", () => {
+    const reopened = { open: true, answering: true };
+    expect(thinkingFoldAfter(reopened, { type: "answering", value: true })).toBe(reopened);
+  });
+
+  it("leaves the row as it was when answering stops without a fold to make", () => {
+    expect(thinkingFoldAfter({ open: false, answering: true }, { type: "answering", value: false }))
+      .toEqual({ open: false, answering: false });
+  });
+});
+
+describe("LiveThinkingText", () => {
+  it("keeps the streaming text out of the transcript's live announcements", () => {
+    expect(renderText("step one")).toMatch(/aria-live="off"[^>]*data-testid="live-thinking-text"|data-testid="live-thinking-text"[^>]*aria-live="off"/);
   });
 
   it("mounts only the newest part of a long think", () => {
@@ -40,7 +77,7 @@ describe("LiveThinking", () => {
     expect(tail.clipped).toBe(true);
     expect(tail.text.length).toBeLessThanOrEqual(THINKING_TAIL_CHARS);
     expect(tail.text.endsWith("NEWEST")).toBe(true);
-    const html = render(text, false);
+    const html = renderText(text);
     expect(html).toContain("…");
     expect(html).toContain("NEWEST");
     expect(html.length).toBeLessThan(THINKING_TAIL_CHARS + 2_000);
