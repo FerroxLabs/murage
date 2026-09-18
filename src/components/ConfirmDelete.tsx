@@ -15,12 +15,21 @@ export function ConfirmDelete({
   name,
   kind,
   detail,
+  title,
+  items,
   onCancel,
   onConfirm,
 }: {
   name: string;
   kind: string;
   detail: string;
+  /** Heading override for a delete that is not one named thing (a bulk
+   * delete names its count instead). Default: Delete {kind} "{name}"? */
+  title?: string;
+  /** Exactly what is going, one line each, when `name` alone cannot say it
+   * (bulk delete). Shown in full, scrolling if long: the person must be able
+   * to read every name before typing the confirmation. */
+  items?: string[];
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -57,9 +66,19 @@ export function ConfirmDelete({
           <AlertTriangle size={20} className="mt-0.5 shrink-0 text-danger" />
           <div className="min-w-0">
             <h2 id="confirm-delete-title" className="text-[15px] font-semibold text-ink">
-              Delete {kind} “{name}”?
+              {title ?? <>Delete {kind} “{name}”?</>}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
+            {items && items.length > 0 && (
+              <ul
+                aria-label="What will be deleted"
+                className="mt-2 max-h-[160px] overflow-y-auto rounded-lg border border-hairline/40 bg-app px-3 py-2 text-[12.5px] leading-relaxed text-ink"
+              >
+                {items.map((item, index) => (
+                  <li key={`${index}-${item}`} className="truncate">{item}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 

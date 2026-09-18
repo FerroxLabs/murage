@@ -771,6 +771,9 @@ export type Action =
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
   | { type: "deleteBot"; botId: string }
+  /** The server already confirmed this bot is gone (the archived list's
+   * own DELETE returned); drop it from state without sending a second one. */
+  | { type: "botRemoved"; botId: string }
   | { type: "duplicateBot"; botId: string }
   | { type: "markUnread"; botId: string }
   | { type: "botPatched"; bot: BotAnnouncement }
@@ -1143,7 +1146,8 @@ export function reducer(state: AppState, action: Action): AppState {
         activeView: "chat",
         selectedId: action.bot.id,
       }, action.bot.id, "arrive");
-    case "deleteBot": {
+    case "deleteBot":
+    case "botRemoved": {
       const bots = state.bots.filter((b) => b.id !== action.botId);
       const selectedId =
         state.selectedId === action.botId ? (bots.find((b) => !b.hidden)?.id ?? bots[0]?.id ?? "") : state.selectedId;
@@ -1914,7 +1918,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const bot = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
         return bot ? openOnboardingCard(bot) : undefined;
       })();
-      if (action.type === "deleteBot") botPatchQueue.cancel(action.botId);
+      if (action.type === "deleteBot" || action.type === "botRemoved") botPatchQueue.cancel(action.botId);
       // A queued message is still real until the server confirms deletion.
       // All other actions keep their existing optimistic behavior.
       if (action.type !== "cancelQueued" && action.type !== "cancelGroupQueued") rawDispatch(action);

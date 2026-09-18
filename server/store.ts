@@ -1752,13 +1752,57 @@ export class Store {
     return bot;
   }
 
+  /** Remove a bot for good: its record, every task transcript, its
+   * workspace and its approval state. Nothing else.
+   *
+   * What stays, deliberately: every channel the bot sat in, with its whole
+   * history. Only the bot's seat is dropped from the roster — the messages
+   * it said keep the name and colour they were said with (`Message.from`),
+   * which is the tombstone the renderer already draws for an unknown
+   * member. A channel whose lead responder was the deleted bot is handed
+   * to its first remaining member; one left with nobody stays standing,
+   * empty, for the user to delete or repopulate. Cascading into channels
+   * would take other bots' conversations with them.
+   *
+   * Ordering is the atomicity: the roster (bots.json + groups.json) is
+   * written FIRST and is the commit point. A failed write throws with the
+   * record, transcripts and workspace all untouched, so the delete can be
+   * retried. Everything after the commit is cleanup of data nothing can
+   * reach any more and is best-effort — a failure there is logged, never
+   * thrown, so a half-finished cleanup can never resurrect a half-bot. */
   deleteBot(id: string): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
-    this.bots = this.bots.filter((b) => b.id !== id);
+    const nextBots = this.bots.filter((b) => b.id !== id);
+    const seated = this.groups.filter((g) => g.memberIds.includes(id));
+    const priorSeats = new Map(seated.map((g) => [g.id, { memberIds: g.memberIds, defaultResponder: g.defaultResponder }]));
+    for (const group of seated) {
+      group.memberIds = group.memberIds.filter((memberId) => memberId !== id);
+      group.defaultResponder = normalizeGroupDefaultResponder(group.defaultResponder, group.memberIds, Boolean(group.dm));
+    }
+    try {
+      this.saveBots(nextBots);
+    } catch (error) {
+      for (const group of seated) Object.assign(group, priorSeats.get(group.id));
+      throw error;
+    }
+    this.bots = nextBots;
+    if (seated.length) {
+      try {
+        this.saveGroups();
+      } catch (error) {
+        // the bot is already gone durably; a seat that could not be written
+        // is filtered on every read and pruned again by the next group save
+        console.error("store: deleteBot could not persist channel seats", error);
+      }
+    }
     // every task's transcript goes with the bot, not just the open one
     for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])) {
-      this.deleteThreadRecord(threadId);
+      try {
+        this.deleteThreadRecord(threadId);
+      } catch (error) {
+        console.error(`store: deleteBot could not remove thread ${threadId}`, error);
+      }
     }
     // the bot's workspace (files + memory) goes with it — same rule as its
     // transcripts: deleting a bot deletes what it knew
@@ -1771,7 +1815,14 @@ export class Store {
     try {
       rmSync(join(DATA_DIR, "skill-state", id), { recursive: true, force: true });
     } catch {}
-    this.saveBots();
+    // Checkpoint shadow repos (checkpoints.ts shadowDir) are snapshots the
+    // bot's own threads offered to roll back to. With the threads gone
+    // nothing can reach them, and a full-folder snapshot per working
+    // directory is the largest thing a bot leaves behind.
+    try {
+      rmSync(join(DATA_DIR, "checkpoints", id), { recursive: true, force: true });
+    } catch {}
+    for (const group of seated) this.emit({ type: "group", groupId: group.id });
     this.emit({ type: "bot.deleted", botId: id });
     return true;
   }

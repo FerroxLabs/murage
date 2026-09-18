@@ -19,7 +19,8 @@ vi.mock("@/lib/analytics", () => ({
 // asks the desktop shell what it is running on), and this suite runs in node.
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
-const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview } =
+const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview,
+  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -261,5 +262,67 @@ describe("the toast a finished import puts up", () => {
       }),
     );
     expect(markup).not.toContain("text-danger");
+  });
+});
+
+describe("what the archived-bot delete confirmation says", () => {
+  const bot = (id: string, name: string, extra: Partial<Bot> = {}): Bot =>
+    ({ id, name, title: "", hidden: true, messages: [], ...extra }) as Bot;
+  const group = (id: string, name: string, memberIds: string[], extra: Partial<Group> = {}): Group =>
+    ({ id, name, memberIds, messages: [], ...extra }) as Group;
+  const tasks = (n: number) => Array.from({ length: n }, (_, i) => ({ threadId: `t${i}` })) as Bot["tasks"];
+
+  it("counts the conversations that go and names the channels that stay", () => {
+    const kessler = bot("k", "Kessler", { tasks: tasks(3) });
+    const detail = archivedBotDeleteDetail(kessler, [
+      group("g1", "Launch", ["k", "other"]),
+      group("g2", "Ops", ["other"]),
+      group("dm", "Kessler & Aria", ["k", "a"], { dm: true }),
+    ]);
+    expect(detail).toContain("Permanently deletes Kessler: 3 conversations with it");
+    expect(detail).toContain("There is no undo and nothing to restore from.");
+    expect(detail).toContain("Kept: the channel it was in (Launch), with every message it said there.");
+    expect(detail).not.toContain("Ops");
+    expect(detail).not.toContain("Kessler & Aria");
+  });
+
+  it("says so plainly when the bot was in no channel, and counts one conversation for a bot with no task list", () => {
+    const detail = archivedBotDeleteDetail(bot("k", "Kessler"), [group("g2", "Ops", ["other"])]);
+    expect(detail).toContain("1 conversation with it");
+    expect(detail).toContain("It was in no channels, so nothing else changes.");
+    expect(detail).not.toContain("Kept:");
+  });
+
+  it("pluralises the channels that are kept", () => {
+    const detail = archivedBotDeleteDetail(bot("k", "Kessler"), [group("g1", "Launch", ["k"]), group("g2", "Ops", ["k"])]);
+    expect(detail).toContain("Kept: the 2 channels it was in (Launch, Ops)");
+  });
+
+  it("totals the bulk delete and lists every bot by name with its conversation count", () => {
+    const bots = [bot("a", "Aria", { tasks: tasks(2), title: "Researcher" }), bot("b", "Bram"), bot("c", "Cass", { tasks: tasks(5) })];
+    const groups = [group("g1", "Launch", ["a", "b"]), group("g2", "Ops", ["c"]), group("dm", "dm", ["a", "b"], { dm: true })];
+    const detail = archivedBotsDeleteDetail(bots, groups);
+    expect(detail).toContain("Permanently deletes these 3 archived bots and their 8 conversations");
+    expect(detail).toContain("Kept: all 2 channels they were in, with every message said there.");
+    expect(detail).toContain("is left alone and named afterwards");
+    expect(archivedBotsDeleteItems(bots)).toEqual([
+      "Aria (Researcher): 2 conversations",
+      "Bram: 1 conversation",
+      "Cass: 5 conversations",
+    ]);
+    expect(archivedBotsDeletePhrase(3)).toBe("delete 3 bots");
+  });
+
+  it("says nothing else changes when none of the bulk set sat in a channel", () => {
+    expect(archivedBotsDeleteDetail([bot("a", "Aria"), bot("b", "Bram")], [group("g2", "Ops", ["other"])]))
+      .toContain("None of them was in a channel, so nothing else changes.");
+  });
+
+  it("never promises an undo or a backup, and carries no em dash", () => {
+    const bots = [bot("a", "Aria"), bot("b", "Bram")];
+    for (const text of [archivedBotDeleteDetail(bots[0]!, []), archivedBotsDeleteDetail(bots, []), ...archivedBotsDeleteItems(bots)]) {
+      expect(text).not.toMatch(/undo (is|will be) available|restore (it|them) later|backup/i);
+      expect(text).not.toContain(String.fromCodePoint(0x2014));
+    }
   });
 });
