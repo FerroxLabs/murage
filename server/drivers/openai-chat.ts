@@ -10,6 +10,7 @@ import { validateProviderTurnRoute, type ProviderTurnRoute } from "../provider-r
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { classifyProviderError } from "../../shared/provider-error.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
@@ -68,24 +69,90 @@ interface RuntimeOptions<Config> {
   retryScale?: number;
 }
 
-/** Why a streamed reply is not a successful completion. */
-type FailedStreamStop = "incomplete" | "provider_error" | "empty_response";
+/** Why a streamed reply is not a successful completion. `invalid_body`
+ * separates "the address answered with something that is not a completion"
+ * from `incomplete`, "the stream stopped early" — before, a reverse proxy's
+ * HTML page and a model that simply said nothing were reported identically
+ * (F8). `cancelled` is the user's Stop, which now carries its partial text
+ * out of the reader instead of discarding it (F6). */
+type FailedStreamStop = "incomplete" | "provider_error" | "empty_response" | "invalid_body" | "cancelled";
 
 /** A streamed reply that missed the terminal contract, reported an in-band
- * provider error, or produced nothing. It carries whatever output did arrive,
- * so the turn keeps it marked failed instead of dropping it or calling it
- * complete (A3). */
+ * provider error, produced nothing, or was stopped. It carries whatever output
+ * did arrive, so the turn keeps it marked failed instead of dropping it or
+ * calling it complete (A3).
+ *
+ * `message` is the plain sentence the chat card shows; `details` is the
+ * engine-shaped line that belongs in its Technical details disclosure. The two
+ * are separate so a user never reads transport vocabulary as the headline. */
 class StreamOutcomeError extends Error {
   readonly partial: Completion;
   readonly stopReason: FailedStreamStop;
+  readonly details?: string;
 
-  constructor(message: string, partial: Completion, stopReason: FailedStreamStop, cause?: unknown) {
+  constructor(message: string, partial: Completion, stopReason: FailedStreamStop, cause?: unknown, details?: string) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "StreamOutcomeError";
     this.partial = partial;
     this.stopReason = stopReason;
+    if (details) this.details = details;
   }
 }
+
+/** A non-2xx answer from the model server. `data.http_status` is exactly the
+ * shape `classifyProviderError` reads, so the reviewed provider copy in
+ * shared/provider-error.ts is reachable from this driver too; before, every
+ * status took one branch that pasted the provider's raw JSON body — another
+ * vendor's branding and URLs included — into the chat bubble (F5). The body is
+ * kept as `details` for the Technical details disclosure. */
+class ProviderHttpError extends Error {
+  readonly data: { http_status: number; message: string };
+  readonly details: string;
+
+  constructor(status: number, body: string, label: string) {
+    super(providerHttpMessage(status));
+    this.name = "ProviderHttpError";
+    this.data = { http_status: status, message: body };
+    this.details = `${label} HTTP ${status}${body ? `: ${body}` : ""}`;
+  }
+}
+
+/** Plain copy for a non-2xx status. No status numbers, no provider body: both
+ * are in the technical details. */
+const providerHttpMessage = (status: number): string => {
+  if (status === 401) return "The model server did not accept this engine's key. Check the key for this engine in App Settings.";
+  if (status === 402) return "The model provider needs payment or account access before it will answer.";
+  if (status === 403) return "The model server refused access for this account or this model.";
+  if (status === 404) return "The model server does not have the model this bot is set to. Choose another model for this bot.";
+  if (status === 408 || status === 504) return "The model server took too long to answer. Try again.";
+  if (status === 429) return "The model server's request limit was reached. Wait a moment, then try again.";
+  if (status === 400 || status === 422) return "The model server would not accept this request.";
+  if (status >= 500) return "The model server hit a problem on its side. Try again in a moment.";
+  return "The model server could not answer this request.";
+};
+
+/** A body that is a whole (non-streamed) completion rather than a stream. Some
+ * gateways answer a streaming request this way; reading it is the difference
+ * between "the model returned nothing" and "that was not a completion" (F8). */
+const wholeCompletionFrom = (body: string, reasoning: boolean | undefined): Completion | null => {
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const json = parsed as CompletionJson;
+  if (!Array.isArray(json.choices)) return null;
+  const choice = json.choices[0];
+  const message = choice?.message;
+  return {
+    text: typeof message?.content === "string" ? message.content : "",
+    reasoning: reasoning && typeof message?.reasoning_content === "string" ? message.reasoning_content : "",
+    usage: usageFrom(json.usage),
+    finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
+  };
+};
+
+/** How much of a non-streamed body is held while judging it. A completion
+ * envelope is small; anything larger is not one. */
+const RAW_BODY_MAX = 64_000;
 
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
   usage
@@ -226,7 +293,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       // non-streamed body) is the provider's timeout failure. The caller's own
       // Stop always wins and stays an AbortError (STOP1).
       if (idle.expired && !signal?.aborted && asError(value).name === "TimeoutError") {
-        throw new Error(`${label} ${idle.message}`, { cause: value });
+        // The reader's own expiry is handled in completeWithin; this is the
+        // wait for a connection, headers or a first token. The millisecond
+        // figure reads like a stack trace, so it stays in the details.
+        const timedOut: Error & { details?: string } = new Error(
+          "The model server did not answer in time. If a large model is still loading, try again in a moment.",
+          { cause: value },
+        );
+        timedOut.details = `${label} ${idle.message}`;
+        throw timedOut;
       }
       throw value;
     } finally {
@@ -255,7 +330,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     if (!response.ok) {
       const rawBody = await response.text().catch(() => "");
       const body = redact(rawBody);
-      throw new Error(`${label} HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+      throw new ProviderHttpError(response.status, body.slice(0, 200), label);
     }
 
     if (!stream) {
@@ -284,8 +359,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     let sawDone = false;
     let unreadableFrames = 0;
     const partial = (): Completion => ({ text, reasoning, usage, finishReason });
-    const failure = (why: string, stopReason: FailedStreamStop, cause?: unknown) =>
-      new StreamOutcomeError(redact(`${label} ${why}`).slice(0, 300), partial(), stopReason, cause);
+    let dataFrames = 0;
+    let body = "";
+    /** `plain` is the sentence the chat card shows; `why` is the engine-shaped
+     * line that belongs under Technical details. */
+    const failure = (plain: string, why: string, stopReason: FailedStreamStop, cause?: unknown) =>
+      new StreamOutcomeError(plain, partial(), stopReason, cause, redact(`${label} ${why}`).slice(0, 300));
 
     /** Folds one SSE line. Returns true once the [DONE] marker arrives. */
     const consumeLine = (rawLine: string): boolean => {
@@ -295,9 +374,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const data = line.slice(5).trim();
       if (!data) return false;
       if (data === "[DONE]") {
+        dataFrames++;
         sawDone = true;
         return true;
       }
+      dataFrames++;
       let chunk: CompletionJson;
       try {
         chunk = JSON.parse(data) as CompletionJson;
@@ -310,7 +391,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         return false;
       }
       const errorDetail = inBandErrorDetail(chunk);
-      if (errorDetail !== null) throw failure(`stream error: ${errorDetail}`, "provider_error");
+      if (errorDetail !== null) {
+        throw failure("The model server reported an error part-way through the answer.", `stream error: ${errorDetail}`, "provider_error");
+      }
       if (isProgress(chunk)) idle.renew();
       const choice = chunk.choices?.[0];
       const delta = choice?.delta;
@@ -329,7 +412,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (chunk.usage) usage = usageFrom(chunk.usage);
       if (typeof choice?.finish_reason === "string" && choice.finish_reason) {
         if (choice.finish_reason === "error") {
-          throw failure('stream ended with finish_reason "error"', "provider_error");
+          throw failure("The model server ended this answer with an error.", 'stream ended with finish_reason "error"', "provider_error");
         }
         // Keep reading: usage and [DONE] commonly follow the finish frame.
         finishReason = choice.finish_reason;
@@ -347,19 +430,33 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           result = await readUnlessAborted(reader, requestSignal);
         } catch (value) {
           const cause = asError(value);
-          if (cause.name === "AbortError") throw cause;
-          if (idle.expired && cause.name === "TimeoutError") throw failure(`stream ${idle.message}`, "incomplete", cause);
-          throw failure(`stream failed: ${cause.message}`, "incomplete", cause);
+          // F6: a Stop used to rethrow the bare AbortError, which carries no
+          // partial, so every streamed word the user had already read was
+          // dropped. Carry it out the same way a dropped connection does.
+          if (cause.name === "AbortError") throw failure("You stopped this answer.", "stopped by the user", "cancelled", cause);
+          if (idle.expired && cause.name === "TimeoutError") {
+            throw failure("The model server stopped sending this answer before it was finished.", `stream ${idle.message}`, "incomplete", cause);
+          }
+          // F11: `cause.message` is the transport's own word (undici says
+          // "terminated"), which means nothing to a reader. It stays in the
+          // technical details.
+          throw failure("The connection to the model server dropped before the answer finished.", `stream failed: ${cause.message}`, "incomplete", cause);
         }
         if (result.done) {
           // A final frame can arrive without its trailing newline. Flush the
           // decoder and fold what is left before judging the stream.
-          buffer += decoder.decode();
+          const tail = decoder.decode();
+          if (body.length < RAW_BODY_MAX) body += tail;
+          buffer += tail;
           if (buffer) consumeLine(buffer);
           buffer = "";
           break;
         }
-        buffer += decoder.decode(result.value, { stream: true });
+        const chunk = decoder.decode(result.value, { stream: true });
+        // Kept only so a body that is not a stream at all can be recognised
+        // (F8). Bounded: a real stream never needs to be held whole.
+        if (body.length < RAW_BODY_MAX) body += chunk;
+        buffer += chunk;
         let newline: number;
         while ((newline = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, newline);
@@ -373,13 +470,34 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // A dropped frame may have carried reply text, so the output is uncertain.
     if (unreadableFrames > 0) {
       throw failure(
+        "Part of this answer arrived damaged, so some of it may be missing.",
         `stream contained ${unreadableFrames} unreadable frame${unreadableFrames === 1 ? "" : "s"}`,
         "incomplete",
       );
     }
     // The terminal contract: [DONE], or a finish frame followed by clean EOF.
     if (!sawDone && finishReason === null) {
-      throw failure("stream ended before the provider signalled completion", "incomplete");
+      // F8: nothing in the body was a server-sent event. Either something in
+      // front of the model server answered with a page of its own, or the
+      // server sent one whole completion instead of a stream. Reporting both
+      // as a truncated stream pointed people at the network when the model had
+      // simply said nothing.
+      // An empty body is a stream that carried nothing, not a body of the
+      // wrong shape, and keeps the truncated-stream reading.
+      if (dataFrames === 0 && body.trim()) {
+        const whole = wholeCompletionFrom(body, options.reasoning);
+        if (whole) return whole;
+        throw failure(
+          "That address answered, but not with a model reply. Check that it points at your model server.",
+          "response body was not a completion",
+          "invalid_body",
+        );
+      }
+      throw failure(
+        "The model server stopped before it finished this answer.",
+        "stream ended before the provider signalled completion",
+        "incomplete",
+      );
     }
     return partial();
   };
@@ -428,7 +546,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const finish = completion.finishReason && completion.finishReason !== "stop"
               ? ` (finish_reason "${completion.finishReason}")`
               : "";
-            throw new StreamOutcomeError(`${label} returned an empty reply${finish}`, completion, "empty_response");
+            throw new StreamOutcomeError(
+              "The model returned an empty answer. Try sending the message again, or choose another model.",
+              completion,
+              "empty_response",
+              undefined,
+              `${label} returned an empty reply${finish}`,
+            );
           }
           appendNative(turn.threadId, {
             dir: "in",
@@ -453,8 +577,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           return;
         } catch (value) {
           const error = asError(value);
-          const aborted = error.name === "AbortError";
           const outcome = error instanceof StreamOutcomeError ? error : null;
+          // A Stop now arrives wrapped so its partial text survives (F6); it
+          // is still the user's Stop, never a failure.
+          const aborted = error.name === "AbortError" || outcome?.stopReason === "cancelled";
           const verdict = classifyError(error);
           if (
             options.retryScale !== undefined &&
@@ -496,7 +622,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
           }
           active.delete(turn.threadId);
-          if (!aborted) emit({ ...base(turn.threadId, turnId), type: "runtime.error", message: error.message });
+          const details = (error as { details?: unknown }).details;
+          const providerError = classifyProviderError(error);
+          if (!aborted) {
+            emit({
+              ...base(turn.threadId, turnId),
+              type: "runtime.error",
+              message: error.message,
+              ...(typeof details === "string" && details ? { details } : {}),
+              ...(providerError ? { providerError } : {}),
+            });
+          }
           // An abort is Murage stopping the turn (interruptTurn, stopAll):
           // settle as cancelled like every other driver's user Stop (STOP1).
           emit({

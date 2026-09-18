@@ -44,6 +44,7 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync } from "node:fs";
+import { writeFileAtomic } from "./atomic.ts";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
@@ -247,6 +248,9 @@ import {
   drainSteeredMessages,
   queuedSteeredMessage,
   queueSteeredMessage,
+  restoreSteerQueues,
+  setSteerQueueMirror,
+  type SteerQueueEntries,
 } from "./steer-queue.ts";
 import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
 import {
@@ -418,7 +422,7 @@ import { autoMountsLocalComputer, shouldMountLocalComputer } from "./local-routi
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
-import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedDisplayName } from "../shared/host-stop.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
@@ -2742,7 +2746,43 @@ const watchdog = new TurnWatchdog({
     release.unref?.();
   },
 });
+// F7: a message queued behind a running turn lived only in this process's
+// memory, so a restart destroyed the person's own words with no notice at all.
+// The queue is mirrored to disk; anything still waiting when Murage closed is
+// put back into its thread as the message it was, and the restart marker below
+// then explains that nothing answered it. Nothing is re-sent on the person's
+// behalf — they can send it again if they still want it.
+const STEER_QUEUE_MIRROR = join(DATA_DIR, "queued-messages.json");
+try {
+  const waiting = JSON.parse(readFileSync(STEER_QUEUE_MIRROR, "utf8")) as SteerQueueEntries;
+  if (Array.isArray(waiting)) {
+    for (const [threadId, entry] of waiting) {
+      if (!threadId || !entry || !Array.isArray(entry.items)) continue;
+      for (const item of entry.items) {
+        if (!item || typeof item.text !== "string" || !item.text) continue;
+        try {
+          store.appendMessage(threadId, {
+            role: "user",
+            kind: "text",
+            text: item.text,
+            ...(item.replyToId ? { replyToId: item.replyToId } : {}),
+          });
+        } catch { /* the thread went away while the message waited */ }
+      }
+    }
+  }
+} catch { /* no mirror, or an unreadable one: the queue is simply empty */ }
+restoreSteerQueues([]);
+try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ }
+setSteerQueueMirror(entries => {
+  if (entries.length === 0) { try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ } return; }
+  writeFileAtomic(STEER_QUEUE_MIRROR, JSON.stringify(entries));
+});
 reconcileInterruptedMemoryTurns();
+// F7: the same boot pass for ordinary 1:1 turns. Routines, memory turns and
+// team goals were already reconciled here; a direct turn was the one kind that
+// came back with no reply and no explanation.
+store.reconcileInterruptedDirectTurns(TURN_INTERRUPTED_NOTE);
 watchdog.start();
 
 async function reviewPermissionCard(args: {
@@ -3502,6 +3542,18 @@ bus.subscribe((event: RuntimeEvent) => {
       const settledOutcome = echoOnlyReply ? "failed" : terminalOutcome;
       if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, settledOutcome);
       else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, settledOutcome);
+      // F6: a stopped turn left no trace at all, so a transcript could show two
+      // user messages in a row with nothing between them. Record the stop the
+      // same way every other turn event is recorded — an activity line, not an
+      // error card: stopping is a normal thing to do, not a failure.
+      if (turnStopped(event) && !replacementOwnsThread) {
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          ...(completedTurnId ? { turnId: completedTurnId } : {}),
+          tool: { name: TURN_STOPPED_NOTE, ok: true },
+        });
+      }
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = replacementOwnsThread ? "" : (lastReply.get(event.threadId) ?? "");

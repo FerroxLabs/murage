@@ -1067,7 +1067,7 @@ export class RoutineManager {
     if (input.channelOrigin !== undefined && (!channelOriginSchema.safeParse(input.channelOrigin).success || input.telegramConnectionId || this.options.isChannelCurrent?.(input.channelOrigin, input.botId) !== true)) throw new Error("Channel binding is not current");
     if(!input.telegramConnectionId&&!input.channelOrigin&&this.options.automaticPaused?.())throw Object.assign(new Error("Automatic work is paused. Resume automations before accepting new webhook work."),{status:409,code:"automations_paused"});
     if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error("The assigned EMBER no longer exists"), { status: 410 });
+      throw Object.assign(new Error("The bot this runs on no longer exists"), { status: 410 });
     }
     const run: RoutineRun = {
       id: randomUUID(),

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
@@ -109,6 +110,13 @@ it("Stop on a direct Claude turn leaves the normal stopped state, not an error c
   await expect.poll(() => turnOutcomes(bot.threadId).at(-1), { timeout: 10_000 }).toBe("cancelled");
   expect(turnOutcomes(bot.threadId)).not.toContain("failed");
   expect(await errorActivities(bot.threadId)).toEqual([]);
+  // F6: the stop is on the record. Before this, a stopped turn left nothing at
+  // all, so the transcript could show two user messages in a row with no sign
+  // that a turn had ever run. It is an activity note, not an error card.
+  const stopNotes = (await messages(bot.threadId))
+    .filter((m) => m.kind === "activity" && m.tool?.name === TURN_STOPPED_NOTE);
+  expect(stopNotes).toHaveLength(1);
+  expect(stopNotes[0].tool.ok).toBe(true);
 
   // U-02: the stopped turn's file keeps a verified receipt and nothing else.
   // The receipt is written in the same synchronous sweep that would post the

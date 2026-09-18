@@ -13,6 +13,7 @@ import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord, type Message } from "./store.ts";
+import { TURN_INTERRUPTED_NOTE } from "./turn-outcome.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -1901,6 +1902,36 @@ describe("Store.reconcileInterruptedGroupGoals", () => {
         startedAt: 1,
       },
     });
+
+  it("marks a 1:1 turn that a restart interrupted, and never twice", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "how do I export this?" });
+    const before = store.messagesFor(bot.threadId).length;
+
+    expect(store.reconcileInterruptedDirectTurns(TURN_INTERRUPTED_NOTE)).toBe(1);
+
+    const messages = store.messagesFor(bot.threadId);
+    expect(messages.at(-1)).toMatchObject({
+      role: "bot",
+      kind: "activity",
+      tool: { name: TURN_INTERRUPTED_NOTE, ok: false },
+    });
+    // The marker is the new branch head, so a second boot finds nothing.
+    expect(store.reconcileInterruptedDirectTurns(TURN_INTERRUPTED_NOTE)).toBe(0);
+    expect(store.messagesFor(bot.threadId)).toHaveLength(before + 1);
+  });
+
+  it("leaves a thread alone when the bot did answer", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hello" });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "hello back" });
+    const before = store.messagesFor(bot.threadId).length;
+
+    expect(store.reconcileInterruptedDirectTurns(TURN_INTERRUPTED_NOTE)).toBe(0);
+    expect(store.messagesFor(bot.threadId)).toHaveLength(before);
+  });
 
   it("fails an orphaned working goal card that no scheduler run explains", () => {
     const store = new Store(selection);

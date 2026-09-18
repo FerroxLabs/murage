@@ -1313,6 +1313,32 @@ export class Store {
     return recovered;
   }
 
+  /** A process restart cannot resume a 1:1 turn either. Every thread whose
+   * visible end is the person's own message had a turn in flight (or a send
+   * that never got one), and no answer is coming: append the same kind of
+   * restart marker routines, memory turns and team goals already get, so the
+   * transcript never shows two user messages in a row with nothing between
+   * them (F7). Appending makes the marker the new branch head, so a second
+   * boot does not repeat it. */
+  reconcileInterruptedDirectTurns(note: string): number {
+    const ownedThreadIds = new Set<string>();
+    for (const bot of this.bots) {
+      ownedThreadIds.add(bot.threadId);
+      for (const task of bot.tasks ?? []) ownedThreadIds.add(task.threadId);
+    }
+    let recovered = 0;
+    for (const hit of mdb.threadsEndingOnUserMessage()) {
+      if (!ownedThreadIds.has(hit.threadId)) continue;
+      this.appendMessage(hit.threadId, {
+        role: "bot",
+        kind: "activity",
+        tool: { name: note, ok: false },
+      });
+      recovered += 1;
+    }
+    return recovered;
+  }
+
   // ── channel tasks ────────────────────────────────────────────────────
   groupTasks(groupId: string): GroupTaskRecord[] {
     const group = this.group(groupId);

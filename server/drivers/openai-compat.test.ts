@@ -299,7 +299,8 @@ describe("OpenAICompatDriver", () => {
     );
     expect(recorder.events).toContainEqual(expect.objectContaining({
       type: "runtime.error",
-      message: "upstream stream error: Provider returned error, code 502",
+      message: "The model server reported an error part-way through the answer.",
+      details: "upstream stream error: Provider returned error, code 502",
     }));
     recorder.stop();
     await inst.dispose();
@@ -562,7 +563,7 @@ describe("OpenAICompatDriver", () => {
         const completed = await recorder.until((event) => event.type === "turn.completed");
         expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
         expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([
-          expect.objectContaining({ message: "upstream stream timed out after 180000ms without provider progress" }),
+          expect.objectContaining({ message: 'The model server stopped sending this answer before it was finished.' }),
         ]);
         expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1" });
         expect(state.requests).toBe(1);

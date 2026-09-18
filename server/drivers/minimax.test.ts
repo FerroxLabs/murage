@@ -148,7 +148,7 @@ describe("MinimaxDriver", () => {
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(recorder.events).toContainEqual(expect.objectContaining({
       type: "runtime.error",
-      message: expect.stringContaining("stream ended before the provider signalled completion"),
+      message: 'The model server stopped before it finished this answer.',
     }));
     expect(recorder.events.some((event) => event.type === "item.completed")).toBe(false);
     expect(instance.adapter.hasSession("thread-empty-stream")).toBe(false);

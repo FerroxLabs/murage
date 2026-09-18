@@ -276,11 +276,11 @@ function Shell() {
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />
           <div className="text-[14px]">
-            {state.connected ? "No bots yet" : "Connecting to the bot server…"}
+            {state.connected ? "No bots yet" : "Reconnecting to Murage…"}
           </div>
           {!state.connected && (
             <div className="text-[12px]">
-              Start it with <code className="rounded bg-raised px-1.5 py-0.5">pnpm dev:server</code>
+              This usually clears on its own. If it does not, quit Murage and open it again.
             </div>
           )}
         </main>

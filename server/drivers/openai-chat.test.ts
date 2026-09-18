@@ -45,6 +45,10 @@ const replies = (events: RuntimeEvent[]) =>
   events.flatMap((event) => (event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []));
 const errors = (events: RuntimeEvent[]) =>
   events.flatMap((event) => (event.type === "runtime.error" ? [event.message] : []));
+/** The engine-shaped line, which lives in the card's Technical details rather
+ * than in the sentence the person reads. */
+const errorDetails = (events: RuntimeEvent[]) =>
+  events.flatMap((event) => (event.type === "runtime.error" ? [event.details ?? ""] : []));
 
 describe("createOpenAIChatRuntime stream contract", () => {
   const instances: ProviderInstance[] = [];
@@ -144,7 +148,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual(["half an ans"]);
-    expect(errors(events)).toEqual(["TestProvider stream ended before the provider signalled completion"]);
+    expect(errors(events)).toEqual(['The model server stopped before it finished this answer.']);
     expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
     expect(calls).toBe(1);
     const types = events.map((event) => event.type);
@@ -156,7 +160,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const { completed, events, instance } = await runTurn("t-empty-eof", [() => sse([])]);
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual([]);
-    expect(errors(events)).toEqual(["TestProvider stream ended before the provider signalled completion"]);
+    expect(errors(events)).toEqual(['The model server stopped before it finished this answer.']);
     expect(instance.adapter.hasSession("t-empty-eof")).toBe(false);
   });
 
@@ -172,7 +176,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "provider_error" });
     expect(replies(events)).toEqual(["partial "]);
-    expect(errors(events)).toEqual(["TestProvider stream error: upstream overloaded, code 529"]);
+    expect(errors(events)).toEqual(["The model server reported an error part-way through the answer."]);
+    expect(errorDetails(events)).toEqual(["TestProvider stream error: upstream overloaded, code 529"]);
     expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
     expect(calls).toBe(1);
   });
@@ -220,7 +225,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "provider_error" });
     expect(replies(events)).toEqual(["so far"]);
-    expect(errors(events)).toEqual(['TestProvider stream ended with finish_reason "error"']);
+    expect(errors(events)).toEqual(["The model server ended this answer with an error."]);
+    expect(errorDetails(events)).toEqual(['TestProvider stream ended with finish_reason "error"']);
   });
 
   it("fails a stream with an unreadable frame even when [DONE] follows", async () => {
@@ -233,7 +239,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual(["before after"]);
-    expect(errors(events)).toEqual(["TestProvider stream contained 1 unreadable frame"]);
+    expect(errors(events)).toEqual(["Part of this answer arrived damaged, so some of it may be missing."]);
+    expect(errorDetails(events)).toEqual(["TestProvider stream contained 1 unreadable frame"]);
   });
 
   it("folds a final [DONE] that arrives without a trailing newline", async () => {
@@ -271,7 +278,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "empty_response" });
     expect(replies(events)).toEqual([]);
-    expect(errors(events)).toEqual(['TestProvider returned an empty reply (finish_reason "content_filter")']);
+    expect(errors(events)).toEqual(['The model returned an empty answer. Try sending the message again, or choose another model.']);
   });
 
   it("keeps partial output when the connection drops mid-stream", async () => {
@@ -283,7 +290,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual(["streamed "]);
-    expect(errors(events)).toEqual(["TestProvider stream failed: socket hang up"]);
+    expect(errors(events)).toEqual(['The connection to the model server dropped before the answer finished.']);
     expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
     expect(calls).toBe(1);
   });
@@ -294,7 +301,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     ])]);
 
     expect(completed).toMatchObject({ ok: false, stopReason: "provider_error" });
-    expect(errors(events)).toEqual(["TestProvider stream error: rejected credential [redacted]"]);
+    expect(errorDetails(events)).toEqual(["TestProvider stream error: rejected credential [redacted]"]);
     expect(JSON.stringify(events)).not.toContain(SECRET);
   });
 
@@ -335,7 +342,111 @@ describe("createOpenAIChatRuntime stream contract", () => {
     // STOP1: a user Stop is the shared cancelled state, never a failed turn
     expect(completed).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(errors(recorder.events)).toEqual([]);
-    expect(replies(recorder.events)).toEqual([]);
+    // F6: what had already streamed is kept. The person watched those words
+    // appear; pressing Stop must not erase them, and the provider-drop path
+    // has always kept its partial (F11) — Stop was the odd one out.
+    expect(replies(recorder.events)).toEqual(["working on it"]);
+  });
+
+  it("keeps a long partial answer when the user stops mid-stream", async () => {
+    const paragraph = "Mara climbed the lighthouse stairs every evening before the light came on. ";
+    responders = [(signal) => {
+      let sent = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (sent < 3) {
+                sent += 1;
+                controller.enqueue(encoder.encode(contentFrame(paragraph)));
+                return;
+              }
+              return new Promise<void>((resolve) => {
+                signal?.addEventListener("abort", () => {
+                  controller.error(signal.reason);
+                  resolve();
+                }, { once: true });
+              });
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-stop-long", text: "write a story" });
+    let deltas = 0;
+    await recorder.until((event) => event.type === "content.delta" && ++deltas === 3);
+    await instance.adapter.interruptTurn("t-stop-long");
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(replies(recorder.events)).toEqual([paragraph.repeat(3)]);
+    expect(errors(recorder.events)).toEqual([]);
+  });
+
+  it("separates a body that is not a completion from a stream that stopped early (F8)", async () => {
+    responders = [() => new Response("<html><body>502 Bad Gateway</body></html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    })];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-html", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "invalid_body" });
+    expect(errors(recorder.events)).toEqual([
+      "That address answered, but not with a model reply. Check that it points at your model server.",
+    ]);
+    const failure = recorder.events.find((event) => event.type === "runtime.error");
+    expect(failure && "details" in failure ? failure.details : undefined)
+      .toBe("TestProvider response body was not a completion");
+  });
+
+  it("reads a whole completion sent in place of a stream and reports an empty answer as one (F8)", async () => {
+    responders = [() => new Response(JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "stop" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-empty-json", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "empty_response" });
+    expect(errors(recorder.events)).toEqual([
+      "The model returned an empty answer. Try sending the message again, or choose another model.",
+    ]);
+  });
+
+  it("gives a 401 the reviewed provider copy instead of the provider's own JSON (F5)", async () => {
+    responders = [() => new Response(
+      JSON.stringify({ error: { message: `Incorrect API key provided: ${SECRET}. See https://platform.openai.com/account/api-keys`, code: "invalid_api_key" } }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    )];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-401", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: false });
+    const failure = recorder.events.find((event) => event.type === "runtime.error");
+    // The bubble gets a sentence, not a JSON blob, and the card can now reach
+    // the reviewed authentication copy because the status travels structurally.
+    expect(failure?.message).not.toContain("{");
+    expect(failure?.message).toBe("The model server did not accept this engine's key. Check the key for this engine in App Settings.");
+    expect(failure && "providerError" in failure ? failure.providerError : undefined)
+      .toMatchObject({ kind: "authentication", httpStatus: 401 });
+    // The provider's own words stay available, with the key redacted.
+    expect(failure && "details" in failure ? failure.details : "").toContain("Incorrect API key provided");
+    expect(JSON.stringify(recorder.events)).not.toContain(SECRET);
   });
 
   it("surfaces an in-band error from a non-streamed helper call", async () => {
