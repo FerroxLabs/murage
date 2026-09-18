@@ -374,7 +374,17 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
   if (message.role !== "bot") return message;
   const out = { ...message };
   if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
-  if (out.tool?.name) out.tool = { ...out.tool, name: redactSecretsInText(out.tool.name), ...(out.tool.errorDetails ? { errorDetails: redactSecretsInText(out.tool.errorDetails).slice(0, 4096) } : {}) };
+  // `summary` is a short read of the tool's arguments and `spoken` is narrated
+  // from the raw title, so either can carry a credential into the transcript.
+  if (out.tool) {
+    out.tool = {
+      ...out.tool,
+      ...(out.tool.name ? { name: redactSecretsInText(out.tool.name) } : {}),
+      ...(out.tool.summary ? { summary: redactSecretsInText(out.tool.summary) } : {}),
+      ...(out.tool.spoken ? { spoken: redactSecretsInText(out.tool.spoken) } : {}),
+      ...(out.tool.errorDetails ? { errorDetails: redactSecretsInText(out.tool.errorDetails).slice(0, 4096) } : {}),
+    };
+  }
   if (out.routineRun) {
     const routineRun = { ...out.routineRun };
     routineRun.routineName = redactSecretsInText(routineRun.routineName);

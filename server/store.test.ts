@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BOT_OPENERS, openerAt } from "../shared/bot-openers.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
+import { resolveToolLabel } from "../shared/tool-activity.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
@@ -1263,6 +1264,35 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(new Store(selection).messagesFor(bot.threadId).find(item => item.id === message.id)?.tool?.errorDetails).toBe(message.tool?.errorDetails);
     const long = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "error: failure", errorDetails: "x".repeat(9000) } });
     expect(long.tool?.errorDetails?.length).toBe(4096);
+  });
+
+  it("masks a key that a tool argument carried into the chip's stored summary", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const wrapped = resolveToolLabel("use_tool", { tool_name: "mcp__web__search", tool_input: { query: `status for ${key}` } });
+    const searched = resolveToolLabel("search_tools", { query: `token ${key}` });
+    expect(wrapped.summary).toContain(key);
+    expect(searched.summary).toContain(key);
+    for (const label of [wrapped, searched]) {
+      const chip = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { ...label, ok: true } });
+      expect(chip.tool?.summary).not.toContain(key);
+      expect(chip.tool?.summary).toContain("«redacted");
+      const reloaded = new Store(selection).messagesFor(bot.threadId).find(item => item.id === chip.id);
+      expect(reloaded?.tool?.summary).toBe(chip.tool?.summary);
+    }
+    const unnamed = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "", summary: `query: ${key}` } });
+    expect(unnamed.tool?.summary).not.toContain(key);
+  });
+
+  it("masks a key in the chip's spoken narration, which is derived from the raw tool title", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const token = "abcdefghijklmnopqrstuvwxyz0123";
+    const chip = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: `Bearer ${token}`, spoken: `running Bearer ${token}` } });
+    expect(chip.tool?.name).not.toContain(token);
+    expect(chip.tool?.spoken).not.toContain(token);
+    expect(chip.tool?.spoken).toMatch(/^running Bearer «redacted/);
   });
 
   it("masks a key in bot text, tools and cards — but never in what the user typed", () => {
