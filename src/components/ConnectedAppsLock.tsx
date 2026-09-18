@@ -23,7 +23,7 @@ import { cn } from "@/lib/cn";
 /** The facts the lock reads, as GET /api/config reports them. Presence only:
  * no key ever reaches the renderer. */
 export interface ConnectedAppsLockConfig {
-  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
+  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable"; migration?: { state?: string } };
   flux?: { configured: boolean };
 }
 
@@ -128,8 +128,10 @@ export function focusSettingsField(
 }
 
 /** One headline, one line, one button. The secondary way in is a link, not
- * a second button, so the eye lands on the one thing to do. */
-export function ConnectedAppsLock({ onAddFluxKey, onOwnKey }: { onAddFluxKey: () => void; onOwnKey: () => void }) {
+ * a second button, so the eye lands on the one thing to do. `retired`: this
+ * install's apps were on Murage's original service, which has ended, so the
+ * headline says that instead of offering apps as if for the first time. */
+export function ConnectedAppsLock({ onAddFluxKey, onOwnKey, retired = false }: { onAddFluxKey: () => void; onOwnKey: () => void; retired?: boolean }) {
   return (
     <div data-connected-apps-lock="" className="relative min-h-0 flex-1 overflow-hidden px-6 pb-7 pt-5 sm:px-8">
       {/* The showcase. Hidden from assistive tech and from the tab order, and
@@ -174,9 +176,9 @@ export function ConnectedAppsLock({ onAddFluxKey, onOwnKey }: { onAddFluxKey: ()
             </svg>
           </div>
           <h3 id="connected-apps-lock-title" className="text-[19px] font-semibold tracking-[-0.01em] text-ink">
-            {t("connectedApps.lock.title")}
+            {t(retired ? "connectedApps.lock.retiredTitle" : "connectedApps.lock.title")}
           </h3>
-          <p className="mx-auto mt-2 max-w-[38ch] text-[13.5px] leading-relaxed text-ink-secondary">{t("connectedApps.lock.body")}</p>
+          <p className="mx-auto mt-2 max-w-[38ch] text-[13.5px] leading-relaxed text-ink-secondary">{t(retired ? "connectedApps.lock.retiredBody" : "connectedApps.lock.body")}</p>
           <button
             type="button"
             data-connected-apps-lock-primary=""

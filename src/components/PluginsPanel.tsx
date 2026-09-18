@@ -120,7 +120,7 @@ export function requiresAccountAlias(message: string) {
 export interface ConnectorPanelFields {
   broker: "flux" | "legacy" | null;
   migration: {
-    state: "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere";
+    state: "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere" | "legacy-retired";
     legacyUntil: string | null;
     code?: string;
     accountKind?: "personal" | "shared";
@@ -249,6 +249,7 @@ export function connectedAppsNotices(input: {
     } else if (tokenNotice) {
       notices.push(tokenNotice);
     } else {
+      if (migration.state === "legacy-retired") notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.legacyRetired") });
       notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.unreachable") });
     }
     return notices;
@@ -260,6 +261,9 @@ export function connectedAppsNotices(input: {
   }
   if (fields.broker === "flux") {
     notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.modeFlux") });
+    // The Worker identity is gone and the apps on it did not move: they have
+    // to be connected again, here, on FluxRouter.
+    if (migration.state === "legacy-retired") notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.legacyRetired") });
     if (migration.accountKind === "shared") notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.shared") });
     if (fields.freeRunsRemainingToday !== null) {
       notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.freeRuns", { count: fields.freeRunsRemainingToday }) });
@@ -883,7 +887,7 @@ export function PluginsPanel() {
             <Loader2 size={14} className="animate-spin" /> {t("connectedApps.lock.loading")}
           </div>
         ) : locked ? (
-          <ConnectedAppsLock onAddFluxKey={addFluxKey} onOwnKey={addOwnKey} />
+          <ConnectedAppsLock onAddFluxKey={addFluxKey} onOwnKey={addOwnKey} retired={state.config?.composio?.migration?.state === "legacy-retired"} />
         ) : <>
 
         {stale && (
