@@ -105,7 +105,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict, approvalHoldNote, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -271,7 +271,7 @@ import {
 } from "./send-idempotency.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
-import { fullAccessChange } from "./full-access.ts";
+import { fullAccessApprovesSetup, fullAccessChange, fullAccessOptionsChange } from "./full-access.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, hostConsentRefusal, hostConsentState, isHostComputerConsent, resolveHostComputerConsent } from "./host-computer-consent.ts";
 import {
@@ -1587,6 +1587,17 @@ function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined,
   const recorded = folderTrust.decision(scan.folder, { fuigoHome });
   const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed }) ? "trust" as const : undefined);
   return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
+}
+/** Full access with "approve setup requests" on (server/full-access.ts)
+ * trusts a folder nobody has decided about, for this turn only: nothing is
+ * remembered, so a later turn decides again, and a recorded "Don't trust"
+ * still wins. It is logged and shown in the conversation like any other
+ * Full access approval. */
+function fullAccessFolderTrust(bot: BotRecord, origin: FullAccessOrigin, threadId: string, gate: SendTurnInput["folderTrust"]): SendTurnInput["folderTrust"] {
+  if (!gate || gate.decision || gate.upstreamTrusted || !gate.sources.length || !fullAccessApprovesSetup(bot, origin)) return gate;
+  store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: `auto-approved folder trust (full access): ${gate.folder}`, ok: true } });
+  appendDecision(DATA_DIR, { threadId, botId: bot.id, botName: bot.name, tool: "folder-trust", summary: gate.folder, decision: "folder-trusted", source: "full-access" });
+  return { ...gate, decision: "trust" };
 }
 /** A folder the human chose in a picker is trusted at that moment (the
  * picker says so): the common case never sees a card. Bot-created folders,
@@ -3377,6 +3388,8 @@ bus.subscribe((event: RuntimeEvent) => {
             // Full access covers turns the owner started; a routine's turn
             // is judged as Auto would judge it
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
+            // ...and the owner's own channel message, if the bot allows it
+            channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
           })
         : null;
       if (verdict?.approve && asker && event.requestId) {
@@ -4452,6 +4465,10 @@ async function startTurn(
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
+  const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
+    : opts?.automationSource === "channel" ? "owner-channel"
+    : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   const eventId = opts?.eventId ?? (opts?.cardContinuation ? task.automationEventId : undefined);
@@ -5057,7 +5074,7 @@ async function startTurn(
       // twice could disagree if the folder changed between the two calls, and
       // a primer that says "trusted" over a turn dispatched untrusted is
       // exactly the kind of confident-and-wrong the primer exists to stop.
-      const folderTrust = folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] });
+      const folderTrust = fullAccessFolderTrust(bot, fullAccessOrigin, threadId, folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }));
       const primer = capabilitiesPrimer(turnCapabilityFacts({
         instance, integrations, model, providerRoute, cwd, folderTrust,
         // Vision is a property of the MODEL, not the engine. Murage only
@@ -7405,11 +7422,23 @@ function peerContactSettings(botId: string, threadId: string) {
   return conversation.group ? conversation.bot : botForDirectThread(botId, threadId);
 }
 
+/** Who started the turn now running in this thread, as Full access reads
+ * it (server/auto-approve.ts). Only the workspace owner's conversation can be
+ * anything but "other"; inside a routine run only the owner's own channel
+ * message counts, and an unattended mark with no run (a turn another bot's
+ * unattended turn started) stays "other". */
+function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
+  if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
+  const run = routines?.activeRunOrigin(threadId);
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel" : "other";
+  return isUnattended(threadId) ? "other" : "owner";
+}
+
 /** Full access skips the bot-to-bot contact card, but only in a turn the
- * owner started: a webhook, channel or routine turn still asks, as in Auto. */
+ * owner started: a webhook, channel or routine turn still asks, as in Auto
+ * (the owner's own channel message only with the bot's option on). */
 function fullAccessSkipsPeerCard(botId: string, threadId: string): boolean {
-  if (isUnattended(threadId) || routines?.isActiveThread(threadId)) return false;
-  return hasFullAccess(peerContactSettings(botId, threadId));
+  return fullAccessCovers(peerContactSettings(botId, threadId), fullAccessTurnOrigin(threadId));
 }
 
 function routineProposalPersistence(botId: string, threadId: string) {
@@ -7509,7 +7538,9 @@ function appendSkillRequestCard(args: {
     sha256: string;
     warnings: string[];
   };
-}): { requestId: string; summary: string } {
+  /** false when Full access is about to approve the card itself */
+  notify?: boolean;
+}): { requestId: string; messageId: string; summary: string } {
   const requestId = randomUUID();
   const copy = skillCardCopy(args.staged);
   const payload: SkillRequestCardData = {
@@ -7541,9 +7572,10 @@ function appendSkillRequestCard(args: {
       skillRequest: payload,
     },
   });
-  notifyApproval(args.botId, args.threadId, requestId, approvalMessage.id);
+  if (args.notify !== false) notifyApproval(args.botId, args.threadId, requestId, approvalMessage.id);
   return {
     requestId,
+    messageId: approvalMessage.id,
     summary: `${copy.title} ${args.staged.gist}`.trim(),
   };
 }
@@ -7555,6 +7587,8 @@ function resolveSkillRequest(args: {
   requestId: string;
   behavior: "allow" | "deny" | "answer";
   reviewedSha256?: string;
+  /** Full access approved it for the owner (logged as such, not as the user) */
+  decidedBy?: "full-access";
 }):
   | { claimed: false }
   | { claimed: true; status: number; error: string }
@@ -7703,8 +7737,7 @@ function resolveSkillRequest(args: {
     botName: args.botName,
     tool: card.tool,
     summary: card.subtitle,
-    decision: "user-approved",
-    source: "user",
+    ...(args.decidedBy ? { decision: "auto-approved" as const, source: args.decidedBy } : { decision: "user-approved" as const, source: "user" as const }),
   });
   return { claimed: true, outcome: "allowed-once" };
 }
@@ -9481,7 +9514,6 @@ const server = createServer(async (req, res) => {
         });
         requireActiveInternal();
         const proposedCard = store.messagesFor(fromThreadId).find((message) => message.id === proposed.messageId)?.card;
-        notifyApproval(from.id, fromThreadId, proposed.requestId, proposed.messageId);
         appendDecision(DATA_DIR, {
           threadId: fromThreadId,
           requestId: proposed.requestId,
@@ -9494,6 +9526,26 @@ const server = createServer(async (req, res) => {
           decision: "card-shown",
           source: "routine",
         });
+        // Full access with "approve setup requests" on confirms the card for
+        // the owner, in the owner's own turn only (server/full-access.ts).
+        // A refusal on applying leaves the card waiting, as it always did.
+        if (fullAccessApprovesSetup(peerContactSettings(from.id, fromThreadId), fullAccessTurnOrigin(fromThreadId))) {
+          const settled = routineRequests.resolve({ botId: from.id, threadId: fromThreadId, requestId: proposed.requestId, behavior: "allow" });
+          if (settled.claimed && settled.state === "applied") {
+            appendDecision(DATA_DIR, {
+              threadId: fromThreadId,
+              requestId: proposed.requestId,
+              botId: from.id,
+              botName: from.name,
+              tool: proposedCard?.tool,
+              summary: proposedCard?.subtitle ?? proposed.summary,
+              decision: "auto-approved",
+              source: "full-access",
+            });
+            return json(res, 201, { ...proposed, autoApproved: true, resultId: settled.resultId });
+          }
+        }
+        notifyApproval(from.id, fromThreadId, proposed.requestId, proposed.messageId);
         return json(res, 201, proposed);
       }
       if (method === "GET" && path === "/api/internal/skills") {
@@ -9544,9 +9596,12 @@ const server = createServer(async (req, res) => {
           source: learnSource(source),
         });
         if ("error" in staged) return json(res, 422, { error: staged.error });
+        // Full access with "approve setup requests" on enables the skill for
+        // the owner, in the owner's own turn only (server/full-access.ts).
+        const approveSetup = fullAccessApprovesSetup(peerContactSettings(from.id, fromThreadId), fullAccessTurnOrigin(fromThreadId));
         let card: ReturnType<typeof appendSkillRequestCard>;
         try {
-          card = appendSkillRequestCard({ botId: from.id, threadId: fromThreadId, staged });
+          card = appendSkillRequestCard({ botId: from.id, threadId: fromThreadId, staged, notify: !approveSetup });
         } catch (error) {
           rejectStagedSkillWrite(from.id, staged.id);
           throw error;
@@ -9561,6 +9616,12 @@ const server = createServer(async (req, res) => {
           decision: "card-shown",
           source: "skill",
         });
+        let autoApproved = false;
+        if (approveSetup) {
+          const settled = resolveSkillRequest({ botId: from.id, botName: from.name, threadId: fromThreadId, requestId: card.requestId, behavior: "allow", reviewedSha256: staged.sha256, decidedBy: "full-access" });
+          autoApproved = settled.claimed && "outcome" in settled && settled.outcome === "allowed-once";
+          if (!autoApproved) notifyApproval(from.id, fromThreadId, card.requestId, card.messageId);
+        }
         return json(res, 201, {
           stagedId: staged.id,
           name: staged.name,
@@ -9568,6 +9629,7 @@ const server = createServer(async (req, res) => {
           gist: staged.gist,
           warnings: staged.warnings,
           summary: card.summary,
+          ...(autoApproved ? { autoApproved: true } : {}),
         });
       }
       if (method === "POST" && path === "/api/internal/ask-bot") {
@@ -12339,6 +12401,10 @@ const server = createServer(async (req, res) => {
       if (fullAccess.autoApprove !== undefined) patch.autoApprove = fullAccess.autoApprove;
       if (fullAccess.fullAccess !== undefined) patch.fullAccess = fullAccess.fullAccess;
       if (fullAccess.acknowledgedAt !== undefined) patch.fullAccessAcknowledgedAt = fullAccess.acknowledgedAt;
+      // Full access's two per-bot options: desktop only (server/full-access.ts).
+      const fullAccessOptions = fullAccessOptionsChange(body, requestSurface(req.headers, url.searchParams) === "desktop");
+      if (!fullAccessOptions.ok) return json(res, fullAccessOptions.status, { error: fullAccessOptions.error });
+      Object.assign(patch, fullAccessOptions.patch);
       if (body.autoReview !== undefined) {
         if (body.autoReview !== "off" && body.autoReview !== "shadow" && body.autoReview !== "enforce") {
           return json(res, 400, { error: "autoReview must be off, shadow, or enforce" });

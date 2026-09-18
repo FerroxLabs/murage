@@ -332,6 +332,10 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
+  /** Full access also covers the owner's own Telegram, Slack and Discord messages */
+  fullAccessChannelMessages?: boolean;
+  /** Full access also approves setup requests (skills, routines, folder trust) */
+  fullAccessSetupRequests?: boolean;
   /** optional model review for otherwise undecided, attended approvals */
   autoReview?: "off" | "shadow" | "enforce";
   /** tools this bot may always use without asking */
@@ -1463,7 +1467,7 @@ export function reducer(state: AppState, action: Action): AppState {
                     : b,
               ),
             };
-      const { acknowledgeLocalAuto: _ack, chiefTier: _tier, settingsScope:_scope, ...botPatch } = action.patch;
+      const { acknowledgeLocalAuto: _ack, acknowledgeFullAccess: _fullAck, chiefTier: _tier, settingsScope:_scope, ...botPatch } = action.patch;
       return updateBot(scoped, action.botId, (b) => ({
         ...b,
         ...botPatch,

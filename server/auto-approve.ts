@@ -206,12 +206,29 @@ export interface AutoApprover {
   /** Full access, the level above Auto. It counts only while `autoApprove`
    * is on too, so every path that switches Auto off ends it as well. */
   fullAccess?: boolean;
+  /** Full access also covers the owner's own messages from Telegram, Slack
+   * and Discord. Off unless it is exactly `true`. */
+  fullAccessChannelMessages?: boolean;
   alwaysAllow?: string[];
 }
 
 /** Is this bot (or task) on Full access? */
 export function hasFullAccess(bot: AutoApprover | null | undefined): boolean {
   return bot?.autoApprove === true && bot.fullAccess === true;
+}
+
+/** Who started the turn, as Full access reads it: the owner at the desktop
+ * (or a bot the owner's turn reached), the owner's own message from
+ * Telegram, Slack or Discord, or anyone and anything else — a webhook, a
+ * routine, another person's channel message. */
+export type FullAccessOrigin = "owner" | "owner-channel" | "other";
+
+/** Does Full access cover a turn from this origin? The owner's channel
+ * messages only when the bot's option says so; everything else never. */
+export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin): boolean {
+  if (!hasFullAccess(bot)) return false;
+  if (origin === "owner") return true;
+  return origin === "owner-channel" && bot?.fullAccessChannelMessages === true;
 }
 
 /** Why a verdict landed the way it did. `unattended-block` exists only in
@@ -273,6 +290,9 @@ export function autoVerdict(
     /** the turn belongs to a routine run (scheduled, manual, webhook or
      * channel trigger) rather than to someone typing to the bot */
     automated?: boolean;
+    /** the turn is the workspace owner's own Telegram, Slack or Discord
+     * message (it is also unattended and automated) */
+    channelOwner?: boolean;
   },
 ): AutoVerdict {
   // A question outranks everything, including the unattended and host
@@ -283,8 +303,12 @@ export function autoVerdict(
   // guards, not the host-control guard — for a turn the owner started. A turn
   // started by a webhook, a channel event or a routine carries input someone
   // else wrote (or nobody is watching it), so it is judged exactly as Auto
-  // would judge it, below.
-  if (hasFullAccess(bot) && !context?.unattended && !context?.automated) {
+  // would judge it, below. The owner's own channel message joins the owner's
+  // turns only when the bot's option says so.
+  const origin: FullAccessOrigin = context?.unattended || context?.automated
+    ? context.channelOwner === true ? "owner-channel" : "other"
+    : "owner";
+  if (fullAccessCovers(bot, origin)) {
     return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
   }
   // the guards outrank the grants, so an "always allow" can never widen
@@ -346,6 +370,8 @@ export function autoDecision(
     question?: boolean;
     /** the turn belongs to a routine run */
     automated?: boolean;
+    /** the owner's own channel message */
+    channelOwner?: boolean;
   },
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
