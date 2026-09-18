@@ -908,6 +908,11 @@ describe("Store", () => {
       expect(survivor).toBeTruthy();
       expect(survivor.memberIds).toEqual([keeper.id]);
       expect(survivor.defaultResponder).toEqual({ kind: "member", botId: keeper.id });
+      // and in the LIVE store, not only after a reload: load re-normalises
+      // the lead, so a check on the reloaded copy alone would let the
+      // running process keep pointing the channel at a bot that is gone
+      expect(store.group(channel.id)!.memberIds).toEqual([keeper.id]);
+      expect(store.group(channel.id)!.defaultResponder).toEqual({ kind: "member", botId: keeper.id });
       // every message survives, the deleted bot's lines included, still
       // wearing the name and colour they were said with (a tombstone the
       // renderer already knows how to draw)
@@ -933,6 +938,7 @@ describe("Store", () => {
       const after = new Store(selection);
       expect(after.group(channel.id)?.memberIds).toEqual([]);
       expect(after.group(channel.id)?.defaultResponder).toEqual({ kind: "mentions" });
+      expect(store.group(channel.id)?.defaultResponder).toEqual({ kind: "mentions" });
       expect(after.messagesFor(channel.threadId).map((m) => m.text)).toEqual(["kept"]);
     });
 
