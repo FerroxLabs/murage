@@ -1228,7 +1228,8 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
  * one quiet note in the conversation. It used to throw into the turn's setup
  * catch and fail the whole request — with a card that sent the person to
  * Provider settings for a failure no provider was involved in. */
-async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId: string = randomUUID()) {
+type BrowserBinding = { profileKey: string; integration: { command: string; args: string[]; env: Record<string, string> } };
+async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId: string = randomUUID()): Promise<BrowserBinding | { unavailable: string } | null> {
   if (browserEngineStatus().kind !== "ready") return null;
   let binding: Awaited<ReturnType<typeof unifiedBrowserBinding>>;
   try {
