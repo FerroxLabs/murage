@@ -72,6 +72,8 @@
 //                     file exists — a deterministic busy window for the
 //                     steer-queue e2e, with the echo pinning exactly what a
 //                     drained turn was sent)
+//   FAKE_ACP_PERMISSION_COMMAND  the command a permission-mode ask names
+//                   (default "echo hi")
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_PROMPT_DUMP  path to write the last session/prompt's content
@@ -128,6 +130,8 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
+// permission modes: the command the approval asks about (default "echo hi")
+const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // opencode-shaped surface: the session carries its own model catalog and the
 // model is chosen with session/set_config_option, because `opencode acp` takes
@@ -1199,7 +1203,7 @@ function handle(msg: any) {
                     }],
                   },
                 }
-              : { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
+              : { kind: "execute", rawInput: { command: permissionCommand }, title: permissionCommand },
             options: mode === "permission-session-first"
               // verbatim order and ids from a Fuigo 1.0.12 `Write` prompt
               ? [

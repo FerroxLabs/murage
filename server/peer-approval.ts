@@ -28,6 +28,9 @@ export interface ApprovalBus {
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   onApproval?: (botId: string, threadId: string, requestId: string, messageId: string) => void;
+  /** Is this bot's conversation still on Full access? Consulted only for a
+   * handoff that was queued from a Full access turn the owner started. */
+  fullAccessStanding?: (botId: string, threadId: string) => boolean;
 }
 
 interface Pending {

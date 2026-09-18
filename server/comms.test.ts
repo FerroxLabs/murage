@@ -1427,6 +1427,53 @@ describe("comms e2e (fake ACP fleet)", () => {
     ).toBe(false);
   }, 50_000);
 
+  // Full access skips the bot-to-bot contact card for a turn the owner
+  // started. Both doors: the synchronous ask and the queued handoff, whose
+  // card would otherwise open when the queue drains after the turn.
+  const fullAccessAsker = async (instanceId: string) => {
+    const seeded = (await api("GET", "/api/bots")).body.bots[0];
+    await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
+    const helper = (await api("POST", "/api/bots")).body.bot;
+    await api("PATCH", `/api/bots/${helper.id}`, { name: "Helper", modelSelection: { instanceId: "grok", model: "fake-model" } });
+    const asker = (await api("POST", "/api/bots")).body.bot;
+    expect((await api("PATCH", `/api/bots/${asker.id}`, {
+      name: "Asker",
+      modelSelection: { instanceId, model: "fake-model" },
+      approvePeerComms: true,
+      computer: "off",
+    })).status).toBe(200);
+    const on = await api("PATCH", `/api/bots/${asker.id}/tasks/${asker.threadId}`, { fullAccess: true, acknowledgeFullAccess: true });
+    expect(on.status).toBe(200);
+    expect(on.body.task.fullAccess).toBe(true);
+    return { asker, helper };
+  };
+  const helperReplied = async (helperId: string) => {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const state = (await api("GET", "/api/bots")).body;
+      const helperBot = state.bots.find((b: any) => b.id === helperId);
+      if (helperBot.messages.some((m: any) => m.role === "bot" && m.kind === "text" && m.text?.includes("hello from fake acp")) && !helperBot.busy) return state;
+      if (Date.now() > deadline) throw new Error(`B never ran. helper tail: ${JSON.stringify(helperBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  };
+  const peerCards = (state: any, botId: string) =>
+    state.bots.find((b: any) => b.id === botId).messages.filter((m: any) => m.kind === "options" && (m.card?.tool === "ask_bot" || m.card?.tool === "delegate_bot"));
+
+  it("skips the contact card for ask_bot when the asker is on Full access", async () => {
+    const { asker, helper } = await fullAccessAsker("grok");
+    expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "hey @Helper no card please" })).status).toBe(202);
+    const state = await helperReplied(helper.id);
+    expect(peerCards(state, asker.id)).toHaveLength(0);
+  }, 50_000);
+
+  it("skips the contact card for a queued delegate_bot when the asker is on Full access", async () => {
+    const { asker, helper } = await fullAccessAsker("askerDelegate");
+    expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "delegate this to @Helper please" })).status).toBe(202);
+    const state = await helperReplied(helper.id);
+    expect(peerCards(state, asker.id)).toHaveLength(0);
+  }, 50_000);
+
   // Delegated helpers keep their MCP directory; budgets constrain actions,
   // not the existence of the management tool server.
   it("retains the scoped agents directory on a delegated depth-1 turn", async () => {

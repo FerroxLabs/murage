@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, ShieldOff, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { newSendId } from "@/lib/send-id";
@@ -31,6 +31,8 @@ import {
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
+import { FullAccessWarning } from "./FullAccessWarning";
+import { permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
   appendPastedText,
@@ -86,13 +88,28 @@ interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
 }
 
-/** Composer chip for Auto mode. Compact label (Ask / Auto); the menu still
- * uses the full names. Same `autoApprove` bit as the profile switch — picking
- * Auto mode here turns that on. The chip only changes its name, not its color. */
-function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto: boolean) => void }) {
+const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: string; chip: string; detail: string }> = [
+  { mode: "ask", label: "Ask for approval", chip: "Ask", detail: "Ask before actions that need your permission" },
+  { mode: "auto", label: "Auto mode", chip: "Auto", detail: "Keep going automatically; destructive and sensitive actions still ask" },
+  {
+    mode: "full",
+    label: "Full access",
+    chip: "Full access",
+    detail: "Never stops to ask. Webhook and routine turns still ask; image generation still asks before it spends",
+  },
+];
+
+const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
+  mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
+
+/** Composer chip for the approval level: Ask, Auto or Full access. The same
+ * `autoApprove` bit as the profile switch, plus `fullAccess` above it. The
+ * chip only changes its name, not its color. */
+function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode: PermissionMode) => void }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const on = Boolean(bot.autoApprove);
+  const current = permissionModeOf(bot);
+  const currentEntry = PERMISSION_MODES.find((entry) => entry.mode === current)!;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -117,13 +134,13 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={on ? "Auto mode" : "Ask for approval"}
+        aria-label={current === "ask" ? "Ask for approval" : currentEntry.label}
         disabled={bot.busy}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => setOpen((value) => !value)}
         className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        {on ? <ShieldCheck size={14} className="opacity-70" /> : <Hand size={14} className="opacity-70" />}
-        {on ? "Auto" : "Ask"}
+        <PermissionModeIcon mode={current} size={14} className="opacity-70" />
+        {currentEntry.chip}
       </button>
 
       {open && (
@@ -136,46 +153,28 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
             How should {bot.name} actions be approved?
           </div>
           <div className="flex flex-col py-1">
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={!on}
-              onClick={() => {
-                onSetAuto(false);
-                setOpen(false);
-              }}
-              className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
-            >
-              <Hand size={16} className="mt-0.5 shrink-0 opacity-70" />
-              <div className="flex w-full flex-col gap-0.5">
-                <div className="flex items-center justify-between text-[14px] text-ink">
-                  Ask for approval
-                  {!on && <Check size={14} />}
+            {PERMISSION_MODES.map((entry) => (
+              <button
+                key={entry.mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={current === entry.mode}
+                onClick={() => {
+                  onSetMode(entry.mode);
+                  setOpen(false);
+                }}
+                className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
+              >
+                <PermissionModeIcon mode={entry.mode} size={16} className="mt-0.5 shrink-0 opacity-70" />
+                <div className="flex w-full flex-col gap-0.5">
+                  <div className="flex items-center justify-between text-[14px] text-ink">
+                    {entry.label}
+                    {current === entry.mode && <Check size={14} />}
+                  </div>
+                  <div className="text-[13px] text-ink-secondary">{entry.detail}</div>
                 </div>
-                <div className="text-[13px] text-ink-secondary">Ask before actions that need your permission</div>
-              </div>
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={on}
-              onClick={() => {
-                onSetAuto(true);
-                setOpen(false);
-              }}
-              className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
-            >
-              <ShieldCheck size={16} className="mt-0.5 shrink-0 opacity-70" />
-              <div className="flex w-full flex-col gap-0.5">
-                <div className="flex items-center justify-between text-[14px] text-ink">
-                  Auto mode
-                  {on && <Check size={14} />}
-                </div>
-                <div className="text-[13px] text-ink-secondary">
-                  Keep going automatically; destructive and sensitive actions still ask
-                </div>
-              </div>
-            </button>
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -464,7 +463,10 @@ export function Composer({
     else interruptTurn();
   };
   const fileInput = useRef<HTMLInputElement>(null);
-  const [autoWarn, setAutoWarn] = useState(false);
+  // which level the Auto-on-this-computer warning is confirming, if open
+  const [autoWarn, setAutoWarn] = useState<false | "auto" | "full">(false);
+  // the one-time Full access warning, and whether it also covers this computer
+  const [fullWarn, setFullWarn] = useState<false | { onThisComputer: boolean }>(false);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const audioFileRef = useRef<File | null>(null);
@@ -488,20 +490,36 @@ export function Composer({
     // overlapping intake must not erase an earlier failure before it is read.
     if (notice) setAttachmentNotice(notice);
   };
-  const setAuto = (auto: boolean) => {
+  const setMode = (mode: PermissionMode) => {
     if (!autoBot) return;
-    // Turning it on for a bot that drives THIS computer is the one case that
-    // has to be acknowledged first. The flag the dialog sends is stripped by
-    // the reducer rather than stored, so — exactly like the settings panel —
-    // the warning is shown on every switch-on, not just the first. The
-    // platform is the harness's own (announced on /api/config), not this
-    // browser's UA (FOLLOW5).
+    // Turning Auto (or Full access, which includes it) on for a bot that
+    // drives THIS computer has to be acknowledged first. The flag the dialog
+    // sends is stripped by the reducer rather than stored, so — exactly like
+    // the settings panel — that warning is shown on every switch-on, not just
+    // the first. The platform is the harness's own (announced on
+    // /api/config), not this browser's UA (FOLLOW5).
     const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
-    if (auto && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove })) {
-      setAutoWarn(true);
+    const needsLocal = mode !== "ask" && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove });
+    if (mode === "full") {
+      // Full access has its own warning, once per bot; the server refuses the
+      // switch without it (server/full-access.ts). When it is shown it also
+      // covers this computer, so the owner is never asked twice in a row.
+      if (autoBot.fullAccessAcknowledgedAt === undefined) {
+        setFullWarn({ onThisComputer: needsLocal });
+        return;
+      }
+      if (needsLocal) {
+        setAutoWarn("full");
+        return;
+      }
+      dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: { fullAccess: true } });
       return;
     }
-    dispatch({ type: "updateTask", botId: autoBot.id,threadId, patch: { autoApprove: auto } });
+    if (needsLocal) {
+      setAutoWarn("auto");
+      return;
+    }
+    dispatch({ type: "updateTask", botId: autoBot.id,threadId, patch: { autoApprove: mode === "auto", fullAccess: false } });
   };
 
   const hasContent = Boolean(effectiveText.trim()) || attachments.length > 0;
@@ -1056,7 +1074,7 @@ export function Composer({
                   {effectiveChannelMode === "goal" ? "/goal" : "Goal"}
                 </button>
               )}
-              {autoBot && <PermissionModeSelector bot={autoBot} onSetAuto={setAuto} />}
+              {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} />}
             </div>
           )}
           <div className="ml-auto flex items-center gap-1">
@@ -1151,7 +1169,7 @@ export function Composer({
       </div>
       <div className="pointer-events-auto">
       <LocalComputerAutoWarning
-        open={autoWarn}
+        open={autoWarn !== false}
         onCancel={() => setAutoWarn(false)}
         onConfirm={() => {
           if (autoBot) {
@@ -1159,10 +1177,27 @@ export function Composer({
               type: "updateTask",
               botId: autoBot.id,
               threadId,
-              patch: { autoApprove: true, acknowledgeLocalAuto: true },
+              patch: autoWarn === "full" ? { fullAccess: true, acknowledgeLocalAuto: true } : { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true },
             });
           }
           setAutoWarn(false);
+        }}
+      />
+      <FullAccessWarning
+        open={fullWarn !== false}
+        botName={autoBot?.name ?? ""}
+        onThisComputer={fullWarn !== false && fullWarn.onThisComputer}
+        onCancel={() => setFullWarn(false)}
+        onConfirm={() => {
+          if (autoBot && fullWarn !== false) {
+            dispatch({
+              type: "updateTask",
+              botId: autoBot.id,
+              threadId,
+              patch: { fullAccess: true, acknowledgeFullAccess: true, ...(fullWarn.onThisComputer ? { acknowledgeLocalAuto: true } : {}) },
+            });
+          }
+          setFullWarn(false);
         }}
       />
       </div>

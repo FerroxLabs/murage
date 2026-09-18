@@ -105,7 +105,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict, approvalHoldNote, isQuestionGrant, isQuestionTool, withoutQuestionGrants } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants } from "./auto-approve.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -271,6 +271,7 @@ import {
 } from "./send-idempotency.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
+import { fullAccessChange } from "./full-access.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, hostConsentRefusal, hostConsentState, isHostComputerConsent, resolveHostComputerConsent } from "./host-computer-consent.ts";
 import {
@@ -3361,6 +3362,9 @@ bus.subscribe((event: RuntimeEvent) => {
             unattended,
             scope: event.approvalScope,
             question: event.questionTool === true,
+            // Full access covers turns the owner started; a routine's turn
+            // is judged as Auto would judge it
+            automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
           })
         : null;
       if (verdict?.approve && asker && event.requestId) {
@@ -4419,7 +4423,7 @@ async function startTurn(
   const humanIsOwner=isWorkspaceOwner(humanPrincipal);
   if(!humanIsOwner){
     if(!opts?.automationSource&&!opts?.commsDepth&&!opts?.cardContinuation&&!opts?.memoryRedispatch)throw Object.assign(new Error("This conversation belongs to a channel person. Start a new owner task to chat."),{status:403});
-    bot.autoApprove=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
+    bot.autoApprove=false;bot.fullAccess=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
   }
   if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
@@ -6016,7 +6020,7 @@ const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapac
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
 // can call resolvePeerComms without holding a reference back to here.
-const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval };
+const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval, fullAccessStanding: (botId, threadId) => hasFullAccess(peerContactSettings(botId, threadId)) };
 
 // Approvals live only in memory, so any peer card still open on disk is one
 // whose resolver died with the previous process. Left alone it can never be
@@ -7377,6 +7381,21 @@ function connectorThread(botId: string, threadId: string) {
   const group = store.groupByThread(threadId);
   if (group?.memberIds.includes(botId)) return { bot, group };
   return null;
+}
+
+/** The approval settings a bot's peer contact is judged by: the task in a
+ * 1:1, the profile in a room — the same resolution `request.opened` uses. */
+function peerContactSettings(botId: string, threadId: string) {
+  const conversation = connectorThread(botId, threadId);
+  if (!conversation) return null;
+  return conversation.group ? conversation.bot : botForDirectThread(botId, threadId);
+}
+
+/** Full access skips the bot-to-bot contact card, but only in a turn the
+ * owner started: a webhook, channel or routine turn still asks, as in Auto. */
+function fullAccessSkipsPeerCard(botId: string, threadId: string): boolean {
+  if (isUnattended(threadId) || routines?.isActiveThread(threadId)) return false;
+  return hasFullAccess(peerContactSettings(botId, threadId));
 }
 
 function routineProposalPersistence(botId: string, threadId: string) {
@@ -9580,13 +9599,14 @@ const server = createServer(async (req, res) => {
         const eventAdmissionId = randomUUID();
         let childCoordination: CoordinationTrace | undefined;
         const nextCoordination = () => childCoordination ??= coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId);
+        const peerCardWaived = from.approvePeerComms === true && fullAccessSkipsPeerCard(from.id, fromThreadId);
         const queueBusyFallback = (approvalAlreadyGranted = false) => {
           requireActiveInternal();
           admitEventAction("handoff", eventAdmissionId);
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId, coordination: nextCoordination() },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(peerCardWaived ? { fullAccessWaived: true } : {}), eventId: internalEventId, coordination: nextCoordination() },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -9609,7 +9629,7 @@ const server = createServer(async (req, res) => {
         // (15-min timeout → deny) before its peer turn starts. The channel
         // and the chips are created only AFTER the verdict, so a denied
         // contact leaves no trace of an exchange that never happened.
-        if (from.approvePeerComms) {
+        if (from.approvePeerComms && !peerCardWaived) {
           const verdict = await requestPeerApproval(
             approvalBus,
             from,
@@ -9780,10 +9800,11 @@ const server = createServer(async (req, res) => {
         if (!handoffSlot) return json(res, 429, { error: `at most ${MAX_HANDOFFS_PER_TURN} peer handoffs are allowed per turn` });
         try {
         admitEventAction("handoff", randomUUID());
+        const peerCardWaived = from.approvePeerComms === true && fullAccessSkipsPeerCard(from.id, fromThreadId);
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth, eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
+          { toBotId, message, reason, depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -9803,7 +9824,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, {
           queued: true,
           taskId: queued.id,
-          message: from.approvePeerComms
+          message: from.approvePeerComms && !peerCardWaived
             ? `Queued for review — @${targetName} will only pick it up if the user approves after your turn finishes.`
             : `Delegation queued — @${targetName} will pick it up after your current turn finishes.`,
         });
@@ -12109,7 +12130,7 @@ const server = createServer(async (req, res) => {
       if(body.settingsScope!==undefined&&body.settingsScope!=="defaults")return json(res,400,{error:"settingsScope must be defaults"});
       const preserveTaskSettings=body.settingsScope==="defaults";
       if(preserveTaskSettings&&requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"not found"});
-      if(!preserveTaskSettings&&(existingBot?.tasks?.length??0)>1&&(body.modelSelection!==undefined||body.autoApprove!==undefined||body.alwaysAllow!==undefined))return json(res,409,{error:"Choose a thread or edit bot defaults explicitly"});
+      if(!preserveTaskSettings&&(existingBot?.tasks?.length??0)>1&&(body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.alwaysAllow!==undefined))return json(res,409,{error:"Choose a thread or edit bot defaults explicitly"});
       if(existingBot&&directRuns.forBot(existingBot.id).length>1)return json(res,409,{error:"Stop this bot's threads before changing shared settings"});
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
         return json(res, 400, { error: "requireAvailableModel must be true or false" });
@@ -12298,6 +12319,12 @@ const server = createServer(async (req, res) => {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
         patch.autoApprove = body.autoApprove;
       }
+      // Full access (server/full-access.ts): desktop only, warning once per bot.
+      const fullAccess = fullAccessChange(body, existingBot, requestSurface(req.headers, url.searchParams) === "desktop");
+      if (!fullAccess.ok) return json(res, fullAccess.status, { error: fullAccess.error });
+      if (fullAccess.autoApprove !== undefined) patch.autoApprove = fullAccess.autoApprove;
+      if (fullAccess.fullAccess !== undefined) patch.fullAccess = fullAccess.fullAccess;
+      if (fullAccess.acknowledgedAt !== undefined) patch.fullAccessAcknowledgedAt = fullAccess.acknowledgedAt;
       if (body.autoReview !== undefined) {
         if (body.autoReview !== "off" && body.autoReview !== "shadow" && body.autoReview !== "enforce") {
           return json(res, 400, { error: "autoReview must be off, shadow, or enforce" });
@@ -12322,7 +12349,7 @@ const server = createServer(async (req, res) => {
       // patching unrelated fields needs no re-ack, while leaving the local
       // computer ends the grant and coming back needs the warning again.
       const wantsComputer = body.computer === null ? undefined : body.computer !== undefined ? body.computer : existingBot?.computer;
-      const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
+      const wantsAuto = patch.autoApprove !== undefined ? patch.autoApprove === true : existingBot?.autoApprove === true;
       const alreadyGranted = existingBot?.autoApprove === true && autoMountsLocalComputer(existingBot.computer);
       if (autoMountsLocalComputer(wantsComputer) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
         return json(res, 400, {
@@ -13549,8 +13576,8 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if(!body||typeof body!=="object"||Array.isArray(body))return json(res,400,{error:"body must be an object"});
       const current=store.projectBotForTask(m[1],m[2]);if(!current)return json(res,404,{error:"no such task"});
-      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","cwd","unread","pinned","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
-      const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.cwd!==undefined;
+      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","fullAccess","acknowledgeFullAccess","cwd","unread","pinned","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
+      const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.cwd!==undefined;
       // the working folder is a desktop setting: a paired device answers 404
       // and (FUIGOTRUST2) records no folder trust either way
       const desktopSurface=requestSurface(req.headers,url.searchParams)==="desktop";
@@ -13558,11 +13585,16 @@ const server = createServer(async (req, res) => {
       if(settings&&directThreadBusy(current.id,current.threadId))return json(res,409,{error:"Stop this thread before changing its settings"});
       const patch:Parameters<typeof store.patchTask>[2]={};
       if(body.modelSelection!==undefined){const checked=checkedModelSelection(body.modelSelection,{selection:current.modelSelection,busy:false},body.requireAvailableModel===true);if(!checked.ok)return json(res,checked.status,{error:checked.error});patch.modelSelection=checked.selection;}
-      if(body.autoApprove!==undefined){
-        if(typeof body.autoApprove!=="boolean")return json(res,400,{error:"autoApprove must be true or false"});
-        if(body.autoApprove&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
-        patch.autoApprove=body.autoApprove;
+      if(body.autoApprove!==undefined&&typeof body.autoApprove!=="boolean")return json(res,400,{error:"autoApprove must be true or false"});
+      // Full access (server/full-access.ts): desktop only, warning once per bot.
+      const fullAccess=fullAccessChange(body,store.bot(m[1]),desktopSurface);
+      if(!fullAccess.ok)return json(res,fullAccess.status,{error:fullAccess.error});
+      const wantsAuto=fullAccess.autoApprove??body.autoApprove;
+      if(wantsAuto!==undefined){
+        if(wantsAuto&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
+        patch.autoApprove=wantsAuto;
       }
+      if(fullAccess.fullAccess!==undefined)patch.fullAccess=fullAccess.fullAccess;
       if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd,desktopSurface);}
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
@@ -13570,6 +13602,7 @@ const server = createServer(async (req, res) => {
       if(body.pinned!==undefined){if(typeof body.pinned!=="boolean")return json(res,400,{error:"pinned must be true or false"});patch.pinned=body.pinned;}
       const task = store.patchTask(m[1],m[2],patch);
       if (!task) return json(res, 404, { error: "no such task" });
+      if (fullAccess.acknowledgedAt !== undefined) store.patchBot(m[1], { fullAccessAcknowledgedAt: fullAccess.acknowledgedAt }, { preserveTaskSettings: true });
       const fresh = botWithThread(store.bot(m[1])!);
       broadcast({ kind: "bot", bot: fresh });
       return json(res, 200, { task: wireTask(task) });

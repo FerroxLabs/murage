@@ -32,6 +32,10 @@ export interface DelegationItem {
    * an ask_bot request. If that peer became busy before dispatch, the
    * fallback handoff must not ask them to approve the same action twice. */
   approvalAlreadyGranted?: boolean;
+  /** Queued from a Full access turn the owner started, so the contact card
+   * is skipped at drain time — if the sender's conversation is still on
+   * Full access then. Never set for a webhook, channel or routine turn. */
+  fullAccessWaived?: boolean;
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
@@ -217,6 +221,7 @@ export function _loadPending(): void {
           ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
+        if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
         if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
         return [loaded];
       });
@@ -545,7 +550,8 @@ async function processOne(
     delete item.waitingOnBusy;
     savePending();
   }
-  if (sender.approvePeerComms && !item.approvalAlreadyGranted) {
+  const fullAccessWaived = item.fullAccessWaived === true && approvalBus.fullAccessStanding?.(sender.id, sourceThreadId) === true;
+  if (sender.approvePeerComms && !item.approvalAlreadyGranted && !fullAccessWaived) {
     const verdict = await requestPeerApproval(
       approvalBus,
       sender,

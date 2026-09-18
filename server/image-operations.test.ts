@@ -137,6 +137,17 @@ it("requires an exact owner count approval before work and persists a real artif
  expect(imageReferences(f.store,f.actor.threadId,[result.referenceId])[0].bytes).toEqual(png);
  expect(f.waiting.mock.calls.map(c=>c[1])).toEqual([true,false]);
 });
+it("still asks before it spends when the bot is on Full access",async()=>{
+ const f=generationFixture();
+ f.store.patchBot(f.bot.id,{autoApprove:true,fullAccess:true,fullAccessAcknowledgedAt:1});
+ expect(f.store.projectBotForTask(f.bot.id,f.bot.threadId)?.fullAccess).toBe(true);
+ const job=f.run("full-access",f.request);
+ const card=await f.card();
+ expect(card.card!.title).toBe("Approve image generation");
+ expect(f.fetcher).not.toHaveBeenCalled();
+ f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
+ expect(f.fetcher).toHaveBeenCalledOnce();
+});
 it("denial or cancellation cannot start a provider request",async()=>{
  const f=fixture(),provider=vi.fn();const job=f.operations.execute(f.actor,"denied",{prompt:"fixture"},async reserve=>{await reserve(detail);provider();});
  const rejected=expect(job).rejects.toThrow("not approved");const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await rejected;expect(provider).not.toHaveBeenCalled();
