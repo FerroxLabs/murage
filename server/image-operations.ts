@@ -231,9 +231,11 @@ export class ImageOperations {
     let released = 0;
     for (const row of rows) {
       // Belt and braces: bytes are only ever retained through a receipt, and
-      // retaining one also writes `running` and a result. Refuse to clear a
-      // row that somehow has one anyway.
-      if (this.db().prepare("SELECT id FROM output_publications WHERE producer='image-operation' AND run_id=? LIMIT 1").get(row.id)) continue;
+      // retaining one writes `running` and a result in the same statement, so
+      // this cannot match. Refuse to clear a row that somehow has one anyway —
+      // and treat a receipts table that does not exist yet as "no receipts",
+      // never as a reason to abandon the sweep.
+      try { if (this.db().prepare("SELECT id FROM output_publications WHERE producer='image-operation' AND run_id=? LIMIT 1").get(row.id)) continue; } catch { /* no receipts recorded yet */ }
       released += Number(this.db().prepare("DELETE FROM image_operations WHERE id=? AND state='awaiting' AND result IS NULL").run(row.id).changes ?? 0);
     }
     return released;
