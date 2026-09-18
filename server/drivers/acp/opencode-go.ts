@@ -403,13 +403,21 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   // before it can reach the router: Flux would be paying for a turn the gate
   // never lets start. `skipSubscriptionAuthForLocalInject` cannot cover it —
   // that predicate only knows `host::model` inject ids.
-  isAuthenticated: async (env, config) => (
+  //
+  // F2: `canListOpenCodeModels` used to be a fourth leg of this predicate, and
+  // it is the reason an empty $HOME reported opencode as signed in. `opencode
+  // models` prints the bundled models.dev catalogue whether or not anybody has
+  // logged in, so a non-empty list is evidence the BINARY works, never that
+  // this machine has a credential. It now lives in `mayRunUnauthenticated`
+  // below: the pre-spawn gate is exactly as permissive as before, and the
+  // Engines screen stops claiming a login nobody performed.
+  isAuthenticated: (env) => (
     Boolean(env.OPENCODE_API_KEY)
     || openCodeFluxRouted(env)
     || hasStoredOpenCodeAuth(env)
-    || await canListOpenCodeModels(env, config.cli)
   ),
   requireAuthenticationBeforeSpawn: true,
+  mayRunUnauthenticated: (env, config) => canListOpenCodeModels(env, config.cli),
   classifyError: classifyOpenCodeError,
   // The gate env is READ-ONLY and never handed to a child: `process.env` for
   // the Flux key (FLUX_API_KEY is a workspace credential the ACP core has

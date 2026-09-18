@@ -1325,10 +1325,24 @@ async function defaultSelection() {
   // the failure surfaced as "the delegated turn auto-approved". Bisected
   // against the pre-change commit rather than guessed at.
   const usable = available.filter((d) => d.models.default);
+  // F2 — a new bot used to be handed `codex` on a machine where codex had
+  // never been signed in, because this preference could not see the difference.
+  // `authenticated` is still NOT a filter, for the reason spelled out above:
+  // several drivers report it conservatively and filtering on it once left a
+  // delegated teammate with no engine at all (server/unattended.test.ts). It is
+  // a RANKING instead. An engine that says it is signed in wins over one that
+  // says it is not; an engine that does not answer the question keeps the
+  // benefit of the doubt and sits between them. Every engine that was pickable
+  // before is still pickable, so nothing that worked can stop working — the
+  // only change is which of several candidates a brand-new bot lands on.
+  const signInRank = (d: (typeof usable)[number]) =>
+    d.snapshot.authenticated === true ? 0 : d.snapshot.authenticated === undefined ? 1 : 2;
+  const best = Math.min(...usable.map(signInRank));
+  const preferred = usable.filter((d) => signInRank(d) === best);
   const pick =
-    usable.find((d) => d.driverKind === "fuigoAgent") ??
-    usable.find((d) => d.driverKind === "claudeAgent") ??
-    usable[0];
+    preferred.find((d) => d.driverKind === "fuigoAgent") ??
+    preferred.find((d) => d.driverKind === "claudeAgent") ??
+    preferred[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 
@@ -4232,8 +4246,14 @@ async function startTurn(
     store.setTaskAutomationEvent(bot.id, threadId);
   }
   const commsDepth = opts?.commsDepth ?? 0;
-  // a task takes its name from the first thing you asked it to do
-  if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
+  // A task takes its name from the first thing you asked it to do — but NOT
+  // before the turn has cleared every refusal below. Naming the task here used
+  // to be the first and only trace a refused first send left behind: the
+  // sentence renamed the thread, the refusal threw before `appendMessage`, and
+  // the text the person typed existed nowhere afterwards. A send that is
+  // refused must leave the conversation exactly as it found it, so this now
+  // runs beside the append (search: titleTaskFromFirstMessage) once the turn
+  // is certain to be recorded.
 
   const { instance, providerRoute } = turnRouting(bot, opts?.runOn);
   if(!humanIsOwner&&(instance.driverKind==="boxAgent"||opts?.runOn==="cloud"))throw Object.assign(new Error("This channel person has no cloud computer grant. Choose a chat engine."),{status:403});
@@ -4258,6 +4278,10 @@ async function startTurn(
   // to the ENGINE'S own host — api.openai.com for codex — and 400s there.
   const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);
   if (fluxRefusal) throw Object.assign(new Error(fluxRefusal), { status: 409 });
+
+  // Every refusal that can reject this turn outright has now passed, so the
+  // text is about to be recorded and naming the task from it is safe.
+  if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
