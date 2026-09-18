@@ -31,6 +31,7 @@ import { isAbsolute, join, parse, resolve } from "node:path";
 
 import { samePath } from "../shared/path-identity.mjs";
 import { DATA_DIR } from "./config.ts";
+import { cachedProtectedFolders, volumeRootReason } from "./protected-folders.ts";
 
 export const CHECKPOINTS_DIR = join(DATA_DIR, "checkpoints");
 
@@ -151,9 +152,11 @@ function gitAvailable(): Promise<boolean> {
 }
 
 /** Folders a checkpoint must never be taken in: missing paths, the sprawling
- * personal folders (home, Desktop, Documents, Downloads), and the filesystem
- * root — snapshotting those would trawl unbounded personal data into a repo,
- * and a restore's `git clean -fd` there would be an act of vandalism. */
+ * personal folders (home, Desktop, Documents, Downloads and the rest — see
+ * protected-folders.ts, which finds where they really are on each platform),
+ * and the filesystem, volume or home root — snapshotting those would trawl
+ * unbounded personal data into a repo, and a restore's `git clean -fd` there
+ * would be an act of vandalism. */
 export function refusalReason(cwd: string): string | null {
   if (!isAbsolute(cwd)) return "the working folder must be an absolute path";
   const requested = resolve(cwd);
@@ -177,16 +180,17 @@ export function refusalReason(cwd: string): string | null {
   if (samePath(requested, requestedHome) || samePath(dir, home)) {
     return "checkpoints are not taken in the home folder";
   }
-  for (const name of ["Desktop", "Documents", "Downloads"]) {
-    const requestedProtected = join(requestedHome, name);
-    const protectedDir = existsSync(requestedProtected)
-      ? realpathSync.native(requestedProtected)
-      : requestedProtected;
-    if (samePath(requested, requestedProtected) || samePath(dir, protectedDir)) {
-      return `checkpoints are not taken in the ${name} folder`;
+  for (const folder of cachedProtectedFolders(requestedHome)) {
+    // A protected folder that does not exist still has to be refused by name:
+    // on Windows with Known Folder Move the *default* location is often gone,
+    // and a bot pointed at it would otherwise be told yes.
+    const protectedDir = existsSync(folder.path) ? realpathSync.native(folder.path) : folder.path;
+    if (samePath(requested, folder.path) || samePath(dir, protectedDir)) {
+      return `checkpoints are not taken in the ${folder.label} folder`;
     }
   }
-  return null;
+  // "/Volumes/Work" and "/Users/someone-else" are roots too; parse() cannot see it.
+  return volumeRootReason(dir) ?? volumeRootReason(requested);
 }
 
 /** The shadow repo for a folder — and, through `serialize`, the lock that
