@@ -139,17 +139,18 @@ describe("orderedPickerModels puts Flux Router first", () => {
   const other = row("gpt-5.4");
   const starred = row("claude-sonnet-5");
 
-  it("leads with Flux Auto, then favourites, then the rest of Flux", () => {
+  it("leads with the Flux tiers, then favourites, then the engine's models, then models bought through Flux", () => {
+    // Was: flux-auto, the star, flux-reasoning, claude-opus-5, gpt-5.4. The
+    // four tiers now lead together in tier order, and a model bought through a
+    // Flux connection under its own name sits with the pinned routes, after
+    // the engine's own models.
     const ordered = orderedPickerModels([other, starred, reasoning, viaFlux, auto], "", [starred.key], []);
     expect(ordered.map((r) => r.selection.model)).toEqual([
       "flux-auto",
-      "claude-sonnet-5", // starred: an explicit choice is never demoted
-      // both are rank 2 (Flux); within a rank the pre-existing tie-break
-      // stands — group name, then label — so "Engine models" precedes
-      // "Flux Router". This rule reorders ranks, nothing inside one.
       "flux-reasoning",
-      "claude-opus-5", // bought through a Flux connection
+      "claude-sonnet-5", // starred: above the engine's models, below the tiers
       "gpt-5.4",
+      "claude-opus-5", // bought through a Flux connection
     ]);
   });
 

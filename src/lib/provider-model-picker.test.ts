@@ -393,36 +393,91 @@ const modelRow = (model: string, label: string, group: string, provider = "Fuigo
   ({ key: JSON.stringify(["e", null, model]), selection: { instanceId: "e", model }, label, group, provider } as PickerModel);
 
 describe("pickerZone", () => {
-  const rows = { auto: modelRow("flux-auto", "Flux Auto", "Engine models"), star: modelRow("gpt-5", "GPT-5", "Engine models"), last: modelRow("claude-sonnet-5", "Claude Sonnet 5", "Engine models"), plain: modelRow("kimi-k2", "Kimi K2", "Engine models") };
+  const rows = { auto: modelRow("flux-auto", "Flux Auto", "Engine models"), star: modelRow("gpt-5", "GPT-5", "Engine models"), plain: modelRow("kimi-k2", "Kimi K2", "Engine models"), pinned: modelRow("flux-pinned-claude-opus-5", "Flux Pinned Claude Opus 5", "Flux Router", "flux") };
 
-  it("draws the zones the picker has always drawn, in the same precedence", () => {
-    const favorites = [rows.star.key], recent = [rows.last.key];
-    expect(pickerZone(rows.auto, favorites, recent)).toBe("Flux Auto");
-    expect(pickerZone(rows.star, favorites, recent)).toBe("Favorites");
-    expect(pickerZone(rows.last, favorites, recent)).toBe("Recent");
-    expect(pickerZone(rows.plain, favorites, recent)).toBe("Engine models");
+  it("heads the tiers, favourites and pinned routes, and leaves every other run to its own group", () => {
+    // Was: Flux Auto / Favorites / Recent / group. The tiers now share one
+    // heading, the pinned routes have their own, and Recent is no longer a
+    // section — a recent model sits in its own group like any other.
+    const favorites = [rows.star.key];
+    expect(pickerZone(rows.auto, favorites, [])).toBe("Flux Router");
+    expect(pickerZone(rows.star, favorites, [])).toBe("Favorites");
+    expect(pickerZone(rows.pinned, favorites, [])).toBe("Flux pinned models");
+    expect(pickerZone(rows.plain, favorites, [rows.plain.key])).toBe("Engine models");
+    expect(PICKER_ZONES.map(zone => zone.name)).toEqual(["Flux Router", "Favorites", "Flux pinned models"]);
   });
 
-  it("prefers Flux Auto over a star, and a star over a recent, as the order does", () => {
-    expect(pickerZone(rows.auto, [rows.auto.key], [rows.auto.key])).toBe("Flux Auto");
-    expect(pickerZone(rows.star, [rows.star.key], [rows.star.key])).toBe("Favorites");
+  it("keeps a starred tier with the tiers, and a starred pinned route under Favorites, as the order does", () => {
+    expect(pickerZone(rows.auto, [rows.auto.key], [])).toBe("Flux Router");
+    expect(pickerZone(rows.pinned, [rows.pinned.key], [])).toBe("Favorites");
   });
 
-  it("falls back to the row's own group when no zone claims it", () => {
-    expect(pickerZone(modelRow("kimi-k2", "Kimi K2", "Engine models"), [], [])).toBe("Engine models");
-    // Was: expect(PICKER_ZONES.map(...)).toEqual(["Flux Auto","Favorites","Recent"]);
-    // "Flux Router" joined the ladder with the rank that promotes those rows
-    // above recents; the order here is the precedence, and it mirrors the rank.
-    expect(PICKER_ZONES.map(zone => zone.name)).toEqual(["Flux Auto", "Favorites", "Flux Router", "Recent"]);
+  it("files a model bought through Flux under its own name with the pinned routes, not the tiers", () => {
+    expect(pickerZone(modelRow("claude-opus-5", "Claude Opus 5", "Flux Router", "flux"), [], [])).toBe("Flux pinned models");
+    expect(pickerZone(modelRow("flux::flux-fast", "Flux Fast", "Engine models"), [], [])).toBe("Flux Router");
+  });
+});
+
+// The order Sean specified for a bot on the Claude engine: the four Flux
+// Router tiers cheapest-first, then the engine's own models, then the Flux
+// pinned routes, then every other provider.
+describe("the picker's section order", () => {
+  const conn = (connectionId: string, model: string, label: string, group: string, provider: string, contextWindow?: number): PickerModel =>
+    ({ key: JSON.stringify(["claude", connectionId, model]), selection: { instanceId: "claude", connectionId, model }, label, group, provider, ...(contextWindow ? { contextWindow } : {}) } as PickerModel);
+  const native = (model: string, label: string): PickerModel =>
+    ({ key: JSON.stringify(["claude", null, model]), selection: { instanceId: "claude", model }, label, group: "Engine models", provider: "Claude" } as PickerModel);
+  const fleet = [
+    conn("or", "openai/gpt-5", "GPT-5", "OpenRouter", "openrouter"),
+    native("claude-sonnet-5", "Claude Sonnet 5"),
+    conn("flux", "flux-pinned-claude-opus-5", "Flux Pinned Claude Opus 5", "Flux Router", "flux"),
+    native("flux-reasoning", "Flux Reasoning"),
+    native("claude-opus-5", "Claude Opus 5"),
+    native("flux-fast", "Flux Fast"),
+    native("flux-auto", "Flux Auto"),
+    conn("flux", "flux-auto", "Flux Auto", "Flux Router", "flux", 1_000_000),
+    native("flux-standard", "Flux Standard"),
+  ];
+
+  it("lists the tiers cheapest-first, then the engine's models, then pinned routes, then other providers", () => {
+    const ordered = orderedPickerModels(fleet, "", [], []);
+    expect(ordered.map(row => row.label)).toEqual([
+      "Flux Auto", "Flux Fast", "Flux Standard", "Flux Reasoning",
+      "Claude Opus 5", "Claude Sonnet 5",
+      "Flux Pinned Claude Opus 5",
+      "GPT-5",
+    ]);
+    expect(pickerHeadings(ordered, [], [])).toEqual(["Flux Router", "Engine models", "Flux pinned models", "OpenRouter"]);
   });
 
-  it("claims a Flux row for the Flux Router zone, under a star but over a recent", () => {
-    const flux = modelRow("flux-fast", "Flux Fast", "Engine models");
-    const bought = modelRow("claude-opus-5", "Claude Opus 5", "Flux Router", "flux");
-    expect(pickerZone(flux, [], [])).toBe("Flux Router");
-    expect(pickerZone(bought, [], [])).toBe("Flux Router");
-    expect(pickerZone(flux, [flux.key], [])).toBe("Favorites");
-    expect(pickerZone(flux, [], [flux.key])).toBe("Flux Router");
+  it("shows Flux Auto once when the engine offers it natively, and keeps the context size the hidden copy carried", () => {
+    const autos = orderedPickerModels(fleet, "", [], []).filter(row => row.label === "Flux Auto");
+    expect(autos).toHaveLength(1);
+    expect(autos[0]!.selection.connectionId).toBeUndefined();
+    expect(autos[0]!.contextWindow).toBe(1_000_000);
+    // The input rows are the picker's memoised list and must not be mutated.
+    expect(fleet.find(row => row.label === "Flux Auto" && !row.selection.connectionId)!.contextWindow).toBeUndefined();
+  });
+
+  it("keeps the connection's tier when the engine does not offer that tier natively", () => {
+    const onlyConnection = [conn("flux", "flux-auto", "Flux Auto", "Flux Router", "flux"), native("claude-opus-5", "Claude Opus 5")];
+    expect(orderedPickerModels(onlyConnection, "", [], []).map(row => row.label)).toEqual(["Flux Auto", "Claude Opus 5"]);
+  });
+
+  it("never hides the copy the user actually has selected", () => {
+    const chosen = fleet.find(row => row.label === "Flux Auto" && row.selection.connectionId)!;
+    const autos = orderedPickerModels(fleet, "", [], [], chosen.key).filter(row => row.label === "Flux Auto");
+    expect(autos.map(row => row.key)).toContain(chosen.key);
+  });
+
+  it("never hides a pinned route, even beside a native model of the same name", () => {
+    expect(orderedPickerModels(fleet, "", [], []).some(row => row.selection.model === "flux-pinned-claude-opus-5")).toBe(true);
+  });
+
+  it("lifts a starred model above the engine's models but not above the tiers", () => {
+    const star = fleet.find(row => row.label === "GPT-5")!;
+    const ordered = orderedPickerModels(fleet, "", [star.key], []);
+    expect(ordered.map(row => row.label).slice(0, 5)).toEqual(["Flux Auto", "Flux Fast", "Flux Standard", "Flux Reasoning", "GPT-5"]);
+    expect(pickerHeadings(ordered, [star.key], [])).toEqual(["Flux Router", "Favorites", "Engine models", "Flux pinned models"]);
   });
 });
 
@@ -451,9 +506,11 @@ describe("the picker's headings never repeat", () => {
   it("still draws a heading for each run, not one heading for the whole list", () => {
     const headings = pickerHeadings(orderedPickerModels(fleet, "", favorites, recent), favorites, recent);
     expect(headings.length).toBeGreaterThan(1);
-    expect(headings[0]).toBe("Flux Auto");
+    // Was: first heading "Flux Auto", and a "Recent" heading present. The
+    // tiers now share the "Flux Router" heading and Recent is not a section.
+    expect(headings[0]).toBe("Flux Router");
     expect(headings).toContain("Favorites");
-    expect(headings).toContain("Recent");
+    expect(headings).toContain("Flux pinned models");
   });
 
   it("reports a heading drawn twice instead of hiding it — the guard above is only as honest as this fold", () => {

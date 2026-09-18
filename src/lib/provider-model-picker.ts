@@ -254,29 +254,50 @@ export function localToolsWarning(row: PickerModel): string {
 export function isFluxRouterRow(row: Pick<PickerModel, "selection"|"provider">): boolean {
   return row.provider === "flux" || /^(?:flux::)?flux-/.test(row.selection.model);
 }
-/** The picker's order (Sean, 2026-09-18 — Flux Router leads every model list).
+/** The four Flux Router tiers, cheapest first. Auto routes across the other
+ *  three per turn, so it leads; the rest follow in price order so the list
+ *  reads as a ladder rather than an alphabet. */
+export const FLUX_TIER_ORDER = Object.freeze(["flux-auto", "flux-fast", "flux-standard", "flux-reasoning"] as const);
+function fluxTierIndex(row: Pick<PickerModel, "selection">): number {
+  return (FLUX_TIER_ORDER as readonly string[]).indexOf(row.selection.model.replace(/^flux::/, ""));
+}
+export function isFluxTierRow(row: Pick<PickerModel, "selection">): boolean { return fluxTierIndex(row) >= 0; }
+/** A Flux row that is not one of the four tiers: the pinned routes, and any
+ *  model bought through a Flux connection under its own name. */
+export function isFluxPinnedRow(row: Pick<PickerModel, "selection"|"provider">): boolean { return isFluxRouterRow(row) && !isFluxTierRow(row); }
+const ENGINE_MODELS_GROUP = "Engine models";
+function isNativeEngineRow(row: PickerModel): boolean { return !row.selection.connectionId && row.group === ENGINE_MODELS_GROUP && !isFluxRouterRow(row); }
+/** The picker's order. Flux Router leads every model list:
  *
- *   0  Flux Auto                the recommended default; already rank 0 before
- *                               this change, and still the single first row
- *   1  the user's favourites    an explicit choice outranks a promotion: a
- *                               starred model is never demoted by this rule
- *   2  every other Flux Router  the tiers, the pinned routes, and anything
- *      row                      bought through a Flux connection
- *   3  recently used            below Flux on purpose. A recent is an
- *                               incidental signal (it is what you happened to
- *                               run last), where a star is a deliberate one;
- *                               this is the one place where the promotion
- *                               costs a non-Flux row a position, and it is
- *                               stated rather than hidden
- *   4  everything else
+ *   0  Flux Router tiers         Auto, Fast, Standard, Reasoning — in that
+ *                                order, not alphabetically
+ *   1  the user's favourites     a deliberate choice stays near the top; a
+ *                                starred tier stays with the tiers
+ *   2  the engine's own models   what this engine runs natively
+ *   3  local and custom models   still the engine's own, grouped by kind
+ *   4  Flux pinned models        specific models routed through Flux
+ *   5  every other provider      grouped by connection
  *
- *  Within a rank the previous tie-breaks stand: group name, then label. */
-export function orderedPickerModels(rows: readonly PickerModel[], query: string, favorites: readonly string[], recent: readonly string[]): PickerModel[] {
+ *  Within a rank: tier order for the tiers, otherwise group then label.
+ *
+ *  A tier the engine already offers natively is also listed by a Flux Router
+ *  connection; that second copy is hidden, and the context size it carried
+ *  moves onto the row that stays. The copy the user actually has selected is
+ *  never hidden, so their checkmark cannot vanish. */
+export function orderedPickerModels(rows: readonly PickerModel[], query: string, favorites: readonly string[], _recent: readonly string[], selectedKey?: string): PickerModel[] {
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean),seen=new Set<string>();
-  return rows.filter(row=>{if(seen.has(row.key))return false;seen.add(row.key);return words.every(word=>`${row.label} ${row.selection.model} ${row.group} ${row.provider}`.toLowerCase().includes(word));}).sort((a,b)=>{
-    const rank=(r:PickerModel)=>/^(?:flux::)?flux-auto$/.test(r.selection.model)?0:favorites.includes(r.key)?1:isFluxRouterRow(r)?2:recent.includes(r.key)?3:4;
-    return rank(a)-rank(b)||a.group.localeCompare(b.group)||a.label.localeCompare(b.label);
-  });
+  const nativeTiers=new Map<number,PickerModel>();
+  for(const row of rows){const tier=fluxTierIndex(row);if(tier>=0&&!row.selection.connectionId&&!nativeTiers.has(tier))nativeTiers.set(tier,row);}
+  const contextFor=new Map<string,number>();
+  const kept=rows.filter(row=>{
+    const tier=fluxTierIndex(row),native=tier>=0&&row.selection.connectionId?nativeTiers.get(tier):undefined;
+    if(!native||row.key===selectedKey)return true;
+    if(native.contextWindow===undefined&&row.contextWindow!==undefined&&!contextFor.has(native.key))contextFor.set(native.key,row.contextWindow);
+    return false;
+  }).map(row=>contextFor.has(row.key)?{...row,contextWindow:contextFor.get(row.key)}:row);
+  const rank=(r:PickerModel)=>isFluxTierRow(r)?0:favorites.includes(r.key)?1:isNativeEngineRow(r)?2:!r.selection.connectionId&&!isFluxRouterRow(r)?3:isFluxPinnedRow(r)?4:5;
+  return kept.filter(row=>{if(seen.has(row.key))return false;seen.add(row.key);return words.every(word=>`${row.label} ${row.selection.model} ${row.group} ${row.provider}`.toLowerCase().includes(word));}).sort((a,b)=>
+    rank(a)-rank(b)||(rank(a)===0?fluxTierIndex(a)-fluxTierIndex(b)||(a.selection.connectionId?1:0)-(b.selection.connectionId?1:0):0)||a.group.localeCompare(b.group)||a.label.localeCompare(b.label));
 }
 export function engineFamilies<T extends PickerEngine>(instances: readonly T[]): Array<{ primary: T; members: T[] }> {
   const groups=new Map<string,T[]>(),seen=new Set<string>();
@@ -299,14 +320,12 @@ export function engineFamilies<T extends PickerEngine>(instances: readonly T[]):
  *  so this lane's additions stay clear of the concurrent metadata lane's hunks. */
 export interface PickerZone { name: string; match: (row: PickerModel, favorites: readonly string[], recent: readonly string[]) => boolean }
 export const PICKER_ZONES: readonly PickerZone[] = Object.freeze([
-  { name: "Flux Auto", match: row => /^(?:flux::)?flux-auto$/.test(row.selection.model) },
+  // Mirrors the rank ladder in orderedPickerModels, rank for rank. Ranks 2, 3
+  // and 5 are headed by their own group name (the engine's models, local or
+  // custom models, each connection), so they need no zone here.
+  { name: "Flux Router", match: row => isFluxTierRow(row) },
   { name: "Favorites", match: (row, favorites) => favorites.includes(row.key) },
-  // Between Favorites and Recent, mirroring the rank in orderedPickerModels:
-  // Flux rows are promoted above recents, and a star still outranks the
-  // promotion. Without this row those rows fall through to `row.group` and the
-  // list prints one group heading twice with another heading between them.
-  { name: "Flux Router", match: row => isFluxRouterRow(row) },
-  { name: "Recent", match: (row, _favorites, recent) => recent.includes(row.key) },
+  { name: "Flux pinned models", match: row => isFluxPinnedRow(row) },
 ]);
 export function pickerZone(row: PickerModel, favorites: readonly string[], recent: readonly string[]): string {
   return PICKER_ZONES.find(zone => zone.match(row, favorites, recent))?.name ?? row.group;
