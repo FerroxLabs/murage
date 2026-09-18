@@ -983,6 +983,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Close Murage before taking a filesystem-level backup so SQLite and configuration files are captured consistently. Preserve the entire .murage directory rather than selecting individual database files."
   },
   {
+    "id": "self-hosting/data-and-backups#create-your-recovery-key",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Create your recovery key",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#create-your-recovery-key",
+    "text": "Encrypted backups from the desktop app need a recovery key. It is the only thing that can open them, so Murage never keeps a copy. In the Backups settings, choose Create my recovery key and pick where to save the file. Keep it somewhere other than your backup folder, such as a password manager or a USB drive. Murage refuses to save it inside its own data folder or inside the backup folder you chose, and never replaces an existing file.\n\nWhen you then choose your backup folder and key, the key picker opens in the folder where you saved it. You still pick the file yourself."
+  },
+  {
+    "id": "self-hosting/data-and-backups#back-up-now",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Back up now",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#back-up-now",
+    "text": "Once your backup folder and recovery key are chosen and you have allowed Murage to restart for backups, Back up now runs one backup straight away instead of waiting for the daily time. Murage closes its idle services, restarts to take the backup, then reopens. It will not start while a bot is working or another backup is in progress. The result shows as your latest verified backup, just like a scheduled one."
+  },
+  {
     "id": "self-hosting/data-and-backups#do-not-copy-secrets-casually",
     "title": "Data and backups",
     "description": "Know what Murage stores locally and what to preserve.",

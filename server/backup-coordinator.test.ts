@@ -125,3 +125,34 @@ it("closed eligibility holds pending upgrades and preserves durable bounded outc
  expect(()=>c.recordClosedResult({status:"unavailable",reason:"raw private path"} as never)).toThrow();
  expect(c.status().lastClosedResult).toEqual(result);expect(c.status().phase).toBe("handoff-prepared");
 });
+it("a manual request needs the current revision and a complete schedule, and runs once through the handoff",async()=>{
+ const f=fixture(),c=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});
+ expect(()=>c.requestManual(0,"manual-one")).toThrow("BACKUP_SCHEDULE_CONSENT_REQUIRED");
+ c.configure(0,{enabled:false,installationRef:"installation-one"});expect(()=>c.requestManual(1,"manual-one")).toThrow("BACKUP_SCHEDULE_CONSENT_REQUIRED");
+ c.configure(1,{...choices,enabled:false});expect(()=>c.requestManual(1,"manual-one")).toThrow("BACKUP_SCHEDULE_CHANGED");expect(()=>c.requestManual(2,"/not/a/reference")).toThrow("BACKUP_HANDOFF_REJECTED");
+ const due=c.requestManual(2,"manual-one");expect(due).toMatchObject({enabled:false,phase:"due",job:{occurrence:"2:manual:manual-one",revision:2}});
+ const intent={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ c.prepareHandoff(due.job!.id,intent);c.armHandoff(intent.id);c.claimHandoff(intent.id,intent.bindingRevision,intent.installationIdentity);c.beginHandoffCapture(intent.id);
+ const receipt={jobId:due.job!.id,installationRef:choices.installationRef,destinationRef:choices.destinationRef,selectionHash,snapshotId:randomUUID(),artifactRef:due.job!.id,sha256:"a".repeat(64),bytes:200,verifiedAt:f.options.now()};
+ c.completeHandoff(intent.id,receipt);c.completeReturn(intent.id);expect(c.status()).toMatchObject({phase:"returned",lastVerified:receipt});
+ expect(()=>c.requestManual(2,"manual-one")).toThrow("BACKUP_HANDOFF_CHANGED");
+});
+it("a manual request never starts unattended and never duplicates a waiting daily job",async()=>{
+ const f=fixture(),c=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});c.configure(0,{...choices,closedApp:true});
+ const manual=c.requestManual(1,"manual-two");expect(manual.phase).toBe("due");expect(c.closedEligibility().status).toBe("not-due");
+ // An abandoned manual request is not work the daily tick may pick up.
+ expect((await f.coordinator.tick()).phase).toBe("skipped");expect(f.claimIdle).not.toHaveBeenCalled();
+ f.setNow("2026-09-13T03:00:00Z");const daily=await c.tick();expect(daily.phase).toBe("waiting-backup-mode");expect(daily.job!.occurrence).toContain(":daily:");
+ const again=c.requestManual(1,"manual-three");expect(again.job!.id).toBe(daily.job!.id);expect(again.job!.occurrence).toContain(":daily:");
+ const armed={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ c.prepareHandoff(daily.job!.id,armed);expect(()=>c.requestManual(1,"manual-four")).toThrow("BACKUP_REVIEW_REQUIRED");c.armHandoff(armed.id);expect(()=>c.requestManual(1,"manual-four")).toThrow("BACKUP_BUSY");
+});
+it("a disabled schedule admits only the manual job it created to the handoff",async()=>{
+ const f=fixture(),c=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});c.configure(0,choices);f.setNow("2026-09-13T03:00:00Z");const daily=await c.tick();
+ c.configure(1,{...choices,enabled:false});const intent={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ const file=join(f.stateDirectory,"backup-coordinator.json"),saved=JSON.parse(readFileSync(file,"utf8"));saved.job={...daily.job,revision:2};writeFileSync(file,JSON.stringify(saved));
+ expect(()=>c.prepareHandoff(daily.job!.id,intent)).toThrow("BACKUP_HANDOFF_REJECTED");
+ const manual=c.requestManual(2,"manual-five");expect(manual.job!.occurrence).toBe("2:manual:manual-five");c.prepareHandoff(manual.job!.id,intent);c.armHandoff(intent.id);
+ const armed=JSON.parse(readFileSync(file,"utf8"));armed.schedule={enabled:false,installationRef:"installation-one"};writeFileSync(file,JSON.stringify(armed));
+ expect(()=>c.claimHandoff(intent.id,intent.bindingRevision,intent.installationIdentity)).toThrow("BACKUP_HANDOFF_REJECTED");
+});

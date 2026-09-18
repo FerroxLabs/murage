@@ -134,6 +134,35 @@ export function createBackupScheduleHost(host) {
       if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
     }finally{running=false;}
   }
+  /** User-requested backup through the same handoff a due daily run takes.
+   * Every precondition is proven before the workspace is asked to close. */
+  async function runNow(expectedRevision){
+    if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
+    if(running)throw Error("BACKUP_BUSY");
+    if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+    running=true;let release,intent,manual;
+    try{
+      const current=coordinator.status();
+      if(current.revision!==expectedRevision)throw Error("BACKUP_SCHEDULE_CHANGED");
+      const b=await read();
+      if(!b||!b.allowIdleRestart||current.schedule.installationRef!==b.installationRef||current.schedule.destinationRef!==b.destinationRef||current.schedule.recoveryRef!==b.recoveryRef)throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");
+      await checked();
+      const s=coordinator.requestManual(expectedRevision,randomUUID());
+      if(s.job.occurrence.startsWith(s.revision+":manual:"))manual=s.job.id;
+      release=await host.prepare();
+      if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
+      coordinator.prepareHandoff(s.job.id,intent);
+      stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
+      await host.relaunch("backup");lastError=null;
+    }catch(error){
+      if(intent){lastError="BACKUP_HANDOFF_DEFERRED";try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}}
+      else if(manual)try{coordinator.cancelManual(manual);}catch{/* A changed job is left for review. */}
+      if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
+      throw error;
+    }finally{running=false;}
+    return publicStatus();
+  }
   async function captureArmed(closed=false){
     const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
     try{
@@ -202,7 +231,9 @@ export function createBackupScheduleHost(host) {
     }finally{running=false;}
   }
   return {
-    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    /** Folder the saved references back up into, for recovery-key placement checks. */
+    async selectedDestination(){const b=await read();return b?b.destination:null;},
     async latestVerifiedArtifact(){
       if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       const receipt=coordinator.status().lastVerified;if(!receipt)return null;

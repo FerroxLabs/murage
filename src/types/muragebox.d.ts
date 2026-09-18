@@ -143,11 +143,17 @@ type SkillRecordingPayload = {
   interface Window {
     muragebox?: {
       platform: NodeJS.Platform;
-      backup?: { status(): Promise<{ supported:boolean; pending:boolean }>; restart(): Promise<{ restarting:boolean }> };
+      backup?: {
+        status(): Promise<{ supported:boolean; pending:boolean }>; restart(): Promise<{ restarting:boolean }>;
+        /** Native save dialog; the private key never reaches the renderer. */
+        createRecoveryKey(): Promise<{ cancelled:true }|{ saved:true; label:string; publicKey:string }>;
+      };
       backupSchedule?: {
         status():Promise<BackupScheduleStatus>;
         selectReferences():Promise<BackupScheduleStatus|{cancelled:true}>;
         configure(revision:number,choices:import("../../shared/backup-schedule").BackupSchedule&{allowIdleRestart?:boolean;allowClosedApp?:boolean}):Promise<BackupScheduleStatus>;
+        /** One backup now through the Backup-mode restart; resolves as Murage restarts. */
+        runNow(revision:number):Promise<BackupScheduleStatus>;
       };
       backupClosed?: {
         status():Promise<BackupClosedStatus>;
