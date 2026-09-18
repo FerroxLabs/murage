@@ -8,7 +8,11 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 
-const SRC = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams/skills";
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const TEAMS = process.argv.includes("--source") ? process.argv[process.argv.indexOf("--source") + 1] : process.env.WAYLAND_TEAMS_DIR;
+if (!TEAMS) throw new Error("--source <waylandteams directory> (or WAYLAND_TEAMS_DIR) is required");
+const SRC = join(TEAMS, "skills");
 const OUT = process.argv.includes("--out") ? process.argv[process.argv.indexOf("--out") + 1] : "skills-library";
 const yaml = (s) => JSON.stringify(String(s ?? "").replace(/\s+/g, " ").trim());
 

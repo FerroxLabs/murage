@@ -15,12 +15,14 @@
 //   node scripts/import-wayland-skills.mjs [--out <dir>] [--source <dir>]
 //                                          [--force] [--dry-run]
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const DEFAULT_SOURCE = "/Volumes/Mando/wayland/app/.skill-pack/skills-library";
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const DEFAULT_SOURCE = process.env.WAYLAND_SKILL_PACK_DIR ?? "";
 const DEFAULT_OUT = join(repoRoot, "skills-library");
 // Written into the output directory so a re-run knows the tree is ours to
 // replace. It is not a skill directory, so the loader skips it.
@@ -47,6 +49,7 @@ function parseArgs(argv) {
     } else throw new Error(`unknown argument: ${arg}`);
   }
   options.out = isAbsolute(options.out) ? options.out : resolve(process.cwd(), options.out);
+  if (!options.source) throw new Error("--source <skill-pack skills-library directory> (or WAYLAND_SKILL_PACK_DIR) is required");
   options.source = isAbsolute(options.source) ? options.source : resolve(process.cwd(), options.source);
   return options;
 }
@@ -275,7 +278,7 @@ function main() {
   const report = {
     generatedBy: "scripts/import-wayland-skills.mjs",
     generatedAt: new Date().toISOString(),
-    source,
+    source: basename(source),
     indexed: index.length,
     written,
     collisions,

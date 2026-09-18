@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -134,6 +134,11 @@ it("recovers already-published bytes and advances a missed grant acknowledgement
 });
 
 // Explicit native qualification only: ordinary CI has no admitted native bundle.
+/** MURAGE_B33_NATIVE_RECEIPT names where a native run's receipt goes. It has
+ * no default; it must be an absolute path outside this checkout, so a
+ * receipt can never land in (and be committed with) the repository. */
+const receiptOutsideCheckout=(path:string)=>{const rel=relative(resolve(import.meta.dirname,"..",".."),path);return isAbsolute(path)&&(rel.startsWith("..")||isAbsolute(rel));};
+
 it.skipIf(!process.env.MURAGE_B33_NATIVE_DIR)("native GEPA completes approved publication, restart recovery and scoped rollback",async()=>{
   const native={directory:process.env.MURAGE_B33_NATIVE_DIR!,manifest:process.env.MURAGE_B33_NATIVE_MANIFEST!};
   expect(native.manifest).toMatch(/^[a-f0-9]{64}$/);
@@ -177,7 +182,7 @@ it.skipIf(!process.env.MURAGE_B33_NATIVE_DIR)("native GEPA completes approved pu
   expect(readFileSync(file(afterRollback.task.threadId,afterRollback.pin.bundleId),"utf8")).toBe(markdown(body));
   expect(readFileSync(file(next.task.threadId,next.pin.bundleId),"utf8")).toBe(receipt.candidate);expect(readFileSync(file(f.threadId,f.pin.bundleId),"utf8")).toBe(markdown(body));
   const evidence=process.env.MURAGE_B33_NATIVE_RECEIPT;
-  if(evidence){expect(evidence.startsWith("/Users/seandonahoe/murage-qualification-private-20260914/")).toBe(true);writeFileSync(evidence,JSON.stringify({status:"PASS",nativeManifest:native.manifest,receipt,charges:charge,ledgerCalls:ledger.calls,nativeCounts:f.nativeCounts(),restartChargesUnchanged:true,activePinUnchanged:true,nextPinPublished:true,rollbackRestoredBase:true,earlierPinsUnchanged:true,networkProviderCalls:0},null,2)+"\n",{flag:"wx",mode:0o600});}
+  if(evidence){expect(receiptOutsideCheckout(evidence)).toBe(true);writeFileSync(evidence,JSON.stringify({status:"PASS",nativeManifest:native.manifest,receipt,charges:charge,ledgerCalls:ledger.calls,nativeCounts:f.nativeCounts(),restartChargesUnchanged:true,activePinUnchanged:true,nextPinPublished:true,rollbackRestoredBase:true,earlierPinsUnchanged:true,networkProviderCalls:0},null,2)+"\n",{flag:"wx",mode:0o600});}
 },45_000);
 
 it.skipIf(!process.env.MURAGE_B33_NATIVE_DIR)("native GEPA cancellation preserves publication and fences restart charges",async()=>{
@@ -192,5 +197,5 @@ it.skipIf(!process.env.MURAGE_B33_NATIVE_DIR)("native GEPA cancellation preserve
   const before=rows(),recovered=f.restart();await processProcedureReview(id,recovered.host.host,new AbortController().signal);
   expect(rows()).toEqual(before);expect(f.seen).toHaveLength(1);expect(f.nativeCounts().workerStarts).toBe(1);expect(readReview().status).toBe("deferred");
   const evidence=process.env.MURAGE_B33_NATIVE_RECEIPT;
-  if(evidence){expect(evidence.startsWith("/Users/seandonahoe/murage-qualification-private-20260914/")).toBe(true);writeFileSync(evidence+".cancel.json",JSON.stringify({status:"PASS",nativeManifest:native.manifest,reason:review.reason,nativeCounts:f.nativeCounts(),publicationUnchanged:true,restartChargesUnchanged:true,networkProviderCalls:0},null,2)+"\n",{flag:"wx",mode:0o600});}
+  if(evidence){expect(receiptOutsideCheckout(evidence)).toBe(true);writeFileSync(evidence+".cancel.json",JSON.stringify({status:"PASS",nativeManifest:native.manifest,reason:review.reason,nativeCounts:f.nativeCounts(),publicationUnchanged:true,restartChargesUnchanged:true,networkProviderCalls:0},null,2)+"\n",{flag:"wx",mode:0o600});}
 },45_000);

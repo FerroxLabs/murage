@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { axeScriptPath } from "./axe";
 let server: ViteDevServer, origin: string, cache: string;
 const empty = { state: "idle", configured: false, appConfigured: false, botConfigured: false, enabled: false, paired: false, requiresRevoke: false, busy: false,
   pending: 0, uncertain: 0, rejected: 0, needsReview: 0, error: null, nextRetryAt: null };
@@ -79,15 +78,43 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   }
   expect(seen.size).toBe(total); expect(pageErrors).toEqual([]);
 });
-test("self-review gathers three widths, axe and mobile Lighthouse on the isolated component", async ({}, testInfo) => {
-  const out = testInfo.outputPath("self-review");
-  try { await promisify(execFile)("rtk", ["proxy", "node", "/Users/seandonahoe/.sable/web/tools/review.mjs", "--url", `${origin}/__slack`, "--out", out, "--entity", "murage"], { timeout: 85000, maxBuffer: 100000 }); }
-  catch (e) { if ((e as { code?: string | number }).code !== 1) throw e; }
-  const report = JSON.parse(readFileSync(join(out, "review.json"), "utf8"));
-  for (const value of Object.values(report.viewports) as any[]) expect(value.horizontalOverflow).toBe(false);
-  expect(report.axe.error).toBeUndefined(); expect(report.axe.bySeverity.critical ?? 0).toBe(0); expect(report.axe.bySeverity.serious ?? 0).toBe(0);
+// The self-review pass, run in-repo: three widths without horizontal scroll,
+// axe (the pinned devDependency) with no critical or serious finding, and a
+// visible focus ring on every enabled control. It used to shell out to a
+// review tool outside the repository, which CI does not have; that tool's
+// mobile Lighthouse score was gathered but never asserted, so it is not
+// reproduced here.
+test("self-review gathers three widths, axe and keyboard focus on the isolated component", async ({ page }, testInfo) => {
+  const axe = readFileSync(axeScriptPath, "utf8");
+  const report: { viewports: Record<string, { horizontalOverflow: boolean }>; axe: { bySeverity: Record<string, number> }; focus: { missingVisibleFocus: string[] } } =
+    { viewports: {}, axe: { bySeverity: {} }, focus: { missingVisibleFocus: [] } };
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 900 }); await page.goto(`${origin}/__slack`); await page.waitForLoadState("networkidle");
+    await expect(page.getByText("Save your Slack credentials", { exact: true })).toBeVisible();
+    // The page root may clip (overflow: hidden), so a too-wide box is found by its own edges, not by page scroll.
+    report.viewports[width] = { horizontalOverflow: await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth
+      || [...document.querySelectorAll("#root *")].some(el => { const box = el.getBoundingClientRect(); return box.width > 0 && (box.left < -1 || box.right > innerWidth + 1); })) };
+    await page.evaluate(axe);
+    const result = await page.evaluate(async () => (window as any).axe.run(document)) as { violations: Array<{ id: string; impact: string | null }> };
+    for (const violation of result.violations) report.axe.bySeverity[violation.impact ?? "unknown"] = (report.axe.bySeverity[violation.impact ?? "unknown"] ?? 0) + 1;
+  }
+  const total = await page.evaluate(() => {
+    const all = [...document.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href],summary')].filter(el => el.getBoundingClientRect().height > 0);
+    all.forEach((el, i) => el.dataset.focusAudit = el.getAttribute("aria-label") || el.textContent?.trim() || `#${i}`); return all.length;
+  });
+  const seen = new Set<string>();
+  for (let i = 0; i < total + 2; i++) {
+    await page.keyboard.press("Tab");
+    const item = await page.evaluate(() => { const el = document.activeElement as HTMLElement; const style = getComputedStyle(el); return { id: el.dataset.focusAudit, focus: style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0 || style.boxShadow !== "none" }; });
+    if (item.id === undefined || seen.has(item.id)) continue;
+    seen.add(item.id); if (!item.focus) report.focus.missingVisibleFocus.push(item.id);
+  }
+  await testInfo.attach("self-review-report", { body: JSON.stringify(report, null, 2), contentType: "application/json" });
+  expect(Object.keys(report.viewports)).toEqual(["390", "820", "1440"]);
+  for (const value of Object.values(report.viewports)) expect(value.horizontalOverflow).toBe(false);
+  expect(report.axe.bySeverity.critical ?? 0).toBe(0); expect(report.axe.bySeverity.serious ?? 0).toBe(0);
+  expect(seen.size).toBeGreaterThan(0);
   expect(report.focus.missingVisibleFocus).toEqual([]);
-  await testInfo.attach("self-review-report", { path: join(out, "review.json"), contentType: "application/json" });
 });
 test("expired challenges and missing secure storage have a visible next action", async ({ page }) => {
   let state: Record<string, unknown> = { ...empty, configured: true, appConfigured: true, botConfigured: true, teamId: "TEAM", appId: "APP", ownerUserId: "UOWNER" };

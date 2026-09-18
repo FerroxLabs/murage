@@ -22,7 +22,7 @@ import { expect, test } from "./fixtures";
 /** The identifier from the photograph, plus the other unbreakable shapes a
  *  real answer carries: an absolute path, a URL, and a wide code block. */
 const TOOL_NAME = "mcp__io-github-taylorwilsdon-google-workspace-mcp__list_calendars";
-const LONG_PATH = "/Users/seandonahoe/Library/Application Support/murage/workspaces/google-workspace-mcp/calendars.json";
+const LONG_PATH = "/Users/exampleuser/Library/Application Support/murage/workspaces/google-workspace-mcp/calendars.json";
 const LONG_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250&showHidden=true&minAccessRole=writer";
 /** No spaces and no hyphens: the shape `overflow-wrap: normal` cannot break,
  *  which is what makes a paragraph's min-content wider than a phone. */

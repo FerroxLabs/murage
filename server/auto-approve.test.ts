@@ -83,8 +83,8 @@ describe("looksSensitive", () => {
     "grep -rn TODO src",
     "git log --oneline -5",
     "python3 scripts/report.py --profile default",
-    "ls ~/.sable/ops/numbers/",
-    "cat ~/.sable/bots/carrie.md",
+    "ls ~/.acme/ops/numbers/",
+    "cat ~/.acme/bots/carrie.md",
     "curl -s https://api.github.com/repos/foo/bar",
     "node -e \"console.log(process.env.HOME)\"",
   ]) {

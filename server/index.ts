@@ -428,7 +428,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
-import { hostStoppedActivityName, hostStoppedDisplayName } from "../shared/host-stop.ts";
+import { hostStoppedActivityName, hostStoppedDisplayName, hostStoppedReason } from "../shared/host-stop.ts";
 import { browserUnavailableActivityName, browserUnavailableDisplayName } from "../shared/browser-unavailable.ts";
 import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
@@ -558,6 +558,17 @@ function noteHostStoppedTurn(threadId: string, botId: string, reason: string): v
       tool: { name: hostStoppedActivityName(reason), ok: false },
     });
   } catch { /* the thread may already be gone */ }
+}
+/** True when the thread's newest host-stop notice comes after its newest
+ * message from the person: the turn now settling was ended by the host. */
+function hostStopNotedSinceLastUserMessage(threadId: string): boolean {
+  const thread = store.messagesFor(threadId);
+  for (let i = thread.length - 1; i >= 0; i--) {
+    const message = thread[i];
+    if (message.role === "user") return false;
+    if (message.kind === "activity" && hostStoppedReason(message.tool?.name)) return true;
+  }
+  return false;
 }
 /** The reason a room member turn reports when its internal generation was
  * revoked after the room claim and before dispatch (runGroupMemberTurn). */
@@ -3708,7 +3719,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // user messages in a row with nothing between them. Record the stop the
       // same way every other turn event is recorded — an activity line, not an
       // error card: stopping is a normal thing to do, not a failure.
-      if (turnStopped(event) && !replacementOwnsThread) {
+      // A host stop already said why the turn ended (noteHostStoppedTurn);
+      // the person did not press Stop, so "Stopped by you" would be untrue.
+      if (turnStopped(event) && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
         pushMessage({
           role: "bot",
           kind: "activity",

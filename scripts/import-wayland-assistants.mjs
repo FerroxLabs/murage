@@ -44,12 +44,14 @@
 //                                              [--skills-dir <dir>]
 //                                              [--force] [--dry-run]
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const DEFAULT_SOURCE = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const DEFAULT_SOURCE = process.env.WAYLAND_TEAMS_DIR ?? "";
 const DEFAULT_OUT = join(repoRoot, "library");
 const DEFAULT_SKILLS_DIR = join(repoRoot, "skills-library");
 // Written into <out>/assistants so a re-run knows the tree is ours to replace.
@@ -102,6 +104,7 @@ function parseArgs(argv) {
       options[dirFlags[flag]] = rest.join("=");
     } else throw new Error(`unknown argument: ${arg}`);
   }
+  if (!options.source) throw new Error("--source <waylandteams directory> (or WAYLAND_TEAMS_DIR) is required");
   for (const field of ["out", "source", "skillsDir"]) {
     options[field] = isAbsolute(options[field]) ? options[field] : resolve(process.cwd(), options[field]);
   }
@@ -380,8 +383,9 @@ function main() {
   const report = {
     generatedBy: "scripts/import-wayland-assistants.mjs",
     generatedAt: new Date().toISOString(),
-    source,
-    skillsDir: installedIds ? skillsDir : `${skillsDir} (not present — skills checked against the Wayland catalog only)`,
+    // Provenance only: the directory names, not this machine's absolute paths.
+    source: basename(source),
+    skillsDir: installedIds ? relative(repoRoot, skillsDir) || "." : `${relative(repoRoot, skillsDir) || "."} (not present — skills checked against the Wayland catalog only)`,
     specialists: specialists.length,
     written: written.length,
     packages: written,

@@ -35,8 +35,11 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   useEffect(() => { content.current?.querySelector<HTMLElement>("[data-settings-scroll]")?.scrollTo({ top: 0 }); }, [section]);
   useEffect(() => { if (!saving) setNotice(null); }, [saving]);
   useEffect(() => { if (query && matches.length && !matches.some(item => item.id === section)) setSection(matches[0].id); }, [query, matches, section]);
+  // Overlay convention (styles.css): a modal with text fields is pinned to the
+  // top of the layout viewport and sized to the VISUAL viewport (--vvh), so the
+  // on-screen keyboard shrinks it instead of covering its lower half.
   return <dialog ref={dialog} aria-labelledby="bot-settings-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}
-    className="m-auto h-[100dvh] max-h-[100dvh] w-screen max-w-none overflow-hidden bg-panel p-0 text-ink backdrop:bg-black/60 sm:h-[min(840px,92dvh)] sm:max-h-[92dvh] sm:w-[min(1040px,calc(100vw-32px))] sm:rounded-2xl sm:border sm:border-hairline sm:shadow-2xl">
+    className="fixed inset-x-0 top-0 bottom-auto mx-auto my-0 h-[var(--vvh,100dvh)] max-h-[var(--vvh,100dvh)] w-screen max-w-none overflow-hidden bg-panel p-0 text-ink backdrop:bg-black/60 sm:top-[max(calc((var(--vvh,100dvh)_-_840px)/2),calc(0.04*var(--vvh,100dvh)))] sm:h-[min(840px,calc(0.92*var(--vvh,100dvh)))] sm:max-h-[calc(0.92*var(--vvh,100dvh))] sm:w-[min(1040px,calc(100vw-32px))] sm:rounded-2xl sm:border sm:border-hairline sm:shadow-2xl">
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline/40 px-4 py-3 sm:px-5">
         <div className="min-w-0"><h1 id="bot-settings-title" className="text-[18px] font-semibold">Bot settings</h1><p className="truncate text-[13px] text-ink-secondary">{bot.name}</p></div>

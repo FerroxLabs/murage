@@ -26,12 +26,14 @@
 //   node scripts/import-wayland-teams.mjs [--out <dir>] [--source <dir>]
 //                                         [--force] [--dry-run] [--no-verify]
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const DEFAULT_SOURCE = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const DEFAULT_SOURCE = process.env.WAYLAND_TEAMS_DIR ?? "";
 const DEFAULT_OUT = join(repoRoot, "teams-library");
 const TEAM_MANIFEST_PATH = join(repoRoot, "server", "team-manifest.ts");
 // Written into the output directory so a re-run knows the tree is ours to
@@ -72,6 +74,7 @@ function parseArgs(argv) {
       options[flag === "--out" ? "out" : "source"] = rest.join("=");
     } else throw new Error(`unknown argument: ${arg}`);
   }
+  if (!options.source) throw new Error("--source <waylandteams directory> (or WAYLAND_TEAMS_DIR) is required");
   options.out = isAbsolute(options.out) ? options.out : resolve(process.cwd(), options.out);
   options.source = isAbsolute(options.source) ? options.source : resolve(process.cwd(), options.source);
   return options;
@@ -328,7 +331,7 @@ async function main() {
   const report = {
     generatedBy: "scripts/import-wayland-teams.mjs",
     generatedAt: new Date().toISOString(),
-    source,
+    source: basename(source),
     specialists: specialists.size,
     teams: teams.length,
     written: built.length,

@@ -151,6 +151,12 @@ it("a host stop (this computer switched off for the bot) leaves a stopped notice
   expect(notices).toHaveLength(1);
   expect(notices[0].tool).toEqual({ name: "stopped: this computer was switched off for the bot", ok: false });
   expect(notices[0].from).toBeUndefined();
+  // Nobody pressed Stop, so the thread must not go on to say "Stopped by you":
+  // the host's reason is the last word, in the transcript and in the one-line
+  // sidebar preview that reads the thread's tail.
+  const settled = await messages(bot.threadId);
+  expect(settled.filter((m) => m.kind === "activity" && m.tool?.name === TURN_STOPPED_NOTE)).toEqual([]);
+  expect(settled.at(-1)?.tool?.name).toBe("stopped: this computer was switched off for the bot");
 }, 60_000);
 
 it("Stop on a source turn drops the delegation it queued instead of running it", async () => {
