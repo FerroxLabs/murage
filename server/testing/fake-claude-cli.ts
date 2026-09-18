@@ -210,7 +210,17 @@ const armSteerGate = () => {
 
 const promptText = (prompt: JsonValue): string => {
   const m = prompt && typeof prompt === "object" && !Array.isArray(prompt) ? (prompt as { message?: { content?: unknown } }).message : undefined;
-  return typeof m?.content === "string" ? m.content : "";
+  // `content` is a bare string for a text-only turn and an array of content
+  // blocks once the turn carries images. Fixtures keyed on the prompt text
+  // must still find it in the second shape.
+  if (typeof m?.content === "string") return m.content;
+  if (Array.isArray(m?.content)) {
+    return (m.content as Array<{ type?: unknown; text?: unknown }>)
+      .filter(block => block?.type === "text" && typeof block.text === "string")
+      .map(block => block.text as string)
+      .join("\n");
+  }
+  return "";
 };
 
 // ── AskUserQuestion through the real permission host ─────────────────────

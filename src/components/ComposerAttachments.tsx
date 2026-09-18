@@ -114,7 +114,9 @@ export function ComposerAttachments({
       {dragging && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
           <div className="rounded-2xl border-2 border-dashed border-accent/70 bg-panel/90 px-8 py-6 text-[14px] font-medium text-ink shadow-2xl">
-            Drop to attach — the bot gets the file path
+            {allowImages
+              ? "Drop to attach — images are shown to the bot, other files arrive as a path"
+              : "Drop to attach — the bot gets the file path, and cannot be shown an image"}
           </div>
         </div>
       )}

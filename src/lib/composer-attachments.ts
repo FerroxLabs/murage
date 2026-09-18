@@ -390,6 +390,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const { allowImages, getPath, uploadImage } = _opts;
   const attachments: Attachment[] = [];
   const rejectedNames: string[] = [];
+  const refusedImageNames: string[] = [];
   const imageErrors: string[] = [];
   // Finish each selected file in sequence so the chips retain the order in
   // which the user chose or dropped them.
@@ -402,7 +403,15 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
       } catch (error) { imageErrors.push(`${file.name}: ${error instanceof Error ? error.message : "Could not queue audio"}`); }
       continue;
     }
-    if (allowImages && isImageFile(file)) {
+    if (isImageFile(file)) {
+      // Refused out loud. Falling through to the path attachment turned a
+      // dropped picture into an <attached-file path> the responder cannot
+      // look at, with nothing on screen to say the image had been dropped —
+      // while the SAME refusal on paste says so plainly. One behaviour.
+      if (!allowImages) {
+        refusedImageNames.push(file.name);
+        continue;
+      }
       try {
         const attachment = await uploadImage(file);
         if (attachment) attachments.push(attachment);
@@ -418,10 +427,13 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const pathless = rejectedNames.length
     ? `${rejectedNames.join(", ")}; that file has no path on disk. Save it first, then attach it from Finder.`
     : null;
+  const refused = refusedImageNames.length
+    ? `${refusedImageNames.join(", ")} was not attached: the selected responder cannot receive images. Choose an image-capable responder.`
+    : null;
   const failed = imageErrors.length ? imageErrors.join("; ") : null;
   return {
     attachments,
-    notice: pathless && failed ? `${pathless} (${failed})` : (pathless ?? failed),
+    notice: [refused, pathless, failed].filter(Boolean).join(" ") || null,
   };
 }
 

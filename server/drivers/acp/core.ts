@@ -1968,6 +1968,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             composioMcp: true,
             browserMcp: true,
             images: support.images !== false,
+            // The ACP session/prompt carries real image parts (see sendTurn),
+            // so an engine that takes images at all is shown them.
+            imagesInline: support.images !== false,
             effortLevels: support.effortLevels,
             localComputerMcp: !config.fullAuto,
             folderTrust: support.folderTrust === true,

@@ -1297,6 +1297,41 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(turnStart.params.effort).toBe("xhigh");
   });
 
+  // Before 0.1.55 an attached image reached codex only as an
+  // <attached-image path> tag in the text, which the model had to open with
+  // its own read tool. turn/start takes the app-server's ImageUserInput
+  // {type:"image", url} — the bytes ride a data: URL.
+  it("puts an attached image into turn/start as a data-URL image item", async () => {
+    await create();
+    const dump = join(scratch, "image.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
+
+    await instance.adapter.sendTurn({ threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
+    expect(turnStart.params.input).toEqual([
+      { type: "text", text: "what is this" },
+      { type: "image", url: `data:image/png;base64,${data}` },
+    ]);
+    expect(instance.adapter.capabilities.imagesInline).toBe(true);
+  });
+
+  it("sends only the text item when the turn carries no image", async () => {
+    await create();
+    const dump = join(scratch, "no-image.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-no-image", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
+    expect(turnStart.params.input).toEqual([{ type: "text", text: "hi" }]);
+  });
+
   it("sends no effort key when the turn has none", async () => {
     await create();
     const dump = join(scratch, "no-effort.json");
