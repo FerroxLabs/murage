@@ -294,6 +294,14 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     pages and anchored windows; route integration in server/index.ts.
     Murage: server/message-db.ts, server/store.ts, server/index.ts
 
+  OpenMausBot PR #1377 (incomplete final frame at end of stream)
+    merge 03bc81510a0f2e775146745657b7206f85e0ec3e
+    The end-of-stream half only: an unterminated tail left in the buffer when
+    the connection closes is an incomplete frame, not an unreadable one, so a
+    finished answer settles and an unfinished one reads as stopped early.
+    Murage already folded the tail on end of stream.
+    Murage: server/drivers/openai-chat.ts
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,
