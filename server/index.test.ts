@@ -1996,6 +1996,53 @@ describe("harness HTTP API", () => {
     }
   }, 40_000);
 
+  // An <attached-image path> the conversation never bound — the legacy upload
+  // the composer makes without a thread — must not lose the turn on an engine
+  // that inlines. Nothing is inlined for it (the tag never grants a read), the
+  // tag stays in the text as it always did, and the bot is told it has a path.
+  // A bound upload on the same engine is the positive half: the bytes ride the
+  // prompt and the bot is told the picture is in front of it.
+  it("carries an unbound image as a path on an inline engine, and inlines a bound one", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Unbound image fixture" })).body.bot;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
+    const dump = () => readJsonFileWhenReady<{ prompt: { message: { content: unknown } }; systemPrompt: string | null }>(fakeClaudeDump);
+    try {
+      const unbound = await fetch(`${BASE}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
+      expect(unbound.status).toBe(201);
+      const unboundPath = ((await unbound.json()) as { path: string }).path;
+      await startInternalFixtureTurn(bot.id, undefined, `What is this?\n\n<attached-image path="${unboundPath}" />`);
+      const degraded = await dump();
+      // The whole turn reached the engine, the tag as text, no bytes beside it.
+      expect(typeof degraded.prompt.message.content).toBe("string");
+      expect(degraded.prompt.message.content).toContain(`<attached-image path="${unboundPath}" />`);
+      expect(JSON.stringify(degraded.prompt)).not.toContain(png.toString("base64"));
+      // The user message recorded the truth: nothing bound.
+      const thread = (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id).threadId;
+      const recorded = ((await api("GET", `/api/threads/${thread}/messages`)).body.messages as Array<{ role: string; text?: string; attachments?: unknown[] }>)
+        .find((message) => message.role === "user" && message.text?.includes(unboundPath));
+      expect(recorded?.attachments).toEqual([]);
+      // And the bot was told it has a path, never that a picture is in front of it.
+      expect(degraded.systemPrompt).toMatch(/open that path with your file-read tool/);
+      expect(degraded.systemPrompt).not.toMatch(/[Ii]mages attached to this turn are already in front of you/);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+
+      const bound = await fetch(`${BASE}/api/attachments?threadId=${encodeURIComponent(thread)}`, { method: "POST", headers: { ...DESKTOP_HEADERS, "content-type": "image/png" }, body: png });
+      expect(bound.status).toBe(201);
+      const boundPath = ((await bound.json()) as { path: string }).path;
+      await startInternalFixtureTurn(bot.id, undefined, `And this?\n\n<attached-image path="${boundPath}" />`);
+      const inlined = await dump();
+      expect(inlined.prompt.message.content).toEqual([
+        { type: "text", text: expect.stringContaining(`<attached-image path="${boundPath}" />`) },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } },
+      ]);
+      expect(inlined.systemPrompt).toMatch(/Images attached to this turn are already in front of you/);
+      expect(inlined.systemPrompt).not.toMatch(/open that path with your file-read tool/);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   // R3-T4: an approved generated image enters Files exactly once; repeating
   // the request returns the same saved result with no provider call.
   it("saves an approved generated image to Files once and repeats the request without provider work", async () => {
