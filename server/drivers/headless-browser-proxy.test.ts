@@ -137,4 +137,24 @@ describe("real isolated engine subprocess", () => {
       }
     }
   });
+  it("withdraws a request with MCP notifications/cancelled naming its own id, and still waits for the peer", async () => {
+    // The peer answers the withdrawn call only when the cancel arrives, and
+    // echoes both the id it was working on and the notification it received.
+    const script = `let buf='',held;process.stdin.on('data',c=>{buf+=c;let n;while((n=buf.indexOf('\\n'))>=0){const m=JSON.parse(buf.slice(0,n));buf=buf.slice(n+1);if(m.method==='tools/call'&&m.params.name==='slow'){held=m.id;continue;}if(m.method==='notifications/cancelled'){process.stdout.write(JSON.stringify({id:held,result:{held,cancel:m}})+'\\n');continue;}if(m.id!==undefined)process.stdout.write(JSON.stringify({id:m.id,result:{}})+'\\n');}});`;
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    try {
+      await client.request("initialize");
+      const stop = new AbortController();
+      const call = client.request("tools/call", { name: "slow" }, { signal: stop.signal });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      stop.abort();
+      const echoed = await call as { held: number; cancel: { jsonrpc: string; id?: unknown; method: string; params: { requestId: unknown; reason?: unknown } } };
+      expect(echoed.cancel.method).toBe("notifications/cancelled");
+      expect(echoed.cancel.jsonrpc).toBe("2.0");
+      expect(echoed.cancel).not.toHaveProperty("id");
+      expect(echoed.cancel.params.requestId).toBe(echoed.held);
+      // A signal that is already aborted never sends the request at all.
+      await expect(client.request("tools/call", { name: "slow" }, { signal: AbortSignal.abort() })).rejects.toThrow();
+    } finally { await client.close(); }
+  });
 });

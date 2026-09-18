@@ -9128,8 +9128,19 @@ const server = createServer(async (req, res) => {
         if (!authorized()) return json(res, 403, { error: "computer turn is no longer authorized or a person has control" });
         const body = z.object({ method: z.enum(["tools/list", "tools/call"]), params: z.record(z.string(), z.unknown()).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
-        const result = await hostComputer.dispatch(entry!.connection, body.method, body.params, authorized);
-        res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
+        // Every stop revokes `authorized`; an action already inside the driver
+        // is then withdrawn and answered as cancelled rather than awaited.
+        const controller = new AbortController();
+        const disconnected = () => controller.abort();
+        res.once("close", disconnected);
+        const revoked = setInterval(() => { if (!authorized()) controller.abort(); }, 100);
+        try {
+          const result = await hostComputer.dispatch(entry!.connection, body.method, body.params, authorized, controller.signal);
+          res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "cancelled") return json(res, 409, { error: (error as Error).message, code: "cancelled" });
+          throw error;
+        } finally { clearInterval(revoked); res.off("close", disconnected); }
       }
       if (path === "/api/internal/unified-browser") {
         requireActiveInternal();

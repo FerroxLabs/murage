@@ -13,7 +13,11 @@ const FAILURE = "Headless browser request refused or unavailable; the turn may h
 type Authority = { spec: AgentBrowserSpec; held: boolean };
 type Rpc = { id?: string | number | null; method?: string; params?: Record<string, unknown> };
 export interface EngineClient {
-  request: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+  /** Aborting `signal` withdraws the request: the peer is sent MCP
+   * `notifications/cancelled` naming it. The promise still settles only on the
+   * peer's own reply or the watchdog, because a cancel is a request to stop,
+   * not proof that the work stopped. */
+  request: (method: string, params?: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<unknown>;
   notify?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
 }
@@ -109,13 +113,20 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
       if (stopped) throw new Error(FAILURE);
       await writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params }));
     },
-    request(method, params) {
-      if (stopped) return Promise.reject(new Error(FAILURE));
+    request(method, params, options) {
+      const signal = options?.signal;
+      if (stopped || signal?.aborted) return Promise.reject(new Error(FAILURE));
       const id = ++serial;
       return new Promise((resolve, reject) => {
+        const withdraw = () => {
+          if (stopped || !pending.has(id)) return;
+          void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "The turn was stopped." } })).catch(fail);
+        };
+        const settle = <T>(finish: (value: T) => void) => (value: T) => { signal?.removeEventListener("abort", withdraw); finish(value); };
         const timer = setTimeout(() => { fail(); child.kill("SIGKILL"); }, 60_000);
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { resolve: settle(resolve), reject: settle(reject), timer });
         void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", id, method, params })).catch(fail);
+        signal?.addEventListener("abort", withdraw, { once: true });
       });
     },
     close() {
