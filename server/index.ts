@@ -11710,25 +11710,53 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const body = await readBody(req);
       const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
-      const bot = requestedDirectBot(m[1],body.threadId);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      const grantBotId = m[1];
+      const record = store.bot(grantBotId);
+      if (!record) return json(res, 404, { error: "no such bot" });
       if (!allowKey) return json(res, 400, { error: "allowKey required" });
       // A question is answered by the owner every time; no grant speaks for
       // them, even over a card an older build rendered with this key.
       if (isQuestionGrant(allowKey)) return json(res, 400, { error: "questions cannot be always allowed" });
-      const pending = store.messagesFor(bot.threadId).some((message) =>
+      // A card raised while this bot was answering in a ROOM sits on the
+      // room's thread, which is not one of the bot's own tasks. The client
+      // still offers "Always allow" there, and this route answered every one
+      // of them with "No such thread for this bot." — so the grant never
+      // landed and the identical card came back on the next turn, forever.
+      // A room turn reads the bot's own defaults (the asker is the bot
+      // record, not a task), which is exactly where such a grant belongs.
+      const roomThread =
+        typeof body.threadId === "string" &&
+        !store.tasks(grantBotId).some((task) => task.threadId === body.threadId) &&
+        store.groupByThread(body.threadId)?.memberIds.includes(grantBotId)
+          ? body.threadId
+          : undefined;
+      const bot = roomThread ? record : requestedDirectBot(grantBotId,body.threadId);
+      const cardThread = roomThread ?? bot.threadId;
+      const pending = store.messagesFor(cardThread).some((message) =>
         message.card?.requestId &&
         !message.card.answered &&
         message.card.dismissed !== true &&
-        message.card.allowKey === allowKey
+        message.card.allowKey === allowKey &&
+        // In a room many bots share one transcript; only the bot that raised
+        // the card may be granted anything by answering it.
+        (!roomThread || message.from?.botId === grantBotId)
       );
       if (!pending) {
         return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
       }
-      store.patchTask(bot.id,bot.threadId, {
+      // The grant belongs to the BOT, not to whichever task happened to be
+      // open. Writing it only to the task meant the bot's next task started
+      // from the (never-written) defaults and asked all over again. Record
+      // the default too — `preserveTaskSettings` so a sibling task's own
+      // list is left exactly as its owner left it — and new tasks inherit it
+      // at creation, which is where the re-asking came from.
+      store.patchBot(grantBotId, {
+        alwaysAllow: [...new Set([...(record.alwaysAllow ?? []), allowKey])].slice(0, 200),
+      }, { preserveTaskSettings: true });
+      if (!roomThread) store.patchTask(bot.id,bot.threadId, {
         alwaysAllow: [...new Set([...(bot.alwaysAllow ?? []), allowKey])].slice(0, 200),
       })!;
-      const updated=store.bot(bot.id)!;
+      const updated=store.bot(grantBotId)!;
       const visible = wireBot(updated);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
