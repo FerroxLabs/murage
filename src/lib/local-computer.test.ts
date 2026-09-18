@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Bot, InstanceInfo } from "@/state/store";
 import {
@@ -209,5 +211,22 @@ describe("localAutoHostPlatform", () => {
     expect(autoNeedsLocalComputerWarning({ platform: linuxHarness, computer: undefined, autoApprove: false })).toBe(false);
     expect(computerSwitchNeedsLocalAutoWarning({ platform: linuxHarness, from: "cloud", to: undefined, autoApprove: true })).toBe(false);
     expect(computerSwitchNeedsLocalAutoWarning({ platform: darwinHarness, from: "cloud", to: undefined, autoApprove: true })).toBe(true);
+  });
+});
+
+describe("Local VM driver version label", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../components/LocalComputerSection.tsx", import.meta.url)),
+    "utf8",
+  );
+
+  it("never hard-codes a Cua Driver version the harness did not report", () => {
+    // The Local VM pin lives in server/container-computer.ts (CUA_DRIVER_VERSION).
+    // That module is node-only, so the renderer cannot import it; the defence is
+    // that no version literal is written here at all. A literal silently lies the
+    // moment the pin moves — it read "0.20.0" while the macOS bundle went to
+    // 0.28.2.
+    expect(source).not.toMatch(/\bdriver_version\s*\?\?\s*"[\d.]+"/);
+    expect(source).toContain('status?.driver_version ?? "unknown"');
   });
 });
