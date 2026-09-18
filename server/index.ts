@@ -146,6 +146,7 @@ import { roomContextMessageIds, roomContextMessages } from "./room-context.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
+import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
@@ -2288,6 +2289,20 @@ async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
   const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
   const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
   return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog };
+}
+
+/** The one per-MODEL image fact Murage holds: a BYOK provider catalog's
+ * `capabilities.vision`. Until now it was displayed in Settings and nowhere
+ * else, so a bot on a text-only model was told the engine accepts images and
+ * confidently described a picture it could not see. `undefined` means Murage
+ * genuinely does not know — an engine-managed model has no such catalog — and
+ * the primer says so rather than guessing. */
+function routedModelAcceptsImages(route: { connectionId: string; model: string } | undefined): boolean | undefined {
+  if (!route) return undefined;
+  try {
+    const model = providerConnections.getCatalog(route.connectionId).models.find(candidate => candidate.id === route.model);
+    return model ? model.capabilities.vision === true : undefined;
+  } catch { return undefined; }
 }
 
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
@@ -4784,6 +4799,27 @@ async function startTurn(
       projectTurnLeases.markDispatched(dispatchClaimId);
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
+      // Hoisted so the primer and the driver read ONE trust answer. Scanning
+      // twice could disagree if the folder changed between the two calls, and
+      // a primer that says "trusted" over a turn dispatched untrusted is
+      // exactly the kind of confident-and-wrong the primer exists to stop.
+      const folderTrust = folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] });
+      const primer = capabilitiesPrimer(turnCapabilityFacts({
+        instance, integrations, model, providerRoute, cwd, folderTrust,
+        // Vision is a property of the MODEL, not the engine. Murage only
+        // holds that fact for a BYOK provider connection's catalog; for an
+        // engine-managed model it stays undefined and the primer says it
+        // cannot confirm, rather than claiming either way.
+        modelAcceptsImages: routedModelAcceptsImages(providerRoute),
+        peers: reachablePeers.length,
+        memory: memoryState().mode,
+        // A configured connection AND the owner's switch: the generate_image
+        // tool is mounted with the agents server whether or not anything is
+        // behind it, which is the case where a bot promises a picture it
+        // cannot make.
+        imageProvider: cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0,
+        canAskOwner: humanIsOwner && opts?.automationSource === undefined,
+      }));
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
           if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
@@ -4848,6 +4884,13 @@ async function startTurn(
           routinePrompt +
           learnPrompt +
           (privateWorkspace ? pinnedProcedures.importedPrompt : "") +
+          // LAST of the stable prefix, deliberately. Everything above depends
+          // only on the bot and the workspace; everything below is chosen from
+          // THIS turn's text (skillInstructions, packagePlaybooks) or thread
+          // (outputInstructions, tagged). Putting the primer here means a
+          // configuration change re-caches only itself, never the persona and
+          // integration prose in front of it.
+          primer +
           skillInstructions +
           packagePlaybooks +
           outputInstructions +
@@ -4863,7 +4906,7 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
+        folderTrust,
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
