@@ -18,8 +18,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+import { fakeHostDescriptorSource } from "./testing/fake-host-descriptor.ts";
 
-/** Windows never mounts the host desktop, so there is nothing to cancel. */
+/** Windows never mounts the host desktop, so there is nothing to cancel.
+ * macOS and Linux each mount the fake driver through their own real
+ * descriptor (server/testing/fake-host-descriptor.ts). */
 const HOST_COMPUTER = shouldMountLocalComputer({ requested: "local", hostPlatform: process.platform, providerSupportsLocal: true });
 
 const fakeDriverSource = `import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
@@ -48,13 +51,10 @@ const fs = await import('node:fs');
 const path = await import('node:path');
 process.env.MURAGE_USER_DATA = process.env.MURAGE_DATA_DIR;
 const dataDir = fs.realpathSync(process.env.MURAGE_DATA_DIR);
-const driver = path.join(dataDir, 'fake-host-driver.mjs');
-fs.writeFileSync(driver, ${JSON.stringify(fakeDriverSource)});
-fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({
-  mcpCommand: process.execPath,
-  mcpArgs: [driver],
-  mcpEnv: { FIXTURE_DRIVER_LOG: path.join(dataDir, 'driver-frames.log'), FIXTURE_HOLD_GATE: path.join(dataDir, 'hold-gate') },
-}));
+${fakeHostDescriptorSource({ driverSource: fakeDriverSource, driverEnv: {
+  FIXTURE_DRIVER_LOG: "path.join(dataDir, 'driver-frames.log')",
+  FIXTURE_HOLD_GATE: "path.join(dataDir, 'hold-gate')",
+} })}
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';
 `;
 
