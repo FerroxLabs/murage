@@ -3,20 +3,32 @@ export interface WebhookMessageView {
   payload?: string;
 }
 
+const EVENT_DATA_OPEN = "[UNTRUSTED WEBHOOK EVENT DATA]\n";
+
+/** Trusted task blocks, in the server's own precedence: the owner's configured
+ * instructions win over a task named in the payload, which wins over the
+ * default. The server only ever writes one of them. */
+const TASK_MARKERS = [
+  "USER-CONFIGURED WEBHOOK INSTRUCTIONS",
+  "AUTHENTICATED WEBHOOK TASK",
+  "DEFAULT WEBHOOK INSTRUCTIONS",
+];
+
 /** Convert the model-safe webhook prompt into the smaller view shown in chat.
  * The stored message stays untouched, preserving the trust boundary for model
  * context and follow-up turns. */
 export function webhookMessageView(text: string): WebhookMessageView | null {
-  const markers = [
-    "AUTHENTICATED WEBHOOK TASK",
-    "USER-CONFIGURED WEBHOOK INSTRUCTIONS",
-    "DEFAULT WEBHOOK INSTRUCTIONS",
-  ];
+  // The task comes only from the text before the event data. Anyone holding
+  // the webhook URL controls the event data, so a task block written inside
+  // it must never become the task the chat shows.
+  const eventStart = text.indexOf(EVENT_DATA_OPEN);
+  if (eventStart < 0) return null;
+  const trustedPrefix = text.slice(0, eventStart);
   let task = "";
-  for (const marker of markers) {
-    const match = text.match(new RegExp(`\\[${marker}\\]\\n([\\s\\S]*?)\\n\\[\\/${marker}\\]`));
-    if (match?.[1]) {
-      task = match[1].trim();
+  for (const marker of TASK_MARKERS) {
+    const candidate = trustedPrefix.match(new RegExp(`\\[${marker}\\]\\n([\\s\\S]*?)\\n\\[\\/${marker}\\]`))?.[1]?.trim();
+    if (candidate) {
+      task = candidate;
       break;
     }
   }
