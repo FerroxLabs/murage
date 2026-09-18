@@ -620,6 +620,16 @@ export interface AcpSupport {
   /** Refuse a first-party cloud turn before spawning when snapshot auth is
    * false. Local injected models deliberately bypass this subscription gate. */
   requireAuthenticationBeforeSpawn?: boolean;
+  /** Evidence that a turn will probably run even though `isAuthenticated` says
+   *  no — consulted ONLY by the pre-spawn gate, never by the snapshot.
+   *
+   *  These two questions had been answered by one predicate, and the weaker
+   *  one won: a driver that wanted to be permissive at spawn time had to widen
+   *  `isAuthenticated`, and the widening was then reported to the user as
+   *  "signed in". That is F2 — engines that claimed to be ready when they were
+   *  not. Splitting them lets the gate stay exactly as permissive as it was
+   *  while the Engines screen tells the truth. */
+  mayRunUnauthenticated?(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
   /** Classify provider-native failures without coupling the core to messages. */
   classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
@@ -922,6 +932,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           && !turn.providerRoute
           && !skipSubscriptionAuthForLocalInject(turn.model)
           && !(await support.isAuthenticated(env, config))
+          && !(await support.mayRunUnauthenticated?.(env, config))
         ) {
           emit({ ...base(threadId, turnId), type: "turn.started" });
           emit({ ...base(threadId, turnId), type: "runtime.error", message: support.loginNote, setup: true });

@@ -128,3 +128,52 @@ export function engineErrorCategory(kind: unknown): EngineErrorCategory | undefi
     ? canonical as EngineErrorCategory
     : undefined;
 }
+
+/** Codes a failed CONNECTION raises, as distinct from a server that answered
+ *  badly. undici wraps all of these in `TypeError("fetch failed")`, whose
+ *  message is what a user used to be shown, whole. */
+const CONNECT_FAILURE_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "EHOSTUNREACH",
+  "ENETUNREACH", "EPIPE", "ETIMEDOUT", "ERR_SOCKET_CONNECTION_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+]);
+
+/** True when this error means "the address never answered", not "the server
+ *  answered with something I did not like". Walks `cause`, because that is
+ *  where undici puts the real errno. */
+export function isEndpointUnreachable(error: unknown): boolean {
+  for (let step: unknown = error, depth = 0; step instanceof Error && depth < 5; depth++) {
+    const code = (step as NodeJS.ErrnoException).code;
+    if (typeof code === "string" && CONNECT_FAILURE_CODES.has(code)) return true;
+    if (step.name === "TypeError" && step.message === "fetch failed" && !(step.cause instanceof Error)) return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** `http://192.168.1.50:11434/v1` → `192.168.1.50:11434`. Never the path
+ *  and never the query: a base URL can carry a key in either. Falls back to the
+ *  raw string only when it will not parse, and never to an empty name. */
+export function endpointName(url: string | undefined | null): string {
+  if (!url?.trim()) return "the model server";
+  try {
+    return new URL(url).host || "the model server";
+  } catch {
+    return url.split("/").filter(Boolean)[1] ?? "the model server";
+  }
+}
+
+/** What the chat bubble says when the model server never answered.
+ *
+ *  It used to say `fetch failed`, in full — undici's own words, escaping
+ *  before the driver's label was applied. That sentence names no host, no
+ *  engine and no next step, and it is the exact message a user gets when their
+ *  llama.cpp box is off or the tailnet drops, which is the commonest local
+ *  failure there is. Wording follows the Local models screen, which already
+ *  had the right sentence for this ("Nothing answered at this address. Start
+ *  the server, then check again." — src/components/LocalModelsSettings.tsx).
+ *  Stays inside ERROR_MESSAGE_MAX so the transcript does not truncate it. */
+export function unreachableEndpointMessage(url: string | undefined | null): string {
+  return `Could not reach ${endpointName(url)} — nothing answered there. Check that the server is running and that its address is right.`;
+}

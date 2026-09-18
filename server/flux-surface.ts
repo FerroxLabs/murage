@@ -217,6 +217,18 @@ export function filterFluxRows(
  * persisted while its engine is offline, cloned from another bot
  * (store.tsx clone), imported, or set over MCP, and none of those paths
  * revalidate against the catalog.
+ *
+ * COPY RULE for everything this returns. On a fresh install this is the very
+ * first sentence a new user reads, because the shipped starter bot is pinned
+ * to a routed model before anyone has opened Settings. It used to open with
+ * the words "Flux Router", the name of a thing the person had not seen
+ * anywhere in the app yet, and the sentence read as a fault report about
+ * internal plumbing. Every branch now says the same three things in the
+ * order a person needs them: what cannot happen, what is missing, and the one
+ * place in this app to fix it. No internal names, no config file, no terminal
+ * command — a first-run user has no terminal open and should never be sent to
+ * one. "Settings → Models" is the same location the connected-apps copy
+ * already points at (locales/en.json, connectedApps.flux.tokenReconnect).
  */
 export function fluxSelectionRefusal(
   model: string | null | undefined,
@@ -225,19 +237,20 @@ export function fluxSelectionRefusal(
 ): string | null {
   if (!isFluxModel(model)) return null;
   if (fluxSurfaceFor(driverKind) === null) {
-    return "this bot's engine cannot route Flux Router — choose another model in settings";
+    return "This bot's engine cannot use the model it is set to. Pick a different model for this bot in Settings → Models.";
   }
   if (!fluxConfigured(env)) {
-    return "Flux Router has no API key — add one in App Settings, or choose another model";
+    return "This bot's model needs an AI provider connected first. Open Settings → Models to connect one, or pick a different model for this bot.";
   }
   // A setup-class engine is routable in principle and unrouted in fact. The
-  // distinction is worth its own sentence: "cannot route" would be a lie the
-  // user acts on by changing engines, when the fix is one deliberate write.
+  // distinction is worth its own sentence: "cannot use this model at all"
+  // would be a lie the user acts on by changing engines, when the fix is one
+  // deliberate setup step they can take on the Models screen.
   if (fluxMechanismFor(driverKind) === "configWrite" && !connectorRouted(driverKind, env)) {
-    return "Flux Router is not set up for this engine yet — run Flux setup for it (that writes a \"flux\" provider into the CLI's own config), or choose another model";
+    return "This model is not finished setting up for this bot's engine. Open Settings → Models to finish it, or pick a different model for this bot.";
   }
   if (!fluxIdIsRoutable(model, driverKind)) {
-    return `"${model}" is not a Flux Router model this engine can route — re-pick the model in settings`;
+    return `This bot's engine cannot use "${model}". Pick a different model for this bot in Settings → Models.`;
   }
   return null;
 }

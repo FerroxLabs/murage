@@ -9,9 +9,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CHOOSE_ENGINE_OPTION,
   CUSTOM_MODELS_GROUP,
   LOCAL_MODELS_GROUP,
   NO_LOCAL_SERVER_ROW,
+  NO_MODEL_CHOSEN,
+  pickerCountLine,
+  pickerEmptyState,
+  pickerTriggerTitle,
   contextLabel,
   localPickerRows,
   localRowLabel,
@@ -189,5 +194,60 @@ describe("the rail is a state, not an absence", () => {
     expect(showNoLocalServerRow(gemini, pickerModels(gemini, []))).toBe(false);
     expect(showNoLocalServerRow(null, [])).toBe(false);
     expect(showNoLocalServerRow(undefined, [])).toBe(false);
+  });
+});
+
+// ── The first-run picker ────────────────────────────────────────────────────
+// A brand-new profile has no selection at all: server/index.ts defaultSelection
+// deliberately returns {instanceId:"",model:""} rather than pinning a bot to an
+// engine that cannot answer. Every one of these read as a fault report before:
+// "0 compatible chat models", a blank engine box, and a chip that said
+// "Unavailable engine · " with nothing after the separator.
+describe("the picker with nothing configured", () => {
+  it("never leaves a dangling separator in the chip tooltip", () => {
+    expect(unavailableSelectionLabel("")).toBe(NO_MODEL_CHOSEN);
+    expect(unavailableSelectionLabel("   ")).toBe(NO_MODEL_CHOSEN);
+    const title = pickerTriggerTitle(undefined, unavailableSelectionLabel(""), undefined);
+    expect(title).not.toMatch(/·\s*$/);
+    expect(title).not.toContain("Unavailable engine");
+    expect(title).toBe("No model chosen yet — open this to pick one");
+  });
+
+  it("still names a genuinely unavailable engine, and still joins cleanly", () => {
+    expect(pickerTriggerTitle(undefined, "gpt-5.6-sol", undefined)).toBe("Unavailable engine · gpt-5.6-sol");
+    expect(pickerTriggerTitle("Claude", "Claude Sonnet 5", "My key")).toBe("Claude · Claude Sonnet 5 · My key");
+    expect(pickerTriggerTitle("Claude", "Claude Sonnet 5", undefined)).toBe("Claude · Claude Sonnet 5");
+  });
+
+  it("counts models only once there is an engine to count them for", () => {
+    expect(pickerCountLine(false, 0)).toBe("Pick an engine above to see the models it can run");
+    expect(pickerCountLine(false, 0)).not.toMatch(/^0 /);
+    expect(pickerCountLine(true, 0)).toBe("No models to choose here yet");
+    expect(pickerCountLine(true, 1)).toBe("1 compatible chat model · prices per million tokens");
+    expect(pickerCountLine(true, 7)).toBe("7 compatible chat models · prices per million tokens");
+  });
+
+  it("offers the engine select a row that says what it wants", () => {
+    expect(CHOOSE_ENGINE_OPTION).toBe("Choose an engine");
+  });
+
+  it("answers the empty list with both next steps, including the local one", () => {
+    const empty = pickerEmptyState(false, false);
+    expect(empty).not.toBeNull();
+    expect(empty!.title).toBe("No engine set up yet");
+    expect(empty!.action).toBeTruthy();
+    // showNoLocalServerRow needs an engine to be truthful, so it goes quiet
+    // here; this is the only thing left that can mention a local model.
+    expect(empty!.localAction).toBeTruthy();
+    expect(showNoLocalServerRow(undefined, [])).toBe(false);
+    // plain words only: no jargon, no config file, no terminal
+    for (const copy of [empty!.title, empty!.body, empty!.action, empty!.localAction]) {
+      expect(copy).not.toMatch(/config\.json|terminal|CLI|npm |install -g|~\//i);
+    }
+  });
+
+  it("stands aside once an engine is chosen, or while the user is searching", () => {
+    expect(pickerEmptyState(true, false)).toBeNull();
+    expect(pickerEmptyState(false, true)).toBeNull();
   });
 });

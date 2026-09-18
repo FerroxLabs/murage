@@ -314,7 +314,7 @@ describe("fluxSelectionRefusal — the spawn backstop", () => {
 
   it("refuses a persisted flux-* selection on an engine with no Flux surface", () => {
     expect(fluxSelectionRefusal("flux-auto", "droidAgent", KEYED)).toBe(
-      "this bot's engine cannot route Flux Router — choose another model in settings",
+      "This bot's engine cannot use the model it is set to. Pick a different model for this bot in Settings → Models.",
     );
   });
 
@@ -323,17 +323,44 @@ describe("fluxSelectionRefusal — the spawn backstop", () => {
     // sends the user to change engines when the fix is one deliberate write.
     const env = { ...KEYED, HOME: join(tmpdir(), "murage-flux-surface-no-such-home") } as NodeJS.ProcessEnv;
     const refusal = fluxSelectionRefusal("flux-auto", "opencodeGo", env);
-    expect(refusal).toContain("not set up for this engine yet");
-    expect(refusal).not.toContain("cannot route");
+    expect(refusal).toContain("not finished setting up");
+    expect(refusal).not.toContain("cannot use");
   });
 
   it("refuses when the key was removed after the selection was saved", () => {
-    expect(fluxSelectionRefusal("flux-auto", "claudeAgent", UNKEYED)).toContain("no API key");
+    expect(fluxSelectionRefusal("flux-auto", "claudeAgent", UNKEYED)).toBe(
+      "This bot's model needs an AI provider connected first. Open Settings → Models to connect one, or pick a different model for this bot.",
+    );
   });
 
   it("refuses a bare flux id on codex rather than POSTing it to api.openai.com", () => {
-    expect(fluxSelectionRefusal("flux-auto", "codex", KEYED)).toContain("not a Flux Router model this engine can route");
+    expect(fluxSelectionRefusal("flux-auto", "codex", KEYED)).toBe(
+      'This bot\'s engine cannot use "flux-auto". Pick a different model for this bot in Settings → Models.',
+    );
     expect(fluxSelectionRefusal("flux::flux-auto", "codex", KEYED)).toBeNull();
+  });
+
+  // First-run copy contract. This refusal is the first sentence a new user can
+  // hit, so it may not name internal plumbing, and it may not send anyone to a
+  // config file or a terminal — a first-run user has neither open.
+  it("never names an internal product, a config file or a terminal command", () => {
+    const env = { ...KEYED, HOME: join(tmpdir(), "murage-flux-surface-no-such-home") } as NodeJS.ProcessEnv;
+    const refusals = [
+      fluxSelectionRefusal("flux-auto", "droidAgent", KEYED),
+      fluxSelectionRefusal("flux-auto", "claudeAgent", UNKEYED),
+      fluxSelectionRefusal("flux-auto", "opencodeGo", env),
+      fluxSelectionRefusal("flux-auto", "codex", KEYED),
+    ];
+    expect(refusals.every((refusal) => typeof refusal === "string" && refusal.length > 0)).toBe(true);
+    for (const refusal of refusals) {
+      // A quoted model id is the row the person picked in the picker and is
+      // theirs to see; it is the PROSE that may not name internal plumbing.
+      const prose = refusal!.replace(/"[^"]*"/g, '"…"');
+      expect(prose).not.toMatch(/flux/i);
+      expect(prose).not.toMatch(/config\.json|\.json\b|~\/|run [`"']?\w/i);
+      // one place to go, named the way the app names it
+      expect(refusal).toContain("Settings → Models");
+    }
   });
 
   it("allows a correctly shaped selection on every routable engine", () => {
@@ -352,6 +379,23 @@ describe("the gate is actually wired into the spawn path", () => {
   it("calls fluxSelectionRefusal with the instance's driverKind", () => {
     expect(indexSource).toContain('import { fluxSelectionRefusal } from "./flux-surface.ts";');
     expect(indexSource).toContain("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);");
+  });
+
+  // F1 — a refused first send must leave nothing behind. The task used to be
+  // renamed from the typed sentence BEFORE these refusals ran, so a 409 left
+  // the thread wearing the user's words while the words themselves were never
+  // stored. Naming the task must therefore happen after every refusal, and
+  // beside the append that actually records the turn.
+  it("names the task only after the refusals, beside the append", () => {
+    const titleAt = indexSource.indexOf("store.titleTaskFromFirstMessage(bot.id, text, threadId)");
+    const fluxAt = indexSource.indexOf("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(");
+    const effortAt = indexSource.indexOf("is not offered by this bot's engine — choose another level in settings");
+    const appendAt = indexSource.indexOf("let userMessage = opts?.userMessage;");
+    expect(titleAt).toBeGreaterThan(-1);
+    expect(appendAt).toBeGreaterThan(-1);
+    expect(titleAt).toBeGreaterThan(effortAt);
+    expect(titleAt).toBeGreaterThan(fluxAt);
+    expect(titleAt).toBeLessThan(appendAt);
   });
 
   it("throws it as a 409, beside the effort re-check", () => {

@@ -76,6 +76,7 @@ export function showNoLocalServerRow(engine: Pick<PickerEngine, "driverKind"> | 
   if (!engine || localEngineSupport(engine.driverKind) !== "tools") return false;
   return localPickerRows(rows).length === 0;
 }
+
 /** "qwen3.8-27b · llama.cpp on seanbeast" (spec V3), whichever half the
  *  engine's own catalog supplied. */
 export function localRowLabel(row: PickerModel): string {
@@ -97,8 +98,57 @@ export function localRowNote(row: PickerModel): string {
  *  or stops answering; the raw id is not a name anyone chose, so the chip
  *  says the model and the fact instead, until another model is picked. */
 export function unavailableSelectionLabel(model: string): string {
+  // A fresh profile has no selection at all (server/index.ts defaultSelection
+  // returns {instanceId:"",model:""} rather than pinning a bot to an engine
+  // that cannot answer). The raw "" used to reach the chip and the tooltip,
+  // which rendered as "Unavailable engine · " — a dangling separator that told
+  // a brand-new user nothing except that something was broken.
+  if (!model.trim()) return NO_MODEL_CHOSEN;
   const local = localPickerModel(model);
   return local ? `${local.model} · local server unavailable` : model;
+}
+/** What the chip says before anything is set up. */
+export const NO_MODEL_CHOSEN = "No model chosen";
+/** The first row of the engine `<select>` when nothing is selected, so the
+ *  control is never a blank box with no clue what it wants. */
+export const CHOOSE_ENGINE_OPTION = "Choose an engine";
+/** The chip's tooltip / aria-label. Every part is optional and the separator
+ *  is joined, never concatenated, so a missing part can never leave a
+ *  dangling " · ". */
+export function pickerTriggerTitle(
+  engineName: string | undefined,
+  selectedLabel: string,
+  connectionLabel?: string,
+): string {
+  if (!engineName && selectedLabel === NO_MODEL_CHOSEN) return "No model chosen yet — open this to pick one";
+  return [engineName ?? "Unavailable engine", selectedLabel, connectionLabel].filter(Boolean).join(" · ");
+}
+/** The line under the search box. "0 compatible chat models" is true and
+ *  useless on a fresh profile: it counts a list the person was never given a
+ *  way to fill. Each state says what to do next instead. */
+export function pickerCountLine(engineChosen: boolean, count: number): string {
+  if (!engineChosen) return "Pick an engine above to see the models it can run";
+  if (count === 0) return "No models to choose here yet";
+  return `${count} compatible chat model${count === 1 ? "" : "s"} · prices per million tokens`;
+}
+/** The body of the list when it has nothing in it. `null` means the caller's
+ *  own branches (engine setup card, "no matching…") own this state. */
+export function pickerEmptyState(
+  engineChosen: boolean,
+  hasQuery: boolean,
+): { title: string; body: string; action: string; localAction: string } | null {
+  if (engineChosen || hasQuery) return null;
+  return {
+    title: "No engine set up yet",
+    body: "An engine is the program that answers your messages. Set one up and its models appear here.",
+    action: "Set up an engine",
+    // The Local rail's own row needs an engine to be truthful about detection
+    // (showNoLocalServerRow), so on a fresh profile it goes quiet — which used
+    // to hide the fastest route to a working app from the only person who
+    // needed it. This offer claims nothing about what is running; it just
+    // opens the same screen that row opens.
+    localAction: "Use a model on this computer",
+  };
 }
 /** The picker's warning marker, in plain words. Empty when there is nothing to
  *  warn about — an untested model is not accused of anything. */

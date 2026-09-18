@@ -10,6 +10,7 @@ import { validateProviderTurnRoute, type ProviderTurnRoute } from "../provider-r
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
@@ -227,6 +228,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       // Stop always wins and stays an AbortError (STOP1).
       if (idle.expired && !signal?.aborted && asError(value).name === "TimeoutError") {
         throw new Error(`${label} ${idle.message}`, { cause: value });
+      }
+      // F3 — a connect failure is the ONE error on this path that reached the
+      // chat bubble unlabelled. `label` is applied at five places, every one of
+      // them after a response exists, so undici's `TypeError("fetch failed")`
+      // rethrown here arrived at the transcript as the literal two words
+      // "fetch failed": no host, no engine, no next step. It is also the
+      // commonest local-model failure there is — the box is off, or the tailnet
+      // dropped. Say which address and what to check instead. The Stop path is
+      // untouched: an aborted turn is never rewritten.
+      if (!signal?.aborted && isEndpointUnreachable(value)) {
+        throw new Error(unreachableEndpointMessage(providerRoute?.baseUrl ?? options.apiUrl), { cause: value });
       }
       throw value;
     } finally {

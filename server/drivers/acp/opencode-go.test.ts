@@ -196,7 +196,13 @@ describe("OpenCode catalog", () => {
     }
   });
 
-  it("treats OpenCode's anonymous free catalog as runnable without a saved key", async () => {
+  // F2 — a listable catalogue is evidence the BINARY works, never evidence
+  // that this machine has a credential: `opencode models` prints the bundled
+  // models.dev catalogue whether or not anyone has logged in. It used to be
+  // OR'd into `isAuthenticated`, so an empty $HOME reported opencode as signed
+  // in on the Engines screen. It now answers the pre-spawn gate only, so the
+  // turn still runs and the screen stops claiming a login nobody performed.
+  it("treats OpenCode's anonymous free catalog as runnable, but not as signed in", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-free-"));
     const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
     const instance = await driver.create({
@@ -212,7 +218,7 @@ describe("OpenCode catalog", () => {
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     try {
-      expect((await instance.snapshot()).authenticated).toBe(true);
+      expect((await instance.snapshot()).authenticated).toBe(false);
     } finally {
       await instance.dispose();
       await removeTempDir(scratch);

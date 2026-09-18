@@ -10,7 +10,7 @@
 // changing the model. That is Kimi finding B
 // (docs/plans/flux-router-integration.md), and it is why a Flux id short-
 // circuits `resolveTurnModel` below instead of falling through to the writer.
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -264,7 +264,29 @@ const support: AcpSupport = {
   },
   pickAuthMethod: () => null,
   authFailure: "continue",
-  isAuthenticated: () => true,
+  /** F2 — "authenticated: true" was asserted here unconditionally, so a machine
+   *  with no credential of any kind reported qwen as signed in. Nothing backed
+   *  the claim: the only thing detection had proved was that `qwen --version`
+   *  answered, which is `state`, not sign-in. A user took the word "signed in"
+   *  at face value, picked qwen, and the first turn failed.
+   *
+   *  What is checked is the one durable fact that means "this machine has a
+   *  qwen login": the OAuth credential `qwen` writes when you sign in, under
+   *  `$HOME/.qwen`. Deliberately nothing else:
+   *    - `OPENAI_API_KEY` cannot be read here at all — `transformEnv`
+   *      (stripForeignProviderKeys) has already removed it from this env by the
+   *      time the snapshot runs, and it is re-supplied per turn by
+   *      `applyTurnEnv` above.
+   *    - a local model pick supplies its own key at turn time, so it is a fact
+   *      about that pick, not about qwen.
+   *    - a Flux key says this APP can reach a router, never that this machine
+   *      has a qwen login; counting it would be the same over-claim in a new
+   *      costume.
+   *
+   *  `authFailure: "continue"` is unchanged and qwen has no
+   *  `requireAuthenticationBeforeSpawn`, so this is a truthfulness change only:
+   *  nothing new is refused, and a user whose qwen works keeps working. */
+  isAuthenticated: (env) => existsSync(join(qwenHome(env), "oauth_creds.json")),
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
 

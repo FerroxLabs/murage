@@ -12,7 +12,7 @@
 //     the interesting failures are ordering ones: the credential strip runs
 //     between the driver and the spawn (core.ts:204-212), and `applyTurnEnv`
 //     (core.ts:323) is the only hook that lands after it.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -200,5 +200,50 @@ describe("qwen Flux routing — the gate", () => {
     expect(env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
     expect(env.OPENAI_MODEL).toBe("GLM-5.2-fp8");
     expect(env.OPENAI_API_KEY).toBe("omlx"); // the host's own placeholder key, from LOCAL_HOSTS
+  });
+});
+
+// F2 — qwen reported `authenticated: true` on a machine with no credential of
+// any kind, because the predicate was the literal `() => true`. Detection had
+// only ever proved that `qwen --version` answered, which is `state`, not
+// sign-in. `authFailure` stays "continue", so nothing new is refused: this is
+// a truthfulness change on the Engines screen, not a new gate.
+describe("qwen sign-in is reported, not assumed", () => {
+  const scratchHomes: string[] = [];
+  afterEach(() => {
+    for (const dir of scratchHomes.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  const emptyHome = () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-qwen-auth-"));
+    scratchHomes.push(dir);
+    return dir;
+  };
+
+  async function reportedAuth(env: Record<string, string>): Promise<boolean | undefined> {
+    const instance = await QwenAgentDriver.create({
+      instanceId: "qwen-auth", displayName: "Qwen", enabled: true,
+      environment: env, config: { cli: FAKE_ACP, fullAuto: false },
+    });
+    try { return (await instance.snapshot()).authenticated; } finally { await instance.dispose(); }
+  }
+
+  it("says no on a machine with nothing signed in", async () => {
+    const home = emptyHome();
+    expect(await reportedAuth({ HOME: home, USERPROFILE: home })).toBe(false);
+  });
+
+  it("says yes once the login it actually uses is there", async () => {
+    const home = emptyHome();
+    mkdirSync(join(home, ".qwen"), { recursive: true });
+    writeFileSync(join(home, ".qwen", "oauth_creds.json"), "{}");
+    expect(await reportedAuth({ HOME: home, USERPROFILE: home })).toBe(true);
+  });
+
+  // The env this predicate is handed has already been through
+  // stripForeignProviderKeys, so a provider key in the parent shell is neither
+  // visible here nor evidence of a qwen login.
+  it("does not mistake an ambient provider key for a qwen login", async () => {
+    const home = emptyHome();
+    expect(await reportedAuth({ HOME: home, USERPROFILE: home, OPENAI_API_KEY: "sk-fixture" })).toBe(false);
   });
 });
