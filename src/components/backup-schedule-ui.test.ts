@@ -10,10 +10,13 @@ it("rejects missing/malformed/out-of-bound choices without rounding",()=>{
   for(const change of [{time:"24:00"},{timezone:"not/a-zone"},{catchup:""},{catchup:"169"},{catchup:"0.0001"},{size:"0"},{size:"1025"},{size:"NaN"},{duration:"31"},{duration:"0.00001"},{size:"1e-20"}])expect(enabledSchedule({...draft,...change},state,true)).toBeNull();
   expect(enabledSchedule({...draft,catchup:"168",size:"1024",duration:"30"},state,true)).not.toBeNull();
 });
-it("preserves saved exact integers and leaves first setup budgets/time empty",()=>{
+it("preserves saved exact integers, fills first-setup limits and leaves the time empty",()=>{
   const saved={...state,schedule:{...state.schedule,time:"01:30",timezone:"UTC",catchupMs:60001,maxBytes:1001,maxDurationMs:1001}};
   expect(enabledSchedule(scheduleDraft(saved.schedule),saved,true)).toMatchObject({catchupMs:60001,maxBytes:1001,maxDurationMs:1001});
-  expect(scheduleDraft(state.schedule)).toMatchObject({time:"",catchup:"",size:"",duration:""});
+  // Was: first setup left the limits empty ({catchup:"",size:"",duration:""}).
+  const first=scheduleDraft(state.schedule);
+  expect(first).toMatchObject({time:"",catchup:"12",size:"50",duration:"30"});
+  expect(enabledSchedule({...first,time:"03:00",timezone:"UTC"},state,true)).toMatchObject({catchupMs:12*3600000,maxBytes:50*1024**3,maxDurationMs:30*60000});
 });
 it("locks active, review, unknown, enabled and unsupported routes",()=>{
   for(const phase of ["claiming","capturing","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","unknown"]){expect(scheduleNeedsReview(phase)).toBe(true);expect(enabledSchedule(draft,{...state,phase},true)).toBeNull();}
