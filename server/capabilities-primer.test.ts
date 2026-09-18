@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { capabilitiesPrimer, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
@@ -179,10 +182,17 @@ describe("turnCapabilityFacts", () => {
     expect(facts({ instance: { ...INSTANCE, adapter: { capabilities: { images: false } } } }).imageInput).toBe("unsupported");
   });
 
-  it("only the Fuigo driver receives inline images", () => {
-    const fuigo = { ...INSTANCE, driverKind: "fuigoAgent" };
-    expect(facts({ instance: fuigo }).imageInput).toBe("inline");
-    expect(facts({ instance: { ...INSTANCE, driverKind: "codex" } }).imageInput).toBe("file-reference");
+  it("reads the inline-image capability, never the driver kind", () => {
+    // The old rule was "only Fuigo", which handed Claude, Codex and the ACP
+    // engines a file path each although all three carry a picture. Driver kind
+    // must not move the answer at all now.
+    const inline = { ...INSTANCE, adapter: { capabilities: { images: true, imagesInline: true } } };
+    for (const driverKind of ["fuigoAgent", "claudeCode", "codex", "customAcp", "pi"]) {
+      expect(facts({ instance: { ...inline, driverKind } }).imageInput).toBe("inline");
+      expect(facts({ instance: { ...INSTANCE, driverKind } }).imageInput).toBe("file-reference");
+    }
+    // Only an explicit true is inline; absent and false both mean a path.
+    expect(facts({ instance: { ...INSTANCE, adapter: { capabilities: { images: true, imagesInline: false } } } }).imageInput).toBe("file-reference");
   });
 
   it("lists tools directly on every engine, Fuigo included", () => {
@@ -436,5 +446,107 @@ describe("no capability is both claimed and denied", () => {
     // And the split lives in the table, so neither half can be edited alone.
     expect(INTEGRATION_FACTS.agents.presentWithoutPeers).toBeDefined();
     expect(INTEGRATION_FACTS.agents.presentWithoutPeers).not.toContain("peer");
+  });
+});
+
+/** The primer's image story must match the dispatch rule, both directions.
+ *
+ * `capabilities.imagesInline` has two readers: index.ts's gate on
+ * `turnImages.read`, which decides whether the bytes are sent, and the
+ * selector above, which decides what the bot is TOLD. If they disagree, a bot
+ * is either shown a picture and told to go open a file, or handed a path and
+ * told to look at an image that was never sent — the 2026-09-17 failure, from
+ * the other end. Driven by the flag itself and by this file's own prose, so
+ * neither can drift from the drivers without a red test. */
+const DRIVER_DIR = fileURLToPath(new URL("./drivers/", import.meta.url));
+const PRIMER_SOURCE = readFileSync(fileURLToPath(new URL("./capabilities-primer.ts", import.meta.url)), "utf8");
+
+function driverFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) out.push(full);
+    }
+  };
+  walk(DRIVER_DIR);
+  return out;
+}
+
+/** Drivers that put the bytes in their own prompt, read from the source of
+ * truth rather than restated here. */
+function declaresInlineImages(): string[] {
+  return driverFiles()
+    .filter((file) => /imagesInline\s*:/.test(readFileSync(file, "utf8")))
+    .map((file) => `server/drivers/${relative(DRIVER_DIR, file)}`)
+    .sort();
+}
+
+/** The driver files this file's own `file-reference` bullet cites as engines
+ * that receive a PATH. Parsed out of the doc comment so the prose cannot claim
+ * one thing while the flag says another. */
+function citedAsPathEngines(): string[] {
+  const bullet = PRIMER_SOURCE.slice(PRIMER_SOURCE.indexOf(" *  - `file-reference`"), PRIMER_SOURCE.indexOf(" *  - `model-not-listed`"));
+  expect(bullet, "the file-reference bullet moved — this guard needs updating").not.toBe("");
+  return [...bullet.matchAll(/server\/drivers\/[A-Za-z0-9/_-]+\.ts/g)].map((match) => match[0]).sort();
+}
+
+describe("the inline-image story matches the dispatch rule", () => {
+  const imageFacts = (capabilities: { images?: boolean; imagesInline?: boolean }, modelAcceptsImages?: boolean) =>
+    turnCapabilityFacts({
+      instance: { ...INSTANCE, adapter: { capabilities } },
+      integrations: { agents: {} }, peers: 1, memory: "off",
+      imageProvider: false, canAskOwner: true, cwd: "/w", modelAcceptsImages,
+    }).imageInput;
+
+  it("says inline exactly when the driver carries the bytes", () => {
+    expect(imageFacts({ images: true, imagesInline: true })).toBe("inline");
+    expect(imageFacts({ images: true, imagesInline: false })).toBe("file-reference");
+    expect(imageFacts({ images: true })).toBe("file-reference");
+    // The model's vision fact still outranks the driver: bytes the model
+    // cannot read are not "already in front of you".
+    expect(imageFacts({ images: true, imagesInline: true }, false)).toBe("model-not-listed");
+    // …and "don't know" must not take the picture away, matching the dispatch
+    // rule, which refuses only on an explicit false.
+    expect(imageFacts({ images: true, imagesInline: true }, undefined)).toBe("inline");
+  });
+
+  it("tells the bot to look, or to open the path, in the matching direction", () => {
+    const block = (capabilities: { images?: boolean; imagesInline?: boolean }) =>
+      capabilitiesPrimer({ ...BASE, imageInput: imageFacts(capabilities) });
+    expect(block({ images: true, imagesInline: true })).toContain("do not open the file");
+    expect(block({ images: true })).toContain("open it with your own file-reading tool");
+    // Never both stories in one block.
+    expect(block({ images: true, imagesInline: true })).not.toContain("open it with your own file-reading tool");
+    expect(block({ images: true })).not.toMatch(/delivered straight to you/);
+  });
+
+  it("reads the capability and never a driver kind", () => {
+    const selector = PRIMER_SOURCE.slice(PRIMER_SOURCE.indexOf("const imageInput: ImageInput"), PRIMER_SOURCE.indexOf("return {", PRIMER_SOURCE.indexOf("const imageInput: ImageInput")));
+    expect(selector).toContain("capabilities.imagesInline");
+    expect(selector).not.toMatch(/driverKind/);
+  });
+
+  it("no engine this file calls a path engine secretly carries the bytes", () => {
+    // The mutation this catches: flipping a driver's `imagesInline` without
+    // touching the primer. The prose says pi and Antigravity get a path; if
+    // either starts declaring the flag, the bullet above is a lie and so is
+    // every block those bots receive.
+    const cited = citedAsPathEngines();
+    expect(cited.length, "the bullet should cite at least one path engine").toBeGreaterThan(0);
+    const inlineDrivers = declaresInlineImages();
+    for (const path of cited) {
+      expect(inlineDrivers, `${path} is documented as a path engine but declares imagesInline`).not.toContain(path);
+    }
+  });
+
+  it("every driver that declares the flag is one the selector can reach", () => {
+    // Vacuous only before the inline-image lane lands; afterwards it pins that
+    // each declaring driver really does produce the inline story.
+    for (const _driver of declaresInlineImages()) {
+      expect(imageFacts({ images: true, imagesInline: true })).toBe("inline");
+    }
+    expect(declaresInlineImages().every((path) => path.startsWith("server/drivers/"))).toBe(true);
   });
 });

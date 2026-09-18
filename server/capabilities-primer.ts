@@ -126,13 +126,20 @@ export type ToolAccess = "direct" | "none";
 
 /** How an image reaches this bot. Engine and model are different facts and
  * Murage knows them separately:
- *  - `inline`: the image is delivered as an image part to the model. Only the
- *    Fuigo driver does this (index.ts gates `turnImages.read` on the
- *    "fuigoAgent" driver kind).
+ *  - `inline`: the image is delivered as an image part to the model. Every
+ *    driver that declares `capabilities.imagesInline` does this — Claude
+ *    (a stream-json content block array), Codex (`turn/start` input
+ *    `{type:"image", url}` carrying a data URL) and the ACP engines (real
+ *    `session/prompt` image parts). index.ts gates `turnImages.read` on that
+ *    flag composed with the routed model's vision fact, so the primer reads
+ *    the same flag rather than naming engines of its own. It is deliberately
+ *    NOT `capabilities.images`, which answers the composer's question ("may
+ *    this engine be offered an attachment") and is true for pi and
+ *    Antigravity, whose protocols take no image.
  *  - `file-reference`: the engine accepts images, but they arrive as an
  *    `<attached-image path=…>` reference the agent opens with its read tool
- *    (server/drivers/pi.ts). Telling such a bot "never open an image file"
- *    leaves it unable to look at anything.
+ *    (server/drivers/pi.ts, server/drivers/antigravity.ts). Telling such a
+ *    bot "never open an image file" leaves it unable to look at anything.
  *  - `model-not-listed`: the engine could carry an image, but the selected
  *    provider model does not declare image input
  *    (shared/provider-connections.ts `capabilities.vision`).
@@ -333,7 +340,12 @@ export function turnCapabilityFacts(input: {
     driverKind: string;
     displayName?: string;
     models: { default: string; options: ReadonlyArray<{ id: string; label: string }> };
-    adapter: { capabilities: { images?: boolean } };
+    /** `images`: the composer may offer an attachment on this engine.
+     * `imagesInline`: the DRIVER puts the bytes in its own prompt. The two are
+     * not the same question — pi and Antigravity declare the first and not the
+     * second — and index.ts's dispatch gate reads the second, so this does
+     * too. */
+    adapter: { capabilities: { images?: boolean; imagesInline?: boolean } };
   };
   integrations: Readonly<Partial<Record<IntegrationKey, unknown>>>;
   model?: string;
@@ -361,9 +373,10 @@ export function turnCapabilityFacts(input: {
     ? "unsupported"
     : input.modelAcceptsImages === false
       ? "model-not-listed"
-      // Only the Fuigo driver is handed `turn.images`; every other engine
-      // receives an <attached-image path=…> reference it must open itself.
-      : input.instance.driverKind === "fuigoAgent"
+      // The SAME flag index.ts's dispatch gate reads. Naming driver kinds here
+      // is what went wrong before: the primer said "only Fuigo" while Claude,
+      // Codex and the ACP engines all carry a picture perfectly well.
+      : input.instance.adapter.capabilities.imagesInline === true
         ? "inline"
         : "file-reference";
   return {
