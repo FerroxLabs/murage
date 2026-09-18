@@ -33,7 +33,11 @@ describe("intakeFiles", () => {
     expect(out.notice).toBeNull();
   });
 
-  it("treats an image as an ordinary file when the engine cannot read one", async () => {
+  // Was: "treats an image as an ordinary file when the engine cannot read
+  // one". Dropping a picture on a responder that cannot see one produced a
+  // silent <attached-file path> chip and no notice, while pasting the same
+  // picture said so plainly. The drop now refuses out loud too.
+  it("refuses a dropped image out loud when the engine cannot read one", async () => {
     const out = await intakeFiles([file("shot.png", "image/png")], {
       allowImages: false,
       getPath: onDisk,
@@ -41,8 +45,21 @@ describe("intakeFiles", () => {
         throw new Error("must not upload");
       },
     });
-    expect(out.attachments).toHaveLength(1);
-    expect(out.attachments[0].kind).toBe("file");
+    expect(out.attachments).toEqual([]);
+    expect(out.notice).toContain("shot.png");
+    expect(out.notice).toMatch(/cannot receive images/);
+  });
+
+  it("still takes the non-image files dropped alongside a refused image", async () => {
+    const out = await intakeFiles([file("shot.png", "image/png"), file("notes.txt", "text/plain")], {
+      allowImages: false,
+      getPath: onDisk,
+      uploadImage: async () => {
+        throw new Error("must not upload");
+      },
+    });
+    expect(out.attachments.map((a) => [a.kind, "name" in a ? a.name : ""])).toEqual([["file", "notes.txt"]]);
+    expect(out.notice).toContain("shot.png");
   });
 
   it("names the files it could not take, rather than dropping them in silence", async () => {

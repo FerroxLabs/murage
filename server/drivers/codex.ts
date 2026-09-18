@@ -852,7 +852,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         turnStartSent = true;
         await request("turn/start", {
           threadId: codexThreadId,
-          input: [{ type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text }],
+          // `{type:"image", url}` is the app-server's own UserInput variant,
+          // read out of codex-cli 0.154.0's generated protocol schema
+          // (`codex app-server generate-json-schema`: TextUserInput,
+          // ImageUserInput {url}, LocalImageUserInput {path}, …). Murage holds
+          // the validated BYTES, never a path a driver resolves itself, so the
+          // data URL is the variant that fits — `localImage` would hand codex
+          // a path to re-open under its own sandbox, which is the read-tool
+          // detour this change exists to remove.
+          input: [
+            { type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text },
+            ...(turn.images ?? []).map((image) => ({ type: "image", url: `data:${image.mimeType};base64,${image.data}` })),
+          ],
           // Spread, not `effort: turn.effort ?? null`. Probed against
           // codex-cli 0.146.0: null is indistinguishable from an absent key
           // — both leave the thread's current effort alone, emitting no
@@ -975,6 +986,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         phoneMcp: true,
         browserMcp: true,
         images: true,
+        // turn/start takes the app-server's ImageUserInput {type,url}; the
+        // bytes ride a data: URL. See the input builder above.
+        imagesInline: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],
       },
       sendTurn,

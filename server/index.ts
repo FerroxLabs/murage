@@ -67,6 +67,7 @@ import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
+import { sendsInlineImages } from "./turn-image-dispatch.ts";
 import { TurnImages, turnImageAudience } from "./turn-images.ts";
 import {
   chooseIntakeProfile,
@@ -2325,6 +2326,35 @@ function routedModelAcceptsImages(route: { connectionId: string; model: string }
     const model = providerConnections.getCatalog(route.connectionId).models.find(candidate => candidate.id === route.model);
     return model ? model.capabilities.vision === true : undefined;
   } catch { return undefined; }
+}
+
+/** Whether THIS turn should carry the picture itself rather than only the
+ * `<attached-image path=…>` tag the composer writes into the text.
+ *
+ * Two independent facts, and both have to hold:
+ *  - the DRIVER puts the bytes in its own prompt (`capabilities.imagesInline`).
+ *    Until 0.1.55 this was hard-coded to the Fuigo driver, so Claude, Codex
+ *    and the eight other ACP engines — every one of which can carry a picture
+ *    — were handed a file path and left to open it with a read tool, which
+ *    depends on the model choosing to, on the file being inside the folder it
+ *    may work in, and on permission mode. It is deliberately NOT the looser
+ *    `capabilities.images`: pi and Antigravity declare that (the composer may
+ *    offer an attachment) but neither protocol takes an image, so reading and
+ *    base64-ing up to 20 MB for them would only be thrown away.
+ *  - the MODEL can see (`routedModelAcceptsImages`). Only `false` refuses:
+ *    `undefined` means Murage holds no vision fact for an engine-managed
+ *    model, and refusing on "don't know" would silently take the picture
+ *    away from every non-BYOK turn.
+ *
+ * The tag stays in the text either way. It is what `resolve_image_reference`
+ * and the agents server's `reference_ids` resolve against, and dropping it
+ * for inline engines would break image editing for exactly the engines that
+ * just gained inline vision. */
+function inlineTurnImagesEnabled(
+  instance: { adapter: { capabilities: { imagesInline?: boolean } } },
+  providerRoute: { connectionId: string; model: string } | undefined,
+): boolean {
+  return sendsInlineImages(instance.adapter.capabilities.imagesInline, routedModelAcceptsImages(providerRoute));
 }
 
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
@@ -4753,8 +4783,18 @@ async function startTurn(
       // bot asked for an avatar from an attached photo opened the PNG with
       // read_file (a text-only model then 400'd on the image part), hunted the
       // disk for an OpenAI key and called the vendor itself. Say it once.
+      // "when your model accepts images" was a hedge written while exactly one
+      // engine was sent the picture. The turn now knows which it is, so say it
+      // outright: a bot told it can already see an image it was never sent
+      // describes one it is guessing at, and a bot told to open the file when
+      // the picture is right there in its prompt wastes a tool call and a
+      // permission prompt on it.
       const imagePrompt = integrations.agents
-        ? " To create or edit an image, use generate_image; list_image_models shows the configured connections and models. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with resolve_image_reference. Attached images are already shown to you when your model accepts images; do not open image files with shell or file-read tools to look at them, never search the computer for provider API keys, and never call an image provider directly."
+        ? " To create or edit an image, use generate_image; list_image_models shows the configured connections and models. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with resolve_image_reference." +
+          (inlineTurnImagesEnabled(instance, providerRoute)
+            ? " Images attached to this turn are already in front of you: look at them directly and do not open image files with shell or file-read tools to see them."
+            : " You are not shown attached images directly — an attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.") +
+          " Never search the computer for provider API keys, and never call an image provider directly."
         : "";
       const routinePrompt = integrations.agents
         ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
@@ -4870,10 +4910,12 @@ async function startTurn(
       // provider turn completes, so a refusal here (memory revoked, provider
       // route changed) with no provider turn to complete would hold the
       // folder until restart — and every workspace save with it (F4-T7).
-      // The Fuigo driver registers as "fuigoAgent" (drivers/acp/fuigo.ts DRIVER_KIND);
-      // "fuigo" is only the engine-management spelling. The old comparison never
-      // matched, so no inline image ever reached the model (thread e4454625).
-      const incomingImages = instance.driverKind === "fuigoAgent" ? await turnImages.read(threadId, bot.id, text) : undefined;
+      // Every image-capable engine gets the picture, not only Fuigo. The old
+      // comparison was against "fuigo", which the driver never registers as
+      // (drivers/acp/fuigo.ts DRIVER_KIND is "fuigoAgent"), so no inline image
+      // reached any model at all (thread e4454625); 0.1.54 fixed the spelling
+      // and 0.1.55 removes the single-engine gate behind it.
+      const incomingImages = inlineTurnImagesEnabled(instance, providerRoute) ? await turnImages.read(threadId, bot.id, text) : undefined;
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
@@ -6368,7 +6410,9 @@ async function runGroupMemberTurn(
       activeProviderSelections.delete(threadId);
       if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId: instance.instanceId, route: providerRoute });
       const imageSelectionText = latestUser?.text ?? "";
-      const incomingImages = instance.driverKind === "fuigoAgent" ? await turnImages.read(threadId, bot.id, imageSelectionText) : undefined;
+      // Same rule as the direct path: engine capability AND model vision, not
+      // one hard-coded driver kind.
+      const incomingImages = inlineTurnImagesEnabled(instance, providerRoute) ? await turnImages.read(threadId, bot.id, imageSelectionText) : undefined;
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");

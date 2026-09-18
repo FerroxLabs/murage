@@ -326,6 +326,18 @@ export interface ProviderAdapter {
      * attachment an engine cannot open (a bot told it has an image it
      * cannot read burns the turn). */
     images?: boolean;
+    /** True when the DRIVER puts the picture into the prompt itself, so the
+     * model sees it without opening anything. `images` is the looser
+     * question the composer asks ("can this engine deal with an attachment
+     * at all"); this is the one the turn asks ("was it shown, or handed a
+     * path"). They differ: pi and Antigravity take an attachment as the
+     * `<attached-image path=…>` reference in the text and open it with a
+     * read tool — Antigravity's stream-json input accepts exactly one
+     * content-block type and it is not an image — while Claude, Codex and
+     * the ACP engines carry the bytes. A driver that does not consume
+     * `turn.images` must leave this unset, or its bots are told they can
+     * already see a picture that was never sent. */
+    imagesInline?: boolean;
     /** Effort levels this driver can pass to its CLI, ascending. Absent =
      * the driver cannot set effort, so the app never offers the control —
      * same rule as computerMcp: never show a knob the driver cannot turn. */

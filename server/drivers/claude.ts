@@ -824,9 +824,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** Writes one user message. With a boundary, the turn's submission state
      * follows the write: in-flight once bytes are handed over, then written or
      * refused when the write reports. A refused write never delivered the
-     * trailing newline, so the CLI cannot have read the message whole. */
-    const writeUser = (s: Session, threadId: string, text: string, boundary?: AttemptBoundary): Promise<boolean> => {
-      const promptMsg = { type: "user", message: { role: "user", content: text } };
+     * trailing newline, so the CLI cannot have read the message whole.
+     *
+     * `images` makes `content` an array of Anthropic content blocks instead of
+     * a bare string — the shape the CLI already reads on this exact stdin path
+     * (it counts, compacts and re-sends `{type:"image",source:{type:"base64",
+     * media_type,data}}` blocks off a user message's content array). Text
+     * first, pictures after, so a prompt that says "the image below" still
+     * reads in order. No images means the bare string, byte-for-byte as before:
+     * a turn with no attachment must not change shape. */
+    const writeUser = (s: Session, threadId: string, text: string, boundary?: AttemptBoundary, images?: SendTurnInput["images"]): Promise<boolean> => {
+      const content = images?.length
+        ? [
+            { type: "text", text },
+            ...images.map((image) => ({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } })),
+          ]
+        : text;
+      const promptMsg = { type: "user", message: { role: "user", content } };
       if (!s.child.stdin.writable || s.child.stdin.destroyed) {
         boundary?.markRefused();
         return Promise.resolve(false);
@@ -840,7 +854,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               return resolve(false);
             }
             boundary?.markWritten();
-            appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: promptMsg });
+            // The native log is a debugging transcript a person reads and
+            // attaches to a bug report. Ten megabytes of base64 per image
+            // would bury it and copy the picture somewhere nobody expects it,
+            // so the log keeps the shape and drops the bytes.
+            appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: images?.length ? { ...promptMsg, message: { role: "user", content: [{ type: "text", text }, ...images.map((image) => ({ type: "image", source: { type: "base64", media_type: image.mimeType, data: `<${image.data.length} base64 chars elided>` } }))] } } : promptMsg });
             resolve(true);
           });
         } catch {
@@ -1078,7 +1096,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           stopSession(live);
         }, () => liveTurn.stopRequested === true));
         emit({ ...base(threadId, turnId), type: "turn.started" });
-        liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary);
+        liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary, turn.images);
         const written = await liveTurn.submission;
         if (!written) {
           forgetActive(threadId);
@@ -1594,7 +1612,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // prompt over stdin as a stream-json message — never argv (ARG_MAX).
       // stdin stays OPEN: that is what keeps the session alive for a
       // mid-turn steer or the next turn; closeSession() ends it.
-      launchTurn.submission = writeUser(session, threadId, turn.text, launchTurn.boundary);
+      launchTurn.submission = writeUser(session, threadId, turn.text, launchTurn.boundary, turn.images);
       if (!(await launchTurn.submission)) {
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch
@@ -1713,6 +1731,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           phoneMcp: true,
           browserMcp: true,
           images: true,
+          // The prompt is a stream-json user message whose `content` may be an
+          // array of Anthropic content blocks; claude 2.1.276 reads
+          // {type:"image",source:{type:"base64",media_type,data}} off it.
+          imagesInline: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
           queueing: true,
           localComputerMcp: config.permissionMode !== "bypassPermissions",

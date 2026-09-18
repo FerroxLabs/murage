@@ -374,6 +374,44 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
   });
 
+  // Before 0.1.55 the picture never reached Claude: `content` was always the
+  // bare prompt string and the model was left to open an <attached-image
+  // path> tag with its read tool. The CLI's stream-json stdin takes an array
+  // of content blocks on this exact path.
+  it("puts an attached image into the stream-json prompt as a base64 content block", async () => {
+    await create();
+    const dump = join(scratch, "dump-image.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
+
+    await instance.adapter.sendTurn({ threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.prompt).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data } },
+        ],
+      },
+    });
+    expect(instance.adapter.capabilities.imagesInline).toBe(true);
+  });
+
+  it("keeps the prompt a bare string when the turn carries no image", async () => {
+    await create();
+    const dump = join(scratch, "dump-no-image.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-no-image", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).prompt.message.content).toBe("hi");
+  });
+
   it("keeps user and system prompts off argv and strips identity env vars", async () => {
     await create();
     const dump = join(scratch, "dump.json");
