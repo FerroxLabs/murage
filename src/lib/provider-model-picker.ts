@@ -66,9 +66,9 @@ export function priceBand(price: ProviderModel["pricing"]): string { const n=pri
  *  For the picker to draw it differently — muted, not $-coloured. */
 export function isPriceUnknown(row: Pick<PickerModel, "selection"|"pricing">): boolean { return modelPriceLabel(row)===PRICE_UNKNOWN; }
 /** Published rates move constantly and a band is a snapshot of one day's
- *  prices, so the picker says so ONCE, under the list — not on every row
- *  (Sean: "not that I need to put a disclaimer on every fucking one"). Dated
- *  from the snapshot itself so it cannot quietly go stale. */
+ *  prices, so the picker says so ONCE, under the list — not as a disclaimer
+ *  on every row. Dated from the snapshot itself so it cannot quietly go
+ *  stale. */
 export function priceBandNote(updatedAt: number = modelMetadataUpdatedAt()): string {
   if(!Number.isFinite(updatedAt))return "Bands are approximate, from published rates";
   const when=new Date(updatedAt).toLocaleString(undefined,{month:"long",year:"numeric",timeZone:"UTC"});

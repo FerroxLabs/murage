@@ -108,8 +108,8 @@ jobs:
         # library/catalog.json bakes profileReviewHash at build time and the
         # server 409s on a mismatch, so editing a built-in profile or its skill
         # without rebuilding makes that profile impossible to apply. Nothing in
-        # the vitest chain caught it: eleven lanes shipped past a stale catalog
-        # before the 0.1.55 verification pass found it.
+        # the vitest chain caught it: a stale catalog reached the 0.1.55
+        # candidate before the release verification pass found it.
         run: pnpm catalog:check
       - name: Stage pinned backup test fixtures
         # Test-only: hash-pinned upstream age/restic bytes that backup tests read

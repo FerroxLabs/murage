@@ -148,7 +148,7 @@ describe("local server address rule (spec A1)", () => {
   });
 
   // The ranges that DO hold real machines keep plain http: closing them would
-  // break the Tailscale and ULA setups lane W/X shipped for.
+  // break the Tailscale and ULA setups that 0.1.55 opened plain http for.
   it("keeps the ranges a real model server plausibly lives on", () => {
     expect(classifyIpAddress("100.64.0.1")).toBe("tailnet");
     expect(classifyIpAddress("100.100.100.199")).toBe("tailnet");

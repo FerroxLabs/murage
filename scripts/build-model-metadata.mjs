@@ -46,8 +46,8 @@ export const SNAPSHOT_FORMAT = "murage.model-metadata";
 export const SNAPSHOT_VERSION = 1;
 
 /** Which providers to keep. `null` means ALL of them, which is the shipped
- *  setting (Sean, 2026-09-18: "we need to also pull, for example, OpenRouter if
- *  people are using it, or basically all the fucking main models").
+ *  setting: a user on OpenRouter or any other broad provider should find
+ *  their model priced, not just the first-party ones.
  *
  *  This started as a 13-provider allow-list of what Murage can reach, which cut
  *  the file from 1.5 MB to 133 KB. It was the wrong trade. An `openai-compat`

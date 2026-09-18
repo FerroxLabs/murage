@@ -507,7 +507,7 @@ it.runIf(AUTO_REACHES_HOST)("tells a bot that it can drive a computer whenever o
 // 4. Lifecycle, and two recorded defects
 // ---------------------------------------------------------------------------
 
-// DEFECT (lane AT, 2026-09-18). server/index.ts:12209 filters the
+// DEFECT (found 2026-09-18). server/index.ts:12209 filters the
 // "stop touching my computer" sweep to `bot.computer === "local"`. But a bot
 // that never chose a computer is handed the same host Mac by the auto-fallback
 // at server/index.ts:4678-4693, and Auto is the DEFAULT for every bot the
@@ -544,7 +544,7 @@ it.runIf(AUTO_REACHES_HOST)("DEFECT: the local-computer interrupt does not stop 
   }
 }, 90_000);
 
-// DEFECT (lane AT, 2026-09-18). server/index.ts:810 memoises browser bindings
+// DEFECT (found 2026-09-18). server/index.ts:810 memoises browser bindings
 // under an UNTAGGED identity:
 //     [realmId, partition && partition !== "guest" ? partition : botId, …]
 // The middle slot is a partitionId OR a botId with nothing to tell them apart.

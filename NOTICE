@@ -112,8 +112,8 @@ They do not imply import of a complete upstream release.
 
   Blob Studio mascot packs (Blob, Circle, Capsule, Drop, Cone, Polygon, Star)
     https://www.blobstudio.xyz/ — packs BlobMascot, CircleMascot,
-    CapsuleMascot, DropMascot, ConeMascot, PolygonMascot and StarMascot as
-    supplied by Sean Donahoe, 2026-09-18.
+    CapsuleMascot, DropMascot, ConeMascot, PolygonMascot and StarMascot,
+    Ferrox Labs' own artwork built with Blob Studio, 2026-09-18.
     Taken from each pack: the `SHAPE` constant only — the silhouette `body`
     and `clip` path, the `fit` transform, and the face `anchor` — copied
     verbatim but for the dropped `xmlns` attribute on each path. These now

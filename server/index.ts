@@ -4915,7 +4915,7 @@ async function startTurn(
       // Every image-capable engine gets the picture, not only Fuigo. The old
       // comparison was against "fuigo", which the driver never registers as
       // (drivers/acp/fuigo.ts DRIVER_KIND is "fuigoAgent"), so no inline image
-      // reached any model at all (thread e4454625); 0.1.54 fixed the spelling
+      // reached any model at all; 0.1.54 fixed the spelling
       // and 0.1.55 removes the single-engine gate behind it.
       const incomingImages = turnImageDelivery(instance, providerRoute) === "inline" ? await turnImages.read(threadId, bot.id, text) : undefined;
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
