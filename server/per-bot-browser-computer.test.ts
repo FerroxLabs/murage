@@ -138,6 +138,29 @@ registerHooks({ load(url, context, nextLoad) {
 const file = path.join(process.env.MURAGE_DATA_DIR, 'config.json');
 const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
 cfg.instances.second = { ...cfg.instances.verification, displayName: 'Second isolated engine', environment: { FAKE_CLAUDE_DUMP: path.join(process.env.MURAGE_DATA_DIR, 'second-dump.json') } };
+// --- an engine that takes a moment to close after Stop, as the real CLI does
+// while it tears down its MCP children ---
+cfg.instances.slowclose = { ...cfg.instances.verification, displayName: 'Slow-closing isolated engine', environment: { FAKE_CLAUDE_DUMP: path.join(process.env.MURAGE_DATA_DIR, 'slowclose-dump.json'), FAKE_CLAUDE_SIGTERM_DELAY_MS: '600' } };
+// --- an engine whose Stop is never confirmed, until the test allows it ---
+cfg.instances.nostop = { ...cfg.instances.verification, displayName: 'Unconfirmed-stop isolated engine', environment: { FAKE_CLAUDE_DUMP: path.join(process.env.MURAGE_DATA_DIR, 'nostop-dump.json') } };
+const { ClaudeDriver } = await import(${JSON.stringify(new URL("./drivers/claude.ts", import.meta.url).href)});
+const create = ClaudeDriver.create;
+ClaudeDriver.create = async function (input) {
+  const instance = await create.call(this, input);
+  if (input.instanceId !== 'nostop') return instance;
+  // Only a thread with a turn in flight is refused; an idle one confirms at
+  // once, as every real engine's does.
+  const running = new Set();
+  const send = instance.adapter.sendTurn.bind(instance.adapter);
+  instance.adapter.sendTurn = async (turn, ...rest) => { running.add(turn.threadId); return send(turn, ...rest); };
+  const stop = instance.adapter.interruptTurn.bind(instance.adapter);
+  instance.adapter.interruptTurn = async (threadId, turnId) => {
+    if (running.has(threadId) && !fs.existsSync(path.join(dataDir, 'allow-stop'))) return { closeConfirmed: false, reason: 'timeout' };
+    running.delete(threadId);
+    return stop(threadId, turnId);
+  };
+  return instance;
+};
 fs.writeFileSync(file, JSON.stringify(cfg));
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';
 `;
@@ -157,6 +180,16 @@ const dumpPath = (second: boolean) => second ? join(fixture.info.dataDir, "secon
 const dump = (second: boolean) => {
   try { return JSON.parse(readFileSync(dumpPath(second), "utf8")); } catch { return null; }
 };
+/** The last prompt an extra engine slot recorded (see the instrumentation). */
+const instanceDump = (instance: "slowclose" | "nostop") => {
+  try { return JSON.parse(readFileSync(join(fixture.info.dataDir, `${instance}-dump.json`), "utf8")); } catch { return null; }
+};
+/** Send a turn to a bot on an extra engine slot and wait until it is dispatched. */
+const startInstanceTurn = async (bot: any, label: string, instance: "slowclose" | "nostop") => {
+  expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `__fixture_hold_authority__ ${label}` })).status).toBe(202);
+  await expect.poll(() => JSON.stringify(instanceDump(instance)?.prompt ?? ""), { timeout: 15_000 }).toContain(label);
+  return instanceDump(instance);
+};
 const sessionLog = (): Array<{ kind: string; session: string; method?: string; tool?: string }> => {
   try { return JSON.parse(readFileSync(join(fixture.info.dataDir, "browser-sessions.json"), "utf8")); } catch { return []; }
 };
@@ -164,7 +197,7 @@ const state = async (id: string) => (await api("GET", "/api/bots?messages=0")).b
 const task = async (botId: string, threadId: string) => (await state(botId))?.tasks?.find((item: any) => item.threadId === threadId);
 
 /** Create a bot on a named engine slot and return its record. */
-const makeBot = async (name: string, instanceId: "verification" | "second", patch: Record<string, unknown> = {}) => {
+const makeBot = async (name: string, instanceId: "verification" | "second" | "slowclose" | "nostop", patch: Record<string, unknown> = {}) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model } });
   expect(created.status, `create ${name}: ${JSON.stringify(created.body)}`).toBe(201);
   const bot = created.body.bot;
@@ -572,6 +605,80 @@ it.runIf(AUTO_REACHES_HOST)("leaves a bot that is not on this computer running t
   }
 }, 90_000);
 
+// WAS A DEFECT. The panic sweep sent each interrupt and swallowed the answer,
+// so it reported a bot `stopped` even when its engine refused to confirm the
+// stop and the turn kept running on the owner's screen. It now stops each bot
+// the way the per-bot Stop does — a stop the engine does not confirm keeps the
+// turn (and its leases) and is reported under `failed` — and still answers 200,
+// because the Linux panel disables the driver straight after this call.
+it.runIf(AUTO_REACHES_HOST)("reports a bot whose engine does not confirm the stop as failed, not stopped", async () => {
+  const stubborn = await makeBot("Panic unconfirmed", "nostop", { computer: "local", browser: false });
+  const willing = await makeBot("Panic confirmed", "second", { computer: "local", browser: false });
+  const allow = join(fixture.info.dataDir, "allow-stop");
+  try {
+    const a = mountedComputer(await startInstanceTurn(stubborn, "panic-unconfirmed", "nostop"));
+    expect(a, "the stubborn bot is on the host").toBeTruthy();
+    await startTurn(willing, "panic-confirmed", true);
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body.ok).toBe(false);
+    expect(stop.body.failed).toEqual([stubborn.id]);
+    expect(stop.body.stopped).toContain(willing.id);
+    expect(stop.body.stopped).not.toContain(stubborn.id);
+
+    // The confirmed one really is idle; the unconfirmed one is not pretended
+    // idle, and the thread says why.
+    await expect.poll(async () => (await task(willing.id, willing.threadId))?.busy, { timeout: 15_000 }).toBe(false);
+    expect((await task(stubborn.id, stubborn.threadId))?.busy).toBe(true);
+    expect(JSON.stringify((await api("GET", `/api/threads/${stubborn.threadId}/messages`)).body)).toMatch(/provider stop is unconfirmed/u);
+    // Its computer grant is gone regardless: the capability is revoked first.
+    expect([401, 403]).toContain((await hostRpc(a.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status);
+
+    // Once the engine confirms, the same sweep reports it stopped.
+    writeFileSync(allow, "1");
+    const again = await api("POST", "/api/local-computer/interrupt", {});
+    expect(again.status).toBe(200);
+    expect(again.body.ok).toBe(true);
+    expect(again.body.stopped).toContain(stubborn.id);
+    await expect.poll(async () => (await task(stubborn.id, stubborn.threadId))?.busy, { timeout: 15_000 }).toBe(false);
+  } finally {
+    writeFileSync(allow, "1");
+    for (const bot of [stubborn, willing]) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+    rmSync(allow, { force: true });
+  }
+}, 90_000);
+
+// The same honesty for a bot that is working in a channel when the owner
+// pulls the plug: the channel's stop is confirmed with the engine too.
+it.runIf(AUTO_REACHES_HOST)("reports a channel member whose engine does not confirm the stop as failed", async () => {
+  const member = await makeBot("Panic room unconfirmed", "nostop", { computer: "local", browser: false });
+  const allow = join(fixture.info.dataDir, "allow-stop");
+  const room = (await api("POST", "/api/groups", {
+    name: "Panic room", memberIds: [member.id],
+    setup: { bulletin: "Synthetic panic-stop fixture", defaultResponder: { kind: "member", botId: member.id } },
+  })).body.group;
+  try {
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: "__fixture_hold_authority__ panic-room" })).status).toBe(202);
+    await expect.poll(() => JSON.stringify(instanceDump("nostop")?.prompt ?? ""), { timeout: 15_000 }).toContain("panic-room");
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body).toMatchObject({ ok: false, failed: [member.id] });
+    expect(stop.body.stopped).not.toContain(member.id);
+
+    writeFileSync(allow, "1");
+    const again = await api("POST", "/api/local-computer/interrupt", {});
+    expect(again.status).toBe(200);
+    expect(again.body.ok).toBe(true);
+  } finally {
+    writeFileSync(allow, "1");
+    await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
+    await api("POST", `/api/bots/${member.id}/interrupt`, { threadId: member.threadId }).catch(() => undefined);
+    rmSync(allow, { force: true });
+  }
+}, 90_000);
+
 // WAS A DEFECT (found by lane AT, fixed by lane AU, 2026-09-18).
 // server/index.ts memoised browser bindings under an UNTAGGED identity:
 //     [realmId, partition && partition !== "guest" ? partition : botId, …]
@@ -624,13 +731,51 @@ it("keeps two bots apart even when a browser profile is named after a bot's id",
 // server/index.ts:8941 has already refused any claim whose generation is not
 // the thread's current one, so a claim that reaches the clause always carries
 // the thread's live generation. Making the ENTRY stale instead is the other
-// half, and that is a real, separate race (recorded by lane AU, not fixed
-// here): after an interrupt, the retired turn's `turn.completed` event calls
-// `releaseBrowserCapabilityForThread(threadId)` with no owner scope
-// (server/index.ts:2939), deleting the NEXT generation's binding — the very
-// hazard the `session.exited` branch three lines below guards against. A
-// second turn's browser RPC therefore answers 403 in 19 of 20 runs. Test it
-// here only once that is fixed; asserting it now would pin a defect.
+// half, and that was a real race — see the next test.
+
+// WAS A DEFECT. After a Stop, the stopped turn's own `turn.completed` event
+// arrives late (the engine is killed, then reports) and released the thread's
+// browser binding with no owner scope — by then the binding belonged to the
+// NEXT turn, so that turn's browser answered 403 "browser turn is no longer
+// authorized" for its whole life (19 of 20 runs). The release is now scoped
+// to the generation the completing provider turn was bound to.
+it("keeps the browser working on the turn after a Stop, every time", async () => {
+  const bot = await makeBot("Browser after stop", "slowclose", { computer: "off" });
+  const statuses: number[] = [];
+  const late: number[] = [];
+  const tokens = new Set<string>();
+  const refusals = new Set<string>();
+  try {
+    // Turn 0 has no Stop before it; turns 1..20 each follow one.
+    for (let trial = 0; trial <= 20; trial += 1) {
+      const mounted = mountedBrowser(await startInstanceTurn(bot, `after-stop-${trial}`, "slowclose"));
+      expect(mounted, `trial ${trial} mounted a browser`).toBeTruthy();
+      const token = mounted.env.MURAGE_CONTROL_TOKEN as string;
+      // A fresh grant per turn — the old turn's bearer is never reused.
+      expect(tokens.has(token)).toBe(false);
+      tokens.add(token);
+      const first = await browserRpc(token);
+      statuses.push(first.status);
+      // The engine takes 600ms to close after Stop, so the previous turn's
+      // terminal event can land after this turn was granted its browser.
+      // Wait past that, then ask again: the grant must survive the late
+      // event, not merely win a race with it.
+      await new Promise(resolve => setTimeout(resolve, 900));
+      const again = await browserRpc(token);
+      late.push(again.status);
+      if (again.status !== 200) refusals.add(JSON.stringify(await again.json()));
+      // Stop, and send the next message straight away, the way a person
+      // does: nothing here waits for the stopped engine to finish closing.
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+      // The stopped turn's bearer is dead.
+      expect([401, 403]).toContain((await browserRpc(token)).status);
+    }
+    expect({ statuses, late, refusals: [...refusals] }).toEqual({ statuses: Array(21).fill(200), late: Array(21).fill(200), refusals: [] });
+  } finally {
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+  }
+}, 240_000);
+
 it("drops every browser and computer grant when the app restarts, leaving nothing dispatchable", async () => {
   expect((await patchBrowserProfiles([{ id: "restart", name: "Restart" }])).status).toBe(200);
   const bot = await makeBot("Restart", "verification", { browserProfile: "restart", ...(AUTO_REACHES_HOST ? {} : { computer: "off" }) });

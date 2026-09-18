@@ -50,6 +50,26 @@ describe("internal turn capabilities", () => {
     expect(registry.isActive(next.claim)).toBe(false);
   });
 
+  it("remembers which generation dispatched a provider turn after that generation is revoked", () => {
+    const registry = new InternalCapabilities({ tombstoneLimit: 2 });
+    registry.begin("bot", "thread", "stopped");
+    expect(registry.bindProviderTurn("thread", "stopped", "old-turn")).toBe(true);
+    // Stop revokes the generation at once; its turn's terminal event comes later.
+    registry.revokeThread("thread");
+    registry.begin("bot", "thread", "next");
+    expect(registry.dispatchingGeneration("thread", "old-turn")).toBe("stopped");
+    // First binding wins; another thread's identical turn id is its own.
+    registry.bindProviderTurn("thread", "next", "old-turn");
+    expect(registry.dispatchingGeneration("thread", "old-turn")).toBe("stopped");
+    expect(registry.dispatchingGeneration("other-thread", "old-turn")).toBeUndefined();
+    expect(registry.dispatchingGeneration("thread", "")).toBeUndefined();
+    // Bounded like the completion tombstones.
+    registry.bindProviderTurn("thread", "next", "second-turn");
+    registry.bindProviderTurn("thread", "next", "third-turn");
+    expect(registry.dispatchingGeneration("thread", "old-turn")).toBeUndefined();
+    expect(registry.dispatchingGeneration("thread", "third-turn")).toBe("next");
+  });
+
   it("old completion, binding and cleanup cannot revoke a replacement generation", () => {
     const registry = new InternalCapabilities();
     registry.begin("bot", "thread", "generation");
