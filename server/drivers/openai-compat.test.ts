@@ -653,4 +653,51 @@ describe("OpenAICompatDriver", () => {
     recorder.stop();
     await inst.dispose();
   });
+
+  it("asks for usage totals on a streamed turn and never on a plain call", async () => {
+    // Several OpenAI-compatible servers only report token usage in a stream
+    // when stream_options.include_usage is requested, and OpenAI rejects
+    // stream_options on a request that does not stream.
+    const bodies: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        const body = JSON.parse(String(init?.body));
+        bodies.push(body);
+        if (!body.stream) {
+          return new Response(JSON.stringify({ choices: [{ message: { content: "a title" } }] }), { status: 200 });
+        }
+        return new Response(
+          'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n' +
+            'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n' + "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-include-usage",
+      displayName: "Include usage",
+      enabled: true,
+      config: { url: "http://127.0.0.1:9090/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+
+    await inst.adapter.sendTurn({ threadId: "thread-usage", text: "prompt", model: "local/model" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await expect(inst.generateText?.("name this")).resolves.toBe("a title");
+
+    const streamed = bodies.find((body) => body.stream === true);
+    const plain = bodies.find((body) => body.stream === false);
+    expect(streamed?.stream_options).toEqual({ include_usage: true });
+    expect(plain).toBeDefined();
+    expect("stream_options" in plain).toBe(false);
+    expect(recorder.events).toContainEqual(
+      expect.objectContaining({ type: "thread.token-usage.updated", input: 7, output: 3 }),
+    );
+    recorder.stop();
+    await inst.dispose();
+  });
 });

@@ -194,6 +194,9 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         model,
         messages,
         stream,
+        // Several servers report token usage in a stream only on request;
+        // OpenAI rejects stream_options on a request that does not stream.
+        ...(stream ? { stream_options: { include_usage: true } } : {}),
         ...(config.provider && isOpenRouterUrl(config.url)
           ? { provider: { order: [config.provider], allow_fallbacks: false } }
           : {}),

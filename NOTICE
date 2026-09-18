@@ -302,6 +302,13 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     Murage already folded the tail on end of stream.
     Murage: server/drivers/openai-chat.ts
 
+  OpenMausBot PR #1378 (usage totals on streamed OpenAI-compatible turns)
+    merge 41ad277d292ee891dea6926caefedde7c7533fbc
+    Request stream_options.include_usage on a streamed turn, extended to the
+    Grok driver and adapted so a request that does not stream never carries
+    stream_options.
+    Murage: server/drivers/openai-compat.ts, server/drivers/grok.ts
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,
