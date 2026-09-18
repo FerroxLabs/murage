@@ -301,15 +301,15 @@ const ROSTER = [CHIEF, LEADER, SPECIALIST, SPECIALIST_TWO, SOLO, SOLO_MATE, LONE
 
 const reach = (self: ChiefTeamMember) => ROSTER.filter((b) => b.id !== self.id && canReach(self, b));
 
-describe("coordination stays with the fragment that owns it", () => {
-  const cases: Array<{ role: string; bot: ChiefTeamMember }> = [
+const cases: Array<{ role: string; bot: ChiefTeamMember }> = [
     { role: "a workspace Chief of Staff", bot: CHIEF },
     { role: "a team leader", bot: LEADER },
     { role: "a specialist under a leader", bot: SPECIALIST },
     { role: "an individual assistant", bot: SOLO },
-    { role: "a bot with no reachable peers", bot: LONER },
-  ];
+  { role: "a bot with no reachable peers", bot: LONER },
+];
 
+describe("coordination stays with the fragment that owns it", () => {
   for (const { role, bot } of cases) {
     const peers = reach(bot).length;
     const block = primer({ peers, mounted: { agents: true } });
@@ -375,5 +375,66 @@ describe("role golden blocks", () => {
   });
   it("a bot with no reachable peers", () => {
     expect(primer({ peers: 0, mounted: { agents: true }, folder: "ungated" })).toMatchSnapshot();
+  });
+});
+
+/** One block must never assert a capability and its absence.
+ *
+ * This is a general guard, not a case fix. Two separate defects had the same
+ * shape: `agents.present` used to say "generate images" while the imageProvider
+ * clause said "You do NOT have … image generation", and then the peer clause
+ * said "work with the peers …" while the peer `cannot` line said no bot was
+ * reachable. Both were introduced by editing one half of a pair. Anything added
+ * later gets caught here instead of in a snapshot nobody rereads.
+ *
+ * Keyed on capability tokens rather than whole clauses: the two sentences are
+ * written in different voices ("work with the peers …" vs "any peer to hand
+ * work to"), so no substring is shared even when the meaning collides. */
+const CAPABILITY_TOKENS = ["peer", "image", "browser", "memory", "routine", "web-search", "connected app", "MCP server", "computer", "phone", "dweb"] as const;
+
+function contradictions(block: string): string[] {
+  const lines = block.trim().split("\n");
+  const can = lines.find((line) => line.startsWith("In this conversation you can")) ?? "";
+  const cannot = lines.find((line) => line.startsWith("You do NOT have")) ?? "";
+  return CAPABILITY_TOKENS.filter((token) => can.toLowerCase().includes(token) && cannot.toLowerCase().includes(token));
+}
+
+describe("no capability is both claimed and denied", () => {
+  /** Every fixture in this file, plus the corners that decide can/cannot. */
+  const fixtures: Array<{ name: string; facts: PrimerFacts }> = [
+    ...cases.map(({ role, bot }) => ({
+      name: role,
+      facts: { ...BASE, peers: reach(bot).length, mounted: { agents: true } } satisfies PrimerFacts,
+    })),
+    { name: "a Fuigo bot with everything connected", facts: { ...BASE, engine: "Fuigo", imageInput: "inline", mounted: { agents: true, composio: true, browser: true, memory: true, custom: true }, memory: "active", imageProvider: true, peers: 4 } },
+    { name: "a free local model with nothing configured", facts: { ...BASE, engine: "Ollama", toolAccess: "none", imageInput: "unsupported", mounted: {}, folder: "none", peers: 0 } },
+    { name: "an engine bot with an image provider", facts: { ...BASE, mounted: { agents: true, browser: true }, imageProvider: true, folder: "untrusted", peers: 1 } },
+    { name: "an unattended routine turn", facts: { ...BASE, mounted: { agents: true, memory: true }, memory: "active", peers: 2, canAskOwner: false } },
+    { name: "agents mounted, no provider, no peers", facts: { ...BASE, mounted: { agents: true }, imageProvider: false, peers: 0 } },
+    { name: "agents mounted, provider, no peers", facts: { ...BASE, mounted: { agents: true }, imageProvider: true, peers: 0 } },
+    { name: "every integration mounted and nobody reachable", facts: { ...BASE, mounted: { agents: true, composio: true, browser: true, memory: true, custom: true, computer: true, localComputer: true, phone: true, dweb: true }, imageProvider: true, memory: "active", peers: 0 } },
+  ];
+
+  for (const { name, facts } of fixtures) {
+    it(`${name}`, () => {
+      expect(contradictions(capabilitiesPrimer(facts))).toEqual([]);
+    });
+  }
+
+  it("the guard itself catches a planted contradiction", () => {
+    // Without this, a bug in `contradictions` would make every case above
+    // pass vacuously.
+    const planted = " In this conversation you can generate images.\nYou do NOT have, this turn: image generation.";
+    expect(contradictions(planted)).toEqual(["image"]);
+  });
+
+  it("a bot alone on the roster keeps the capabilities that do not need a peer", () => {
+    const text = primer({ peers: 0, mounted: { agents: true } });
+    expect(text).toContain("you can propose routines and fall back on Murage's web-search backup");
+    expect(text).not.toMatch(/you can work with the peers/);
+    expect(text).toContain("no other bot you are allowed to reach");
+    // And the split lives in the table, so neither half can be edited alone.
+    expect(INTEGRATION_FACTS.agents.presentWithoutPeers).toBeDefined();
+    expect(INTEGRATION_FACTS.agents.presentWithoutPeers).not.toContain("peer");
   });
 });

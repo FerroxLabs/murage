@@ -37,9 +37,17 @@ import type { SendTurnInput } from "./contracts.ts";
  * contract rather than restated, so the two cannot drift. */
 export type IntegrationKey = keyof NonNullable<SendTurnInput["integrations"]>;
 
-interface IntegrationFact {
+export interface IntegrationFact {
   /** Clause for "You can …". Empty string = never worth a line of its own. */
   readonly present: string;
+  /** The same clause for a bot with NO reachable peer, where `present` would
+   * name a capability the block goes on to deny in its own "You do NOT have"
+   * sentence. One integration can mount several capabilities, and they do not
+   * all survive together: `agents` carries peers, routines and web search, and
+   * a bot alone on the roster keeps the last two. Split here rather than
+   * edited inline at the call site, so the positive and negative halves of the
+   * peer fact cannot be changed one without the other. */
+  readonly presentWithoutPeers?: string;
   /** Clause for "Not available to you this turn …", with the honest cause. */
   readonly absent: string;
 }
@@ -56,6 +64,10 @@ export const INTEGRATION_FACTS = {
   // provider is behind it.
   agents: {
     present: "work with the peers your coordination instructions name, propose routines, and fall back on Murage's web-search backup",
+    // The peer half is dropped, not the whole clause: the tools ARE mounted,
+    // so routines and the search backup still work, and the matching `cannot`
+    // line still has to say that calling a peer tool will find nobody.
+    presentWithoutPeers: "propose routines and fall back on Murage's web-search backup",
     absent: "peer bots, routines, image generation and the Murage web-search backup — this engine cannot mount Murage's own tools",
   },
   composio: {
@@ -216,7 +228,11 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
   const cannot: string[] = [];
   for (const key of Object.keys(INTEGRATION_FACTS).sort() as IntegrationKey[]) {
     const fact: IntegrationFact = INTEGRATION_FACTS[key];
-    const clause = facts.mounted[key] ? fact.present : fact.absent;
+    // One block must never assert a capability and its absence. The peer half
+    // of a clause comes out here, at the one place that also decides what goes
+    // into `cannot` below, so the two halves are chosen together.
+    const present = facts.peers === 0 ? fact.presentWithoutPeers ?? fact.present : fact.present;
+    const clause = facts.mounted[key] ? present : fact.absent;
     if (!clause) continue;
     (facts.mounted[key] ? can : cannot).push(clause);
   }
