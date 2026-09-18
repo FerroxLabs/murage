@@ -155,7 +155,11 @@ ClaudeDriver.create = async function (input) {
   instance.adapter.sendTurn = async (turn, ...rest) => { running.add(turn.threadId); return send(turn, ...rest); };
   const stop = instance.adapter.interruptTurn.bind(instance.adapter);
   instance.adapter.interruptTurn = async (threadId, turnId) => {
-    if (running.has(threadId) && !fs.existsSync(path.join(dataDir, 'allow-stop'))) return { closeConfirmed: false, reason: 'timeout' };
+    if (running.has(threadId) && !fs.existsSync(path.join(dataDir, 'allow-stop'))) {
+      // 'stop-throws' makes the refusal a rejection instead of an answer.
+      if (fs.existsSync(path.join(dataDir, 'stop-throws'))) throw new Error('fixture engine refused to stop');
+      return { closeConfirmed: false, reason: 'timeout' };
+    }
     running.delete(threadId);
     return stop(threadId, turnId);
   };
@@ -190,6 +194,9 @@ const startInstanceTurn = async (bot: any, label: string, instance: "slowclose" 
   await expect.poll(() => JSON.stringify(instanceDump(instance)?.prompt ?? ""), { timeout: 15_000 }).toContain(label);
   return instanceDump(instance);
 };
+/** The emergency stop answers per thread, as `{ botId, threadId }` entries. */
+const threadsIn = (entries: unknown): string[] => (Array.isArray(entries) ? entries : []).map((entry: any) => entry.threadId);
+const botsIn = (entries: unknown): string[] => (Array.isArray(entries) ? entries : []).map((entry: any) => entry.botId);
 const sessionLog = (): Array<{ kind: string; session: string; method?: string; tool?: string }> => {
   try { return JSON.parse(readFileSync(join(fixture.info.dataDir, "browser-sessions.json"), "utf8")); } catch { return []; }
 };
@@ -623,8 +630,8 @@ it.runIf(AUTO_REACHES_HOST)("stops an unassigned bot that is driving this Mac, n
     // Success is now qualified by what it covered, so a caller can tell
     // "nothing was running" from "something is still on your screen".
     expect(stop.body.ok).toBe(true);
-    expect(stop.body.stopped).toContain(auto.id);
-    expect(stop.body.stopped).toContain(explicit.id);
+    expect(threadsIn(stop.body.stopped)).toContain(auto.threadId);
+    expect(threadsIn(stop.body.stopped)).toContain(explicit.threadId);
 
     // Both are stopped, and neither bearer reaches the Mac any more.
     for (const bot of [auto, explicit]) {
@@ -651,8 +658,8 @@ it.runIf(AUTO_REACHES_HOST)("leaves a bot that is not on this computer running t
 
     const stop = await api("POST", "/api/local-computer/interrupt", {});
     expect(stop.status).toBe(200);
-    expect(stop.body.stopped).toContain(auto.id);
-    expect(stop.body.stopped).not.toContain(elsewhere.id);
+    expect(threadsIn(stop.body.stopped)).toContain(auto.threadId);
+    expect(botsIn(stop.body.stopped)).not.toContain(elsewhere.id);
 
     await expect.poll(async () => (await task(auto.id, auto.threadId))?.busy, { timeout: 15_000 }).toBe(false);
     // Still working: this bot was never on the owner's screen.
@@ -680,9 +687,9 @@ it.runIf(AUTO_REACHES_HOST)("reports a bot whose engine does not confirm the sto
     const stop = await api("POST", "/api/local-computer/interrupt", {});
     expect(stop.status).toBe(200);
     expect(stop.body.ok).toBe(false);
-    expect(stop.body.failed).toEqual([stubborn.id]);
-    expect(stop.body.stopped).toContain(willing.id);
-    expect(stop.body.stopped).not.toContain(stubborn.id);
+    expect(stop.body.failed).toEqual([{ botId: stubborn.id, threadId: stubborn.threadId }]);
+    expect(threadsIn(stop.body.stopped)).toContain(willing.threadId);
+    expect(botsIn(stop.body.stopped)).not.toContain(stubborn.id);
 
     // The confirmed one really is idle; the unconfirmed one is not pretended
     // idle, and the thread says why.
@@ -697,7 +704,7 @@ it.runIf(AUTO_REACHES_HOST)("reports a bot whose engine does not confirm the sto
     const again = await api("POST", "/api/local-computer/interrupt", {});
     expect(again.status).toBe(200);
     expect(again.body.ok).toBe(true);
-    expect(again.body.stopped).toContain(stubborn.id);
+    expect(threadsIn(again.body.stopped)).toContain(stubborn.threadId);
     await expect.poll(async () => (await task(stubborn.id, stubborn.threadId))?.busy, { timeout: 15_000 }).toBe(false);
   } finally {
     writeFileSync(allow, "1");
@@ -707,22 +714,28 @@ it.runIf(AUTO_REACHES_HOST)("reports a bot whose engine does not confirm the sto
 }, 90_000);
 
 // The same honesty for a bot that is working in a channel when the owner
-// pulls the plug: the channel's stop is confirmed with the engine too.
-it.runIf(AUTO_REACHES_HOST)("reports a channel member whose engine does not confirm the stop as failed", async () => {
-  const member = await makeBot("Panic room unconfirmed", "nostop", { computer: "local", browser: false });
+// pulls the plug: the channel's stop is confirmed with the engine too, whether
+// the engine answers "not closed" or its stop call fails outright.
+it.runIf(AUTO_REACHES_HOST).each([
+  { how: "answers that it has not closed", throws: false },
+  { how: "throws", throws: true },
+])("reports a channel member whose engine $how on stop as failed", async ({ throws }) => {
+  const member = await makeBot(`Panic room ${throws ? "throws" : "unconfirmed"}`, "nostop", { computer: "local", browser: false });
   const allow = join(fixture.info.dataDir, "allow-stop");
+  const thrower = join(fixture.info.dataDir, "stop-throws");
+  if (throws) writeFileSync(thrower, "1");
   const room = (await api("POST", "/api/groups", {
-    name: "Panic room", memberIds: [member.id],
+    name: `Panic room ${throws ? "throws" : "unconfirmed"}`, memberIds: [member.id],
     setup: { bulletin: "Synthetic panic-stop fixture", defaultResponder: { kind: "member", botId: member.id } },
   })).body.group;
   try {
-    expect((await api("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: "__fixture_hold_authority__ panic-room" })).status).toBe(202);
-    await expect.poll(() => JSON.stringify(instanceDump("nostop")?.prompt ?? ""), { timeout: 15_000 }).toContain("panic-room");
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: `__fixture_hold_authority__ panic-room-${throws}` })).status).toBe(202);
+    await expect.poll(() => JSON.stringify(instanceDump("nostop")?.prompt ?? ""), { timeout: 15_000 }).toContain(`panic-room-${throws}`);
 
     const stop = await api("POST", "/api/local-computer/interrupt", {});
     expect(stop.status).toBe(200);
-    expect(stop.body).toMatchObject({ ok: false, failed: [member.id] });
-    expect(stop.body.stopped).not.toContain(member.id);
+    expect(stop.body).toMatchObject({ ok: false, failed: [{ botId: member.id, threadId: room.threadId }] });
+    expect(botsIn(stop.body.stopped)).not.toContain(member.id);
 
     writeFileSync(allow, "1");
     const again = await api("POST", "/api/local-computer/interrupt", {});
@@ -733,6 +746,102 @@ it.runIf(AUTO_REACHES_HOST)("reports a channel member whose engine does not conf
     await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
     await api("POST", `/api/bots/${member.id}/interrupt`, { threadId: member.threadId }).catch(() => undefined);
     rmSync(allow, { force: true });
+    rmSync(thrower, { force: true });
+  }
+}, 90_000);
+
+// WAS A DEFECT. The emergency stop reached only each bot's primary thread, but
+// a bot runs up to three threads at once (chats and routines), and any of them
+// can be the one on this computer. It now stops every thread that holds this
+// computer's grant, and every busy thread of a bot on this computer (those are
+// queued for the same screen), and answers per thread.
+it.runIf(LOCAL_MOUNTS)("the emergency stop reaches a thread on this computer that is not the bot's primary one", async () => {
+  const bot = await makeBot("Emergency threads", "verification", { computer: "local", browser: false });
+  const created: string[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const made = await api("POST", `/api/bots/${bot.id}/tasks`, {});
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    created.push(made.body.task.threadId);
+  }
+  const threads = [bot.threadId, ...created];
+  const primary = (await state(bot.id)).threadId as string;
+  expect(threads).toContain(primary);
+  const onScreen = threads.find((threadId) => threadId !== primary)!;
+  const queued = threads.filter((threadId) => threadId !== onScreen);
+  try {
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: onScreen, text: "__fixture_hold_authority__ emergency-on-screen" })).status).toBe(202);
+    await expect.poll(() => JSON.stringify(dump(false)?.prompt ?? ""), { timeout: 15_000 }).toContain("emergency-on-screen");
+    const mounted = mountedComputer(dump(false));
+    expect(mounted, "the non-primary thread is on this computer").toBeTruthy();
+    expect((await hostRpc(mounted.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status).toBe(200);
+    // The other two, the primary among them, queue for the same screen.
+    for (const threadId of queued) {
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: `__fixture_hold_authority__ emergency-queued-${threadId}` })).status).toBe(202);
+      await expect.poll(async () => (await task(bot.id, threadId))?.waitingFor?.resource, { timeout: 15_000 }).toBe("computer");
+    }
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body.ok).toBe(true);
+    for (const threadId of threads) expect(threadsIn(stop.body.stopped)).toContain(threadId);
+    // The thread that held the screen has lost it, and nothing took it over.
+    expect([401, 403]).toContain((await hostRpc(mounted.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status);
+    for (const threadId of threads) await expect.poll(async () => (await task(bot.id, threadId))?.busy, { timeout: 15_000 }).toBe(false);
+    for (const threadId of queued) expect(JSON.stringify(dump(false)?.prompt ?? "")).not.toContain(`emergency-queued-${threadId}`);
+  } finally {
+    for (const threadId of threads) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId }).catch(() => undefined);
+  }
+}, 90_000);
+
+it.runIf(LOCAL_MOUNTS)("reports a routine's thread whose engine does not confirm the stop as failed", async () => {
+  const bot = await makeBot("Emergency routine unconfirmed", "nostop", { computer: "local", browser: false });
+  const routine = (await api("POST", "/api/routines", { name: "Emergency routine stubborn", prompt: "__fixture_hold_authority__ emergency-routine-stubborn", botId: bot.id, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 }, enabled: false })).body.routine;
+  const allow = join(fixture.info.dataDir, "allow-stop");
+  let runId = "";
+  try {
+    const started = await api("POST", `/api/routines/${routine.id}/run`);
+    expect(started.status).toBe(201); runId = started.body.run.id;
+    await expect.poll(() => JSON.stringify(instanceDump("nostop")?.prompt ?? ""), { timeout: 20_000 }).toContain("emergency-routine-stubborn");
+    const threadId = (await api("GET", "/api/routines")).body.runs.find((run: any) => run.id === runId).threadId as string;
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body.ok).toBe(false);
+    expect(stop.body.failed).toContainEqual({ botId: bot.id, threadId });
+    expect(threadsIn(stop.body.stopped)).not.toContain(threadId);
+  } finally {
+    writeFileSync(allow, "1");
+    if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
+    await api("POST", "/api/local-computer/interrupt", {}).catch(() => undefined);
+    await api("DELETE", `/api/routines/${routine.id}`).catch(() => undefined);
+    rmSync(allow, { force: true });
+  }
+}, 90_000);
+
+it.runIf(LOCAL_MOUNTS)("the emergency stop stops a routine's thread that is on this computer, and names it", async () => {
+  const bot = await makeBot("Emergency routine", "verification", { computer: "local", browser: false });
+  const routine = (await api("POST", "/api/routines", { name: "Emergency routine run", prompt: "__fixture_hold_authority__ emergency-routine", botId: bot.id, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 }, enabled: false })).body.routine;
+  let runId = "";
+  const runRecord = async () => (await api("GET", "/api/routines")).body.runs.find((run: any) => run.id === runId);
+  try {
+    const started = await api("POST", `/api/routines/${routine.id}/run`);
+    expect(started.status).toBe(201); runId = started.body.run.id;
+    await expect.poll(() => JSON.stringify(dump(false)?.prompt ?? ""), { timeout: 20_000 }).toContain("emergency-routine");
+    const mounted = mountedComputer(dump(false));
+    expect(mounted, "the routine's thread is on this computer").toBeTruthy();
+    const threadId = (await runRecord()).threadId as string;
+    expect(threadId).toBeTruthy();
+    expect(threadId).not.toBe(bot.threadId);
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body.ok).toBe(true);
+    expect(stop.body.stopped).toContainEqual({ botId: bot.id, threadId });
+    await expect.poll(async () => (await runRecord())?.status, { timeout: 10_000 }).toBe("cancelled");
+    expect([401, 403]).toContain((await hostRpc(mounted.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status);
+  } finally {
+    if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
+    await api("DELETE", `/api/routines/${routine.id}`).catch(() => undefined);
   }
 }, 90_000);
 
