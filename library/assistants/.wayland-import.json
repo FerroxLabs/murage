@@ -1,8 +1,8 @@
 {
   "generatedBy": "scripts/import-wayland-assistants.mjs",
   "generatedAt": "2026-09-01T11:03:45.855Z",
-  "source": "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams",
-  "skillsDir": "/Volumes/Mando/WaylandBots/murage-app/skills-library",
+  "source": "waylandteams",
+  "skillsDir": "skills-library",
   "specialists": 28,
   "written": 28,
   "packages": [

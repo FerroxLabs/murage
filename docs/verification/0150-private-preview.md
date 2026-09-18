@@ -130,14 +130,14 @@ data/home directories, a fake engine and its own server; it does not establish
 live provider authentication, renderer behavior or packaged native readiness.
 
 ```sh
-rtk proxy /Users/seandonahoe/.nvm/versions/node/v24.20.0/bin/node --experimental-strip-types scripts/control-murage.ts launch
+node --experimental-strip-types scripts/control-murage.ts launch
 ```
 
 Keep that terminal open. In another terminal, use the exact URL printed by the
 launcher, replacing `PORT` below:
 
 ```sh
-rtk proxy /Users/seandonahoe/.nvm/versions/node/v24.20.0/bin/node --experimental-strip-types scripts/control-murage.ts doctor --url http://127.0.0.1:PORT
+node --experimental-strip-types scripts/control-murage.ts doctor --url http://127.0.0.1:PORT
 ```
 
 Interrupt the foreground launcher with Ctrl-C when finished. It owns its child

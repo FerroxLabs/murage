@@ -13,7 +13,10 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
-const WT = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const WT = process.argv.includes("--source") ? process.argv[process.argv.indexOf("--source") + 1] : process.env.WAYLAND_TEAMS_DIR;
+if (!WT) throw new Error("--source <waylandteams directory> (or WAYLAND_TEAMS_DIR) is required");
 const OUT = process.argv.includes("--out")
   ? process.argv[process.argv.indexOf("--out") + 1]
   : "/tmp/murage-teams-repo";

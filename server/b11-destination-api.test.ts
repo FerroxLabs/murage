@@ -35,7 +35,7 @@ afterAll(async () => { await fixture?.close(); });
 
 const createBot = async (name: string) => {
   const { bot } = await api<{ bot: Bot }>("POST", "/api/bots", { name });
-  await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", persona: "Old instruction: save documents under ~/.sable/scratch." });
+  await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", persona: "Old instruction: save documents under ~/.old-assistant/scratch." });
   return bot;
 };
 const observations = () => existsSync(join(fixture.info.dataDir, "b11-destinations.jsonl"))
@@ -97,7 +97,7 @@ it("legacy null CWD receives a separate durable file desk without moving the res
 // procedure pin from a legacy pinned folder keep the whole-bot workspace.
 it("default room dispatch publishes in its member/thread desk and runs the engine in that desk's workspace", async () => {
   const bot = await createBot("B11 room member");
-  const { group } = await api<{ group: { id: string; threadId: string } }>("POST", "/api/groups", { name: "B11 room", memberIds: [bot.id], setup: { bulletin: "Use ~/.sable/scratch for older work", defaultResponder: { kind: "member", botId: bot.id } } });
+  const { group } = await api<{ group: { id: string; threadId: string } }>("POST", "/api/groups", { name: "B11 room", memberIds: [bot.id], setup: { bulletin: "Use ~/.old-assistant/scratch for older work", defaultResponder: { kind: "member", botId: bot.id } } });
   await api("POST", `/api/groups/${group.id}/messages`, { threadId: group.threadId, text: "Create HTML, MD and TXT files named b11-room" });
   await checkFiles(bot, group.threadId, 1);
   const observed = observations().find(item => item.name === "b11-room")!;

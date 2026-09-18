@@ -1,7 +1,7 @@
 {
   "generatedBy": "scripts/import-wayland-skills.mjs",
   "generatedAt": "2026-09-01T10:56:42.343Z",
-  "source": "/Volumes/Mando/wayland/app/.skill-pack/skills-library",
+  "source": "skills-library",
   "indexed": 2106,
   "written": 2106,
   "collisions": [

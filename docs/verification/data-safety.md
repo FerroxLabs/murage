@@ -62,7 +62,7 @@ keep a directory alive on this macOS (probed: all "fully removed"), so the
 race is the only mechanism consistent with the evidence.
 
 **Conclusion on mechanism: a whole-tree recursive delete of the path
-`/Users/seandonahoe/.murage` ran at 21:05:0x while the app was writing.**
+`~/.murage` ran at 21:05:0x while the app was writing.**
 
 **Who ran it — not attributed.** Every candidate the lane map names was
 run against the *unfixed* integration branch (`release/v0.1.52` at

@@ -32,7 +32,10 @@ const flag = (name, fallback) => {
   const at = argv.indexOf(name);
   return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback;
 };
-const SRC = flag("--src", "/Volumes/Mando/wayland/app/resources/bundled-extensions");
+// The Wayland checkout is on the operator's machine: name it with a flag or an
+// environment variable. There is deliberately no built-in path.
+const SRC = flag("--src", process.env.WAYLAND_BUNDLED_EXTENSIONS_DIR ?? "");
+if (!SRC) throw new Error("--src <bundled-extensions directory> (or WAYLAND_BUNDLED_EXTENSIONS_DIR) is required");
 const OUT = flag("--out", join(repoRoot, "skills-library"));
 const dryRun = argv.includes("--dry-run");
 

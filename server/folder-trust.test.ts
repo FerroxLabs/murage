@@ -432,8 +432,8 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
   });
 
   it("parses what the engine's serializer writes, and the hand-edit spellings a TOML reader accepts", () => {
-    const written = `[folders."/Volumes/Mando/picked project"]\ntrusted = true\ndecided_at = 1789152451\n\n[folders."/tmp/declined"]\ntrusted = false\ndecided_at = 1789152424\n`;
-    expect(parseUpstreamTrustedFolders(written)).toEqual(new Map([["/Volumes/Mando/picked project", true], ["/tmp/declined", false]]));
+    const written = `[folders."/Volumes/Work/picked project"]\ntrusted = true\ndecided_at = 1789152451\n\n[folders."/tmp/declined"]\ntrusted = false\ndecided_at = 1789152424\n`;
+    expect(parseUpstreamTrustedFolders(written)).toEqual(new Map([["/Volumes/Work/picked project", true], ["/tmp/declined", false]]));
     // no decided_at, a comment, a literal-string key, a Windows key with escapes
     const sparse = `# grants\n[folders.'/a/b']\ntrusted = true # standalone\n[folders."C:\\\\Users\\\\x\\\\repo"]\ntrusted = true\n`;
     expect(parseUpstreamTrustedFolders(sparse)).toEqual(new Map([["/a/b", true], ["C:\\Users\\x\\repo", true]]));
