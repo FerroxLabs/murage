@@ -104,6 +104,32 @@ it("never retries or falls back on a rejected or uncertain provider attempt and 
  for(const status of [401,429,503]){const f=fixture();f.fetcher.mockResolvedValueOnce(new Response("FAKE_CREDENTIAL_CANARY",{status}));await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow("No fallback");expect(f.fetcher).toHaveBeenCalledOnce();expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith(status<500?"failed":"uncertain");}
  const f=fixture();f.fetcher.mockRejectedValueOnce(new Error("FAKE_CREDENTIAL_CANARY"));await expect(f.service.generate(f.request,f.hooks)).rejects.not.toThrow("CANARY");expect(f.fetcher).toHaveBeenCalledOnce();expect(f.finish).toHaveBeenCalledWith("uncertain");
 });
+it("says which wall an unreachable provider hit, without repeating anything private",async()=>{
+ const cases:Array<[unknown,string]>=[
+  [Object.assign(new TypeError("fetch failed"),{cause:Object.assign(new Error("getaddrinfo ENOTFOUND api.example"),{code:"ENOTFOUND"})}),"address could not be looked up"],
+  [Object.assign(new TypeError("fetch failed"),{cause:Object.assign(new Error("connect ECONNREFUSED"),{code:"ECONNREFUSED"})}),"refused the connection"],
+  [Object.assign(new DOMException("The operation timed out","TimeoutError"),{}),"did not answer in time"],
+  [Object.assign(new TypeError("fetch failed"),{cause:Object.assign(new Error("socket hang up"),{code:"ECONNRESET"})}),"connection dropped"],
+  [Object.assign(new TypeError("fetch failed"),{cause:Object.assign(new Error("bad cert"),{code:"UNABLE_TO_VERIFY_LEAF_SIGNATURE"})}),"secure connection could not be established"],
+ ];
+ for(const [thrown,phrase] of cases){
+  const f=fixture();f.fetcher.mockImplementationOnce(async()=>{throw thrown;});
+  const error=await f.service.generate(f.request,f.hooks).catch(e=>e);
+  expect(error).toMatchObject({code:"provider-unreachable"});
+  expect(error.message).toContain(phrase);expect(error.message).toContain("No fallback");
+  expect(error.message).not.toContain("api.example");expect(error.message).not.toContain("CANARY");
+ }
+});
+it("does not spend the turn's image attempt when no image connection is configured",async()=>{
+ for(const connection of [null,{id:"openai",provider:"openai" as const,apiKey:"   ",revision:"initial"}]){
+  const f=fixture();f.setConnection(connection);
+  const error=await f.service.generate(f.request,f.hooks).catch(e=>e);
+  // correctablePreflight is what releases the turn slot: nothing was sent,
+  // nothing was charged, and Settings is a five-second fix
+  expect(error).toMatchObject({code:"connection-unavailable",outcome:"not-dispatched",correctablePreflight:true});
+  expect(f.fetcher).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();
+ }
+});
 it("surfaces the provider's own error code and message from a 4xx JSON body, bounded and redacted",async()=>{
  const f=fixture();f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:"moderation_blocked",message:"the provider's safety system rejected this prompt (key sk-abcdefghijklmnopqrstuvwxyz0123)",type:"invalid_request_error"}}),{status:400,headers:{"content-type":"application/json"}}));
  const error=await f.service.generate(f.request,f.hooks).catch(e=>e);

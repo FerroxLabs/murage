@@ -34,6 +34,7 @@ import {
   type FolderTrustDecision,
 } from "../../../shared/folder-trust.ts";
 import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
+import { resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -1418,23 +1419,32 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             case "tool_call": {
               flushAssistantText();
+              // Engines that route every call through a wrapper ("use a tool")
+              // put the real tool in the arguments. Name that, not the wrapper.
+              const label = resolveToolLabel(u.title, u.rawInput);
               emit({
                 ...base(threadId, turnId),
                 type: "item.started",
                 itemType: "tool",
                 itemId: u.toolCallId,
-                title: String(u.rawInput?.command ?? u.title ?? "tool").slice(0, 80),
+                title: label.name,
+                summary: label.summary,
               });
               break;
             }
             case "tool_call_update": {
               if (u.status === "completed" || u.status === "failed") {
+                // The reason a tool failed arrives with the result. It used to
+                // go only into the model's context; the person who has to act
+                // on it never saw it.
+                const detail = u.status === "failed" ? redactSecretsInText(toolFailureText(u) ?? "") || undefined : undefined;
                 emit({
                   ...base(threadId, turnId),
                   type: "item.completed",
                   itemType: "tool",
                   itemId: u.toolCallId,
                   ok: u.status !== "failed",
+                  detail,
                 });
               }
               break;

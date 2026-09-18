@@ -76,6 +76,46 @@ it("B15 timeout, 5xx and malformed provider responses fence both replay and a fr
   expect(()=>f.run("first",f.request)).toThrow("will not be retried");expect(()=>f.run("new-id",f.request)).toThrow("One image attempt");expect(f.fetcher).toHaveBeenCalledOnce();
  }
 });
+it("lets the same turn try again after an image request that never reached a provider",async()=>{
+ const f=fixture();
+ let connection:{id:string;provider:"flux";apiKey:string;revision:string}|null=null;
+ const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({data:[{b64_json:png.toString("base64")}]})));
+ const service=new ImageGenerationService({resolveConnection:()=>connection,connectionIds:()=>connection?["flux"]:[],fetch:fetcher});
+ const request={connectionId:"flux",prompt:"fixture"};
+ const run=(id:string)=>f.operations.execute(f.actor,id,request,(reserve,publish)=>service.generate(request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal}));
+ await expect(run("first")).rejects.toThrow("Settings");
+ expect(fetcher).not.toHaveBeenCalled();expect(f.waiting).not.toHaveBeenCalled();
+ // the attempt is not spent: the row is gone, so fixing Settings and asking
+ // again in the same turn works instead of 409 then 429
+ expect(database().prepare("SELECT id FROM image_operations WHERE generation=?").all(f.actor.generation)).toHaveLength(0);
+ connection={id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"};
+ const job=run("first");const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
+ expect(fetcher).toHaveBeenCalledOnce();
+});
+it("clears an image request abandoned at its approval card when the app restarts",async()=>{
+ const f=generationFixture();f.operations.resumePendingPublications();
+ const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:abandoned`).digest("hex");
+ const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
+ database().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id,f.actor.generation,requestHash,Date.now());
+ closeDatabase();
+ const restarted=new ImageOperations({store:f.store,waiting:f.waiting});
+ restarted.resumePendingPublications();
+ expect(database().prepare("SELECT id FROM image_operations WHERE id=?").all(id)).toHaveLength(0);
+ const job=restarted.execute(f.actor,"abandoned",f.request,(reserve,publish)=>new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:f.fetcher}).generate(f.request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal}));
+ const card=await f.card();restarted.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
+ expect(f.fetcher).toHaveBeenCalledOnce();
+});
+it("leaves a dispatched image request fenced after a restart",async()=>{
+ const f=generationFixture();f.operations.resumePendingPublications();
+ const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:dispatched`).digest("hex");
+ const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
+ database().prepare("INSERT INTO image_operations VALUES(?,?,?,'running',NULL,?)").run(id,f.actor.generation,requestHash,Date.now());
+ closeDatabase();
+ const restarted=new ImageOperations({store:f.store,waiting:f.waiting});
+ restarted.resumePendingPublications();
+ // the provider may already have been asked, and billed: that row stays
+ expect(database().prepare("SELECT id FROM image_operations WHERE id=?").all(id)).toHaveLength(1);
+});
 it("B15 retains crash boundaries before and after approval and allows a genuinely new turn",async()=>{
  for(const state of ["awaiting","running"]){
   const f=generationFixture();f.operations.resumePendingPublications();

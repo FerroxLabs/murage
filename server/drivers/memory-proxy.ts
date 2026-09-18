@@ -124,21 +124,43 @@ async function handleMessage(message: Json) {
   if (typeof params.name !== "string" || !Object.hasOwn(schemas, params.name)) return rpcError(id, -32602, "Unknown memory tool");
   const name = params.name as keyof typeof schemas;
   const parsed = schemas[name].safeParse(params.arguments ?? {});
-  if (!parsed.success) return result(id, "INVALID_MEMORY_ARGUMENTS", true);
-  if (!TOKEN) return result(id, "MEMORY_CAPABILITY_MISSING", true);
+  // A bare code taught the model nothing, so it retried the same bad call.
+  // Name the argument and what is wrong with it, from the schema's own
+  // message — never the value it was given.
+  if (!parsed.success) return result(id, `Memory request rejected: ${argumentProblems(parsed.error)}`, true);
+  if (!TOKEN) return result(id, "Memory is not available to this bot for this turn, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
+  const timeoutMs = name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000;
   try {
     const response = await fetch(new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000),
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify(parsed.data),
     });
     const body = await readResponse(response);
-    if (!isObject(body)) return result(id, "INVALID_MEMORY_RESPONSE", true);
+    if (!isObject(body)) return result(id, "Memory replied with something this bot could not read, so nothing was searched or saved.", true);
     return result(id, body, !response.ok || body.ok === false || body.isError === true || body.error !== undefined);
-  } catch {
-    // Do not echo URLs, headers, credentials or raw transport diagnostics.
-    return result(id, "MEMORY_REQUEST_FAILED", true);
+  } catch (e) {
+    // Still no URLs, headers, credentials or raw transport diagnostics — but
+    // "it took too long" and "it was not there" are different problems and
+    // the difference is the whole of what a reader needs.
+    const timedOut = e instanceof Error && (e.name === "TimeoutError" || /timeout|aborted/i.test(e.message));
+    return result(id, timedOut
+      ? `Memory did not answer within ${Math.round(timeoutMs / 1000)} seconds, so nothing was searched or saved. It may be busy; do not repeat the same request more than once.`
+      : "Memory could not be reached, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
   }
+}
+
+/** Which arguments the schema refused, and why, in the schema's own words.
+ * Bounded, and values are never repeated back — only paths and reasons. */
+function argumentProblems(error: z.ZodError): string {
+  const seen = new Set<string>();
+  for (const issue of error.issues) {
+    const where = issue.path.filter(part => typeof part === "string" || typeof part === "number").join(".");
+    const why = typeof issue.message === "string" && issue.message.trim() ? issue.message.trim() : issue.code;
+    seen.add((where ? `${where}: ${why}` : why).slice(0, 160));
+    if (seen.size >= 4) break;
+  }
+  return seen.size ? [...seen].join("; ") : "the arguments did not match this tool.";
 }
 
 const lines = readline.createInterface({ input: process.stdin, terminal: false });

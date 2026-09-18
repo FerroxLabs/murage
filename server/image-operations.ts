@@ -203,6 +203,7 @@ export class ImageOperations {
   /** Startup reconciliation: only operations that recorded a retained image
    * receipt are completed, into their exact recorded conversation. */
   resumePendingPublications(limit = 50): number {
+    this.releaseUndispatchedOperations(limit);
     const rows = this.db().prepare("SELECT id,state,result FROM image_operations WHERE state IN ('publish-pending','running','uncertain') AND result IS NOT NULL ORDER BY updated_at LIMIT ?").all(limit) as Array<{ id: string; state: string; result: string | null }>;
     let completed = 0;
     for (const row of rows) {
@@ -216,6 +217,26 @@ export class ImageOperations {
       } catch { /* stays pending with the receipt's recorded category */ }
     }
     return completed;
+  }
+  /** Startup reconciliation, the other half: a row still sitting at
+   * `awaiting` was written when the request was accepted and abandoned before
+   * anyone approved it — the process stopped with the approval card still on
+   * screen. Nothing was sent, nothing was charged, and no image was retained
+   * (a retained image writes `running` and a result). Left behind, that row
+   * answers the same request with "already finished" and the same turn with
+   * "one image attempt", forever. Clearing it is what the live path already
+   * does for a request that never reached a provider. */
+  private releaseUndispatchedOperations(limit = 50): number {
+    const rows = this.db().prepare("SELECT id FROM image_operations WHERE state='awaiting' AND result IS NULL ORDER BY updated_at LIMIT ?").all(limit) as Array<{ id: string }>;
+    let released = 0;
+    for (const row of rows) {
+      // Belt and braces: bytes are only ever retained through a receipt, and
+      // retaining one also writes `running` and a result. Refuse to clear a
+      // row that somehow has one anyway.
+      if (this.db().prepare("SELECT id FROM output_publications WHERE producer='image-operation' AND run_id=? LIMIT 1").get(row.id)) continue;
+      released += Number(this.db().prepare("DELETE FROM image_operations WHERE id=? AND state='awaiting' AND result IS NULL").run(row.id).changes ?? 0);
+    }
+    return released;
   }
   private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown): Promise<boolean> {
     const requestId = `image-${randomUUID()}`;

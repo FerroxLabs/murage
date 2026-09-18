@@ -52,7 +52,7 @@ export class ImageGenerationError extends Error {
   readonly correctablePreflight: boolean;
   constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched", correctablePreflight = false) { super(message); this.code = code; this.outcome = outcome; this.correctablePreflight = correctablePreflight; }
 }
-const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size"]);
+const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size", "connection-unavailable"]);
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 180_000;
@@ -128,6 +128,40 @@ async function providerErrorDetail(response: Response): Promise<string> {
     if (!code && !message) return "";
     return `: ${[code, message].filter(Boolean).join(" — ")}`;
   } catch { return ""; }
+}
+
+/** Plain words for a request that never got a reply. Reads the wall the
+ * transport hit — DNS, a refused socket, the 180-second deadline, TLS — out of
+ * whatever the fetch stack threw.
+ *
+ * Only these fixed phrases are ever returned. A thrown error's own text can
+ * carry the request URL, a header or a key, so it is matched against and
+ * never echoed; an unrecognized failure keeps the plain sentence it always
+ * had rather than repeating something private back to the screen. */
+const TRANSPORT_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED/, "its address could not be looked up"],
+  [/ECONNREFUSED/, "it refused the connection"],
+  [/ETIMEDOUT|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|TimeoutError/, "it did not answer in time"],
+  [/ECONNRESET|EPIPE|SOCKET|ERR_STREAM_PREMATURE/, "the connection dropped before the image arrived"],
+  [/CERT|TLS|SSL|EPROTO|SELF_SIGNED|UNABLE_TO_VERIFY/, "a secure connection could not be established"],
+  [/ENETUNREACH|EHOSTUNREACH|ENETDOWN/, "there is no route to it from this computer"],
+  [/redirect|ERR_FR_REDIRECTION|ERR_TOO_MANY_REDIRECTS/i, "it redirected the request somewhere that could not be followed"],
+  [/AbortError/, "the request was stopped before it answered"],
+];
+export function describeTransportFailure(error: unknown): { code: string; message: string } {
+  const seen = new Set<unknown>();
+  const parts: string[] = [];
+  for (let node: unknown = error, depth = 0; node && depth < 5; depth++) {
+    if (typeof node !== "object" || seen.has(node)) break;
+    seen.add(node);
+    const value = node as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown; errors?: unknown };
+    for (const field of [value.name, value.code, value.message]) if (typeof field === "string") parts.push(field);
+    node = value.cause ?? (Array.isArray(value.errors) ? value.errors[0] : undefined);
+  }
+  const known = TRANSPORT_REASONS.find(([pattern]) => pattern.test(parts.join(" ")))?.[1];
+  return known
+    ? { code: "provider-unreachable", message: `The image provider could not be reached: ${known}.` }
+    : { code: "request-failed", message: "Image generation could not complete." };
 }
 
 async function boundedJson(response: Response, limit: number): Promise<unknown> {
@@ -236,9 +270,13 @@ export class ImageGenerationService {
   private readonly options: { resolveConnection: (id: string) => ImageConnection | null; connectionIds: () => string[]; fetch?: typeof fetch };
   constructor(options: { resolveConnection: (id: string) => ImageConnection | null; connectionIds: () => string[]; fetch?: typeof fetch }) { this.options = options; this.fetcher = options.fetch ?? fetch; }
   private connection(id: string): ImageConnection {
+    // No connection, or no key on it, means nothing was ever sent and nothing
+    // was ever charged. The person fixes it in Settings in five seconds — so
+    // this must not spend the turn's one image attempt on the way out.
+    const unusable = (message: string): never => { throw new ImageGenerationError("connection-unavailable", message, "not-dispatched", true); };
     let found: ImageConnection | null;
-    try { found = this.options.resolveConnection(id); } catch { return fail("connection-unavailable", "The image connection could not be read. Review it in Settings."); }
-    if (!found || found.id !== id || !Object.hasOwn(URLS, found.provider) || !found.apiKey.trim()) fail("connection-unavailable", "Choose a configured image connection in Settings.");
+    try { found = this.options.resolveConnection(id); } catch { return unusable("The image connection could not be read. Review it in Settings."); }
+    if (!found || found.id !== id || !Object.hasOwn(URLS, found.provider) || !found.apiKey.trim()) unusable("Choose a configured image connection in Settings.");
     return { ...found! };
   }
   /** Public, unauthenticated endpoint record for one OpenRouter model. 15-second bound; every failure fails closed. */
@@ -389,7 +427,11 @@ export class ImageGenerationService {
         }
         throw error;
       }
-      throw new ImageGenerationError("request-failed", "Image generation could not complete. No fallback or automatic retry was attempted.", outcome);
+      // 0.1.54 taught the 4xx path to say what the provider objected to. The
+      // same courtesy for a request that never got a reply at all: which wall
+      // it hit, in words, instead of one sentence that fits every failure.
+      const transport = describeTransportFailure(error);
+      throw new ImageGenerationError(transport.code, `${transport.message} No fallback or automatic retry was attempted.`, outcome);
     } finally {
       if (reservation) {
         try { await reservation.finish(outcome); }
