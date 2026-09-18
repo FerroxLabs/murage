@@ -227,13 +227,34 @@ describe("the Body picker", () => {
     expect(markup).not.toContain("Use the Hexagon body");
   });
 
+  it("stays condensed: one labelled group of shape-only tiles, ten across once there is room", () => {
+    const markup = card();
+    const group = markup.match(/<div role="group" aria-label="Mascot body"[^>]*class="([^"]+)"/)
+      ?? markup.match(/<div class="([^"]+)" role="group" aria-label="Mascot body"/);
+    expect(group, "the Body grid is a labelled group").not.toBeNull();
+    // five columns at phone width, ten once the card is wide enough: two rows, then one
+    expect(group![1]).toContain("grid-cols-5");
+    expect(group![1]).toContain("sm:grid-cols-10");
+    // the tiles carry the shape only; the name lives on the tooltip and the label
+    const tiles = markup.split("<button").map((b) => `<button${b.split("</button>")[0]}</button>`).filter((b) => /aria-label="Use the [A-Za-z]+ body"/.test(b));
+    expect(tiles).toHaveLength(MASCOT_BODY_IDS.length);
+    for (const tile of tiles) {
+      expect(tile).toContain("aspect-square");
+      expect(tile).toContain("focus-visible:ring-2");
+      const visible = tile.replace(/<[^>]*>/g, "").replace(/&[a-z]+;/g, "").trim();
+      expect(visible, "a body tile shows no text label").toBe("");
+    }
+    // smaller mascots than the five-up expression tiles it sits under
+    expect(tiles.every((tile) => /(?:width|size)[=:"]*"?30/.test(tile)), "body tiles draw a 30px mascot").toBe(true);
+  });
+
   it("marks the bot's own body as chosen, and the flame when the stored id is unknown", () => {
     // one button per body; read each button on its own so the crop and
     // expression pickers' own pressed states cannot be mistaken for this one
     const chosen = (bot: Record<string, unknown>) =>
       card(bot)
         .split("<button")
-        .filter((b) => b.includes('aria-pressed="true"') && b.includes(" body\""))
+        .filter((b) => b.includes('aria-pressed="true"') && /aria-label="Use the [A-Za-z]+ body"/.test(b))
         .map((b) => b.match(/aria-label="Use the ([A-Za-z]+) body"/)![1]);
     expect(card({ mascotBody: "shield" })).toContain(MASCOT_BODIES.shield.clip.match(/d="([^"]{40})/)![1]);
     expect(chosen({ mascotBody: "shield" })).toEqual(["Cone"]);

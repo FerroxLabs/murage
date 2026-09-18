@@ -279,7 +279,11 @@ export function BotProfileAvatarCard({
             <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
               Body
             </div>
-            <div className="grid grid-cols-5 gap-2">
+            {/* Ten bodies is twice the expression row's five, so these tiles are
+                half its height and the grid doubles to ten columns once the card
+                is wide enough: one row on a desktop card, two at phone width.
+                Shape only — the name rides on the tooltip and the label. */}
+            <div role="group" aria-label="Mascot body" className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
               {MASCOT_BODY_IDS.map((body) => (
                 <button
                   key={body}
@@ -287,13 +291,13 @@ export function BotProfileAvatarCard({
                   aria-pressed={botMascotBody(bot.mascotBody) === body}
                   onClick={() => onPatch({ mascotBody: body })}
                   className={cn(
-                    "flex h-[58px] items-center justify-center rounded-xl bg-inset transition-colors hover:bg-control",
+                    "flex aspect-square items-center justify-center rounded-lg bg-inset transition-colors hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
                     botMascotBody(bot.mascotBody) === body && "ring-2 ring-accent-border",
                   )}
                   title={MASCOT_BODY_NAMES[body]}
                   aria-label={`Use the ${MASCOT_BODY_NAMES[body]} body`}
                 >
-                  <EmberAvatar color={bot.color} body={body} state="idle" size={42} animated={false} trackPointer={false} />
+                  <EmberAvatar color={bot.color} body={body} state="idle" size={30} animated={false} trackPointer={false} />
                 </button>
               ))}
             </div>
