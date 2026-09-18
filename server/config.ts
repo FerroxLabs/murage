@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
-import type { InstanceConfigMap } from "./contracts.ts";
+import type { InstanceConfig, InstanceConfigMap } from "./contracts.ts";
 import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
@@ -531,6 +531,14 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
   if (process.env.OPENAI_COMPAT_MODEL !== undefined) cfg.openaiCompat.model = process.env.OPENAI_COMPAT_MODEL;
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
+  // 0.1.55 and earlier froze the workspace URL into the default connection
+  // whenever any engine was switched on or off or given a CLI path. When
+  // Settings holds an endpoint, the workspace key belongs to that endpoint:
+  // follow it at runtime (the next instances write persists the repair).
+  if (cfg.openaiCompat.url && cfg.instances && Object.hasOwn(cfg.instances, "openaiCompat")) {
+    const repaired = withoutFrozenWorkspaceUrl(cfg.instances.openaiCompat);
+    if (repaired) cfg.instances = { ...cfg.instances, openaiCompat: repaired as unknown as InstanceConfig };
+  }
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
@@ -782,6 +790,15 @@ export function saveConfig(patch: ConfigWritePatch): void {
     }
     disk.instances = diskInstances;
   }
+  // Saving the workspace URL in Settings reconnects the default connection
+  // that rides the workspace key, repairing an endpoint an older version froze
+  // there. A connection with its own key, or an explicit instances patch, is
+  // left exactly as written.
+  if (checkedPatch.openaiCompat?.url !== undefined && checkedPatch.instances?.openaiCompat === undefined) {
+    const instances = jsonObjectSchema.safeParse(disk.instances);
+    const repaired = withoutFrozenWorkspaceUrl(instances.success ? instances.data.openaiCompat : undefined);
+    if (instances.success && repaired) disk.instances = { ...instances.data, openaiCompat: repaired };
+  }
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileAtomic(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
 }
@@ -823,17 +840,51 @@ export function withInstanceCli(
   return { ok: true, config: next };
 }
 
-function persistableInstanceConfigs(next: AppConfig): InstanceConfigMap {
-  const map = instanceConfigs(next);
-  for (const e of Object.values(map)) {
-    if (!e.environment) continue;
-    const injected = injectedEnvironment(next, e.driver);
-    for (const [k, v] of Object.entries(e.environment)) {
-      if (injected.get(k) === v) delete e.environment[k];
-    }
-    if (!Object.keys(e.environment).length) delete e.environment;
+/** The fleet instanceConfigs() materializes, with each entry's `config` and
+ * `environment` exactly as the caller saved them. instanceConfigs() injects
+ * workspace values into the live map (credential env, and the OpenAI-compatible
+ * URL, model and provider); an engine toggle or CLI save must not write those
+ * back, or the endpoint in use today is frozen into the instance, a later
+ * Settings change no longer reaches it, and a replacement key is sent to the
+ * previous host. */
+export function persistableInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
+  const map = instanceConfigs(cfg);
+  for (const [id, entry] of Object.entries(map)) {
+    const owned = cfg.instances && Object.hasOwn(cfg.instances, id) ? cfg.instances[id] : undefined;
+    delete entry.config;
+    delete entry.environment;
+    if (owned?.config !== undefined) entry.config = structuredClone(owned.config);
+    if (owned?.environment === undefined) continue;
+    // A workspace secret an older version may have written here stays out.
+    const injected = injectedEnvironment(cfg, entry.driver);
+    const environment = Object.fromEntries(Object.entries(owned.environment).filter(([k, v]) => injected.get(k) !== v));
+    if (Object.keys(environment).length) entry.environment = environment;
   }
   return map;
+}
+
+/** Config of the default OpenAI-compatible connection when it rides the
+ * workspace key — the connection whose endpoint Settings owns. Undefined for
+ * any other shape, including one that brings its own key. */
+function workspaceKeyedConnectionConfig(entry: unknown): JsonObject | undefined {
+  const parsed = jsonObjectSchema.safeParse(entry);
+  if (!parsed.success || parsed.data.driver !== "openai-compat") return undefined;
+  const config = jsonObjectSchema.safeParse(parsed.data.config);
+  const environment = jsonObjectSchema.safeParse(parsed.data.environment);
+  if (!config.success || config.data.key) return undefined;
+  if (config.data.apiKeyEnv && config.data.apiKeyEnv !== "OPENAI_COMPAT_API_KEY") return undefined;
+  if (environment.success && Object.hasOwn(environment.data, "OPENAI_COMPAT_API_KEY")) return undefined;
+  return config.data;
+}
+
+/** The default connection with its frozen endpoint removed, or undefined when
+ * there is nothing to repair. */
+function withoutFrozenWorkspaceUrl(entry: unknown): JsonObject | undefined {
+  const config = workspaceKeyedConnectionConfig(entry);
+  if (!config || !Object.hasOwn(config, "url")) return undefined;
+  const rest = { ...config };
+  delete rest.url;
+  return { ...(entry as JsonObject), config: rest };
 }
 
 export function withInstanceEnabled(cfg: AppConfig, instanceId: string, enabled: boolean): InstanceCliUpdate {
