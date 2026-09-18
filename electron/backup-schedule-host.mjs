@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
-import { pathWithin } from "../shared/path-identity.mjs";
+import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
@@ -229,10 +229,16 @@ export function createBackupScheduleHost(host) {
       const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
       if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
       await verifyIdentityAccess();
-      if(installation!==realpathSync(host.installation()))throw Error("BACKUP_REFERENCE_CHANGED");
+      // Recheck with the resolver that produced `installation`: the plain one
+      // keeps Windows' lowercased spelling and never matches the native one.
+      if(!samePath(installation,realpathSync.native(host.installation())))throw Error("BACKUP_REFERENCE_CHANGED");
+      // Bind the installation in the spelling every later check recomputes
+      // (installationIdentity(host.installation())) and earlier releases
+      // stored, so their bindings and remote reference stay valid.
+      const bound=realpathSync(host.installation());
       const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
       if(!await host.confirmReferences())return {cancelled:true};
-      const b={version:1,installationIdentity:installationIdentity(installation),installationRef:"installation-"+hash(installation).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:realpathSync(keyFile),keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
+      const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:realpathSync(keyFile),keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
       await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));return publicStatus();
       }finally{running=false;}
     },

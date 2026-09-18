@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync } from "node:fs";
+import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
+import { createRequire,syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,6 +27,7 @@ function updateCandidate(version="9.0.0"){
 function fixture(overrides={}){
   const root=mkdtempSync(path.join(tmpdir(),"murage-schedule-host-")),installation=path.join(root,"installation"),destination=path.join(root,"archives"),keyFile=path.join(root,"independent-key.txt");
   mkdirSync(installation);mkdirSync(destination);writeFileSync(keyFile,fakeKey,{mode:0o600});
+  if(typeof overrides==="function")overrides=overrides({root,installation,destination,keyFile});
   let now=Date.parse("2026-09-13T08:00:00Z"),binding;
   const calls=[];const coordinator=()=>new BackupCoordinator({stateDirectory:path.join(root,"control"),now:()=>now});
   const host={coordinator:coordinator(),installation:()=>installation,now:()=>now,supported:()=>true,readProtected:async()=>binding,writeProtected:async(_key,value)=>{binding=value;},chooseDestination:async()=>destination,chooseKey:async()=>keyFile,confirmReferences:async()=>true,
@@ -55,7 +57,7 @@ test("remote artifact resolver uses only current verified host receipt and never
     await f.arm();await assert.rejects(f.controller.latestVerifiedArtifact(),/BUSY/);
     const resumed=f.create();await resumed.resumeOffline();resumed.completeReturn();
     const selected=await resumed.latestVerifiedArtifact();assert.equal(selected.receipt.jobId,f.coordinator().status().lastVerified.jobId);
-    assert.equal(selected.archivePath,path.join(realpathSync(f.destination),selected.receipt.jobId+".age"));
+    assert.equal(selected.archivePath,path.join(realpathSync.native(f.destination),selected.receipt.jobId+".age"));
     // Uploading existing ciphertext does not need the private decryption key.
     writeFileSync(f.keyFile,"unavailable private key");assert.deepEqual(await resumed.latestVerifiedArtifact(),selected);
     assert.equal(f.calls.filter(call=>call==="capture").length,1);
@@ -84,6 +86,39 @@ test("prepared and capturing crash states need review, never acquire new capture
 });
 test("native references are serialized and cancellation does not persist or start work",async()=>{
   let resolve;const f=fixture({chooseDestination:()=>new Promise(done=>{resolve=done;})});try{const selecting=f.controller.selectReferences();await assert.rejects(f.controller.selectReferences(),/BUSY/);resolve(null);assert.deepEqual(await selecting,{cancelled:true});assert.equal((await f.controller.status()).refs,undefined);assert.deepEqual(f.calls,[]);}finally{f.cleanup();}
+});
+// Windows hands this host its installation lowercased (data-dir-lease.mjs
+// normalizedCanonicalPath) while the native realpath answers in the
+// filesystem's casing, so the two resolvers never agree there. Use that exact
+// spelling where the temp volume folds case (Windows, macOS). On a
+// case-sensitive volume no real spelling splits them, so model the JavaScript
+// resolver keeping a non-canonical spelling it was handed, the way it does on
+// Windows, and restore it afterwards.
+function foreignInstallationSpelling(installation){
+  const canonical=realpathSync.native(installation),lower=canonical.toLowerCase();
+  let folded=false;try{folded=lower!==canonical&&statSync(lower).ino===statSync(canonical).ino;}catch{/* Case-sensitive volume. */}
+  if(folded)return{spelling:lower,restore(){}};
+  const fs=createRequire(import.meta.url)("node:fs"),original=fs.realpathSync,spelling=path.dirname(canonical)+path.sep+path.sep+path.basename(canonical);
+  const keepsSpelling=(value,...rest)=>value===spelling?spelling:original(value,...rest);keepsSpelling.native=original.native;
+  fs.realpathSync=keepsSpelling;syncBuiltinESMExports();
+  return{spelling,restore(){fs.realpathSync=original;syncBuiltinESMExports();}};
+}
+test("an installation the resolvers spell differently still selects, runs and serves its schedule",async()=>{
+  let foreign;const f=fixture(({installation})=>{foreign=foreignInstallationSpelling(installation);return{installation:()=>foreign.spelling};});
+  try{
+    assert.notEqual(realpathSync(foreign.spelling),realpathSync.native(foreign.spelling),"fixture must split the two resolvers");
+    // Containment is still judged natively: the canonical spelling of a folder
+    // inside the installation is refused.
+    const inside=path.join(realpathSync.native(f.installation),"archives");mkdirSync(inside);
+    await assert.rejects(f.create({chooseDestination:async()=>inside}).selectReferences(),/DESTINATION_INVALID/);
+    await f.arm();assert.equal(f.coordinator().status().phase,"handoff-armed");
+    // The binding names the installation the way earlier releases did, so a
+    // reselection keeps the reference remote copies are filed under.
+    assert.equal((await f.controller.status()).refs.installationRef,"installation-"+digest(JSON.stringify(realpathSync(foreign.spelling))).slice(0,24));
+    const resumed=f.create();await resumed.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");resumed.completeReturn();
+    const selected=await resumed.latestVerifiedArtifact();assert.equal(selected.receipt.jobId,f.coordinator().status().lastVerified.jobId);
+    assert.equal(f.calls.filter(call=>call==="capture").length,1);
+  }finally{foreign?.restore();f.cleanup();}
 });
 test("packaged coordinator exports the same default-disabled production host seam",async()=>{
   const module=await import(new URL("../dist-server/backup-coordinator.js",import.meta.url));const f=fixture();try{const coordinator=new module.BackupCoordinator({stateDirectory:path.join(f.root,"built-control")});const host=createBackupScheduleHost({...f.host,coordinator});assert.equal((await host.status()).enabled,false);await host.tick();assert.deepEqual(f.calls,[]);}finally{f.cleanup();}
