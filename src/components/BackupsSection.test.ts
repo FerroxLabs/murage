@@ -53,7 +53,7 @@ describe("Backups settings section", () => {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
-import { backupSummary, closedJobNotice, formatBackupSize, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
+import { backupSummary, closedJobNotice, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import type { RemoteController } from "./BackupRemoteSettings";
 
@@ -100,6 +100,7 @@ describe("backup summary", () => {
       [{ remote: { ...r, lastUpload: { state: "verified", jobId: "a".repeat(64), lockRelease: "unconfirmed" } } }, /lock was released/],
       [{ remote: { ...r, automaticUpload: { enabled: true, state: "needs-review" } } }, /paused for review/],
       [{ remote: { ...r, retention: { state: "pruning" } } }, /Cleaning up old off-site copies/],
+      [{ schedule: { ...s, phase: "skipped" } }, /^Backup skipped\. Murage was busy/],
     ];
     for (const [patch, pattern] of cases) {
       const attention = backupSummary({ ...healthy, ...patch }).attention;
@@ -158,9 +159,17 @@ describe("optional recovery-key and back-up-now bridges", () => {
   it("names the three back-up-now cases and stays generic otherwise", () => {
     expect(runNowError(Error("BACKUP_WORK_ACTIVE"))).toBe("Finish or stop current work first.");
     expect(runNowError(Error("BACKUP_BUSY"))).toBe("A backup is already running.");
-    expect(runNowError(Error("BACKUP_SCHEDULE_REQUIRES_ENABLED"))).toBe("Turn on daily backups first.");
+    expect(runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"))).toBe("Turn on daily backups once to allow Murage to close and reopen the window for a backup.");
+    expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("destination or recovery key changed");
+    expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("Automatic retry is paused");
+    expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("unavailable in this app");
     expect(runNowError(Error("BACKUP_SCHEDULE_CHANGED"))).toContain("Settings changed");
     expect(runNowError(Error("PRIVATE_CANARY fixture-path"))).toBe("Backup settings could not be updated. Your data is preserved. Refresh status before trying again.");
+  });
+  it("names each recovery-key failure and stays generic for unknown codes", () => {
+    const cases: [string, string][] = [["BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "outside the Murage data folder"], ["BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "outside your backup folder"], ["BACKUP_RECOVERY_KEY_EXISTS", "Choose a new name"], ["BACKUP_RECOVERY_KEY_LOCATION_INVALID", "Choose another folder"], ["BACKUP_RECOVERY_KEY_WRITE_FAILED", "nothing was saved"], ["BACKUP_RECOVERY_KEY_UNVERIFIED", "nothing was saved"], ["BACKUP_BINDINGS_UNAVAILABLE", "Refresh status"], ["BACKUP_BUSY", "backup is running"], ["BACKUP_UNAVAILABLE", "supported desktop app"]];
+    for (const [code, text] of cases) expect(recoveryKeyError(Error(`IPC ${code} PRIVATE_PATH`)), code).toContain(text);
+    for (const code of ["INVALID_BACKUP_REQUEST", "PRIVATE_CANARY"]) { const message = recoveryKeyError(Error(code)); expect(message).toBe("The recovery key could not be created. Nothing was changed. Try again."); }
   });
   it("offers the system time zone and UTC in a sorted list", () => {
     const zones = timeZoneChoices();
@@ -185,11 +194,11 @@ describe("setup collapses into a schedule card", () => {
     for (const text of ["Set up backups", "1. Where to save", "2. Recovery key", "3. When", "Choose backup folder and recovery key", "Also back up", "Murage may close and reopen this window when it&#x27;s idle to take the backup.", "nobody, including you"]) expect(html).toContain(text);
     expect(html).toMatch(/disabled=""[^>]*>Turn on daily backups</);
     expect(html).not.toContain(">Turn off<");
-    expect(html).not.toContain("Create a recovery key");
+    expect(html).not.toContain("Create my recovery key");
   });
   it("offers Create a recovery key only when the desktop app provides it, and shows no secret", () => {
     const html = renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ status: off, createRecoveryKey: () => {}, createdKey: { label: "Murage recovery.age", publicKey: "age1" + "q".repeat(58) } }), onSetLimits: () => {} }));
-    expect(html).toContain(">Create a recovery key<"); expect(html).toContain("Recovery key saved as Murage recovery.age");
+    expect(html).toContain(">Create my recovery key<"); expect(html).toContain("Recovery key saved as Murage recovery.age");
     expect(html).toContain("password manager or a USB drive"); expect(html).toContain("<details>"); expect(html).not.toContain("AGE-SECRET-KEY");
   });
   it("while on: settings summary and Turn off, no setup controls", () => {

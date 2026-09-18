@@ -105,6 +105,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   else if (s?.error) attention.push(scheduleError(s.error));
   if (s?.pending) attention.push("A backup is running. Settings are locked until it finishes.");
   else if (s && scheduleNeedsReview(s.phase)) attention.push(schedulePhase(s.phase));
+  else if (s?.phase === "skipped") attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   if (s?.schedule.preUpgrade && s.preUpgradeSupported !== true) attention.push("Pre-upgrade backups are unavailable in this app.");
   if (s?.lastClosedResult?.status === "needs-review") attention.push("The last backup taken while Murage was closed needs review.");
   if (input.closedStale) attention.push("Background job status couldn't be refreshed.");
@@ -145,6 +146,25 @@ export function runNowError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   if (code.includes("BACKUP_WORK_ACTIVE")) return "Finish or stop current work first.";
   if (code.includes("BACKUP_BUSY")) return "A backup is already running.";
-  if (/REQUIRES?_ENABLED|ENABLED_REQUIRED|NOT_ENABLED|SCHEDULE_DISABLED|SCHEDULE_OFF/.test(code)) return "Turn on daily backups first.";
+  if (code.includes("BACKUP_SCHEDULE_CONSENT_REQUIRED")) return "Turn on daily backups once to allow Murage to close and reopen the window for a backup.";
   return scheduleError(cause);
+}
+
+/** "Create my recovery key" failures, named by the host's error code. Unknown
+ * codes stay generic and never echo host text. */
+export function recoveryKeyError(cause: unknown): string {
+  const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  const messages: [string, string][] = [
+    ["BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "Save the recovery key outside the Murage data folder. Nothing was saved."],
+    ["BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "Save the recovery key outside your backup folder. Nothing was saved."],
+    ["BACKUP_RECOVERY_KEY_EXISTS", "A file with that name already exists. Choose a new name; nothing was replaced."],
+    ["BACKUP_RECOVERY_KEY_LOCATION_INVALID", "That location can't be used. Choose another folder; nothing was saved."],
+    ["BACKUP_RECOVERY_KEY_WRITE_FAILED", "The key could not be written or checked, so nothing was saved. Try again."],
+    ["BACKUP_RECOVERY_KEY_UNVERIFIED", "The key could not be written or checked, so nothing was saved. Try again."],
+    ["BACKUP_BINDINGS_UNAVAILABLE", "Backup settings can't be read right now. Refresh status, then try again."],
+    ["BACKUP_BUSY", "A backup is running. Try again when it finishes."],
+    ["BACKUP_UNAVAILABLE", "Recovery keys can't be created in this app. A supported desktop app is required."],
+  ];
+  for (const [key, message] of messages) if (code.includes(key)) return message;
+  return "The recovery key could not be created. Nothing was changed. Try again.";
 }

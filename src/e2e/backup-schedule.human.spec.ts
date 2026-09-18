@@ -70,8 +70,8 @@ async function setup(page:Page,withRemote=false,optional=false){
  if(optional){
    // Optional desktop methods; older apps do not offer them.
    w.keyMode="ok";w.runMode="ok";
-   w.muragebox.backup.createRecoveryKey=async(...args:unknown[])=>{w.calls.push({action:"create-key",args});if(w.keyMode==="cancel")return{cancelled:true};if(w.keyMode==="error")throw Error("PRIVATE_KEY_CANARY");return{saved:true,label:"Murage recovery key.age",publicKey:"age1"+"q".repeat(58),secretKey:"AGE-SECRET-KEY-CANARY"};};
-   w.muragebox.backupSchedule.runNow=async(revision:number,...rest:unknown[])=>{w.calls.push({action:"run-now",revision,rest:rest.length});const codes:Record<string,string>={disabled:"BACKUP_SCHEDULE_REQUIRES_ENABLED",active:"BACKUP_WORK_ACTIVE",busy:"BACKUP_BUSY",unknown:"PRIVATE_RUN_CANARY"};if(codes[w.runMode])throw Error(codes[w.runMode]);w.state={...w.state,phase:"due"};return structuredClone(w.state);};
+   w.muragebox.backup.createRecoveryKey=async(...args:unknown[])=>{w.calls.push({action:"create-key",args});if(w.keyMode==="cancel")return{cancelled:true};if(w.keyMode==="error")throw Error("PRIVATE_KEY_CANARY");if(w.keyMode==="inside")throw Error("BACKUP_RECOVERY_KEY_INSIDE_DESTINATION");return{saved:true,label:"Murage recovery key.age",publicKey:"age1"+"q".repeat(58),secretKey:"AGE-SECRET-KEY-CANARY"};};
+   w.muragebox.backupSchedule.runNow=async(revision:number,...rest:unknown[])=>{w.calls.push({action:"run-now",revision,rest:rest.length});const codes:Record<string,string>={consent:"BACKUP_SCHEDULE_CONSENT_REQUIRED",active:"BACKUP_WORK_ACTIVE",busy:"BACKUP_BUSY",unknown:"PRIVATE_RUN_CANARY"};if(w.runMode==="active")w.state={...w.state,phase:"skipped"};if(codes[w.runMode])throw Error(codes[w.runMode]);w.state={...w.state,phase:"due"};return structuredClone(w.state);};
   }
  },{withRemote,optional});
  await page.goto(origin+"/__schedule");await page.waitForLoadState("networkidle");await expect(page.getByText("Daily backups are off.",{exact:false})).toBeVisible();
@@ -144,7 +144,7 @@ test("explicit setup, keyboard enable/disable and safe reference replacement at 
  const choose=page.getByRole("button",{name:"Choose backup folder and recovery key",exact:true}),enable=page.getByRole("button",{name:"Turn on daily backups",exact:true}),consent=page.getByRole("checkbox",{name:CONSENT,exact:true});
  await expect(enable).toBeDisabled();await expect(page.getByText("No recovery key is created or exported here.",{exact:false})).toBeVisible();
  // No optional desktop methods in this fixture: neither extra button is offered.
- await expect(page.getByRole("button",{name:"Create a recovery key"})).toHaveCount(0);await expect(page.getByRole("button",{name:"Back up now"})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"Create my recovery key"})).toHaveCount(0);await expect(page.getByRole("button",{name:"Back up now"})).toHaveCount(0);
  for(const width of [360,390,820,1440])await inspect(page,info,"off",width);
  await page.evaluate(()=>{(window as any).mode="cancel";});await choose.click();await expect(page.getByText("Selection cancelled. Schedule unchanged.")).toBeVisible();await expect(enable).toBeDisabled();
  // Was: "References selected. Scheduling has not been enabled."
@@ -253,20 +253,23 @@ test("closed-app checkbox sets up the job, keeps consent, stale status and disab
 });
 test("optional recovery-key and back-up-now methods: success, cancel and errors stay truthful",async({page},info)=>{
  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page,false,true);
- const create=page.getByRole("button",{name:"Create a recovery key",exact:true}),now=page.getByRole("button",{name:"Back up now",exact:true}),status=page.getByRole("region",{name:"Your backups"});
+ const create=page.getByRole("button",{name:"Create my recovery key",exact:true}),now=page.getByRole("button",{name:"Back up now",exact:true}),status=page.getByRole("region",{name:"Your backups"});
  await expect(now).toBeDisabled();
  await page.evaluate(()=>{(window as any).keyMode="cancel";});await create.click();await expect(page.getByText("No recovery key was created. Nothing was changed.")).toBeVisible();
  await page.evaluate(()=>{(window as any).keyMode="error";});await create.click();await expect(page.getByRole("alert")).toContainText("could not be created");await expect(page.getByText("PRIVATE_KEY_CANARY",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).keyMode="inside";});await create.click();await expect(page.getByRole("alert")).toContainText("Save the recovery key outside your backup folder.");
  await page.evaluate(()=>{(window as any).keyMode="ok";});await create.focus();await page.keyboard.press("Enter");await expect(page.getByText("Recovery key saved as Murage recovery key.age.")).toBeVisible();await expect(page.getByText("password manager or a USB drive",{exact:false})).toBeVisible();
  await expect(page.getByText("age1"+"q".repeat(58))).toBeHidden();await page.getByText("Show public key",{exact:true}).click();await expect(page.getByText("age1"+"q".repeat(58))).toBeVisible();
  expect(await page.content()).not.toContain("AGE-SECRET-KEY");
  await page.getByRole("button",{name:"Choose backup folder and recovery key",exact:true}).click();await expect(now).toBeEnabled();
  for(const width of [360,390,820,1440])await inspect(page,info,"optional-methods",width);
  await now.click();await expect(status.getByText("Murage will close and reopen this window to take the backup.")).toBeVisible();await status.getByRole("button",{name:"Cancel",exact:true}).click();await expect(now).toBeEnabled();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now").length)).toBe(0);
- for(const [mode,message] of [["disabled","Turn on daily backups first."],["active","Finish or stop current work first."],["busy","A backup is already running."],["unknown","Backup settings could not be updated. Your data is preserved."]] as const){
+ for(const [mode,message] of [["consent","Turn on daily backups once to allow Murage to close and reopen the window for a backup."],["active","Finish or stop current work first."],["busy","A backup is already running."],["unknown","Backup settings could not be updated. Your data is preserved."]] as const){
   await page.evaluate(mode=>{(window as any).runMode=mode;},mode);await now.click();await status.getByRole("button",{name:"Continue",exact:true}).click();await expect(status.getByRole("alert")).toContainText(message);
  }
  await expect(page.getByText("PRIVATE_RUN_CANARY",{exact:false})).toHaveCount(0);
+ // Active work makes the host record a skipped backup; the summary says so plainly.
+ await expect(status).toContainText("Backup skipped. Murage was busy, so no backup was taken.");
  await page.evaluate(()=>{(window as any).runMode="ok";});await now.click();await status.getByRole("button",{name:"Continue",exact:true}).click();await expect(status.getByText("Backup requested.",{exact:false})).toBeVisible();
  const calls=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now"||c.action==="create-key"));
  expect(calls.filter((c:any)=>c.action==="create-key").every((c:any)=>c.args.length===0)).toBe(true);

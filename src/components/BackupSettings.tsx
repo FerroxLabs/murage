@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
-import { backupSummary, closedJobCanSetUp, closedJobNotice, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
+import { backupSummary, closedJobCanSetUp, closedJobNotice, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
 const scheduleInput = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:ring-2 focus:ring-accent-border disabled:opacity-50";
@@ -124,7 +124,7 @@ export function useBackupSchedule() {
   const createRecoveryKey=modeBridge?.createRecoveryKey?()=>void run("schedule",async expected=>{
     let result:ReturnType<typeof recoveryKeyResult>;
     try{result=recoveryKeyResult(await modeBridge.createRecoveryKey!());}
-    catch{if(mounted.current&&expected===version.current)setError("The recovery key could not be created. Nothing was changed. Try again.");return;}
+    catch(cause){if(mounted.current&&expected===version.current)setError(recoveryKeyError(cause));return;}
     if(!mounted.current||expected!==version.current)return;
     if("cancelled"in result){setNotice("No recovery key was created. Nothing was changed.");return;}
     setCreatedKey({label:result.label,publicKey:result.publicKey});
@@ -194,12 +194,12 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
           <p className="text-[13px] text-ink-secondary">Your recovery key unlocks your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>
           <p className="text-[13px] text-ink-secondary">{s.createRecoveryKey?"Create a new key file here, or use an age key file you already have. Murage never shows or keeps the secret part.":"Murage doesn't create this key yet. Choose an age key file you already have; no recovery key is created or exported here."}</p>
           <div className="flex flex-wrap gap-2">
-            {s.createRecoveryKey&&<button type="button" className={primaryButton} disabled={editingLocked} onClick={s.createRecoveryKey}>Create a recovery key</button>}
+            {s.createRecoveryKey&&<button type="button" className={primaryButton} disabled={editingLocked} onClick={s.createRecoveryKey}>Create my recovery key</button>}
             <button type="button" className={scheduleButton} disabled={editingLocked} onClick={s.selectReferences}>Choose backup folder and recovery key</button>
           </div>
           {createdKey&&<div role="status" className="space-y-1 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
             <p className="break-words">Recovery key saved as {createdKey.label}.</p>
-            <p className="text-ink-secondary">Keep a copy somewhere other than the backup folder, such as a password manager or a USB drive. Next, choose your backup folder and select this key file.</p>
+            <p className="text-ink-secondary">Keep a copy somewhere other than the backup folder, such as a password manager or a USB drive. Next, use "Choose backup folder and recovery key": the key picker opens in that folder, and you select this key file.</p>
             {createdKey.publicKey&&<details><summary className="min-h-11 cursor-pointer py-3 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Show public key</summary><p className="break-all font-mono text-[12px] text-ink-secondary">{createdKey.publicKey}</p></details>}
           </div>}
         </li>
