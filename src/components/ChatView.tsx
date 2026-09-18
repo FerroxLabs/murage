@@ -1253,12 +1253,13 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   }, [bot.id, bot.threadId, lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
   const presenceVisible = waiting || popping !== null;
   const poppingMessage = popping ? messages.find((message) => message.id === popping.id) : undefined;
-  // Wall-clock anchor for the working row's elapsed readout — set when the
-  // turn starts, cleared when it settles, reset on bot switch.
+  // Wall-clock anchor for the working row's elapsed readout. The server
+  // stamps the turn's real start (turnStartedAt), so switching threads keeps
+  // the count truthful; Date.now() only covers a server without the stamp.
   const [busySince, setBusySince] = useState<number | null>(null);
   useEffect(() => {
-    setBusySince(bot.busy ? Date.now() : null);
-  }, [bot.busy, bot.id]);
+    setBusySince(bot.busy ? bot.turnStartedAt ?? Date.now() : null);
+  }, [bot.busy, bot.id, bot.threadId, bot.turnStartedAt]);
 
   // regenerate = fork the last user message with the same text — reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›

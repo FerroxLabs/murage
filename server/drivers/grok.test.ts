@@ -280,3 +280,49 @@ describe("GrokDriver address guard", () => {
     expect(completed).toMatchObject({ type: "turn.completed", ok: true });
   }, 20_000);
 });
+
+describe("GrokDriver usage request", () => {
+  let previousFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    ensureDirs();
+    previousFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+  });
+
+  it("asks for usage totals on a streamed turn and never on a plain call", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    // SAFETY: the stub only returns real Response objects, the sole member
+    // of fetch's return type this driver consumes.
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (!body.stream) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: "a title" } }] }), { status: 200 });
+      }
+      return sseResponse(SSE_BODY("hello"));
+    }) as typeof fetch;
+    const instance = await GrokDriver.create({
+      instanceId: "grok-usage",
+      displayName: "Grok usage",
+      environment: { XAI_API_KEY: "xai-fake" },
+      enabled: true,
+      config: { url: "https://fake.xai.invalid/v1", apiKeyEnv: "XAI_API_KEY" },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-usage", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed");
+      await expect(instance.generateText?.("name this")).resolves.toBe("a title");
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+    }
+    const streamed = bodies.find((body) => body.stream === true);
+    const plain = bodies.find((body) => body.stream === false);
+    expect(streamed?.stream_options).toEqual({ include_usage: true });
+    expect(plain).toBeDefined();
+    expect("stream_options" in plain!).toBe(false);
+  });
+});

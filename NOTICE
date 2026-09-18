@@ -294,6 +294,39 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     pages and anchored windows; route integration in server/index.ts.
     Murage: server/message-db.ts, server/store.ts, server/index.ts
 
+  OpenMausBot PR #1377 (incomplete final frame at end of stream)
+    merge 03bc81510a0f2e775146745657b7206f85e0ec3e
+    The end-of-stream half only: an unterminated tail left in the buffer when
+    the connection closes is an incomplete frame, not an unreadable one, so a
+    finished answer settles and an unfinished one reads as stopped early.
+    Murage already folded the tail on end of stream.
+    Murage: server/drivers/openai-chat.ts
+
+  OpenMausBot PR #1378 (usage totals on streamed OpenAI-compatible turns)
+    merge 41ad277d292ee891dea6926caefedde7c7533fbc
+    Request stream_options.include_usage on a streamed turn, extended to the
+    Grok driver and adapted so a request that does not stream never carries
+    stream_options.
+    Murage: server/drivers/openai-compat.ts, server/drivers/grok.ts
+
+  OpenMausBot PR #1371 (elapsed turn timer anchored to the server's turn start)
+    merge a213632a5cc7f9a41a828388c3a5fb3d5633bd5f
+    A runtime-only turn start stamped on a thread's idle-to-busy transition
+    and on a room member's claim of the turn, never persisted; the chat and
+    room readouts count from it, so a thread switch no longer restarts the
+    count. Upstream's browser end-to-end harness was not taken.
+    Murage: server/store.ts, src/state/store.tsx, src/components/ChatView.tsx,
+    src/components/GroupView.tsx
+
+  OpenMausBot PR #1380 (Windows file links written with backslashes)
+    merge 8d8182eaeefb8787d7de01450f2b9fe8e69c9003
+    The Markdown extension that keeps a drive path's backslash before
+    punctuation in a link, image or definition destination, and restoring
+    percent-encoded backslashes before a link is judged. Adapted to Murage's
+    Save a copy file links, which also now accept forward-slash drive paths
+    and file URLs; upstream's server-side and gallery parsing were not taken.
+    Murage: src/lib/markdown-windows-paths.ts, src/components/ChatMarkdown.tsx
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,

@@ -254,6 +254,10 @@ export interface GroupRecord {
   dm?: boolean;
   /** transient: the member currently running a turn (never persisted) */
   busyBotId?: string | null;
+  /** transient: when the busy member's turn started (epoch ms), for the
+   * room's elapsed readout. Stamped when a member claims the turn, cleared
+   * when the room goes idle; never persisted. */
+  turnStartedAt?: number;
   /** the room's shared desk: where member turns run their shell tools,
    * overriding each member's own folder. The room pins its own copy on its
    * first turn (pinnedCwd). Absent = each member's own default. */
@@ -308,6 +312,10 @@ export interface TaskRecord {
    * shared working folder, computer or browser profile, or (a queued routine)
    * for a free thread slot, before it starts. */
   waitingFor?: TaskResourceWait;
+  /** Runtime only: when this task's current busy stretch began (epoch ms).
+   * The chat's elapsed readout counts from here, so it survives a thread
+   * switch. Stamped on an idle-to-busy transition, cleared when idle. */
+  turnStartedAt?: number;
   /** which instance dispatched the most recent turn. A cursor alone can't
    * say whether an engine's session is current — another engine may have
    * taken turns since — so this is what decides an inline replay. Absent
@@ -825,7 +833,7 @@ interface ThreadState {
 function persistedBotsJson(bots: readonly BotRecord[]): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
-    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, ...task }) => task),
+    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, turnStartedAt: _taskTurnStartedAt, ...task }) => task),
   })), null, 2);
 }
 
@@ -981,6 +989,7 @@ export class Store {
     }
     for (const g of this.groups) {
       g.busyBotId = null;
+      delete g.turnStartedAt;
       const normalized = normalizeGroupDefaultResponder(g.defaultResponder, g.memberIds, Boolean(g.dm));
       if (JSON.stringify(normalized) !== JSON.stringify(g.defaultResponder)) groupsMigrated = true;
       g.defaultResponder = normalized;
@@ -1034,7 +1043,7 @@ export class Store {
         if (task.unread === undefined) { task.unread=task.threadId===b.threadId&&b.unread; botsMigrated=true; }
         task.resumeCursors ??= task.threadId===b.threadId?structuredClone(b.resumeCursors??{}):{};
         if (task.threadId===b.threadId) { task.rewound??=b.rewound; task.pinnedMessageId??=b.pinnedMessageId; }
-        task.busy=false;task.activity="idle";delete task.waitingFor;
+        task.busy=false;task.activity="idle";delete task.waitingFor;delete task.turnStartedAt;
       }
       b.unread=b.tasks.some(task=>task.unread);
     }
@@ -1121,7 +1130,7 @@ export class Store {
     return {
       files: new Map([
         ["bots.json", Buffer.from(persistedBotsJson(nextBots))],
-        ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, ...group }) => group), null, 2))],
+        ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, turnStartedAt: _turnStartedAt, ...group }) => group), null, 2))],
       ]),
       publish: () => {
         this.bots = nextBots; this.groups = nextGroups;
@@ -1133,7 +1142,7 @@ export class Store {
   }
 
   private saveGroups() {
-    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2)));
+    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2)));
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -1254,7 +1263,14 @@ export class Store {
   patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt">>): GroupRecord | null {
     const group = this.group(id);
     if (!group) return null;
+    const previousBusyBotId = group.busyBotId;
     Object.assign(group, patch);
+    // The room's elapsed readout counts the speaker's turn from its claim:
+    // stamped on every change to a busy speaker, cleared when the room idles.
+    if (Object.prototype.hasOwnProperty.call(patch, "busyBotId")) {
+      if (patch.busyBotId && patch.busyBotId !== previousBusyBotId) group.turnStartedAt = Date.now();
+      else if (!patch.busyBotId) delete group.turnStartedAt;
+    }
     if (!group.dm && Object.prototype.hasOwnProperty.call(patch, "pinnedMessageId")) {
       const active = this.activeGroupTask(group.id);
       if (active) active.pinnedMessageId = patch.pinnedMessageId;
@@ -1936,7 +1952,12 @@ export class Store {
   setTaskActivity(botId:string,threadId:string,activity:BotActivity):BotRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);
     if(!bot||!task)return null;
-    task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);if(activity!=="working")delete task.waitingFor;this.refreshBotActivity(bot);
+    const wasBusy=Boolean(task.busy);
+    task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);if(activity!=="working")delete task.waitingFor;
+    // The turn's start is its first busy transition: an approval parked on
+    // waiting-on-you keeps the anchor, and only idle clears it.
+    if(task.busy&&!wasBusy)task.turnStartedAt=Date.now();else if(!task.busy)delete task.turnStartedAt;
+    this.refreshBotActivity(bot);
     this.emit({type:"bot",botId});return bot;
   }
 

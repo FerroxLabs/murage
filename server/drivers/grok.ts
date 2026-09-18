@@ -43,7 +43,14 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       apiKey,
       apiUrl: config.url,
       models: () => MODELS,
-      requestBody: (model, messages, stream) => ({ model, messages, stream }),
+      // Usage totals in the stream are sent only on request; never ask on a
+      // request that does not stream.
+      requestBody: (model, messages, stream) => ({
+        model,
+        messages,
+        stream,
+        ...(stream ? { stream_options: { include_usage: true } } : {}),
+      }),
       httpErrorLabel: "xAI",
       missingKeyError: "This engine has no xAI key yet. Add one in App Settings → Models.",
       unavailableReason: "No xAI key yet — add one in App Settings → Models.",

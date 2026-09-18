@@ -15,13 +15,33 @@ import { codeFileName, codeLanguageLabel, codeLineLabel, saveCodeSnippet } from 
 import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
+import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
 // message are the one exception worth keeping (they cost no request); links,
 // SVG and every other scheme keep the default treatment.
-const urlTransform: UrlTransform = (url, key, node) =>
-  key === "src" && node.tagName === "img" && isRasterDataUrl(url) ? url : defaultUrlTransform(url);
+//
+// A link to a file on this machine is the other exception (adapted from
+// OpenMausBot #1380): the default allow-list read "C:" and "file:" as unsafe
+// schemes and emptied the href, so a Windows path or file URL rendered as a
+// dead link. The anchor below turns an accepted path into a Save button and
+// never puts it in an href. Rendering percent-encodes a destination's
+// backslashes, so C:\Users\me\report.md arrives as C:%5CUsers%5Cme%5Creport.md;
+// the separators are restored before the path is judged.
+const localHref = (url: string): string | null => {
+  const restored = /^[a-zA-Z]:%5C/i.test(url) ? url.replace(/%5C/gi, "\\") : url;
+  if (!/^file:\/\//i.test(restored) && !WINDOWS_PATH.test(restored)) return null;
+  return localFilePath(restored) ? restored : null;
+};
+const urlTransform: UrlTransform = (url, key, node) => {
+  if (key === "src" && node.tagName === "img" && isRasterDataUrl(url)) return url;
+  if (key === "href" && node.tagName === "a") {
+    const local = localHref(url);
+    if (local) return local;
+  }
+  return defaultUrlTransform(url);
+};
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -299,7 +319,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations]}
         urlTransform={urlTransform}
         components={{
           pre({ children }: { children?: ReactNode }) {

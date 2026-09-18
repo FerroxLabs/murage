@@ -308,3 +308,21 @@ describe("the running turn's live detail", () => {
     expect(liveTail).not.toMatch(/showToolCalls|showThinking|defaultOpen/);
   });
 });
+
+describe("the elapsed turn timer counts from the server's turn start", () => {
+  it("ChatView anchors to the thread's stamped start and re-reads it on a thread switch", () => {
+    // Anchoring to the moment `busy` flipped on this client restarted the
+    // count at 0s every time the person switched threads mid-turn.
+    const effect = chat.match(/setBusySince\(([^;]*)\);\s*\},\s*\[([^\]]*)\]\)/);
+    expect(effect).not.toBeNull();
+    expect(effect![1]).toMatch(/bot\.busy \? bot\.turnStartedAt \?\? Date\.now\(\) : null/);
+    expect(effect![2]).toContain("bot.threadId");
+    expect(effect![2]).toContain("bot.turnStartedAt");
+  });
+
+  it("GroupView passes the room speaker's stamped start to the readout", () => {
+    const presence = group.match(/<TurnPresence[\s\S]*?>\s*\{popping/);
+    expect(presence).not.toBeNull();
+    expect(presence![0]).toMatch(/since=\{speaker \? group\.turnStartedAt \?\? null : null\}/);
+  });
+});

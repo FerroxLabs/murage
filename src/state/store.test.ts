@@ -257,6 +257,19 @@ describe("Chief-created operators (AUTOOP1)", () => {
     expect(viewed.alwaysAllow ?? []).toEqual([]);
   });
 
+  it("carries the viewed thread's server turn start, and none for an idle thread", () => {
+    const busy = {
+      ...operator,
+      threadId: "op-t2",
+      tasks: [
+        { ...operator.tasks![0], busy: false, activity: "idle" },
+        { threadId: "op-t2", title: "Busy", createdAt: 2, busy: true, activity: "working", turnStartedAt: 5_000 },
+      ],
+    } as Bot;
+    expect(viewedTaskBot(busy).turnStartedAt).toBe(5_000);
+    expect(viewedTaskBot({ ...busy, threadId: "op-t1" }).turnStartedAt).toBeNull();
+  });
+
   it("shows an operator created from an Ask-mode or unattended Chief as Ask", () => {
     const asking = {
       ...operator,

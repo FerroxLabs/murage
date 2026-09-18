@@ -466,8 +466,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const failure = (plain: string, why: string, stopReason: FailedStreamStop, cause?: unknown) =>
       new StreamOutcomeError(plain, partial(), stopReason, cause, redact(`${label} ${why}`).slice(0, 300));
 
-    /** Folds one SSE line. Returns true once the [DONE] marker arrives. */
-    const consumeLine = (rawLine: string): boolean => {
+    /** Folds one SSE line. Returns true once the [DONE] marker arrives.
+     * `atEof` marks the unterminated tail left when the socket closed: a tail
+     * that will not parse is an incomplete frame (the connection ended inside
+     * it), not a damaged one, so it is not counted as unreadable. Only a
+     * newline-terminated frame that will not parse means the server sent
+     * something bad. */
+    const consumeLine = (rawLine: string, atEof = false): boolean => {
       const line = rawLine.trim();
       // comments (": keep-alive") and event/id/retry fields carry no payload
       if (!line.startsWith("data:")) return false;
@@ -483,7 +488,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       try {
         chunk = JSON.parse(data) as CompletionJson;
       } catch {
-        unreadableFrames++;
+        if (!atEof) unreadableFrames++;
         return false;
       }
       if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) {
@@ -546,7 +551,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const tail = decoder.decode();
           if (body.length < RAW_BODY_MAX) body += tail;
           buffer += tail;
-          if (buffer) consumeLine(buffer);
+          if (buffer) consumeLine(buffer, true);
           buffer = "";
           break;
         }

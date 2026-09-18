@@ -2081,6 +2081,42 @@ describe("harness HTTP API", () => {
     }
   }, 40_000);
 
+  // A room member's turn tells the bot what happened to an attached picture
+  // the same way a direct turn does: in front of it when the room thread bound
+  // the upload, a path to open when it did not.
+  it("tells a room member whether an attached image is in front of it or only a path", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Room image fixture" })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Room image fixture",
+      memberIds: [bot.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } },
+    })).body.group;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
+    const systemPrompt = (dump: unknown) => String((dump as { systemPrompt?: string | null }).systemPrompt ?? "");
+    try {
+      const bound = await fetch(`${BASE}/api/attachments?threadId=${encodeURIComponent(room.threadId)}`, { method: "POST", headers: { ...DESKTOP_HEADERS, "content-type": "image/png" }, body: png });
+      expect(bound.status).toBe(201);
+      const boundPath = ((await bound.json()) as { path: string }).path;
+      const inlined = await startInternalFixtureTurn(bot.id, room.id, `What is this?\n\n<attached-image path="${boundPath}" />`);
+      expect(JSON.stringify(inlined.dump)).toContain(png.toString("base64"));
+      expect(systemPrompt(inlined.dump)).toMatch(/Images attached to this turn are already in front of you/);
+      expect(systemPrompt(inlined.dump)).not.toMatch(/open that path with your file-read tool/);
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+
+      const unbound = await fetch(`${BASE}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
+      expect(unbound.status).toBe(201);
+      const unboundPath = ((await unbound.json()) as { path: string }).path;
+      const degraded = await startInternalFixtureTurn(bot.id, room.id, `And this?\n\n<attached-image path="${unboundPath}" />`);
+      expect(JSON.stringify(degraded.dump)).toContain(`<attached-image path=\\"${unboundPath}\\" />`);
+      expect(systemPrompt(degraded.dump)).toMatch(/open that path with your file-read tool/);
+      expect(systemPrompt(degraded.dump)).not.toMatch(/[Ii]mages attached to this turn are already in front of you/);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
+      await desktopApi("DELETE", `/api/groups/${room.id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   // R3-T4: an approved generated image enters Files exactly once; repeating
   // the request returns the same saved result with no provider call.
   it("saves an approved generated image to Files once and repeats the request without provider work", async () => {

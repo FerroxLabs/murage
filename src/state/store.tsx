@@ -209,6 +209,9 @@ export interface Group {
   /** auto-created bot⇄bot channel (ask_bot exchanges mirror here) */
   dm?: boolean;
   busyBotId?: string | null;
+  /** when the busy member's turn started (server epoch ms), for the elapsed
+   * readout; absent while the room is idle */
+  turnStartedAt?: number | null;
   /** True for the whole orchestrated run, including hand-offs between members. */
   working?: boolean;
   /** the room's shared desk — where member turns run their shell tools,
@@ -261,6 +264,9 @@ export interface Task {
   activity?: Bot["activity"];
   /** runtime only: waiting for another thread's folder, computer or browser */
   waitingFor?: TaskResourceWait;
+  /** runtime only: when this thread's current turn became busy (server epoch
+   * ms); the elapsed readout counts from here so it survives thread switches */
+  turnStartedAt?: number;
   pinnedMessageId?: string;
   /** Listed first in the task switcher; absent means not pinned. */
   pinned?: boolean;
@@ -304,6 +310,8 @@ export interface Bot {
   busy?: boolean;
   /** what the bot is doing, as the harness sees it; busy is derived from it */
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
+  /** the viewed thread's turn start (server epoch ms) while busy, else null */
+  turnStartedAt?: number | null;
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
@@ -812,7 +820,7 @@ export type Action =
 export function viewedTaskBot(bot: Bot): Bot {
   const task=bot.tasks?.find(task=>task.threadId===bot.threadId);
   if(!task)return bot;
-  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId};
+  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null};
 }
 export function withThreadUnread(bot:Bot,threadId:string,unread:boolean):Bot {
   if(!bot.tasks?.length)return {...bot,unread};

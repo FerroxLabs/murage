@@ -256,6 +256,38 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(replies(events)).toEqual(["last words"]);
   });
 
+  it("settles a finished answer whose socket closed part-way through a trailing frame", async () => {
+    // The finish frame arrived whole; the connection then closed inside the
+    // next frame. That tail is incomplete, not damaged, and the answer the
+    // server already finished is a success.
+    const { completed, events } = await runTurn("t-finish-then-cut-tail", [() => sse([
+      contentFrame("Hello", "stop"),
+      'data: {"choices":[{"delta":{"content":" wor',
+    ])]);
+    expect(completed).toMatchObject({ ok: true, stopReason: null });
+    expect(replies(events)).toEqual(["Hello"]);
+    expect(errors(events)).toEqual([]);
+  });
+
+  it("reports a stream cut mid-frame before any finish as stopped early, not damaged", async () => {
+    const { completed, events } = await runTurn("t-cut-tail-no-finish", [() => sse([
+      contentFrame("half an ans"),
+      'data: {"choices":[{"delta":{"content":"wer',
+    ])], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(replies(events)).toEqual(["half an ans"]);
+    expect(errors(events)).toEqual(["The model server stopped before it finished this answer."]);
+  });
+
+  it("still counts an unreadable frame that was terminated by a newline before EOF", async () => {
+    const { completed, events } = await runTurn("t-unreadable-terminated-last", [() => sse([
+      contentFrame("answer", "stop"),
+      "data: {not json\n",
+    ])]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(errors(events)).toEqual(["Part of this answer arrived damaged, so some of it may be missing."]);
+  });
+
   it("decodes multibyte characters split across network chunks", async () => {
     const bytes = encoder.encode(contentFrame("héllo 🙂 wörld", "stop") + DONE);
     const insideAccent = bytes.indexOf(0xc3) + 1;
