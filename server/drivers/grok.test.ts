@@ -208,3 +208,75 @@ describe("GrokDriver turns (fake fetch)", () => {
     await expect(instance.adapter.respondToRequest("t-x", "r", { behavior: "allow" })).resolves.toBe("unavailable");
   });
 });
+
+// The Authorization header on this request carries a real API key, so the
+// address rule has to hold here and not only where a server is added. The
+// shared classification refuses every cloud metadata / credential endpoint;
+// this checks the driver actually consults it, and that nothing is sent when
+// it says no. (openai-chat.ts, `completeWithin`.)
+describe("GrokDriver address guard", () => {
+  let instance: ProviderInstance | undefined;
+  let recorder: EventRecorder | undefined;
+  let previousFetch: typeof globalThis.fetch;
+  let calls: Array<{ url: string; auth: string | null }> = [];
+
+  beforeEach(() => {
+    ensureDirs();
+    process.env.FAKE_GROK_RETRY_SCALE = "0.001";
+    previousFetch = globalThis.fetch;
+    calls = [];
+    // SAFETY: the stub only returns real Response objects, the sole member
+    // of fetch's return type this driver consumes.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return sseResponse(SSE_BODY("this should never have been reached"));
+    }) as typeof fetch;
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = previousFetch;
+    delete process.env.FAKE_GROK_RETRY_SCALE;
+    recorder?.stop();
+    await instance?.dispose();
+    instance = undefined;
+    recorder = undefined;
+  });
+
+  const turnTo = async (url: string) => {
+    instance = await GrokDriver.create({
+      instanceId: "grok-guard",
+      displayName: "Grok Guard",
+      environment: { XAI_API_KEY: "xai-fake" },
+      enabled: true,
+      config: { url, apiKeyEnv: "XAI_API_KEY" },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-guard", text: "hi" });
+    return recorder.until((e) => e.type === "turn.completed");
+  };
+
+  it.each([
+    ["http://169.254.169.254/latest/v1", "AWS/GCP/Azure/Oracle/DO/Hetzner IMDS"],
+    ["http://169.254.170.2/v2/v1", "AWS ECS task-role credentials"],
+    ["http://169.254.170.23/v1", "AWS ECS/EKS task metadata v4"],
+    ["http://[fd00:ec2::254]/v1", "AWS IMDS over IPv6"],
+    ["http://100.100.100.200/v1", "Alibaba Cloud metadata"],
+    ["http://metadata.google.internal/v1", "GCP metadata by name"],
+    ["http://gpu.example.com/v1", "any plain-http public host"],
+  ])("sends no request and no key to %s (%s)", async (url) => {
+    const completed = await turnTo(url);
+    expect(calls).toEqual([]);
+    expect(completed).toMatchObject({ type: "turn.completed", ok: false });
+    // A refused address is terminal, never a transient hiccup: retrying would
+    // just re-resolve the same name three times behind a 12s backoff.
+    expect(recorder!.events.filter((event) => event.type === "turn.retrying")).toHaveLength(0);
+  }, 20_000);
+
+  it("still sends to a loopback server over plain http", async () => {
+    const completed = await turnTo("http://127.0.0.1:11434/v1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    expect(calls[0]!.auth).toBe("Bearer xai-fake");
+    expect(completed).toMatchObject({ type: "turn.completed", ok: true });
+  }, 20_000);
+});

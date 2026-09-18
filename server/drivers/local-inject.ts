@@ -211,15 +211,22 @@ const CODEX_RESERVED_PROVIDERS = new Set(["openai", "ollama", "lmstudio"]);
  * Configure the custom local providers on the Codex app-server without
  * rewriting the user's config.toml. Provider secrets ride in the child
  * environment; argv only contains the corresponding environment key name.
+ *
+ * Codex makes the request itself, so this is the last point at which Murage
+ * can check where `base_url` actually points before the key is handed to the
+ * child. An address that fails the check yields no provider table at all —
+ * the same outcome as an unknown host, which Codex refuses at spawn — rather
+ * than a table that would send the key to a cloud metadata endpoint.
  */
-export function codexLocalProviderArgs(
+export async function codexLocalProviderArgs(
   env: Record<string, string | undefined>,
   modelId: string | null | undefined,
-): string[] {
+): Promise<string[]> {
   const inject = decodeInjectId(modelId);
   if (!inject || CODEX_RESERVED_PROVIDERS.has(inject.host)) return [];
   const host = localHost(inject.host);
   if (!host) return [];
+  if (!(await checkLocalServerUrl(host.baseUrl)).ok) return [];
   const envKey = `MURAGE_LOCAL_${host.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
   env[envKey] = hostApiKey(host, env);
   return [
