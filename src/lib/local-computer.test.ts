@@ -12,6 +12,7 @@ import {
   localAutoHostPlatform,
   localComputerDisabledReason,
   localComputerSelectable,
+  switchRevokesThisComputer,
 } from "./local-computer";
 
 describe("local computer UI eligibility", () => {
@@ -228,5 +229,28 @@ describe("Local VM driver version label", () => {
     // 0.28.2.
     expect(source).not.toMatch(/\bdriver_version\s*\?\?\s*"[\d.]+"/);
     expect(source).toContain('status?.driver_version ?? "unknown"');
+  });
+});
+
+describe("taking this screen away from a bot", () => {
+  it("counts leaving Auto for Off on a Mac as a revoke, because Auto IS this desktop", () => {
+    expect(switchRevokesThisComputer({ platform: "darwin", from: undefined, to: "off" })).toBe(true);
+  });
+
+  it("counts leaving an explicit This computer as a revoke on both desktops that mount it", () => {
+    expect(switchRevokesThisComputer({ platform: "darwin", from: "local", to: "off" })).toBe(true);
+    expect(switchRevokesThisComputer({ platform: "linux", from: "local", to: "off" })).toBe(true);
+  });
+
+  it("does not call moving between two forms of this same desktop a revoke", () => {
+    expect(switchRevokesThisComputer({ platform: "darwin", from: undefined, to: "local" })).toBe(false);
+    expect(switchRevokesThisComputer({ platform: "darwin", from: "local", to: undefined })).toBe(false);
+  });
+
+  it("is not a revoke when the bot was never on this screen", () => {
+    expect(switchRevokesThisComputer({ platform: "darwin", from: "cloud", to: "off" })).toBe(false);
+    expect(switchRevokesThisComputer({ platform: "darwin", from: "browser", to: "off" })).toBe(false);
+    // Linux Auto never mounts the user's desktop, so Auto → Off takes nothing.
+    expect(switchRevokesThisComputer({ platform: "linux", from: undefined, to: "off" })).toBe(false);
   });
 });
