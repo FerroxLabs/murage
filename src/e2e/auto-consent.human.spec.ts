@@ -93,7 +93,9 @@ test("the settings Auto switch on a bot with no chosen computer asks before the 
   }
   await expect(auto).toBeChecked();
   await expect.poll(async () => (await storedBot()).autoApprove).toBe(true);
-  expect(patches).toHaveLength(1);
+  // The harness writes before it answers, so the stored bot can read true
+  // before this page has the response; wait for the response itself.
+  await expect.poll(() => patches.length).toBe(1);
   expect(patches[0].status).toBe(200);
   expect(patches[0].body).toMatchObject(mountsThisComputer ? { autoApprove: true, acknowledgeLocalAuto: true } : { autoApprove: true });
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -146,7 +148,7 @@ test.describe("a browser whose UA names another platform (FOLLOW5)", () => {
     }
     await expect(auto).toBeChecked();
     await expect.poll(async () => (await storedBot()).autoApprove).toBe(true);
-    expect(patches).toHaveLength(1);
+    await expect.poll(() => patches.length).toBe(1);
     expect(patches[0].status).toBe(200);
     expect(patches[0].body).toMatchObject(mountsThisComputer ? { autoApprove: true, acknowledgeLocalAuto: true } : { autoApprove: true });
     if (!mountsThisComputer) expect(patches[0].body).not.toHaveProperty("acknowledgeLocalAuto");

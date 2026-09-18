@@ -31,7 +31,9 @@ for (const scenario of ["activity", "thread", "normal"]) test(`saved artifact se
   await page.route(`**/api/artifacts/${artifactId}`, route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ artifact: { id: artifactId, name: "Timed report", botName: "Fixture", kind: "html", bytes: 10, createdAt: 1000, savedState: "available", sourceState: "current", sourceConversationAvailable: true } }) }));
   await page.goto(origin + "/__render", { waitUntil: "domcontentloaded" });
   const controls = page.getByRole("navigation", { name: "Fixture controls" }); await expect(controls).toBeVisible();
-  await page.clock.install(); await page.clock.pauseAt(new Date());
+  // Install at a known time and pause a little after it: pausing at this
+  // process's own "now" raced the page clock, which had already moved on.
+  const clockStart = Date.now(); await page.clock.install({ time: clockStart }); await page.clock.pauseAt(clockStart + 5_000);
   await controls.getByRole("button", { name: "waiting", exact: true }).click();
   await expect(page.locator(".turn-presence")).toBeVisible();
   await controls.getByRole("button", { name: "report", exact: true }).click();
