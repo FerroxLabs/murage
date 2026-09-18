@@ -318,6 +318,15 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     Murage: server/store.ts, src/state/store.tsx, src/components/ChatView.tsx,
     src/components/GroupView.tsx
 
+  OpenMausBot PR #1380 (Windows file links written with backslashes)
+    merge 8d8182eaeefb8787d7de01450f2b9fe8e69c9003
+    The Markdown extension that keeps a drive path's backslash before
+    punctuation in a link, image or definition destination, and restoring
+    percent-encoded backslashes before a link is judged. Adapted to Murage's
+    Save a copy file links, which also now accept forward-slash drive paths
+    and file URLs; upstream's server-side and gallery parsing were not taken.
+    Murage: src/lib/markdown-windows-paths.ts, src/components/ChatMarkdown.tsx
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,

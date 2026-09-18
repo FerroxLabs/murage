@@ -87,3 +87,42 @@ it("never requests a remote, local-path, file or SVG image from model text", () 
   const link = renderToStaticMarkup(createElement(ChatMarkdown, { text: "[x](data:text/html;base64,PGgxPg==)" }));
   expect(link).not.toContain("data:text/html");
 });
+// #1380 (adapted): a bot on Windows links a file the way the OS spells it.
+// Rendering percent-encoded the backslashes, so the link fell to the default
+// protocol allow-list and rendered dead (href=""), and Markdown read "\." as an
+// escaped "." so the separator before ".murage" was lost.
+const saveTitles = (html: string) => [...html.matchAll(/title="Save a copy — ([^"]*)"/g)].map(([, path]) => path);
+it("offers a Windows file link written with backslashes as Save a copy, every separator intact", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "[Report](C:\\Users\\Maus\\.murage\\_drafts\\-old\\report.md) and [Notes](<D:\\.hidden\\notes.md>)",
+  }));
+  expect(html).not.toContain('href=""');
+  expect(saveTitles(html)).toEqual([
+    "C:\\Users\\Maus\\.murage\\_drafts\\-old\\report.md",
+    "D:\\.hidden\\notes.md",
+  ]);
+});
+it("offers forward-slash drive paths and file URLs as Save a copy instead of dead links", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "[a](C:/Users/Maus/report.md) [b](file:///C:/Users/Maus/b.md) [c](file:///Users/maus/c.md)",
+  }));
+  expect(html).not.toContain('href=""');
+  expect(saveTitles(html)).toEqual(["C:/Users/Maus/report.md", "C:/Users/Maus/b.md", "/Users/maus/c.md"]);
+});
+it("still reads escaped backslashes and destination delimiters in a drive path", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "[a](C:\\\\Users\\\\Maus\\\\.murage\\\\r.md) [b](C:\\Apps\\x\\(1\\).md) [c]\n\n[c]: C:\\.cache\\notes.md",
+  }));
+  expect(saveTitles(html)).toEqual(["C:\\Users\\Maus\\.murage\\r.md", "C:\\Apps\\x(1).md", "C:\\.cache\\notes.md"]);
+});
+it("leaves other destinations and prose to ordinary Markdown escaping, and unsafe links dead", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "[a](/Users/maus/\\_notes.md) [x](javascript:alert(1))\n\nC:\\Users\\Maus\\.murage",
+  }));
+  expect(saveTitles(html)).toEqual(["/Users/maus/_notes.md"]);
+  expect(html).toContain("C:\\Users\\Maus.murage");
+  expect(html).not.toContain("javascript:");
+  // A file URL that does not name a path is still emptied, never an href.
+  const bad = renderToStaticMarkup(createElement(ChatMarkdown, { text: "[z](file:///bad%E0%A4.md)" }));
+  expect(bad).not.toContain("file:");
+});
