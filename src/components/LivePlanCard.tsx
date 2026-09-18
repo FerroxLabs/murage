@@ -1,4 +1,4 @@
-// The agent's to-do list for the running turn, as a checklist that updates in
+// The agent's task list for the running turn, as a checklist that updates in
 // place. Each plan update from the engine replaces the whole list (ACP
 // `plan`), so this renders exactly what it is given and keeps no history.
 import { useState } from "react";
