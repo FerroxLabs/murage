@@ -27,7 +27,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, parse, resolve } from "node:path";
+import { isAbsolute, join, parse, posix as posixPath, resolve, win32 as winPath } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
 
@@ -149,6 +149,47 @@ function gitAvailable(): Promise<boolean> {
   return gitProbe;
 }
 
+/** One folder, one spelling — because a guard that compares the string it was
+ * handed refuses one spelling of a folder and waves every other one through.
+ *
+ * Windows names the same folder several ways and its filesystem treats them
+ * all as equal: `c:\users\me` and `C:\Users\Me` differ only in case,
+ * `C:\Users\me\DOCUME~1` is the 8.3 alias of `Documents`, a trailing separator
+ * changes nothing, and `\\?\C:\Users\me` / `\\?\UNC\server\share` are the
+ * extended-length spellings of the same place. Callers resolve with
+ * `realpathSync.native` first, which returns Windows' own casing and long
+ * names (the JavaScript `realpathSync` follows links but keeps the spelling it
+ * was given, so it settles neither); this folds what is left.
+ *
+ * macOS volumes are case-insensitive by default too, but `realpathSync.native`
+ * already answers there in the filesystem's own casing, so folding case off
+ * Windows would only make genuinely distinct folders collide on a
+ * case-sensitive volume. `turn-resources.ts` draws the same line for workspace
+ * claims; keep the two in step. Exported for its tests, which check the
+ * Windows spellings on any platform. */
+export function samePath(a: string, b: string): boolean {
+  return oneSpelling(a) === oneSpelling(b);
+}
+
+function oneSpelling(path: string): string {
+  const windows = process.platform === "win32";
+  let out = path;
+  if (windows) {
+    if (out.startsWith("\\\\?\\UNC\\")) out = `\\\\${out.slice("\\\\?\\UNC\\".length)}`;
+    else if (/^\\\\\?\\[A-Za-z]:/.test(out)) out = out.slice("\\\\?\\".length);
+  }
+  // A trailing separator names the same folder — but a root is all separator,
+  // so never shorten one away to nothing. Name the Windows path rules
+  // explicitly rather than taking the ambient ones: identical in production,
+  // and it lets the tests put a Windows path through this on any platform.
+  const rules = windows ? winPath : posixPath;
+  const root = rules.parse(out).root;
+  while (out.length > root.length && (out.endsWith(rules.sep) || out.endsWith("/"))) {
+    out = out.slice(0, -1);
+  }
+  return windows ? out.toLowerCase() : out;
+}
+
 /** Folders a checkpoint must never be taken in: missing paths, the sprawling
  * personal folders (home, Desktop, Documents, Downloads), and the filesystem
  * root — snapshotting those would trawl unbounded personal data into a repo,
@@ -160,21 +201,28 @@ export function refusalReason(cwd: string): string | null {
   let dir: string;
   try {
     stat = statSync(requested);
-    dir = realpathSync(requested);
+    // Native realpath, not the JavaScript one: on Windows only the native call
+    // hands back the folder's real casing and long name, which is what makes
+    // the comparisons below see through 8.3 aliases and odd capitalisation.
+    dir = realpathSync.native(requested);
   } catch {
     return "the working folder does not exist";
   }
   if (!stat.isDirectory()) return "the working folder is not a folder";
   // Compare canonical paths too: otherwise /tmp/home-link -> $HOME bypasses
   // the refusal while git still follows the symlink into the protected tree.
-  if (dir === parse(dir).root) return "checkpoints are not taken at the filesystem root";
+  if (samePath(dir, parse(dir).root)) return "checkpoints are not taken at the filesystem root";
   const requestedHome = resolve(homedir());
-  const home = existsSync(requestedHome) ? realpathSync(requestedHome) : requestedHome;
-  if (requested === requestedHome || dir === home) return "checkpoints are not taken in the home folder";
+  const home = existsSync(requestedHome) ? realpathSync.native(requestedHome) : requestedHome;
+  if (samePath(requested, requestedHome) || samePath(dir, home)) {
+    return "checkpoints are not taken in the home folder";
+  }
   for (const name of ["Desktop", "Documents", "Downloads"]) {
     const requestedProtected = join(requestedHome, name);
-    const protectedDir = existsSync(requestedProtected) ? realpathSync(requestedProtected) : requestedProtected;
-    if (requested === requestedProtected || dir === protectedDir) {
+    const protectedDir = existsSync(requestedProtected)
+      ? realpathSync.native(requestedProtected)
+      : requestedProtected;
+    if (samePath(requested, requestedProtected) || samePath(dir, protectedDir)) {
       return `checkpoints are not taken in the ${name} folder`;
     }
   }

@@ -5,10 +5,10 @@
 // user's own git repo in the folder is never touched, and dangerous folders
 // (home) are refused outright.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { join, parse, resolve, sep } from "node:path";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "./testing/cleanup.ts";
 
@@ -18,7 +18,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-checkpoints-"));
 process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
 
-const { checkpointsEnabled, listCheckpoints, refusalReason, restore, snapshot } = await import(
+const { checkpointsEnabled, listCheckpoints, refusalReason, restore, samePath, snapshot } = await import(
   "./checkpoints.ts"
 );
 
@@ -262,10 +262,146 @@ describe("refusals", () => {
     expect(await checkpointsEnabled(bot, linkedHome)).toBe(false);
   });
 
+  it("refuses the home folder and the filesystem root spelled with a trailing separator", () => {
+    // resolve() drops the trailing separator, and samePath drops it again for
+    // any spelling resolve leaves alone — either way "$HOME/" is still $HOME.
+    expect(refusalReason(homedir() + sep)).toBe("checkpoints are not taken in the home folder");
+    const root = parse(resolve(tmpdir())).root;
+    expect(refusalReason(root)).toBe("checkpoints are not taken at the filesystem root");
+  });
+
+  it("allows an unrelated folder that merely sits near a protected one", () => {
+    // The guard must refuse the protected folders and nothing else: a folder
+    // whose name only starts with one ("Documents-archive") is the user's own
+    // project and has to keep its checkpoints.
+    const near = mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-unrelated-"));
+    scratchDirs.push(near);
+    expect(refusalReason(near)).toBeNull();
+    const lookalike = join(near, "Documents-archive");
+    mkdirSync(lookalike);
+    expect(refusalReason(lookalike)).toBeNull();
+  });
+
   it("lists nothing (and creates nothing) for a folder never snapshotted", async () => {
     const { bot, cwd } = workspace();
     expect(await listCheckpoints(bot, cwd)).toEqual([]);
     const shadow = join(process.env.MURAGE_DATA_DIR!, "checkpoints", bot);
     expect(existsSync(shadow)).toBe(false);
+  });
+});
+
+// Windows names one folder several ways. These run everywhere, because a
+// refusal that only holds on the reviewer's Mac is no refusal at all: the
+// platform is stubbed and the fixture home is built under the real, already
+// canonical temp path, so nothing here depends on the host's own casing.
+describe("Windows spellings of a protected folder", () => {
+  const realPlatform = process.platform;
+  const realHome = process.env.HOME;
+  const realUserProfile = process.env.USERPROFILE;
+
+  function asPlatform(platform: string): void {
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  }
+
+  afterEach(() => {
+    asPlatform(realPlatform);
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
+  });
+
+  /** A fixture home os.homedir() will answer with, canonical from the start. */
+  function fakeHome(): string {
+    const home = realpathSync.native(
+      mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-home-")),
+    );
+    scratchDirs.push(home);
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    expect(homedir()).toBe(home);
+    return home;
+  }
+
+  it("refuses a protected folder whose case does not match the guard's", () => {
+    const home = fakeHome();
+    // On disk in lower case; the guard's list says "Documents". Before the
+    // fix the two strings differed and refusalReason answered null — a turn
+    // in the user's Documents would have been snapshotted, and a restore
+    // would have run `git clean -fd` over it.
+    const documents = join(home, "documents");
+    mkdirSync(documents);
+    const downloads = join(home, "DOWNLOADS");
+    mkdirSync(downloads);
+
+    asPlatform("win32");
+    expect(refusalReason(home)).toBe("checkpoints are not taken in the home folder");
+    expect(refusalReason(home + sep)).toBe("checkpoints are not taken in the home folder");
+    expect(refusalReason(documents)).toBe("checkpoints are not taken in the Documents folder");
+    expect(refusalReason(downloads)).toBe("checkpoints are not taken in the Downloads folder");
+  });
+
+  it("still refuses a link into the fixture home and still allows an unrelated folder", () => {
+    const home = fakeHome();
+    const elsewhere = mkdtempSync(join(realpathSync.native(tmpdir()), "murage-ckpt-project-"));
+    scratchDirs.push(elsewhere);
+    const linkedHome = join(elsewhere, "linked-home");
+    symlinkSync(home, linkedHome, realPlatform === "win32" ? "junction" : "dir");
+
+    asPlatform("win32");
+    // Case folding must not cost the symlink protection...
+    expect(refusalReason(linkedHome)).toBe("checkpoints are not taken in the home folder");
+    // ...nor start refusing folders that are nobody's personal folder.
+    expect(refusalReason(elsewhere)).toBeNull();
+  });
+
+  // Not a Windows-only hazard, and this one runs on the real platform: macOS
+  // volumes are case-insensitive by default, so "~/documents" opens the very
+  // folder the guard names "Documents". The JavaScript realpath handed back
+  // the spelling it was given, the two strings differed, and the folder was
+  // allowed — on the shipping Mac build, not a hypothetical Windows one. The
+  // native realpath answers in the filesystem's own casing, which settles it
+  // without any case folding.
+  it("resolves a protected folder's real casing on a case-insensitive volume", () => {
+    const home = fakeHome();
+    mkdirSync(join(home, "Documents"));
+    const lower = join(home, "documents");
+    if (existsSync(lower)) {
+      expect(refusalReason(lower)).toBe("checkpoints are not taken in the Documents folder");
+    } else {
+      // A case-sensitive volume: "documents" really is a different folder, and
+      // refusing the user's own project there would be the bug.
+      mkdirSync(lower);
+      expect(refusalReason(lower)).toBeNull();
+    }
+  });
+
+  it("treats the Windows spellings of one path as one path", () => {
+    asPlatform("win32");
+    // realpathSync.native has already turned an 8.3 alias such as
+    // C:\Users\Me\DOCUME~1 into C:\Users\Me\Documents by the time these are
+    // compared; case, a trailing separator and the extended-length prefix are
+    // what is left for samePath to settle.
+    expect(samePath("C:\\Users\\Me", "c:\\users\\me")).toBe(true);
+    expect(samePath("C:\\Users\\Me\\Documents", "C:\\USERS\\ME\\DOCUMENTS")).toBe(true);
+    expect(samePath("C:\\Users\\Me\\", "C:\\Users\\Me")).toBe(true);
+    expect(samePath("C:\\Users\\Me/", "C:\\Users\\Me")).toBe(true);
+    expect(samePath("\\\\?\\C:\\Users\\Me", "C:\\Users\\Me")).toBe(true);
+    expect(samePath("\\\\?\\UNC\\server\\share\\me", "\\\\server\\share\\me")).toBe(true);
+    // A root must stay a root: shortened to "" it would match everything.
+    expect(samePath("C:\\", "C:\\")).toBe(true);
+    expect(samePath("C:\\", "D:\\")).toBe(false);
+    expect(samePath("C:\\", "C:\\Users")).toBe(false);
+    // Different folders stay different — a prefix is not a match.
+    expect(samePath("C:\\Users\\Me", "C:\\Users\\Meredith")).toBe(false);
+    expect(samePath("C:\\Users\\Me\\Documents", "C:\\Users\\Me\\Downloads")).toBe(false);
+  });
+
+  it("keeps case significant off Windows, where a volume may be case-sensitive", () => {
+    asPlatform("linux");
+    expect(samePath("/home/me", "/home/ME")).toBe(false);
+    expect(samePath("/home/me/", "/home/me")).toBe(true);
+    expect(samePath("/", "/")).toBe(true);
+    expect(samePath("/", "/home")).toBe(false);
   });
 });
