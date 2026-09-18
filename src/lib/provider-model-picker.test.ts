@@ -409,8 +409,20 @@ describe("pickerZone", () => {
   });
 
   it("falls back to the row's own group when no zone claims it", () => {
-    expect(pickerZone(modelRow("m", "M", "Flux Router"), [], [])).toBe("Flux Router");
-    expect(PICKER_ZONES.map(zone => zone.name)).toEqual(["Flux Auto", "Favorites", "Recent"]);
+    expect(pickerZone(modelRow("kimi-k2", "Kimi K2", "Engine models"), [], [])).toBe("Engine models");
+    // Was: expect(PICKER_ZONES.map(...)).toEqual(["Flux Auto","Favorites","Recent"]);
+    // "Flux Router" joined the ladder with the rank that promotes those rows
+    // above recents; the order here is the precedence, and it mirrors the rank.
+    expect(PICKER_ZONES.map(zone => zone.name)).toEqual(["Flux Auto", "Favorites", "Flux Router", "Recent"]);
+  });
+
+  it("claims a Flux row for the Flux Router zone, under a star but over a recent", () => {
+    const flux = modelRow("flux-fast", "Flux Fast", "Engine models");
+    const bought = modelRow("claude-opus-5", "Claude Opus 5", "Flux Router", "flux");
+    expect(pickerZone(flux, [], [])).toBe("Flux Router");
+    expect(pickerZone(bought, [], [])).toBe("Flux Router");
+    expect(pickerZone(flux, [flux.key], [])).toBe("Favorites");
+    expect(pickerZone(flux, [], [flux.key])).toBe("Flux Router");
   });
 });
 

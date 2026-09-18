@@ -301,6 +301,11 @@ export interface PickerZone { name: string; match: (row: PickerModel, favorites:
 export const PICKER_ZONES: readonly PickerZone[] = Object.freeze([
   { name: "Flux Auto", match: row => /^(?:flux::)?flux-auto$/.test(row.selection.model) },
   { name: "Favorites", match: (row, favorites) => favorites.includes(row.key) },
+  // Between Favorites and Recent, mirroring the rank in orderedPickerModels:
+  // Flux rows are promoted above recents, and a star still outranks the
+  // promotion. Without this row those rows fall through to `row.group` and the
+  // list prints one group heading twice with another heading between them.
+  { name: "Flux Router", match: row => isFluxRouterRow(row) },
   { name: "Recent", match: (row, _favorites, recent) => recent.includes(row.key) },
 ]);
 export function pickerZone(row: PickerModel, favorites: readonly string[], recent: readonly string[]): string {

@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { Check, ChevronDown, Search, Star, RefreshCw, AlertTriangle } from "lucide-react";
+import { Check, ChevronDown, Search, Star, RefreshCw, AlertTriangle, Eye, Wrench } from "lucide-react";
 import { api, useStore, type Bot, type ModelSelection } from "@/state/store";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { pickerModels, pickerConnectionsToRefresh, orderedPickerModels, pickerKey, priceBand, contextLabel, engineMenuFamilies, engineMenuKey, pickerZone, ENGINE_DISABLED_SUFFIX, type EngineMenuFamily, type PickerEngine, showNoLocalServerRow, localRowLabel, localRowNote, localToolsWarning, unavailableSelectionLabel, LOCAL_MODELS_GROUP, NO_LOCAL_SERVER_ROW, CHOOSE_ENGINE_OPTION, pickerCountLine, pickerEmptyState, pickerTriggerTitle } from "@/lib/provider-model-picker";
+import { pickerModels, pickerConnectionsToRefresh, orderedPickerModels, pickerKey, modelPriceLabel, isPriceUnknown, dollarOfTokens, priceBandNote, PRICE_UNKNOWN, contextLabel, engineMenuFamilies, engineMenuKey, pickerZone, ENGINE_DISABLED_SUFFIX, type EngineMenuFamily, type PickerEngine, type PickerModel, showNoLocalServerRow, localRowLabel, localRowNote, localToolsWarning, unavailableSelectionLabel, LOCAL_MODELS_GROUP, NO_LOCAL_SERVER_ROW, CHOOSE_ENGINE_OPTION, pickerCountLine, pickerEmptyState, pickerTriggerTitle } from "@/lib/provider-model-picker";
 import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli } from "./EngineSetup";
 import { cn } from "@/lib/cn";
@@ -124,6 +124,67 @@ export function EngineSelect<T extends PickerEngine>({id,labelId,instances,value
     {open&&<EngineOptionRows id={listId} labelId={labelId} families={families} selectedId={value} activeIndex={active} onPick={choose} listRef={list} maxHeight={roomBelow||undefined}/>}
   </div>;
 }
+/** What one model row's hover says. Three cases, because the row has three.
+ *
+ *  A Flux route is the one row a single rate cannot describe: `flux-auto`
+ *  dispatches across tiers, so the row reads as a span ("$–$$$") and the hover
+ *  has to say what is actually true rather than quote a figure that does not
+ *  exist. It used to fall into the unpriced branch, which would have put
+ *  "Price unavailable" under a row showing a price range — a contradiction.
+ *
+ *  A priced row keeps every exact number it had: input and output per million,
+ *  the source and the date it was read. The row is coarse on purpose; the hover
+ *  is what keeps the coarse band honest, so nothing is dropped from it — only
+ *  `dollarOfTokens` is added, which is that same rate restated.
+ *
+ *  A row with no resolvable rate says so, in the one wording the picker uses. */
+export function pickerRowTitle(row: Pick<PickerModel, "selection"|"pricing">): string {
+  const label = modelPriceLabel(row);
+  if (!row.pricing) return label === PRICE_UNKNOWN ? PRICE_UNKNOWN
+    : `${label} · Flux Router picks a model for each turn, so what a turn costs depends on which one runs.`;
+  return [
+    `Input $${row.pricing.inputPerMillion ?? 'unknown'}/M`,
+    `Output $${row.pricing.outputPerMillion ?? 'unknown'}/M`,
+    dollarOfTokens(row.pricing),
+    row.pricing.source,
+    new Date(row.pricing.updatedAt).toLocaleDateString(),
+  ].filter(Boolean).join(" · ");
+}
+/** The line under a model's name. Exported so a test without a DOM can read it:
+ *  it is where the band, the capabilities and the local-server note all land,
+ *  and it is the row's tightest surface — five cells at 11px in a 390px menu.
+ *
+ *  Capabilities are icons rather than words for that reason (measured: two
+ *  words wrap at 390px, two icons do not). Only a capability the catalog or
+ *  the snapshot states as true is drawn: an absent flag means "not stated",
+ *  never "cannot", so there is no negative icon and no empty slot.
+ *
+ *  The price cell separates its two meanings by weight and slant rather than
+ *  by colour — a real band is `font-medium`, an unresolved price is italic —
+ *  so "we do not know" can never be read as the cheap end of the scale, and no
+ *  new colour token enters the skins. */
+export function PickerRowMeta({row}:{row:PickerModel}){
+  const unknown=isPriceUnknown(row);
+  return <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-secondary">
+    {!row.localServer&&<span>{row.group}</span>}
+    {row.localServer&&localRowNote(row)&&<span>{localRowNote(row)}</span>}
+    {contextLabel(row.contextWindow)&&<span>{contextLabel(row.contextWindow)}</span>}
+    {!row.localServer&&<span data-price-cell data-price-unknown={unknown?"":undefined} className={unknown?"italic":"font-medium"}>{modelPriceLabel(row)}</span>}
+    {(row.capabilities?.vision||row.capabilities?.tools)&&<span className="flex items-center gap-1">
+      {row.capabilities?.vision&&<span data-capability="vision" role="img" aria-label="Reads images" title="Reads images" className="flex"><Eye size={12}/></span>}
+      {row.capabilities?.tools&&<span data-capability="tools" role="img" aria-label="Uses tools" title="Uses tools" className="flex"><Wrench size={12}/></span>}
+    </span>}
+    {row.stale&&<span className="text-warning">Cached catalog</span>}
+  </div>;
+}
+/** The one dated line about the bands, said once for the whole menu. Exported
+ *  so a test can render it: the placement (outside the scrolling list) is
+ *  pinned separately, because a note that scrolls away is not a note. The date
+ *  comes from the bundled snapshot, so it cannot quietly go stale. */
+export function PickerPriceNote({shown}:{shown:boolean}){
+  if(!shown)return null;
+  return <div data-price-band-note className="border-t border-hairline/40 px-4 pb-1 pt-2 text-[11px] text-ink-secondary">{priceBandNote()}</div>;
+}
 export function isThreadModelMutationLocked(threadId:string|undefined,busy:boolean|undefined){return Boolean(threadId&&busy);}
 /** Same horizontal clamp as TaskPicker, using the rendered menu width. */
 export function modelPickerViewportOffset(anchorRight:number,menuWidth:number,viewportWidth:number){
@@ -199,9 +260,13 @@ const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows])
       <ModelPickerNotices error={error} fleetError={fleetError}/>
       {engine?.instanceId===bot.modelSelection.instanceId&&!selected&&<div className="px-3 py-2 text-xs text-warning">Current choice: {selectedLabel}. It is unavailable in this catalog; your selection is preserved.</div>}
       <div className="min-h-0 flex-1 overflow-y-auto p-2">{noLocalServer&&(!query||!ordered.length)&&<div data-local-rail-empty><div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ink-secondary">{LOCAL_MODELS_GROUP}</div><button type="button" data-model-choice onClick={manageLocal} className="w-full rounded-lg px-2 py-2 text-left text-[13px] text-ink outline-none hover:bg-control/60 focus-visible:ring-2 focus-visible:ring-accent">{NO_LOCAL_SERVER_ROW}</button></div>}
-      {ordered.slice(0,limit).map(row=>{const zone=pickerZone(row,prefs.favorites,prefs.recent);const heading=zone!==previousGroup;previousGroup=zone;const favorite=prefs.favorites.includes(row.key);const rowLabel=localRowLabel(row);const warning=localToolsWarning(row);return <div key={row.key}>{heading&&<div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ink-secondary">{zone}</div>}<div className="flex items-center gap-1 rounded-lg hover:bg-control/60"><button type="button" data-model-choice disabled={threadModelMutationLocked} aria-pressed={row.key===selectedKey} onClick={()=>pick(row.selection)} className="min-w-0 flex-1 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent" title={row.pricing?`Input $${row.pricing.inputPerMillion??'unknown'}/M · Output $${row.pricing.outputPerMillion??'unknown'}/M · ${row.pricing.source} · ${new Date(row.pricing.updatedAt).toLocaleDateString()}`:'Price unavailable'}><div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] text-ink">{rowLabel}</span>{row.key===selectedKey&&<Check size={14} className="shrink-0 text-accent"/>}</div><div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-ink-secondary">{!row.localServer&&<span>{row.group}</span>}{row.localServer&&localRowNote(row)&&<span>{localRowNote(row)}</span>}{contextLabel(row.contextWindow)&&<span>{contextLabel(row.contextWindow)}</span>}{!row.localServer&&<span>{priceBand(row.pricing)}</span>}{row.stale&&<span className="text-warning">Cached catalog</span>}</div>{warning&&<div className="mt-1 flex items-start gap-1 text-[11px] text-warning"><AlertTriangle size={12} className="mt-[1px] shrink-0"/><span>{warning}</span></div>}</button><button type="button" aria-label={`${favorite?'Unfavorite':'Favorite'} ${rowLabel} via ${row.group}`} aria-pressed={favorite} onClick={()=>save({...prefs,favorites:favorite?prefs.favorites.filter(k=>k!==row.key):[...prefs.favorites,row.key].slice(-100)})} className="mr-1 rounded p-2 text-ink-secondary outline-none focus-visible:ring-2 focus-visible:ring-accent"><Star size={13} className={favorite?'fill-accent text-accent':''}/></button></div></div>;})}
+      {ordered.slice(0,limit).map(row=>{const zone=pickerZone(row,prefs.favorites,prefs.recent);const heading=zone!==previousGroup;previousGroup=zone;const favorite=prefs.favorites.includes(row.key);const rowLabel=localRowLabel(row);const warning=localToolsWarning(row);return <div key={row.key}>{heading&&<div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ink-secondary">{zone}</div>}<div className="flex items-center gap-1 rounded-lg hover:bg-control/60"><button type="button" data-model-choice disabled={threadModelMutationLocked} aria-pressed={row.key===selectedKey} onClick={()=>pick(row.selection)} className="min-w-0 flex-1 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent" title={pickerRowTitle(row)}><div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] text-ink">{rowLabel}</span>{row.key===selectedKey&&<Check size={14} className="shrink-0 text-accent"/>}</div><PickerRowMeta row={row}/>{warning&&<div className="mt-1 flex items-start gap-1 text-[11px] text-warning"><AlertTriangle size={12} className="mt-[1px] shrink-0"/><span>{warning}</span></div>}</button><button type="button" aria-label={`${favorite?'Unfavorite':'Favorite'} ${rowLabel} via ${row.group}`} aria-pressed={favorite} onClick={()=>save({...prefs,favorites:favorite?prefs.favorites.filter(k=>k!==row.key):[...prefs.favorites,row.key].slice(-100)})} className="mr-1 rounded p-2 text-ink-secondary outline-none focus-visible:ring-2 focus-visible:ring-accent"><Star size={13} className={favorite?'fill-accent text-accent':''}/></button></div></div>;})}
       {!ordered.length&&<div className="p-3 text-sm text-ink-secondary">{engine&&needsCli(engine)&&!['grok','openai-compat'].includes(engine.driverKind)?<EngineSetup instance={engine}/>:emptyState?<div data-picker-empty className="flex flex-col gap-2 rounded-xl border border-dashed border-accent/45 bg-accent/[0.06] p-3 text-left"><div className="text-[13px] font-medium text-ink">{emptyState.title}</div><div className="text-xs text-ink-secondary">{emptyState.body}</div><div className="flex flex-wrap gap-2 pt-1"><button type="button" data-model-choice onClick={manage} className="rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white outline-none focus-visible:ring-2 focus-visible:ring-accent">{emptyState.action}</button><button type="button" data-model-choice onClick={manageLocal} className="rounded-lg border border-hairline/50 px-2.5 py-1.5 text-xs text-ink outline-none hover:bg-control/60 focus-visible:ring-2 focus-visible:ring-accent">{emptyState.localAction}</button></div></div>:query?'No matching compatible chat models.':'Connect a compatible provider in Models settings.'}</div>}
       {ordered.length>limit&&<button type="button" onClick={()=>setLimit(v=>v+50)} className="w-full rounded-lg p-2 text-xs text-accent">More models · {ordered.length-limit} remaining</button>}</div>
+      {/* Outside the scrolling list on purpose: a note that scrolls away is not
+          a note. One line for the whole menu, dated from the bundled snapshot
+          rather than hardcoded, and never repeated per row. */}
+      <PickerPriceNote shown={!!ordered.length}/>
       <button type="button" onClick={manage} className="border-t border-hairline/40 px-4 py-3 text-left text-sm text-ink hover:bg-control/60">Manage models and providers</button>
     </div>}
   </div>;

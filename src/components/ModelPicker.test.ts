@@ -14,8 +14,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { EngineOptionRows, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
-import { ENGINE_DISABLED_SUFFIX, engineMenuFamilies, type PickerEngine } from "@/lib/provider-model-picker";
+import { EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
+import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
   id, label: id, enabled: true, catalog: { models: [], ...catalog },
@@ -214,5 +214,126 @@ describe("Engine control rows", () => {
     expect(pickerSource).toMatch(/placeholder=\{CHOOSE_ENGINE_OPTION\}/);
     expect(pickerSource).toMatch(/onPick=\{instanceId=>\{setEngineId\(instanceId\);setLimit\(30\);\}\}/);
     expect(pickerSource).not.toContain("<optgroup");
+  });
+});
+
+// ── The model row's meta line and hover ───────────────────────────────────
+// The row is coarse on purpose — a band, not a figure — so the hover is what
+// keeps it honest. Three row shapes, three things the hover has to say.
+const priced = (input: number, output: number) => ({ inputPerMillion: input, outputPerMillion: output, source: "https://models.dev/api.json", updatedAt: Date.parse("2026-09-18T00:00:00Z") });
+const modelRow = (over: Partial<PickerModel> & { label: string }): PickerModel =>
+  ({ key: over.label, selection: { instanceId: "e", model: over.label }, group: "Flux Router", provider: "flux", ...over } as PickerModel);
+const meta = (row: PickerModel) => renderToStaticMarkup(createElement(PickerRowMeta, { row }));
+
+describe("pickerRowTitle", () => {
+  it("keeps every exact figure a priced row has, and adds the same rate restated", () => {
+    const title = pickerRowTitle(modelRow({ label: "Claude Sonnet 5", pricing: priced(2, 10) }));
+    expect(title).toContain("Input $2/M");
+    expect(title).toContain("Output $10/M");
+    expect(title).toContain("$1 ≈ 100K output tokens");
+    expect(title).toContain("https://models.dev/api.json");
+    expect(title).toContain(new Date(Date.parse("2026-09-18T00:00:00Z")).toLocaleDateString());
+  });
+
+  it("says what a route actually is instead of quoting a rate it does not have", () => {
+    // The row reads "$–$$$". The old hover would have said "Price unavailable"
+    // directly under it — a price range over a claim of no price.
+    const title = pickerRowTitle(modelRow({ label: "Flux Auto", selection: { instanceId: "e", model: "flux-auto" } }));
+    expect(title).not.toBe(PRICE_UNKNOWN);
+    expect(title).not.toContain(PRICE_UNKNOWN);
+    expect(title).toContain("$–$$$");
+    expect(title).toMatch(/picks a model for each turn/);
+    expect(title).toMatch(/depends on which one runs/);
+    // No invented figure: the only "$" in it are the band symbols.
+    expect(title).not.toMatch(/\$\d/);
+    expect(title).not.toMatch(/\/M\b/);
+  });
+
+  it("says so plainly when there is no resolvable rate", () => {
+    expect(pickerRowTitle(modelRow({ label: "Mystery model", selection: { instanceId: "e", model: "mystery-1" } }))).toBe(PRICE_UNKNOWN);
+  });
+});
+
+describe("PickerRowMeta", () => {
+  it("draws a five-tier band, and marks an unresolved price as the absence it is", () => {
+    const band = meta(modelRow({ label: "Opus", pricing: priced(15, 25) }));
+    expect(band).toContain("$$$$");
+    expect(band).toContain("data-price-cell");
+    expect(band).toContain('class="font-medium"');
+    expect(band).not.toContain("data-price-unknown");
+
+    const unknown = meta(modelRow({ label: "Mystery", selection: { instanceId: "e", model: "mystery-1" } }));
+    expect(unknown).toContain(PRICE_UNKNOWN);
+    expect(unknown).toContain("data-price-unknown");
+    expect(unknown).toContain('class="italic"');
+    // Never a symbol, so it cannot be read as the cheap end of the scale.
+    expect(unknown.replace(/<[^>]*>/g, "|")).not.toMatch(/\$/);
+  });
+
+  it("draws a route's span rather than one band", () => {
+    expect(meta(modelRow({ label: "Flux Auto", selection: { instanceId: "e", model: "flux-auto" } }))).toContain("$–$$$");
+  });
+
+  it("marks vision and tools with icons, not words", () => {
+    const both = meta(modelRow({ label: "Sonnet", pricing: priced(2, 10), capabilities: { vision: true, tools: true } }));
+    expect(both).toContain('data-capability="vision"');
+    expect(both).toContain('data-capability="tools"');
+    expect(both).toContain('aria-label="Reads images"');
+    expect(both).toContain('aria-label="Uses tools"');
+    expect(both).toContain('title="Reads images"');
+    expect(both.match(/<svg/g)).toHaveLength(2);
+    // Icons, so the drawn text gains nothing: the line is already five cells
+    // at 11px in a 390px menu.
+    expect(both.replace(/<[^>]*>/g, "|")).not.toMatch(/vision|tools|Reads images|Uses tools/);
+  });
+
+  it("stays silent about a capability nobody stated — absent is not 'cannot'", () => {
+    const quiet = meta(modelRow({ label: "Mystery", selection: { instanceId: "e", model: "mystery-1" } }));
+    expect(quiet).not.toContain("data-capability");
+    expect(quiet).not.toContain("<svg");
+    // Not even an empty slot: the parent is `gap-x-2`, so a childless wrapper
+    // would still push 8px of nothing between the price and what follows.
+    expect(quiet.match(/<span/g)).toHaveLength(2);
+    const toolsOnly = meta(modelRow({ label: "Tools", pricing: priced(1, 2), capabilities: { tools: true } }));
+    expect(toolsOnly).toContain('data-capability="tools"');
+    expect(toolsOnly).not.toContain('data-capability="vision"');
+    expect(toolsOnly.match(/<svg/g)).toHaveLength(1);
+    // A stated false is still not a negative icon.
+    const stated = meta(modelRow({ label: "NoVision", pricing: priced(1, 2), capabilities: { vision: false, tools: true } }));
+    expect(stated).not.toContain('data-capability="vision"');
+  });
+
+  it("leaves a local row's own note and the stale marker where they were", () => {
+    const local = meta(modelRow({ label: "Local", group: "Local models", localServer: "llama.cpp on seanbeast", stale: true }));
+    expect(local).not.toContain("data-price-cell");
+    expect(local).toContain("Cached catalog");
+  });
+});
+
+describe("the price-band note", () => {
+  it("is dated from the bundled snapshot, said once, and never per row", () => {
+    expect(priceBandNote()).toMatch(/approximate, from published rates, \w+ \d{4}$/);
+    expect(meta(modelRow({ label: "Opus", pricing: priced(15, 25) }))).not.toContain("approximate");
+  });
+
+  it("renders the dated line when there is a list to annotate, and nothing when there is not", () => {
+    const shown = renderToStaticMarkup(createElement(PickerPriceNote, { shown: true }));
+    expect(shown).toContain("data-price-band-note");
+    expect(shown).toContain(priceBandNote());
+    expect(shown).toMatch(/approximate, from published rates, \w+ \d{4}/);
+    expect(renderToStaticMarkup(createElement(PickerPriceNote, { shown: false }))).toBe("");
+  });
+
+  it("sits outside the scrolling list, so it cannot scroll away", () => {
+    // The list is `<div className="min-h-0 flex-1 overflow-y-auto p-2">…</div>`;
+    // the note must come after its close and before the Manage footer.
+    const list = pickerSource.indexOf('className="min-h-0 flex-1 overflow-y-auto p-2"');
+    const note = pickerSource.indexOf("<PickerPriceNote ");
+    const manage = pickerSource.indexOf("Manage models and providers");
+    expect(list).toBeGreaterThanOrEqual(0);
+    expect(note).toBeGreaterThan(list);
+    expect(manage).toBeGreaterThan(note);
+    expect(pickerSource.slice(list, note)).toContain("More models ·");
+    expect(pickerSource).toContain("<PickerPriceNote shown={!!ordered.length}/>");
   });
 });
