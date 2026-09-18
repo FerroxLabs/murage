@@ -309,6 +309,15 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     stream_options.
     Murage: server/drivers/openai-compat.ts, server/drivers/grok.ts
 
+  OpenMausBot PR #1371 (elapsed turn timer anchored to the server's turn start)
+    merge a213632a5cc7f9a41a828388c3a5fb3d5633bd5f
+    A runtime-only turn start stamped on a thread's idle-to-busy transition
+    and on a room member's claim of the turn, never persisted; the chat and
+    room readouts count from it, so a thread switch no longer restarts the
+    count. Upstream's browser end-to-end harness was not taken.
+    Murage: server/store.ts, src/state/store.tsx, src/components/ChatView.tsx,
+    src/components/GroupView.tsx
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,

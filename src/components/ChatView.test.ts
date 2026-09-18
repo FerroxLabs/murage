@@ -285,3 +285,21 @@ describe("the chat header answers to its container, not the window", () => {
     expect(header).toContain("description: workspaceDetail(workspace)");
   });
 });
+
+describe("the elapsed turn timer counts from the server's turn start", () => {
+  it("ChatView anchors to the thread's stamped start and re-reads it on a thread switch", () => {
+    // Anchoring to the moment `busy` flipped on this client restarted the
+    // count at 0s every time the person switched threads mid-turn.
+    const effect = chat.match(/setBusySince\(([^;]*)\);\s*\},\s*\[([^\]]*)\]\)/);
+    expect(effect).not.toBeNull();
+    expect(effect![1]).toMatch(/bot\.busy \? bot\.turnStartedAt \?\? Date\.now\(\) : null/);
+    expect(effect![2]).toContain("bot.threadId");
+    expect(effect![2]).toContain("bot.turnStartedAt");
+  });
+
+  it("GroupView passes the room speaker's stamped start to the readout", () => {
+    const presence = group.match(/<TurnPresence[\s\S]*?>\s*\{popping/);
+    expect(presence).not.toBeNull();
+    expect(presence![0]).toMatch(/since=\{speaker \? group\.turnStartedAt \?\? null : null\}/);
+  });
+});

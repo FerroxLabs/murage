@@ -34,6 +34,66 @@ it("aggregates sibling and group activity without persisting runtime busy state"
   expect(disk.busy).toBeUndefined();expect(disk.tasks.every((task:any)=>task.busy===undefined&&task.activity===undefined)).toBe(true);
   const restored=fresh();expect(restored.bot(bot.id)?.busy).toBe(false);expect(restored.taskByThread(bot.id,first)?.unread).toBe(true);
 });
+it("stamps a task's turn start on its idle-to-busy transition and never persists it",async()=>{
+  const store=fresh(),bot=store.createBot(),first=bot.threadId,second=store.createTask(bot.id)!;
+  const startOf=(threadId:string)=>store.taskByThread(bot.id,threadId)?.turnStartedAt;
+  expect(startOf(first)).toBeUndefined();
+  store.setTaskActivity(bot.id,first,"working");
+  const started=startOf(first)!;
+  expect(started).toBeGreaterThan(0);
+  // An approval parked on waiting-on-you is the same turn; the anchor holds.
+  await new Promise(done=>setTimeout(done,3));
+  store.setTaskActivity(bot.id,first,"waiting-on-you");
+  store.setTaskActivity(bot.id,first,"working");
+  expect(startOf(first)).toBe(started);
+  // A sibling thread's turn does not move this one's anchor.
+  store.setTaskActivity(bot.id,second.threadId,"working");
+  expect(startOf(first)).toBe(started);
+  expect(startOf(second.threadId)).toBeGreaterThan(0);
+  // The anchor rides the wire copy of the task.
+  expect(store.tasks(bot.id).find(task=>task.threadId===first)?.turnStartedAt).toBe(started);
+  store.patchTask(bot.id,first,{unread:true});
+  const disk=JSON.parse(readFileSync(join(DATA_DIR,"bots.json"),"utf8"))[0];
+  expect(disk.tasks.every((task:any)=>task.turnStartedAt===undefined)).toBe(true);
+  store.setTaskActivity(bot.id,first,"idle");
+  expect(startOf(first)).toBeUndefined();
+  // A stamp that reached disk some other way (an older build, an import)
+  // never survives a load.
+  disk.tasks[0].turnStartedAt=1;
+  writeFileSync(join(DATA_DIR,"bots.json"),JSON.stringify([disk]));
+  const restored=fresh();
+  expect(restored.tasks(bot.id).every(task=>task.turnStartedAt===undefined)).toBe(true);
+});
+it("stamps a room's speaker turn start without persisting it",async()=>{
+  const store=fresh(),lead=store.createBot(),other=store.createBot();
+  const group=store.createGroup("Timer room",[lead.id,other.id]);
+  expect(group.turnStartedAt).toBeUndefined();
+  store.patchGroup(group.id,{unread:true});
+  expect(group.turnStartedAt).toBeUndefined();
+  store.patchGroup(group.id,{busyBotId:lead.id});
+  const started=group.turnStartedAt!;
+  expect(started).toBeGreaterThan(0);
+  // An unrelated patch mid-turn, or the same member claiming again, is the same turn.
+  await new Promise(done=>setTimeout(done,3));
+  store.patchGroup(group.id,{bulletin:"changed"});
+  store.patchGroup(group.id,{busyBotId:lead.id});
+  expect(group.turnStartedAt).toBe(started);
+  const saved=JSON.parse(readFileSync(join(DATA_DIR,"groups.json"),"utf8")).find((row:any)=>row.id===group.id);
+  expect(saved).not.toHaveProperty("turnStartedAt");
+  // A package addition mid-turn rewrites groups.json from memory too.
+  const packaged=JSON.parse(store.preparePackageAddition([],[]).files.get("groups.json")!.toString("utf8"));
+  expect(packaged.find((row:any)=>row.id===group.id)).not.toHaveProperty("turnStartedAt");
+  // A different speaker is a new turn.
+  await new Promise(done=>setTimeout(done,3));
+  store.patchGroup(group.id,{busyBotId:other.id});
+  expect(group.turnStartedAt!).toBeGreaterThan(started);
+  store.patchGroup(group.id,{busyBotId:null});
+  expect(group.turnStartedAt).toBeUndefined();
+  const rows=JSON.parse(readFileSync(join(DATA_DIR,"groups.json"),"utf8"));
+  for(const row of rows)row.turnStartedAt=1;
+  writeFileSync(join(DATA_DIR,"groups.json"),JSON.stringify(rows));
+  expect(fresh().group(group.id)?.turnStartedAt).toBeUndefined();
+});
 it("preserves an old active transcript omitted from a stale tasks array",()=>{
   const store=fresh(),bot=store.createBot(),thread=bot.threadId;
   store.appendMessage(thread,{role:"user",kind:"text",text:"retained old active history"});
