@@ -17,6 +17,7 @@ import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
+import { grandfatheredHostComputerConsent, isHostComputerConsent, type HostComputerConsent } from "./host-computer-consent.ts";
 import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
 import { transaction } from "./database.ts";
 import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
@@ -534,6 +535,10 @@ export interface BotRecord {
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
+  /** Auto on macOS reaches this computer: the owner's one-time answer for
+   * this bot (server/host-computer-consent.ts). Absent = not yet evaluated;
+   * set once at load from what the bot has already done. */
+  hostComputerConsent?: HostComputerConsent;
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
   /** Auto mode may prepare/start this bot's managed VPS container. Off by
@@ -1046,6 +1051,16 @@ export class Store {
     for (const threadId of knownThreads) {
       const legacyFile = messagesFile(threadId);
       if (existsSync(legacyFile)) mdb.readThread(threadId, legacyFile);
+    }
+    // The one-time Auto confirmation starts from what each bot has already
+    // done, once per record: a bot that already used this computer keeps
+    // using it without a surprise prompt. After this every bot has a value,
+    // so evidence created later can never grant it silently.
+    const unevaluated = this.bots.filter((b) => !isHostComputerConsent(b.hostComputerConsent));
+    if (unevaluated.length) {
+      const evidence = mdb.threadsWithAllowedHostActions();
+      for (const b of unevaluated) b.hostComputerConsent = grandfatheredHostComputerConsent(b, evidence);
+      this.saveBots();
     }
     reconcileMemoryRoster(this);
   }
@@ -1737,6 +1752,8 @@ export class Store {
       modelSelection: profile.modelSelection ?? this.defaultSelection(),
       resumeCursors: {},
       createdAt: Date.now(),
+      // a new bot has done nothing yet: Auto asks before it first uses this computer
+      hostComputerConsent: "ask",
     };
     if (section) bot.section = section;
     bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},modelSelection:structuredClone(bot.modelSelection),autoApprove:false,alwaysAllow:[],unread:false }];

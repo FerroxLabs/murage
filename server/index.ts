@@ -271,6 +271,7 @@ import {
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
+import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, hostConsentRefusal, hostConsentState, isHostComputerConsent, resolveHostComputerConsent } from "./host-computer-consent.ts";
 import {
   canReach,
   isIndividualAssistant,
@@ -2671,6 +2672,7 @@ function closeOpenApprovals(threadId: string): void {
   // Peer approvals also hold an in-memory promise. Resolve those first; merely
   // patching their cards would leave the delegation queue waiting 15 minutes.
   cancelPeerApprovalsForThread(threadId);
+  cancelHostComputerConsentForThread(threadId);
   imageOperations.cancelThread(threadId);
   for (const message of store.messagesFor(threadId)) {
     const card = message.card;
@@ -4569,7 +4571,7 @@ async function startTurn(
         const expected = [
           ...(privateWorkspace && opts?.runOn !== "cloud" ? [workspaceResource(cwd ?? homedir())] : []),
           ...(wants && wants !== "off" && wants !== "browser" ? computerResources(wants) : []),
-          ...(wants === undefined && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: instance.adapter.capabilities.localComputerMcp === true }) && readCuaConnection() ? [screenResource] : []),
+          ...(wants === undefined && !autoHostDeclined(bot) && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: instance.adapter.capabilities.localComputerMcp === true }) && readCuaConnection() ? [screenResource] : []),
           ...(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true
             ? [`browser:${unifiedBrowserKey(admissionBot) ?? `guest:${bot.id}`}`, screenResource] : []),
         ];
@@ -4726,6 +4728,8 @@ async function startTurn(
         !integrations.computer &&
         !integrations.localComputer &&
         wants === undefined &&
+        // the owner said no to this bot on this computer (host-computer-consent.ts)
+        !autoHostDeclined(store.bot(bot.id) ?? bot) &&
         shouldMountLocalComputer({
           requested: undefined,
           hostPlatform: process.platform,
@@ -5933,6 +5937,15 @@ const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval 
 {
   const stale = dismissStalePeerCards(approvalBus);
   if (stale) console.log(`peer approvals: dismissed ${stale} card(s) left by a previous run`);
+  const staleConsent = dismissStaleHostConsentCards(approvalBus);
+  if (staleConsent) console.log(`computer consent: dismissed ${staleConsent} card(s) left by a previous run`);
+}
+
+/** How long a host action waits on the one-time Auto confirmation before the
+ * bot is told it is still waiting. Under the host proxy's 65 s deadline. */
+const HOST_CONSENT_WAIT_MS = Math.min(55_000, Math.max(1_000, Number(process.env.MURAGE_HOST_CONSENT_WAIT_MS) || 50_000));
+function rememberHostComputerConsent(botId: string, consent: "allowed" | "declined"): void {
+  store.patchBot(botId, { hostComputerConsent: consent });
 }
 
 // Engines wait on questions only in memory, so a question still open on disk
@@ -9128,6 +9141,26 @@ const server = createServer(async (req, res) => {
         if (!authorized()) return json(res, 403, { error: "computer turn is no longer authorized or a person has control" });
         const body = z.object({ method: z.enum(["tools/list", "tools/call"]), params: z.record(z.string(), z.unknown()).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
+        // A bot on Auto reaches this computer only once its owner has said so
+        // (server/host-computer-consent.ts). Listing tools touches nothing, so
+        // only an actual call is held for the one-time answer.
+        const consentBot = body.method === "tools/call" ? store.bot(entry!.botId) : null;
+        const consent = consentBot ? hostConsentState(consentBot) : "not-needed";
+        if (consentBot && consent !== "not-needed" && consent !== "allowed") {
+          const outcome = consent === "declined" ? "declined" : await (async () => {
+            if (consentBot.hostComputerConsent === undefined) store.patchBot(consentBot.id, { hostComputerConsent: "ask" });
+            const gone = new AbortController();
+            const closed = () => gone.abort();
+            res.once("close", closed);
+            // Answer before the proxy's own request deadline, so the bot is
+            // told why rather than handed a generic failure.
+            try { return await awaitHostComputerConsent(approvalBus, consentBot, internalClaim.threadId, HOST_CONSENT_WAIT_MS, gone.signal); }
+            finally { res.off("close", closed); }
+          })();
+          if (outcome !== "allowed") { res.setHeader("Cache-Control", "no-store"); return json(res, 200, hostConsentRefusal(outcome, consentBot.name)); }
+          if (!authorized()) return json(res, 403, { error: "computer turn is no longer authorized or a person has control" });
+          requireActiveInternal();
+        }
         const result = await hostComputer.dispatch(entry!.connection, body.method, body.params, authorized);
         res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
@@ -12177,6 +12210,18 @@ const server = createServer(async (req, res) => {
           error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
         });
       }
+      // The one-time answer for a bot on Auto reaching this computer
+      // (server/host-computer-consent.ts). The owner may set it, or reset it
+      // with null so the bot asks again; and confirming the Auto-on-this-
+      // computer warning above is that same answer, so it is not asked twice.
+      if (body.hostComputerConsent !== undefined) {
+        if (body.hostComputerConsent !== null && !isHostComputerConsent(body.hostComputerConsent)) {
+          return json(res, 400, { error: "hostComputerConsent must be allowed, declined, ask, or null to ask again" });
+        }
+        patch.hostComputerConsent = body.hostComputerConsent ?? "ask";
+      } else if (body.acknowledgeLocalAuto === true && wantsComputer === undefined && autoMountsLocalComputer(undefined)) {
+        patch.hostComputerConsent = "allowed";
+      }
       if (body.approvePeerComms !== undefined) {
         if (typeof body.approvePeerComms !== "boolean") {
           return json(res, 400, { error: "approvePeerComms must be true or false" });
@@ -12395,6 +12440,7 @@ const server = createServer(async (req, res) => {
         // a peer approval naming this bot can never be meaningfully answered
         // now, and its caller would otherwise wait out the 15-minute timeout
         cancelPeerApprovalsFor(bot.id);
+        cancelHostComputerConsentFor(bot.id);
         discardDelegations(commsBus, bot.threadId, bot.id);
         computerControl.forget(bot.id);
         computerControlRevision.delete(bot.id);
@@ -13157,6 +13203,9 @@ const server = createServer(async (req, res) => {
       if (resolvePeerComms(approvalBus, String(body.requestId), behavior)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
+      if (resolveHostComputerConsent(String(body.requestId), behavior, rememberHostComputerConsent)) {
+        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed" : "rejected" });
+      }
       const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name });
       return json(res, 200, { ok: true, outcome });
     }
@@ -13223,6 +13272,9 @@ const server = createServer(async (req, res) => {
       // looking for one — a room between turns has no speaker to find.
       if (resolvePeerComms(approvalBus, requestId, behavior)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
+      }
+      if (resolveHostComputerConsent(requestId, behavior, rememberHostComputerConsent)) {
+        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed" : "rejected" });
       }
       const asked = threadRequestOwner(threadId, requestId);
       if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });

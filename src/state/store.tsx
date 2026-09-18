@@ -310,6 +310,9 @@ export interface Bot {
   cloudBackend?: CloudBackend;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
   autoStartVps?: boolean;
+  /** Auto on macOS reaches this computer: the owner's one-time answer for
+   * this bot. "ask" (or absent) asks before the bot first acts on it. */
+  hostComputerConsent?: "ask" | "allowed" | "declined";
   /** where new tasks run their shell tools; absent = the private bot workspace */
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
