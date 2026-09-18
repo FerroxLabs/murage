@@ -407,7 +407,11 @@ export function LocalComputerSection() {
         )}
         <div className="mt-3 break-all text-[11px] text-ink-secondary">
           Durable workspace: {status?.workspace_path ?? "not created"} ·{" "}
-          Cua Driver: {status?.driver_version ?? "0.20.0"} · Local image: {status?.image_ref ?? "not prepared"}
+          {/* Never name a version the harness did not report: the Local VM's
+              driver pin lives in server/container-computer.ts and has drifted
+              from a literal here before. Say "unknown" like the neighbouring
+              fallbacks do. */}
+          Cua Driver: {status?.driver_version ?? "unknown"} · Local image: {status?.image_ref ?? "not prepared"}
           {status?.base_image_ref ? <> · Base: {status.base_image_ref}</> : null}
         </div>
       </Card>

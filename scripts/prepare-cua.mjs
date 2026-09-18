@@ -24,11 +24,37 @@ const sdkRoot = realpathSync(join(dirname(sdkEntry), ".."));
 const dependencyRoot = join(sdkRoot, "..", "..");
 const sdkPackage = JSON.parse(await readFile(join(sdkRoot, "package.json"), "utf8"));
 const expectedVersion = String(sdkPackage.version);
+// Pinned to an exact version — never a floating range for a shipped binary.
+// `sha256` covers the official GitHub release archive; the per-arch entries in
+// NATIVE_ASSETS cover the two dylib/.node files the npm optional packages
+// deliver, which used to be copied into the app unverified.
+//
+// Provenance for 0.28.2: the darwin-universal archive digest matches the
+// release's own checksums.txt, its `cua-driver` member is a Mach-O universal
+// x86_64+arm64 executable signed "Developer ID Application: Cua AI, Inc.
+// (YCK386LBJ7)" with the hardened runtime, and both @trycua/cua-driver-darwin-*
+// archives were downloaded without install scripts, verified against their
+// published SHA-512 integrity and SHA-1 shasum, then SHA-256 hashed.
+// See cua-driver-0.28.2-provenance.json for the exact release and registry
+// receipts, including the 56-tool schema comparison against 0.20.0.
 const release = {
-  version: "0.20.0",
-  file: "cua-driver-rs-0.20.0-darwin-universal-binary.tar.gz",
-  sha256: "07a88ea2c28a9ead66b2d9f6f93fab4b1189a1f7c704d2cd7b6d12c30eee9984",
+  version: "0.28.2",
+  file: "cua-driver-rs-0.28.2-darwin-universal-binary.tar.gz",
+  sha256: "386db225a3080714a0f9f935525e61efaf46709587ef8b94dd2df81aeb2f6daa",
 };
+// Both darwin packages publish the same universal dylib/.node bytes at 0.28.2,
+// but they are pinned per arch so a future single-arch upstream split fails
+// here instead of silently shipping the wrong slice.
+const NATIVE_ASSETS = Object.freeze({
+  arm64: Object.freeze({
+    "libcua_driver_sdk.dylib": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
+    "cua_driver_node_runtime.node": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+  }),
+  x64: Object.freeze({
+    "libcua_driver_sdk.dylib": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
+    "cua_driver_node_runtime.node": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+  }),
+});
 if (expectedVersion !== release.version) {
   throw new Error(
     `CUA SDK ${expectedVersion} has no pinned executable asset in prepare-cua.mjs; update the release checksum first`,
@@ -139,10 +165,20 @@ for (const arch of MAC_ARCHES) {
     );
   }
   await mkdir(nativeDir, { recursive: true });
-  await Promise.all([
-    copyFile(join(realpathSync(nativePackage), "libcua_driver_sdk.dylib"), join(nativeDir, "libcua_driver_sdk.dylib")),
-    copyFile(join(realpathSync(nativePackage), "cua_driver_node_runtime.node"), join(nativeDir, "cua_driver_node_runtime.node")),
-  ]);
+  const expectedNative = NATIVE_ASSETS[arch];
+  if (!expectedNative) throw new Error(`no pinned CUA native digests for darwin-${arch}`);
+  await Promise.all(
+    Object.entries(expectedNative).map(async ([name, sha256]) => {
+      const source = join(realpathSync(nativePackage), name);
+      const digest = createHash("sha256").update(await readFile(source)).digest("hex");
+      if (digest !== sha256) {
+        throw new Error(
+          `CUA ${release.version} darwin-${arch} ${name} digest mismatch: expected ${sha256}, got ${digest}`,
+        );
+      }
+      await copyFile(source, join(nativeDir, name));
+    }),
+  );
 }
 
 // Bundle the JS side into one ESM file so electron-builder's intentional
