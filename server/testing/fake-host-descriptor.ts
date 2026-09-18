@@ -33,15 +33,19 @@ export function fakeHostDescriptorSource({ driverSource, driverEnv }: {
   const driverSource = ${JSON.stringify(driverSource)};
   if (process.platform === 'linux') {
     const driverDir = path.join(dataDir, 'fake-cua-driver');
-    fs.mkdirSync(driverDir, { mode: 0o700 });
+    // The fixture re-runs this on every restart, so it must find its own
+    // earlier files and replace them, as Electron republishes on relaunch.
+    fs.mkdirSync(driverDir, { recursive: true, mode: 0o700 });
     const driver = path.join(driverDir, 'fake-host-driver.mjs');
     fs.writeFileSync(driver, '#!' + process.execPath + String.fromCharCode(10)
       + 'Object.assign(process.env, ' + JSON.stringify(driverEnv) + ');' + String.fromCharCode(10) + driverSource);
     fs.chmodSync(driver, 0o755);
     const socketDir = path.join(dataDir, 'cua');
-    fs.mkdirSync(socketDir, { mode: 0o700 });
+    fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
     fs.chmodSync(socketDir, 0o700);
     const socketPath = path.join(socketDir, 'd.sock');
+    // The previous process's socket file outlives it.
+    fs.rmSync(socketPath, { force: true });
     const daemon = net.createServer(socket => socket.destroy());
     await new Promise((resolve, reject) => { daemon.once('error', reject); daemon.listen(socketPath, resolve); });
     daemon.unref();
