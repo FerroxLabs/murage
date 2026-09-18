@@ -197,7 +197,19 @@ jobs:
 
   human:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
-    name: human specs (Ubuntu)
+    name: human specs ${{ matrix.human_shard }}/6 (Ubuntu)
+    # One worker per process (the harness owns one store), so the suite is
+    # split across runners instead: about 920 desktop+mobile tests need close
+    # to an hour in one job and every run hit the cap. Playwright shards by
+    # file and project, balanced by test count, not time, and the slow specs
+    # cluster; four shards measured 38 minutes on the slowest while specs were
+    # failing and retrying, six keep every shard well inside 30 minutes. Each
+    # shard boots its own harness. `required` sees one aggregate result:
+    # success only if every shard passed.
+    strategy:
+      fail-fast: false
+      matrix:
+        human_shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -217,12 +229,13 @@ jobs:
       - name: Run human specs
         env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
-        run: pnpm test:human
+          HUMAN_SHARD: ${{ matrix.human_shard }}/6
+        run: pnpm test:human --shard="$HUMAN_SHARD"
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: murage-human-spec-report
+          name: murage-human-spec-report-${{ matrix.human_shard }}
           path: ${{ runner.temp }}/murage-e2e-scratch/human-results
           if-no-files-found: ignore
           retention-days: 7

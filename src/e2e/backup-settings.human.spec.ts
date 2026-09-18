@@ -40,7 +40,11 @@ test("BackupSettings exposes truthful states and only zero-argument host actions
  await page.evaluate(()=>{(window as any).outcome="error";});await restart.click();await expect(page.getByRole("alert")).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_BACKUP_CANARY")).toHaveCount(0);
  await page.evaluate(()=>{(window as any).outcome="hold";});await restart.click();await expect(page.getByRole("button",{name:"Preparing Backup mode…",exact:true})).toBeDisabled();await page.evaluate(()=>(window as any).finish());await expect(restart).toBeEnabled();
  expect(await page.evaluate(()=>(window as any).calls.every((call:any)=>call.args.length===0))).toBe(true);expect(await page.locator('input').count()).toBe(0);
- await page.goto(origin+"/__backup?supported=false");await expect(restart).toBeDisabled();await expect(page.getByRole("status")).toContainText("verified backup tool");
+ await page.goto(origin+"/__backup?supported=false");await expect(restart).toBeDisabled();
+ // The schedule and remote panels now render their own status lines beside
+ // this one, so the encrypted-backup status is picked out by its subject. Was:
+ //   await expect(page.getByRole("status")).toContainText("verified backup tool");
+ await expect(page.getByRole("status").filter({hasText:"Encrypted backup requires"})).toContainText("verified backup tool");
 });
 test("actual recovery renderer distinguishes encrypted and ZIP actions with opaque selections",async({page},info)=>{
  await page.addInitScript(()=>{const w=window as any;w.recoveryCalls=[];w.recoveryState={context:{backupMode:true,skin:"dark",reason:"Intentional offline backup",dataDirectory:"Fixture installation"},available:true,encryptedAvailable:true,busy:false,separateAvailable:false,captureAvailable:false};w.murageRecovery={action:async(name:string,id?:string)=>{w.recoveryCalls.push({name,id});const state=w.recoveryState;if(name==="choose-encrypted-backup")state.selection={id:"encrypted-selection",name:"Fixture encrypted backup",encrypted:true,snapshotId:"snapshot-fixture",sha256:"a".repeat(64),coverage:{includedCount:4,excludedCount:2}};if(name==="choose-backup")state.selection={id:"zip-selection",name:"Fixture recovery ZIP",encrypted:false,snapshotId:"snapshot-zip",sha256:"b".repeat(64)};return structuredClone(state);}};});

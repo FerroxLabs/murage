@@ -78,7 +78,10 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
   await page.goto(origin);
-  const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: /^Files proof bot/ }).first().click();
+  // The row's name is its own hit target (sidebar hit areas), so a person
+  // clicks the name, which selects the row. Was:
+  //   await sidebar.getByRole("button", { name: /^Files proof bot/ }).first().click();
+  const sidebar = await openSidebar(page); await sidebar.getByText("Files proof bot", { exact: true }).first().click();
   const card = page.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1); await expect(card).toBeVisible();
   // INLINE1: the report is rendered inside the chat card itself, in the same
   // protected frame Files uses; the card offers no Preview that leaves the chat.

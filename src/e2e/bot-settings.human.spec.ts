@@ -97,14 +97,18 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
       if (route.request().method() !== "POST") return route.continue();
       const response = await route.fetch(); await new Promise<void>(resolve => { finishUpload = resolve; }); await route.fulfill({ response });
     });
-    await dialog.getByText("Appearance", { exact: true }).click();
+    // Appearance is open by default on Overview now (see the disclosure test
+    // above), so clicking its summary would collapse it. Was:
+    //   await dialog.getByText("Appearance", { exact: true }).click();
+    await expect(dialog.locator("summary").filter({ hasText: /^Appearance$/ }).locator("..")).toHaveAttribute("open", "");
     const png = await page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 2; canvas.height = 2; canvas.getContext("2d")!.fillRect(0, 0, 2, 2); return canvas.toDataURL("image/png").split(",")[1]; });
     await dialog.locator('input[type="file"]').setInputFiles({ name: "fixture-avatar.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
     await expect.poll(() => Boolean(finishUpload)).toBe(true);
     await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click();
     await expect(dialog.getByRole("status")).toHaveText("Wait for the current operation to finish before closing.");
     finishUpload!(); await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeEnabled();
-    await dialog.getByText("Appearance", { exact: true }).click();
+    // Was (closed the disclosure this block used to open):
+    //   await dialog.getByText("Appearance", { exact: true }).click();
   }
   const search = dialog.getByRole("searchbox", { name: "Search settings" });
   await search.fill("working folder"); await expect(dialog.getByRole("heading", { name: "Access", exact: true })).toBeVisible();

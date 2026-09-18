@@ -83,6 +83,22 @@ describe("evidenceDir", () => {
     expect(source).not.toMatch(/outputFile\s*:\s*["']/);
   });
 
+  it("leaves every live family run to its own config, out of the root human suite", async () => {
+    // A live family spec (B08/B09/B10) refuses to start without the run stamp
+    // its own config sets, so under the root config every case fails instead.
+    const live = readdirSync(here).filter(name => name.endsWith(".config.ts") && /_RUN_STAMP\s*=/.test(readFileSync(join(here, name), "utf8")));
+    expect(live.length).toBeGreaterThanOrEqual(3);
+    process.env.MURAGE_E2E_DATA_DIR = "/lane/.e2e/FOLLOW4";
+    vi.resetModules();
+    const configured = (await import("../../playwright.config")).default;
+    delete process.env.MURAGE_E2E_DATA_DIR;
+    for (const name of live) {
+      const spec = /testMatch:\s*"([^"]+)"/.exec(readFileSync(join(here, name), "utf8"))?.[1];
+      expect(spec, name).toBeTruthy();
+      expect(configured.testIgnore, name).toContain(`**/${spec}`);
+    }
+  });
+
   it("is the only outputDir every per-spec config uses", () => {
     const configs = readdirSync(here).filter(name => name.endsWith(".config.ts"));
     expect(configs.length).toBeGreaterThan(40);

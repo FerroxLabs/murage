@@ -79,8 +79,10 @@ test.beforeAll(async () => {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
     const bot = (await api("/api/bots", "POST", { name: "Inline cards bot", modelSelection: { instanceId: "verification", model: "sonnet" } })).bot as { id: string; threadId: string };
-    // The default workspace root for a bot; the harness resolves it itself.
-    mkdirSync(join(fixture.info.dataDir, "workspaces", bot.id, "outputs"), { recursive: true });
+    // The default workspace root for a new task is its own desk under the bot
+    // (server/workspace.ts taskWorkspacePath); the harness resolves it itself.
+    // Was: mkdirSync(join(fixture.info.dataDir, "workspaces", bot.id, "outputs"), { recursive: true });
+    mkdirSync(join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId, "outputs"), { recursive: true });
     const workspace = (await api(`/api/artifacts/workspace?botId=${bot.id}&threadId=${bot.threadId}`)).path as string;
     const files: Record<string, [string, Buffer | string]> = {
       image: ["outputs/chart.png", png(900, 600, [200, 60, 160])],
