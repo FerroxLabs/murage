@@ -34,6 +34,7 @@ afterPack: ./scripts/after-pack.mjs
 files:
   - electron/**
   - shared/backup-age-pins.mjs
+  - shared/path-identity.mjs
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
   - installer/lib/systemd.mjs

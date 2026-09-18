@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
+import { pathWithin } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
@@ -222,8 +223,11 @@ export function createBackupScheduleHost(host) {
       running=true;try{
       const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
       const keyFile=await host.chooseKey();if(!keyFile)return {cancelled:true};
-      const installation=realpathSync(host.installation()),target=realpathSync(destination);
-      if(target===installation||target.startsWith(installation+path.sep)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
+      // A destination inside the installation makes the backup consume itself.
+      // Resolve natively so a differently cased or 8.3-aliased pick cannot
+      // read as outside; the plain realpath keeps the spelling it was given.
+      const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
+      if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
       await verifyIdentityAccess();
       if(installation!==realpathSync(host.installation()))throw Error("BACKUP_REFERENCE_CHANGED");
       const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
