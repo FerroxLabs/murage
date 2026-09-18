@@ -157,7 +157,7 @@ export interface LegacyClaim {
 }
 export type AccountKind = "personal" | "shared";
 export type ConnectorMigrationState =
-  | "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere";
+  | "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere" | "legacy-retired";
 export interface ConnectorMigration {
   state: ConnectorMigrationState;
   legacyUntil: string | null;
@@ -182,6 +182,9 @@ let managedLegacyUntil: string | undefined;
 /** The Worker answered 410 migrated_to_flux for an install this device never
  * claimed: somebody else moved these connections. */
 let legacyMovedElsewhere = false;
+/** The Worker answered 410 legacy_broker_retired: it will not serve this
+ * install again, whatever the desktop's own cut-off date says. */
+let legacyRetiredObserved = false;
 
 const managedBrokerMessageSchema = z.record(z.string(), z.unknown());
 const managedBrokerToken = /^[0-9a-f]{64}$/;
@@ -264,6 +267,7 @@ export function resetManagedBrokerState(): void {
   managedTokenError = undefined;
   managedLegacyUntil = undefined;
   legacyMovedElsewhere = false;
+  legacyRetiredObserved = false;
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
@@ -302,11 +306,17 @@ function legacyBrokerOpen(now = Date.now()): boolean {
   return Number.isFinite(at) && now < at;
 }
 
-/** The Murage Worker broker, until the configured cut-off. */
+/** The Murage Worker broker, until the configured cut-off or until the
+ * Worker itself says it has retired. */
 function legacyBrokerAccess(): BrokerAccess | null {
   const access = workerBrokerCredential();
-  if (!access || !legacyBrokerOpen()) return null;
+  if (!access || !legacyBrokerOpen() || legacyRetiredObserved) return null;
   return { ...access, kind: "legacy" };
+}
+
+/** This install holds a Worker identity the Worker will no longer serve. */
+function legacyBrokerRetired(): boolean {
+  return workerBrokerCredential() !== null && (legacyRetiredObserved || !legacyBrokerOpen());
 }
 
 /** The FluxRouter broker URL whenever this build turns it on, token or not. */
@@ -479,6 +489,17 @@ async function responseCode(response: Response): Promise<string | undefined> {
 export const BROKER_UNAVAILABLE =
   "Connected apps need FluxRouter. Connect FluxRouter in Settings → Models, or add your own Composio key.";
 
+/** What a connector call says when the Murage Worker has retired. The model
+ * reads it as the tool's answer, so it names the way out rather than a code. */
+export const LEGACY_BROKER_RETIRED =
+  "Murage's original connected-apps service has retired, so this request did not run. Connect FluxRouter in Settings → Models, then reconnect the app under Connected apps.";
+/** The same, once a working FluxRouter broker has taken over. */
+export const LEGACY_BROKER_RETIRED_FLUX_READY =
+  "Murage's original connected-apps service has retired, and connected apps now run through FluxRouter. Try the request again; if the app is missing, reconnect it under Connected apps.";
+/** The Worker's per-install daily cap (it resets at 00:00 UTC). */
+export const LEGACY_DAILY_LIMIT =
+  "Connected apps have reached today's limit on Murage's original service, so this request did not run. The limit resets at 00:00 UTC and does not apply once your apps run through FluxRouter (Settings → Models).";
+
 /** React to what a broker's answer says about the broker itself. */
 async function observeBrokerResponse(broker: BrokerAccess, response: Response): Promise<void> {
   if (broker.kind === "flux") {
@@ -492,9 +513,39 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response): 
     }
     return;
   }
-  if (response.status === 410 && legacyClaim().state !== "claimed" && (await responseCode(response)) === "migrated_to_flux") {
-    legacyMovedElsewhere = true;
+  if (response.status !== 410) return;
+  const code = await responseCode(response);
+  if (code === "legacy_broker_retired") legacyRetiredObserved = true;
+  else if (code === "migrated_to_flux" && legacyClaim().state !== "claimed") legacyMovedElsewhere = true;
+}
+
+/** The broker answers a connector call can carry that the person has to act
+ * on. Each becomes one plain sentence the model reads as the tool's answer,
+ * instead of an HTTP status wrapped in the broker's JSON. Call after
+ * `observeBrokerResponse`, so a retirement has already moved `activeBroker`. */
+function plainBrokerAnswer(cfg: AppConfig, broker: BrokerAccess, status: number, code: string | undefined): string | null {
+  if (broker.kind !== "legacy") return null;
+  if (status === 410 && code === "legacy_broker_retired") {
+    return activeBroker(cfg)?.kind === "flux" ? LEGACY_BROKER_RETIRED_FLUX_READY : LEGACY_BROKER_RETIRED;
   }
+  if (status === 429 && code === "daily_call_ceiling") return LEGACY_DAILY_LIMIT;
+  return null;
+}
+
+/** A JSON-RPC answer for each request in `payload` carrying `text`: a failed
+ * tool result for tools/call, an error for anything else. Null when nothing
+ * in the payload expects an answer. */
+function jsonRpcFailure(payload: JsonValue, text: string): JsonValue | null {
+  const answer = (message: JsonValue): JsonValue | null => {
+    if (!message || typeof message !== "object" || Array.isArray(message) || !Object.hasOwn(message, "id")) return null;
+    const id = (message as Record<string, JsonValue>).id;
+    return (message as Record<string, JsonValue>).method === "tools/call"
+      ? { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], isError: true } }
+      : { jsonrpc: "2.0", id, error: { code: -32000, message: text } };
+  };
+  if (!Array.isArray(payload)) return answer(payload);
+  const answers = payload.map(answer).filter((item): item is JsonValue => item !== null);
+  return answers.length ? answers : null;
 }
 
 /** Which broker a request should use, resolved in exactly one place.
@@ -529,6 +580,9 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response): 
  *     holding the user's connections (no claim, one offered, one pending),
  *     and as the fallback when Flux is not ready. Both brokers point at the
  *     same Composio user after a claim, so the fallback orphans nothing.
+ *     A Worker that has answered 410 `legacy_broker_retired` is past its
+ *     cut-off whatever the date here says, so it drops out and a ready Flux
+ *     broker takes over even mid-claim: the Worker identity is gone either way.
  *   - Neither: connected apps are unavailable and the panel offers FluxRouter.
  * Nothing here depends on whether the build is packaged, so dev and packaged
  * resolve the same broker for the same credentials; the Composio identity
@@ -578,6 +632,9 @@ export function connectorMigration(cfg: AppConfig): ConnectorMigration {
   if (claim.at) base.at = claim.at;
   if (claim.code) base.code = claim.code;
   if (legacyMovedElsewhere && claim.state !== "claimed") return { ...base, state: "moved-elsewhere" };
+  // A claimed install's apps already live on FluxRouter; nobody else has to
+  // reconnect anything when the Worker goes.
+  if (claim.state !== "claimed" && legacyBrokerRetired()) return { ...base, state: "legacy-retired" };
   const state = CLAIM_TO_MIGRATION[claim.state];
   if (state === "none" && activeBroker(cfg)?.kind === "legacy") return { ...base, state: "legacy" };
   return { ...base, state };
@@ -1096,6 +1153,17 @@ export async function relayMcp(
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10 * 60_000),
   });
+  if (broker) {
+    // The hot path learns what the broker says about itself exactly as the
+    // panel routes do: a retired Worker must stop being chosen here too.
+    await observeBrokerResponse(broker, response);
+    const plain = response.ok ? null : plainBrokerAnswer(cfg, broker, response.status, await responseCode(response));
+    const answer = plain === null ? null : jsonRpcFailure(payload, plain);
+    if (answer !== null) {
+      await response.body?.cancel().catch(() => {});
+      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+    }
+  }
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (declared > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   const bytes = new Uint8Array(await response.arrayBuffer());

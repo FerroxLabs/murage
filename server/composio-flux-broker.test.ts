@@ -22,7 +22,11 @@ import {
   connectorPanelFields,
   connectorSystemPrompt,
   invalidateBrokerReadiness,
+  LEGACY_BROKER_RETIRED,
+  LEGACY_BROKER_RETIRED_FLUX_READY,
+  LEGACY_DAILY_LIMIT,
   primeBrokerReadiness,
+  relayMcp,
   resetManagedBrokerState,
   setBrokerEventSink,
 } from "./composio.ts";
@@ -536,5 +540,101 @@ describe("the dev harness mints its own FluxRouter token", () => {
     await priming;
     expect(mints()).toHaveLength(1);
     expect(connectionBroker(cfg())).toBe("flux");
+  });
+});
+
+// The Murage Worker is retiring. After its end date it answers every data call
+// 410 `legacy_broker_retired`, and over its daily cap it answers 429
+// `daily_call_ceiling`. Neither may reach the model as a raw broker error, and
+// a retired Worker may never be chosen over a FluxRouter broker that works.
+describe("when the Murage Worker retires or hits its daily cap", () => {
+  const RETIRED = { status: 410, body: { error: "service ended", code: "legacy_broker_retired" } };
+  const CAPPED = { status: 429, body: { error: "limit", code: "daily_call_ceiling", used: 2001 } };
+  const toolCall = { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} } };
+  const decode = (bytes: Uint8Array) => JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, any>;
+
+  it("answers a retired Worker with one plain, actionable sentence when FluxRouter is not set up", async () => {
+    shell({ flux: "url-only" });
+    expect(connectionBroker(cfg())).toBe("legacy");
+    dataAnswer = RETIRED;
+    const reply = await relayMcp(cfg(), toolCall);
+    expect(requests.at(-1)?.path).toBe("/legacy/v1/mcp");
+    const body = decode(reply.bytes);
+    // A tool result the model reads, not an HTTP failure the bridge stacks up.
+    expect(reply.status).toBe(200);
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 7, result: { isError: true } });
+    const text = body.result.content[0].text as string;
+    expect(text).toBe(LEGACY_BROKER_RETIRED);
+    expect(text).toContain("FluxRouter");
+    expect(text).not.toMatch(/410|legacy_broker_retired|service ended/);
+    // And the harness learned it: no broker is left, and the panel says why.
+    expect(connectionBroker(cfg())).toBeNull();
+    expect(connectionMode(cfg())).toBe("unavailable");
+    expect(connectorMigration(cfg()).state).toBe("legacy-retired");
+  });
+
+  it("moves to a healthy FluxRouter the moment the Worker says it has retired", async () => {
+    await readyFlux({ claim: { state: "pending" } });
+    // Before retirement a pending claim keeps the Worker: it still holds the apps.
+    expect(connectionBroker(cfg())).toBe("legacy");
+    dataAnswer = RETIRED;
+    const reply = await relayMcp(cfg(), toolCall);
+    expect(decode(reply.bytes).result.content[0].text).toBe(LEGACY_BROKER_RETIRED_FLUX_READY);
+    expect(connectionBroker(cfg())).toBe("flux");
+    expect(connectorMigration(cfg()).state).toBe("legacy-retired");
+    // The next call goes to FluxRouter with the Flux broker token.
+    dataAnswer = { status: 200, body: { jsonrpc: "2.0", id: 8, result: { tools: [] } } };
+    const next = await relayMcp(cfg(), { jsonrpc: "2.0", id: 8, method: "tools/list" });
+    expect(next.status).toBe(200);
+    expect(requests.at(-1)).toMatchObject({ path: "/composio/v1/mcp", authorization: `Bearer ${FLUX_TOKEN}` });
+  });
+
+  it("learns the same retirement from a panel request", async () => {
+    await readyFlux({ claim: { state: "none" } });
+    dataAnswer = RETIRED;
+    await connectedServices(cfg()).catch(() => undefined);
+    expect(connectionBroker(cfg())).toBe("flux");
+    expect(connectorMigration(cfg()).state).toBe("legacy-retired");
+  });
+
+  it("reports the retirement once the desktop cut-off has passed, with no FluxRouter", () => {
+    shell({ flux: "url-only", legacyUntil: "2020-01-01T00:00:00Z" });
+    expect(connectionBroker(cfg())).toBeNull();
+    expect(connectorMigration(cfg()).state).toBe("legacy-retired");
+  });
+
+  it("says nothing about retirement for an install whose apps already moved", async () => {
+    await readyFlux({ claim: { state: "claimed" }, legacyUntil: "2020-01-01T00:00:00Z" });
+    expect(connectionBroker(cfg())).toBe("flux");
+    expect(connectorMigration(cfg()).state).toBe("claimed");
+  });
+
+  it("answers the Worker's daily cap plainly and keeps the Worker for tomorrow", async () => {
+    shell({ flux: "url-only" });
+    dataAnswer = CAPPED;
+    const reply = await relayMcp(cfg(), toolCall);
+    expect(reply.status).toBe(200);
+    const text = decode(reply.bytes).result.content[0].text as string;
+    expect(text).toBe(LEGACY_DAILY_LIMIT);
+    expect(text).toContain("00:00 UTC");
+    expect(text).not.toMatch(/429|daily_call_ceiling/);
+    expect(connectionBroker(cfg())).toBe("legacy");
+    expect(connectorMigration(cfg()).state).toBe("legacy");
+  });
+
+  it("answers a non-tool request as a JSON-RPC error carrying the same sentence", async () => {
+    shell({ flux: "url-only" });
+    dataAnswer = RETIRED;
+    const reply = await relayMcp(cfg(), { jsonrpc: "2.0", id: 3, method: "tools/list" });
+    expect(decode(reply.bytes)).toEqual({ jsonrpc: "2.0", id: 3, error: { code: -32000, message: LEGACY_BROKER_RETIRED } });
+  });
+
+  it("leaves every other broker answer untouched", async () => {
+    shell({ flux: "url-only" });
+    dataAnswer = { status: 500, body: { error: "boom" } };
+    const reply = await relayMcp(cfg(), toolCall);
+    expect(reply.status).toBe(500);
+    expect(decode(reply.bytes)).toEqual({ error: "boom" });
+    expect(connectionBroker(cfg())).toBe("legacy");
   });
 });

@@ -393,7 +393,7 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
-  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
+  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable"; migration?: { state?: string } };
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };

@@ -481,3 +481,45 @@ describe("the connected-apps lock", () => {
     expect(focused).toEqual(["scroll", "field"]);
   });
 });
+
+// The Murage Worker's retirement. Once it has ended, people whose apps lived
+// there have to reconnect them through FluxRouter, and every surface they can
+// land on has to say so in plain words instead of "try again shortly".
+describe("when Murage's original connected-apps service has retired", () => {
+  const retired = { state: "legacy-retired" as const, legacyUntil: CUTOFF };
+
+  it("tells a FluxRouter user to reconnect their apps here", () => {
+    const list = notices({}, fields({ broker: "flux", fluxBrokerEnabled: true, fluxConfigured: true, migration: retired }));
+    expect(texts(list)).toContain(en["connectedApps.flux.legacyRetired"]);
+    expect(list.find((notice) => "text" in notice && notice.text === en["connectedApps.flux.legacyRetired"])).toMatchObject({ tone: "warning" });
+  });
+
+  it("says the old service has ended, not only that FluxRouter is unreachable", () => {
+    const list = notices({ configured: false }, fields({ fluxBrokerEnabled: true, fluxConfigured: true, migration: retired }));
+    expect(texts(list)).toBe(`${en["connectedApps.flux.legacyRetired"]} | ${en["connectedApps.flux.unreachable"]}`);
+  });
+
+  it("puts the retirement on the lock when there is no FluxRouter key yet", () => {
+    const html = render({ ...noKeys, composio: { ...noKeys.composio, migration: retired } }).replaceAll("&#x27;", "'");
+    expect(html).toContain('data-connected-apps-lock=""');
+    expect(html).toContain(en["connectedApps.lock.retiredTitle"]);
+    expect(html).toContain(en["connectedApps.lock.retiredBody"]);
+    expect(html).not.toContain("Connect 500+ apps");
+    // Still one way forward: the FluxRouter key.
+    expect(html).toContain("Add FluxRouter key");
+    expect(html.match(/data-connected-apps-lock-primary/g)).toHaveLength(1);
+  });
+
+  it("keeps the ordinary offer on the lock for everyone else", () => {
+    expect(render(noKeys)).toContain("Connect 500+ apps");
+  });
+
+  it("says it in one or two plain sentences that name FluxRouter", () => {
+    for (const key of ["connectedApps.flux.legacyRetired", "connectedApps.lock.retiredBody"]) {
+      const copy = en[key];
+      expect(copy).toContain("FluxRouter");
+      expect(copy).toMatch(/retired/);
+      expect(copy.split(/(?<=\.)\s+/).length).toBeLessThanOrEqual(2);
+    }
+  });
+});
