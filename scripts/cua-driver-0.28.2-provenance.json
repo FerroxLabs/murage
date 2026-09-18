@@ -1,0 +1,126 @@
+{
+  "version": "0.28.2",
+  "source": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.28.2",
+  "registry": "https://registry.npmjs.org",
+  "verifiedAt": "2026-09-18T02:31:08.000Z",
+  "installScriptsExecuted": false,
+  "nativeExecutablesRun": true,
+  "nativeExecutionScope": "cua-driver --version, --help, list-tools and describe <tool> only; no daemon start, no screen/input control",
+  "previousVersion": "0.20.0",
+  "packages": [
+    {
+      "target": "release-asset-darwin-universal",
+      "name": "cua-driver-rs-0.28.2-darwin-universal-binary.tar.gz",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.2/cua-driver-rs-0.28.2-darwin-universal-binary.tar.gz",
+      "tarballSha256": "386db225a3080714a0f9f935525e61efaf46709587ef8b94dd2df81aeb2f6daa",
+      "archiveBytes": 43629843,
+      "checksumsTxtSha256": "448fbf0f9b6ca13dc0bdd3adb0f0f8432293abb0519efd2fe77be90e816e6539",
+      "members": [
+        "cua-driver",
+        "cua-cursor-theme",
+        "libcua_driver_sdk.dylib",
+        "cua_driver_node_runtime.node",
+        "cua_driver_abi.h"
+      ],
+      "executable": {
+        "name": "cua-driver",
+        "sha256": "af30d29cf33bd3bbda1330be7225b18881ea4c5af6df374e08627914b5ac334d",
+        "bytes": 65948880,
+        "format": "Mach-O universal",
+        "architectures": ["x86_64", "arm64"],
+        "codesign": {
+          "identifier": "cua-driver",
+          "teamIdentifier": "YCK386LBJ7",
+          "authority": "Developer ID Application: Cua AI, Inc. (YCK386LBJ7)",
+          "flags": "0x10000(runtime)",
+          "cdhashSha256": "f39eb6bac5737b09d32467dfd07da4cd5b64d9a2f66c882518721bc259f67af4"
+        }
+      }
+    },
+    {
+      "target": "wrapper",
+      "name": "@trycua/cua-driver",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver/-/cua-driver-0.28.2.tgz",
+      "tarballSha256": "743b28e409747b38ac530eeb5280fea75e8de8de45b40e68f70b0d987ca10a1e",
+      "integrity": "sha512-18DHs68WpIdKtkAMecd5mLKwJtT854gXzie24Ag0QMxveRNgzKphAje51t0oeI7ZnHetyXKDAQUr5fQyZu7S6Q==",
+      "shasum": "2bc1d487e68d937d7a8a5ce79d83b13f7e5fd2e8",
+      "archiveBytes": 74128,
+      "scripts": {},
+      "dependencies": {
+        "@ubjs/core": "0.31.0-3",
+        "@ubjs/node": "0.31.0-3"
+      },
+      "optionalDependencies": {
+        "@trycua/cua-driver-darwin-arm64": "0.28.2",
+        "@trycua/cua-driver-darwin-x64": "0.28.2",
+        "@trycua/cua-driver-linux-arm64-gnu": "0.28.2",
+        "@trycua/cua-driver-linux-x64-gnu": "0.28.2",
+        "@trycua/cua-driver-win32-arm64-msvc": "0.28.2",
+        "@trycua/cua-driver-win32-x64-msvc": "0.28.2"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "name": "@trycua/cua-driver-darwin-arm64",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver-darwin-arm64/-/cua-driver-darwin-arm64-0.28.2.tgz",
+      "tarballSha256": "9dbc79870dc367acbee20c86dee34794e77883e5d5d4b440260652d9341098cb",
+      "integrity": "sha512-Eeo62jJjxi67/XwSQKvxpJQMmJg7pjLqGa4vZTxLj3KUmjfGYjwt3wifLl82yU0AfJs6icB7V1uu6sYE+nm9mg==",
+      "shasum": "764ef61d632be016f9901633f6f2076e5ba01df7",
+      "archiveBytes": 18268706,
+      "scripts": {},
+      "files": [
+        {
+          "name": "libcua_driver_sdk.dylib",
+          "sha256": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
+          "bytes": 51741008,
+          "format": "Mach-O universal",
+          "architectures": ["x86_64", "arm64"]
+        },
+        {
+          "name": "cua_driver_node_runtime.node",
+          "sha256": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+          "bytes": 1712400,
+          "format": "Mach-O universal",
+          "architectures": ["x86_64", "arm64"]
+        }
+      ]
+    },
+    {
+      "target": "darwin-x64",
+      "name": "@trycua/cua-driver-darwin-x64",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver-darwin-x64/-/cua-driver-darwin-x64-0.28.2.tgz",
+      "tarballSha256": "f7b671148c06a3c764ceaef1ee58ea39385f3f7ed5416833948a64b9e47c37b6",
+      "integrity": "sha512-n7iWl2iqIyPoDpCJ3hyK2gKZqu0RTolabRptmZKYPzRSTbRbzO3mejOa+CXHsJjVbM4+FyDJDNn5NE2CZLMdXg==",
+      "shasum": "7c793bbd115c9975217b5a222a2d82967ab7af06",
+      "archiveBytes": 18268704,
+      "scripts": {},
+      "files": [
+        {
+          "name": "libcua_driver_sdk.dylib",
+          "sha256": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
+          "bytes": 51741008,
+          "format": "Mach-O universal",
+          "architectures": ["x86_64", "arm64"]
+        },
+        {
+          "name": "cua_driver_node_runtime.node",
+          "sha256": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+          "bytes": 1712400,
+          "format": "Mach-O universal",
+          "architectures": ["x86_64", "arm64"]
+        }
+      ]
+    }
+  ],
+  "toolSurface": {
+    "toolCount": 56,
+    "namesIdenticalToPreviousVersion": true,
+    "rootSchemaCombinators": "none — every one of the 56 input_schema roots is a plain type:object on both 0.20.0 and 0.28.2",
+    "inputSchemaChanges": [
+      "browser_prepare: required[] no longer lists pid (relaxation)",
+      "get_window_state: adds include_accessibility_tree and max_dimension (additive)",
+      "click/double_click/right_click/press_key/scroll/set_value/type_text/hotkey: target property drops a redundant single-branch anyOf wrapper around its oneOf; element_index description drops the stale 0.17 wording"
+    ]
+  },
+  "status": "PASS_RELEASE_ASSET_AND_NPM_METADATA_ARCHIVES_HEADERS_AND_SIGNATURE"
+}
