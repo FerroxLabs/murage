@@ -3,7 +3,7 @@
 // realms, isolated child storage, and explicit session cleanup.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
@@ -257,9 +257,47 @@ function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeo
     });
   });
 }
-export async function verifyAgentBrowserBinary(binary: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const output = await runEngine(binary, ["--version"], env, 5000);
+/** Budget for one `agent-browser --version`. It was 5 s and ran on the turn
+ * path for every new binding, and a cold start of the engine under machine
+ * load overran it: the first launch of a large native binary pages it in
+ * from disk and, on macOS, can wait on the system's code-signature and
+ * malware assessment of a freshly installed executable. 20 s covers that
+ * cold start with margin. It is affordable because a success is now cached
+ * per binary (below), so the check runs once per binary per process rather
+ * than per binding, and because a failure no longer fails the turn — the turn
+ * runs without the browser — so the budget bounds how long a turn waits
+ * before going on without it, not whether it runs at all. */
+const AGENT_BROWSER_VERIFY_TIMEOUT_MS = 20_000;
+async function checkAgentBrowserVersion(binary: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const output = await runEngine(binary, ["--version"], env, AGENT_BROWSER_VERIFY_TIMEOUT_MS);
   if (output !== `agent-browser ${AGENT_BROWSER_VERSION}` && output !== `agent-browser ${agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset())}`) throw new Error(`agent-browser ${AGENT_BROWSER_VERSION} is required`);
+}
+/** Successful (or in-flight) checks, per resolved binary path. The stamp is
+ * the file's identity and content shape, so replacing or updating the engine
+ * re-checks it. A failed check is dropped, never cached: the next turn tries
+ * again rather than inheriting one slow start forever. */
+const verifiedAgentBrowsers = new Map<string, { stamp: string; check: Promise<void> }>();
+function agentBrowserStamp(path: string): string | null {
+  try {
+    const info = statSync(path);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch { return null; }
+}
+export async function verifyAgentBrowserBinary(binary: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const path = resolve(binary);
+  const stamp = agentBrowserStamp(path);
+  if (!stamp) return checkAgentBrowserVersion(binary, env);
+  const known = verifiedAgentBrowsers.get(path);
+  if (known?.stamp === stamp) return known.check;
+  const check = checkAgentBrowserVersion(binary, env);
+  const entry = { stamp, check };
+  verifiedAgentBrowsers.set(path, entry);
+  try {
+    await check;
+  } catch (error) {
+    if (verifiedAgentBrowsers.get(path) === entry) verifiedAgentBrowsers.delete(path);
+    throw error;
+  }
 }
 export async function ensureChrome(binary: string, options: { env: NodeJS.ProcessEnv; withDeps?: boolean } ): Promise<void> {
   await runEngine(binary, ["install", ...(options.withDeps ? ["--with-deps"] : [])], options.env, 10 * 60_000);

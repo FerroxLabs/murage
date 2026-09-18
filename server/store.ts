@@ -7,7 +7,7 @@ import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 import { createHash } from "node:crypto";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
-import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -168,7 +168,7 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */

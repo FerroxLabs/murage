@@ -63,6 +63,8 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { StoppedRow } from "./StoppedRow";
 import { FolderTrustRow } from "./FolderTrustRow";
+import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
+import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { hostStoppedReason } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -320,15 +322,15 @@ export function MessageActionSheet({
  * Once the engine reports itself fixed the card flips back to Retry, which
  * (with the on-focus re-probe) happens by itself when the user returns from
  * the terminal. */
-export function ErrorRow({ message, details, errorKind, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, providerError, onOpenProviderSettings }: {
-  message: string; details?: string; errorKind?: string; onRetry?: () => void; setupInstance?: InstanceInfo;
+export function ErrorRow({ message, details, errorKind, localFailure, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, providerError, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; localFailure?: string; onRetry?: () => void; setupInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
   if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
   const forceSignIn = authRequired && !authRecovered;
   const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
-  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
@@ -1034,6 +1036,9 @@ const MessagesList = memo(function MessagesList({
               // ran without (or gains next time), visible with Tool calls off
               const trustNotice = folderTrustNotice(m.tool?.name);
               if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} />;
+              // a turn that ran without its browser: a quiet note, not a card
+              const browserReason = browserUnavailableReason(m.tool?.name);
+              if (browserReason) return <BrowserUnavailableRow reason={browserReason} />;
               if (m.tool?.name.startsWith("error:")) {
                 return (
                   <ErrorRow
@@ -1043,6 +1048,7 @@ const MessagesList = memo(function MessagesList({
                     authRequired={m.tool.authRequired}
                     details={m.tool.errorDetails}
                     errorKind={m.tool.errorKind}
+                    localFailure={m.tool.localFailure}
                     providerError={m.tool.providerError}
                     diagnostic={m.tool.diagnostic}
                     turnId={m.turnId}

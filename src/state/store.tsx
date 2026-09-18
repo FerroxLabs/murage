@@ -15,7 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
-import type { ProviderErrorInfo } from "../../shared/provider-error";
+import type { LocalSetupFailure, ProviderErrorInfo } from "../../shared/provider-error";
 import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 import { hostStoppedReason } from "../../shared/host-stop";
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
@@ -158,7 +158,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** Provider turn that produced this message. */

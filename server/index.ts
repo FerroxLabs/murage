@@ -428,6 +428,8 @@ import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedDisplayName } from "../shared/host-stop.ts";
+import { browserUnavailableActivityName, browserUnavailableDisplayName } from "../shared/browser-unavailable.ts";
+import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -1207,15 +1209,26 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
   return claim;
 }
 
+/** The browser is an optional tool, never a precondition of a turn. When its
+ * binding cannot be established (the engine's version check timed out under
+ * load, the binary is gone), the turn runs WITHOUT browser tools: the primer's
+ * browser-absent clause then tells the bot the truth, and the caller leaves
+ * one quiet note in the conversation. It used to throw into the turn's setup
+ * catch and fail the whole request — with a card that sent the person to
+ * Provider settings for a failure no provider was involved in. */
 async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId: string = randomUUID()) {
   if (browserEngineStatus().kind !== "ready") return null;
-  // Chrome closed or its remote debugging off: the turn runs without a
-  // browser rather than failing; the Browser panel says how to turn it on.
-  const binding = await unifiedBrowserBinding(botId, profile).catch((error: unknown) => {
+  let binding: Awaited<ReturnType<typeof unifiedBrowserBinding>>;
+  try {
+    binding = await unifiedBrowserBinding(botId, profile);
+  } catch (error) {
+    // Chrome closed or its remote debugging off: the turn runs without a
+    // browser rather than failing; the Browser panel says how to turn it on.
     if (error && typeof error === "object" && "userChromeNotReady" in error) return null;
-    throw error;
-  });
-  if (!binding) return null;
+    const reason = redactSecretsInText(error instanceof Error ? error.message : String(error)).trim().slice(0, 120);
+    console.warn(`[browser] continuing this turn without the browser: ${reason}`);
+    return { unavailable: reason };
+  }
   if (!stillValid()) return null;
   await releaseBrowserCapabilityForThread(threadId);
   if (!stillValid()) return null;
@@ -1225,6 +1238,17 @@ async function browserIntegration(botId: string, profile: string | undefined, th
     ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
     MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
   } } };
+}
+
+/** The one note a turn that runs without its browser leaves behind. */
+function noteBrowserUnavailable(threadId: string, bot: { id: string; name: string; color: string }, reason: string): void {
+  store.appendMessage(threadId, {
+    role: "bot",
+    kind: "activity",
+    ...(store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
+    // ok:true like a folder-trust notice: neutral, not a failure, no card.
+    tool: { name: browserUnavailableActivityName(reason), ok: true },
+  });
 }
 
 function phoneIntegration() {
@@ -4553,7 +4577,7 @@ async function startTurn(
     try {
       await acquireDirectTurnSlot(run);
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
-      let browser: Awaited<ReturnType<typeof browserIntegration>> = null;
+      let browser: Extract<Awaited<ReturnType<typeof browserIntegration>>, { profileKey: string }> | null = null;
       const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
         createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
@@ -4667,20 +4691,20 @@ async function startTurn(
         }
         const localVmTarget = localVmTargetForBot(bot.id);
         if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) {
-          throw new Error("this Local VM is being started, stopped, or replaced — wait for setup to finish");
+          throw new LocalSetupError("computer", "this Local VM is being started, stopped, or replaced — wait for setup to finish");
         }
         // Claim before the first await. The lifecycle route performs its
         // matching check synchronously, so neither side can enter while the
         // other is between inspection and mutation.
         if (!localVmLeaseFor(localVmTarget).claim(threadId, bot.id, localVmOwnerBusy)) {
-          throw new Error("this Local VM is already being used by another turn — wait for that turn to finish");
+          throw new LocalSetupError("computer", "this Local VM is already being used by another turn — wait for that turn to finish");
         }
         localVmThreadTargets.set(threadId, localVmTarget);
         localVmActiveThreads.set(localVmTarget.key, threadId);
         localVmIdleFor(localVmTarget).touch();
         const localVm = await containerComputerStatus(undefined, undefined, localVmTarget);
         if (!localVm.ready || !localVm.runtime) {
-          throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
+          throw new LocalSetupError("computer", `${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
         }
         integrations.localComputer = containerComputerMcp(
           localVm.runtime,
@@ -4697,7 +4721,7 @@ async function startTurn(
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart Murage");
+        if (!cua) throw new LocalSetupError("computer", "CUA Driver is not ready for this computer — check permissions and restart Murage");
         integrations.localComputer = hostComputerIntegration(bot.id, threadId, dispatchClaimId, cua);
         computerKind = "local";
       }
@@ -4727,7 +4751,7 @@ async function startTurn(
           } else {
             activeVpsThreads.delete(bot.id);
             if (wants === "cloud") {
-              throw new Error(remote?.problem ?? "the VPS computer could not be created or reached");
+              throw new LocalSetupError("computer", remote?.problem ?? "the VPS computer could not be created or reached");
             }
             autoVpsProblem = remote?.problem ?? "the VPS computer could not be reached";
           }
@@ -4770,10 +4794,10 @@ async function startTurn(
         }
       }
       if (wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
-        throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+        throw new LocalSetupError("computer", "Cloud box is not configured — add a Box API key or choose Local VM");
       }
       if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
-        throw new Error("the cloud computer could not be created or reached");
+        throw new LocalSetupError("computer", "the cloud computer could not be created or reached");
       }
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
@@ -4806,7 +4830,7 @@ async function startTurn(
         const hint = bot.autoStartVps
           ? "Check the VPS connection in App Settings → Connections."
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
-        throw new Error(`${autoVpsProblem}. ${hint}`);
+        throw new LocalSetupError("computer", `${autoVpsProblem}. ${hint}`);
       }
       // Keep management/status tools available on delegated turns. Handoff
       // depth and shared chain allowances are enforced at action admission;
@@ -4910,7 +4934,7 @@ async function startTurn(
         const selectedProfile = liveBot.browserProfile;
         await acquireDirectTurnResources(run, [`browser:${unifiedBrowserKey(liveBot) ?? `guest:${bot.id}`}`, screenResource], computerKind ? "computer" : "browser", humanIsOwner);
         if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before dispatch");
-        browser = await browserIntegration(bot.id, selectedProfile, threadId, () => {
+        const minted = await browserIntegration(bot.id, selectedProfile, threadId, () => {
           const current = store.bot(bot.id);
           return (
             directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId) &&
@@ -4919,7 +4943,8 @@ async function startTurn(
             current?.browserProfile === selectedProfile
           );
         }, dispatchClaimId);
-        if (browser) integrations.browser = browser.integration;
+        if (minted && "unavailable" in minted) noteBrowserUnavailable(threadId, bot, minted.unavailable);
+        else if (minted) { browser = minted; integrations.browser = minted.integration; }
       }
       // A cancelled adapter can be between accepting sendTurn and revealing
       // its provider turn id. Never overlap a replacement with that ambiguous
@@ -5219,10 +5244,13 @@ async function startTurn(
       const message = isMemoryContextRevoked(failure) && !submissionBoundary.canRetry
         ? "Context changed; previous attempt may have started. Review its output before trying again."
         : failure instanceof Error ? failure.message : String(failure);
+      // A failure of this device's browser, computer or working folder says
+      // so, so the card does not send the person to Provider settings.
+      const localFailure = localSetupFailureOf(failure);
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
+        tool: { name: `error: ${message.slice(0, 160)}`, ok: false, ...(localFailure ? { localFailure } : {}) },
       });
       // Worth a buzz for the same reason a routine failure is, and the rule
       // notify.ts encodes: the bot is not working, and the cause is usually
@@ -6208,7 +6236,8 @@ async function runGroupMemberTurn(
         currentBot.browserProfile === selectedProfile
       );
     }, internalGeneration);
-    if (browser) integrations.browser = browser.integration;
+    if (browser && "unavailable" in browser) noteBrowserUnavailable(threadId, readyBot, browser.unavailable);
+    else if (browser) integrations.browser = browser.integration;
   }
   // Stop/delete may land while the capability is being minted. The callback
   // above prevents publication; this second check also unwinds the bot's
@@ -10679,7 +10708,7 @@ const server = createServer(async (req, res) => {
       for (const msg of messages) {
         const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? "Bot");
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
-        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
+        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? browserUnavailableDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
         else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
           lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");

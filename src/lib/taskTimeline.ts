@@ -1,5 +1,6 @@
 import { hostStoppedReason } from "../../shared/host-stop.ts";
 import { folderTrustDisplayName } from "../../shared/folder-trust.ts";
+import { browserUnavailableDisplayName } from "../../shared/browser-unavailable.ts";
 
 /** The persisted message fields this pure projection needs. Keeping this
  * structural avoids pulling the renderer's TSX store into server tests. */
@@ -46,7 +47,7 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         continue;
       }
       // a folder-trust notice is observed the same way: not a run, not a failure
-      const trustNotice = folderTrustDisplayName(message.tool.name);
+      const trustNotice = folderTrustDisplayName(message.tool.name) ?? browserUnavailableDisplayName(message.tool.name);
       if (trustNotice) {
         events.push({ id: message.id, at: message.at, label: trustNotice, state: "observed", kind: "tool" });
         continue;

@@ -14,7 +14,7 @@ afterEach(() => {
   setLocale("en");
 });
 
-const render = (props: { message: string; details?: string; errorKind?: string; setup?: string; onRetry?: () => void }) =>
+const render = (props: { message: string; details?: string; errorKind?: string; localFailure?: string; setup?: string; onRetry?: () => void }) =>
   renderToStaticMarkup(createElement(RuntimeErrorCard, { ...props, onOpenProviderSettings: () => {} }));
 
 /** Catalog copy as it appears in the rendered markup: React escapes the same
@@ -242,5 +242,64 @@ describe("typed engine failures", () => {
     const markup = render({ message: "Internal error", errorKind, details: `Internal error\nEngine error kind: ${errorKind}\n${code}` });
     expect(markup).toContain("The engine reported an error without explaining what went wrong.");
     expect(markup).not.toContain("did not accept the credentials");
+  });
+});
+
+// A turn this device could not set up — the built-in browser, the bot's
+// computer, its working folder — is not a provider failure. The card that
+// said "choose another configured model in Provider settings" for a browser
+// version check that timed out sent the person to the one place that could
+// not help.
+describe("local setup failures", () => {
+  const providerAdvice = /Provider settings|configured model|choose another/;
+
+  it.each([
+    ["browser", "agent-browser command timed out", "The built-in browser could not start"],
+    ["computer", "CUA Driver is not ready for this computer — check permissions and restart Murage", "This bot&#x27;s computer was not ready"],
+    ["working-folder", "Project folder lease refused: conflict", "This bot&#x27;s working folder could not be used"],
+  ])("gives a %s failure its own card, with Retry and no provider advice", (localFailure, message, title) => {
+    const markup = render({ message, localFailure, onRetry: () => {} });
+    expect(markup).toContain('data-runtime-error="local-setup"');
+    expect(markup).toContain(`data-local-failure="${localFailure}"`);
+    expect(markup).toContain(title);
+    expect(markup).toContain(rendered(message));
+    expect(markup).toContain("not with your model provider");
+    expect(markup).toMatch(/<\/svg> Retry<\/button>/);
+    expect(markup).not.toMatch(providerAdvice);
+    expect(markup).not.toContain("This request hit a problem");
+  });
+
+  // Turns saved by earlier builds, when a browser check failed the whole
+  // turn, carry no tag. Their Murage-authored copy still gets the honest card.
+  it.each([
+    "agent-browser command timed out",
+    "agent-browser command failed (1)",
+    "agent-browser 0.36.0 is required",
+    "No verified pinned agent-browser or executable on PATH; install the optional browser engine",
+  ])("recognises the saved browser failure %j without a tag", (message) => {
+    const markup = render({ message, onRetry: () => {} });
+    expect(markup).toContain('data-local-failure="browser"');
+    expect(markup).not.toMatch(providerAdvice);
+  });
+
+  it("never lets engine text or an unknown tag claim a local failure", () => {
+    for (const props of [
+      // Engine output always carries details; its message cannot choose the card.
+      { message: "agent-browser command timed out", details: "agent-browser command timed out\nACP request: session/prompt" },
+      { message: "provider said agent-browser command timed out" },
+      { message: "CUA Driver is not ready for this computer — check permissions and restart Murage" },
+      { message: "Internal error", localFailure: "provider" },
+      { message: "Internal error", localFailure: "Browser" },
+    ]) {
+      const markup = render({ ...props, onRetry: () => {} });
+      expect(markup, JSON.stringify(props)).not.toContain("local-setup");
+      expect(markup, JSON.stringify(props)).toContain("Provider settings");
+    }
+  });
+
+  it("keeps a setup card for an engine that needs setup, whatever the tag", () => {
+    const markup = render({ message: "agent-browser command timed out", localFailure: "browser", setup: "install" });
+    expect(markup).toContain("This engine needs setup");
+    expect(markup).not.toContain("local-setup");
   });
 });
