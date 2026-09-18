@@ -341,6 +341,27 @@ describe("Store", () => {
     expect(saved.find((bot) => bot.id === absent.id)).not.toHaveProperty("cloudBackend");
   });
 
+  it("keeps the use-my-Chrome opt-in only as an exact true on one bot after a hand edit", () => {
+    const store = new Store(selection);
+    const first = store.createBot();
+    const second = store.createBot();
+    const truthy = store.createBot();
+    const raw: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    raw.find((bot) => bot.id === first.id)!.useMyChrome = true;
+    raw.find((bot) => bot.id === second.id)!.useMyChrome = true;
+    (raw.find((bot) => bot.id === truthy.id) as unknown as { useMyChrome: string }).useMyChrome = "yes";
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+
+    // The first holder in file order keeps it; every later claim is dropped.
+    const [kept, dropped] = raw.filter((bot) => bot.id === first.id || bot.id === second.id).map((bot) => bot.id);
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(kept!)?.useMyChrome).toBe(true);
+    expect(reloaded.bot(dropped!)).not.toHaveProperty("useMyChrome");
+    expect(reloaded.bot(truthy.id)).not.toHaveProperty("useMyChrome");
+    const saved: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    expect(saved.filter((bot) => bot.useMyChrome).map((bot) => bot.id)).toEqual([kept]);
+  });
+
   // The voice note round-trips like any other optional field, and has exactly
   // one shape for "none": absent. A blank one would otherwise put an empty
   // `Personality:` line in front of the model, and a hand-edited bots.json

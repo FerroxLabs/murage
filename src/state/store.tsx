@@ -354,6 +354,8 @@ export interface Bot {
   /** Named browser profile id (config.browserProfiles); absent/null = the
    * bot's own session (null is how a clear travels over PATCH). */
   browserProfile?: string | null;
+  /** The owner opted this bot into their own running Chrome (one bot at most). */
+  useMyChrome?: boolean;
   messages: Message[];
   /** Renderer-only deletion transition; never expose the removed transcript. */
   awaitingThreadSnapshot?: boolean;

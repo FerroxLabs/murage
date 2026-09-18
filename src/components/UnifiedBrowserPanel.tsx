@@ -3,6 +3,21 @@ import { acceptBrowserGeneration, expectedStaleBrowserFrame } from "@/lib/browse
 import { Hand, Maximize2, RotateCcw } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { BrowserLiveView, type LiveBrowserFrame } from "./BrowserLiveView";
+/** Select value for "Use my Chrome"; "@" can never appear in a profile id. */
+export const MY_CHROME = "@my-chrome";
+/** The PATCH a browser choice sends, or null when it must be confirmed first. */
+export function browserChoicePatch(bot: Pick<Bot, "useMyChrome">, value: string): Record<string, unknown> | null {
+  if (value === MY_CHROME) return bot.useMyChrome ? {} : null;
+  return { ...(bot.useMyChrome ? { useMyChrome: false } : {}), browserProfile: value || null };
+}
+/** What choosing "Use my Chrome" means, said at the moment of choosing. */
+export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { botName: string; pending: boolean; onConfirm: () => void; onCancel: () => void }) {
+  return <div role="dialog" aria-label="Use my Chrome" className="flex flex-col gap-2 rounded-lg bg-card p-3 text-xs">
+    <p className="text-sm text-ink">{botName} will act inside your own Chrome, signed in as you, and can see your open tabs.</p>
+    <p className="text-ink-secondary">To connect, open chrome://inspect/#remote-debugging in Chrome and turn on remote debugging. Chrome does not restart and your windows stay open. Chrome asks you to Allow the connection, and {botName} works in a tab of its own. Only one bot can use your Chrome at a time.</p>
+    <div className="flex gap-2"><button disabled={pending} onClick={onConfirm} className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Use my Chrome</button><button onClick={onCancel} className="rounded-lg bg-control px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-accent">Cancel</button></div>
+  </div>;
+}
 type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; url: string };
 export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void }) {
   const { state, dispatch } = useStore();
@@ -13,6 +28,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [pending, setPending] = useState(false);
+  const [confirmMyChrome, setConfirmMyChrome] = useState(false);
   const current = useRef<Status | null>(null);
   const epoch = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -48,7 +64,11 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
     };
     void poll();
     return () => { alive = false; epoch.current++; clearTimeout(timer); };
-  }, [base, bot.browserProfile]);
+  }, [base, bot.browserProfile, bot.useMyChrome]);
+  const chooseBrowser = async (body: Record<string, unknown>) => {
+    try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", bot: result.bot }); setConfirmMyChrome(false); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Profile change failed"); }
+  };
   const action = async (name: string, extra: Record<string, unknown> = {}) => {
     const identity = epoch.current; setPending(true); setError("");
     try {
@@ -80,10 +100,15 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
     </form>}
     <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{connectionError ? "Unavailable" : status?.connected ? "Live" : "Disconnected"} · {status?.held ? "Human control" : "Agent control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to agent" : "Take control"}</button></div>
     {status?.protectedDocument && <div className="rounded-lg bg-card p-3 text-xs text-ink-secondary">This session contains protected interaction. The agent cannot read or act on it. Take control and reopen a blank page to clear the protected document.<button disabled={!status.held || pending} onClick={() => void action("reopen")} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>}
-    <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={async event => {
-      try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify({ browserProfile: event.target.value || null }) }); dispatch({ type: "botPatched", bot: result.bot }); }
-      catch (cause) { setError(cause instanceof Error ? cause.message : "Profile change failed"); }
-    }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option></select></label>
+    <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
+      const patch = browserChoicePatch(bot, event.target.value);
+      // Nothing changes until the owner confirms what attaching means.
+      if (!patch) { setConfirmMyChrome(true); return; }
+      setConfirmMyChrome(false);
+      if (Object.keys(patch).length) void chooseBrowser(patch);
+    }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option><option value={MY_CHROME}>Use my Chrome</option></select></label>
+    {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true })} onCancel={() => setConfirmMyChrome(false)} />}
+    {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} can see your open tabs.</p>}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
     {(connectionError || error) && <div role="alert" className="rounded-lg border border-danger/30 p-2 text-xs text-danger">{connectionError || error}</div>}
   </div>;
