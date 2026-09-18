@@ -66,7 +66,7 @@ test("the settings Auto switch on a bot with no chosen computer asks before the 
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
   await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
-  const auto = dialog.getByRole("switch", { name: "Auto mode", exact: true });
+  const auto = dialog.getByRole("radio", { name: "Auto", exact: true });
   await expect(auto).not.toBeChecked();
   expect((await storedBot()).computer).toBeUndefined();
   const warning = page.getByRole("dialog", { name: "Allow Auto mode on this computer?", exact: true });
@@ -123,7 +123,7 @@ test.describe("a browser whose UA names another platform (FOLLOW5)", () => {
     await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
     await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
-    const auto = dialog.getByRole("switch", { name: "Auto mode", exact: true });
+    const auto = dialog.getByRole("radio", { name: "Auto", exact: true });
     await expect(auto).not.toBeChecked();
     expect((await storedBot()).computer).toBeUndefined();
     const warning = page.getByRole("dialog", { name: "Allow Auto mode on this computer?", exact: true });

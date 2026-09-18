@@ -567,6 +567,8 @@ function routineFields(args: Json): { fields: Json; error?: string } {
 
 function confirmationResult(r: Json, fallback: string): { text: string } {
   const summary = typeof r.summary === "string" && r.summary.trim() ? `\n\n${r.summary.trim()}` : "";
+  // Full access with setup requests allowed confirmed it for the user.
+  if (r.autoApproved === true) return { text: `Approved automatically under Full access: ${fallback} has been applied.${summary}` };
   return {
     text: `A confirmation card is now visible to the user for ${fallback}.${summary}\n\nThis change has not been applied yet. End this turn and wait for the user to confirm or deny the card; do not claim the routine was created or changed before confirmation.`,
   };
@@ -973,6 +975,9 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       ? "The current version remains unchanged until the user reviews and applies the update."
       : "The skill is staged and inactive until the user reviews and enables it.";
     const proposal = args.action === "update" ? `updating skill “${nameLabel}”` : `new skill “${nameLabel}”`;
+    if (r.autoApproved === true) {
+      return { text: `Approved automatically under Full access: the ${proposal} is ${args.action === "update" ? "applied" : "enabled"}.${warningText}` };
+    }
     return {
       text: `A confirmation card is now visible to the user for ${proposal}.${warningText}\n\n${status} End this turn and wait for the decision.`,
     };

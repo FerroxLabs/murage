@@ -18,6 +18,9 @@ import { BotSetupAction } from "./BotIntakeCard";
 import { BotSkillsPanel } from "./BotSkillsPanel";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
+import { FullAccessWarning } from "./FullAccessWarning";
+import { BotPermissionDefault } from "./BotPermissionDefault";
+import { defaultModeStep, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
@@ -346,7 +349,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
-  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
+  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "local" | null>(null);
+  const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean } | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -365,6 +369,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "avatarUrl"
         | "avatarCrop"
         | "autoApprove"
+        | "fullAccess"
+        | "fullAccessChannelMessages"
+        | "fullAccessSetupRequests"
         | "autoReview"
         | "speakReplies"
         | "voice"
@@ -374,8 +381,18 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "browser"
         | "modelSelection"
       >
-    > & { acknowledgeLocalAuto?: boolean; persona?: string },
-  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined?{settingsScope:"defaults" as const}:{})} });
+    > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; persona?: string },
+  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined?{settingsScope:"defaults" as const}:{})} });
+  // The bot's default approval level: the same warnings, in the same order,
+  // as the composer's switch (defaultModeStep). The platform is the
+  // harness's own (announced on /api/config), not this browser's UA.
+  const chooseDefaultMode = (mode: PermissionMode) => {
+    const needsLocal = autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities, { harness: state.config?.harness }), computer: bot.computer, autoApprove: bot.autoApprove });
+    const step = defaultModeStep(bot, mode, needsLocal);
+    if (step.kind === "full-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer });
+    else if (step.kind === "local-warning") setLocalAutoWarning(step.mode);
+    else patch(step.patch);
+  };
   // `persona` is validated, persisted and prompted server-side already
   // (shared/bot-profile.ts, server/bot-profile.ts, server/index.ts). The
   // renderer's `Bot` record and `BotUpdatePatch` live in src/state/, which
@@ -772,33 +789,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
 
           <SettingsSection id="permissions" active={section}>
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">Auto mode</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.computer === "local"
-                  ? bot.autoApprove
-                    ? "Keeps going on this computer; you'll still be asked about anything destructive, and about questions it asks you."
-                    : "Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask."
-                  : bot.autoApprove
-                  ? "Keeps going on its own; you'll still be asked about anything destructive, and about questions it asks you."
-                  : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
-              </div>
-            </div>
-            <Switch
-              checked={Boolean(bot.autoApprove)}
-              aria-label="Auto mode"
-              onClick={() => {
-                // Same rule as the composer chip and the server: a bot that
-                // never chose a computer mounts this Mac too, so switching it
-                // to Auto shows the warning instead of a refused PATCH. The
-                // platform is the harness's own (announced on /api/config),
-                // not this browser's UA (FOLLOW5).
-                if (autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities, { harness: state.config?.harness }), computer: bot.computer, autoApprove: bot.autoApprove })) setLocalAutoWarning("auto");
-                else patch({ autoApprove: !bot.autoApprove });
-              }}
-            />
-          </div>
+          <BotPermissionDefault
+            bot={bot}
+            onThisComputer={bot.computer === "local"}
+            onChoose={chooseDefaultMode}
+            onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
+          />
 
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
@@ -877,9 +873,20 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       open={localAutoWarning !== null}
       onCancel={() => setLocalAutoWarning(null)}
       onConfirm={() => {
-        if (localAutoWarning === "auto") patch({ autoApprove: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "auto") patch({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "full") patch({ autoApprove: true, fullAccess: true, acknowledgeLocalAuto: true });
         if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
         setLocalAutoWarning(null);
+      }}
+    />
+    <FullAccessWarning
+      open={fullAccessWarning !== null}
+      botName={bot.name}
+      onThisComputer={fullAccessWarning?.onThisComputer === true}
+      onCancel={() => setFullAccessWarning(null)}
+      onConfirm={() => {
+        if (fullAccessWarning) patch({ autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, ...(fullAccessWarning.onThisComputer ? { acknowledgeLocalAuto: true } : {}) });
+        setFullAccessWarning(null);
       }}
     />
     </>

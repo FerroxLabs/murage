@@ -786,6 +786,14 @@ export class RoutineManager {
     );
   }
 
+  /** Why the run working in this thread exists, and for whom (Full access
+   * reads it to tell the owner's channel message from everything else). */
+  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && ["running", "waiting"].includes(candidate.status));
+    if (!run) return null;
+    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: structuredClone(run.humanPrincipal) } : {}) };
+  }
+
   create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);

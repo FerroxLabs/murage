@@ -8,7 +8,7 @@ export const BOT_SETTINGS_SECTIONS = [
   { id: "routines", label: "Routines", keywords: "schedule calendar automation recurring" },
   { id: "access", label: "Access", keywords: "computer browser connected apps accounts working folder workspace cloud" },
   { id: "model", label: "Model", keywords: "provider engine effort selection default" },
-  { id: "permissions", label: "Permissions", keywords: "auto approval review safety contacting peers" },
+  { id: "permissions", label: "Permissions", keywords: "auto approval review safety contacting peers full access ask telegram slack discord setup" },
   { id: "voice", label: "Voice & alerts", keywords: "speech notifications sound speak replies" },
   { id: "history", label: "History", keywords: "tasks conversations threads" },
   { id: "usage", label: "Usage", keywords: "cost tokens turns billing spend" },

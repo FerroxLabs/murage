@@ -570,6 +570,13 @@ export interface BotRecord {
   /** When the owner confirmed this bot's one-time Full access warning, on
    * the desktop. Server-written only; never accepted in a patch body. */
   fullAccessAcknowledgedAt?: number;
+  /** Full access also covers the owner's own Telegram, Slack and Discord
+   * messages. Desktop-set; missing or anything but `true` is off. */
+  fullAccessChannelMessages?: boolean;
+  /** Full access also approves setup requests (learned skills, routine
+   * proposals, a folder's own instructions). Desktop-set; missing or
+   * anything but `true` is off. */
+  fullAccessSetupRequests?: boolean;
   /** Optional model review of otherwise undecided, attended approval cards.
    * Unknown persisted values are treated as off by the review boundary. */
   autoReview?: "off" | "shadow" | "enforce";

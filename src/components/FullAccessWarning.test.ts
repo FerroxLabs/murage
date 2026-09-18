@@ -16,6 +16,8 @@ describe("FullAccessWarning", () => {
     expect(markup).toContain("will not ask before running commands, reading credentials or personal files, or contacting other bots");
     expect(markup).toContain("webhooks or routines still ask");
     expect(markup).toContain("image generation still asks");
+    expect(markup).toContain("messages from Telegram, Slack or Discord, and setup requests");
+    expect(markup).toContain("unless you allow them in Bot Settings");
     expect(markup).not.toContain("your own screen");
   });
 

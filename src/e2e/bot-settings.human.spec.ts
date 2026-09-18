@@ -126,7 +126,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await search.fill("notebook"); await dialog.getByRole("button", { name: /^Legacy notebook/ }).click();
   const notebook = dialog.getByRole("textbox", { name: "Legacy bot notebook", exact: true }); await expect(notebook).toBeVisible();
   const note = `Draft retained ${width} ${skin}`; await notebook.fill(note);
-  await search.fill("permissions"); await expect(dialog.getByRole("switch", { name: "Auto mode", exact: true })).not.toBeChecked();
+  await search.fill("permissions"); await expect(dialog.getByRole("radio", { name: "Auto", exact: true })).not.toBeChecked();
   await search.fill("notebook"); await expect(notebook).toHaveValue(note);
   let release: (() => void) | undefined;
   await page.route(`**/api/bots/${botId}/memory`, async route => {

@@ -8,6 +8,9 @@ export const FULL_ACCESS_WARNING =
 export const FULL_ACCESS_STILL_ASKS =
   "Turns started by webhooks or routines still ask, as they do in Auto, and image generation still asks before it spends.";
 
+export const FULL_ACCESS_ASKS_UNLESS_ALLOWED =
+  "Your own messages from Telegram, Slack or Discord, and setup requests like installing skills, proposing routines or trusting folders, also still ask unless you allow them in Bot Settings.";
+
 export const FULL_ACCESS_ON_THIS_COMPUTER =
   "On this computer that includes your own screen, mouse and keyboard.";
 
@@ -66,6 +69,7 @@ export function FullAccessWarning({
               <p className="font-medium text-ink">{FULL_ACCESS_WARNING}</p>
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               <p>{FULL_ACCESS_STILL_ASKS}</p>
+              <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
               <p>You are asked this once for this bot. Switch back to Auto or Ask at any time.</p>
             </div>
           </div>

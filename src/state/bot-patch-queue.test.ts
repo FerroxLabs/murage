@@ -222,6 +222,25 @@ describe("bot patch queue", () => {
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("acknowledgeLocalAuto");
   });
 
+  it("carries the Full access confirmation to the wire but never into a state overlay", async () => {
+    const sent: BotUpdatePatch[] = [];
+    const queue = createBotPatchQueue({
+      send: async (_botId, patch) => {
+        sent.push(patch);
+        return bot();
+      },
+      reconcile: async () => bot(),
+      onAuthoritative: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    queue.enqueue("bot-1", { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, settingsScope: "defaults" }, bot());
+    expect(queue.overlayFor("bot-1")).toEqual({ autoApprove: true, fullAccess: true });
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+    expect(sent).toEqual([{ autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, settingsScope: "defaults" }]);
+  });
+
   it("sends Auto as null but clears the persisted destination in optimistic state", async () => {
     const sent: BotUpdatePatch[] = [];
     const queue = createBotPatchQueue({
