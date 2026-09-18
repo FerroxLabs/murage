@@ -35,6 +35,7 @@ import {
 } from "../../../shared/folder-trust.ts";
 import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
 import { resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
+import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -1426,6 +1427,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (typeof delta === "string" && delta) {
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta });
               }
+              break;
+            }
+            case "plan": {
+              // The protocol's structured to-do list. Every update carries the
+              // whole list, so it is forwarded whole and never joins the answer.
+              const entries = normalizeAgentPlan(u.entries);
+              if (entries) emit({ ...base(threadId, turnId), type: "plan.updated", entries });
               break;
             }
             case "tool_call": {

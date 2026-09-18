@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   StoreProvider,
+  agentPlansAfterEvent,
   createStreamDeltaBuffer,
   configStatusFromFrame,
   initialState,
@@ -139,6 +140,36 @@ class SnapshotEventSource implements LiveEventSourceLike {
     this.onmessage?.({ data: JSON.stringify(frame), lastEventId });
   }
 }
+
+describe("live agent plan", () => {
+  const read = { content: "Read", status: "pending" as const };
+  const fix = { content: "Fix", status: "in_progress" as const };
+
+  it("replaces a thread's whole plan on each update and leaves other threads alone", () => {
+    const first = agentPlansAfterEvent({}, { type: "plan.updated", threadId: "t1", entries: [read] });
+    expect(first).toEqual({ t1: [read] });
+    const second = agentPlansAfterEvent({ ...first, t2: [fix] }, { type: "plan.updated", threadId: "t1", entries: [fix] });
+    expect(second).toEqual({ t1: [fix], t2: [fix] });
+  });
+
+  it("removes the card when the plan is emptied or the turn ends", () => {
+    expect(agentPlansAfterEvent({ t1: [read] }, { type: "plan.updated", threadId: "t1", entries: [] })).toEqual({});
+    expect(agentPlansAfterEvent({ t1: [read], t2: [fix] }, { type: "turn.completed", threadId: "t1" })).toEqual({ t2: [fix] });
+  });
+
+  it("ignores a malformed update and every other event without a new object", () => {
+    const plans = { t1: [read] };
+    expect(agentPlansAfterEvent(plans, { type: "plan.updated", threadId: "t1", entries: "Read" })).toBe(plans);
+    expect(agentPlansAfterEvent(plans, { type: "content.delta", threadId: "t1" })).toBe(plans);
+    expect(agentPlansAfterEvent(plans, { type: "turn.completed", threadId: "t9" })).toBe(plans);
+    expect(agentPlansAfterEvent(plans, { type: "plan.updated", entries: [fix] })).toBe(plans);
+  });
+
+  it("normalizes what it keeps", () => {
+    expect(agentPlansAfterEvent({}, { type: "plan.updated", threadId: "t1", entries: [{ content: " Ship ", status: "later" }] }))
+      .toEqual({ t1: [{ content: "Ship", status: "pending" }] });
+  });
+});
 
 describe("replacement snapshot boundary", () => {
   it("flushes bot frames without reconnecting when a peripheral snapshot fails", async () => {

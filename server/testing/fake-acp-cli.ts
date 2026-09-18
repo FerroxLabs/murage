@@ -113,6 +113,9 @@
 //   FAKE_ACP_MODE=retry-status-thought  Fuigo 1.0.18's retry progress: an
 //                        agent_thought_chunk tagged _meta["fuigo/retryStatus"],
 //                        then ordinary reasoning and the answer
+//   FAKE_ACP_MODE=plan   ACP `plan` session updates (the protocol's to-do list):
+//                        a first plan, a malformed one, an update that ticks
+//                        an entry off, then the answer
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
@@ -830,6 +833,25 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Retrying the model (1/2): empty response from model (reasoning_only)\n\n" }, _meta: { "fuigo/retryStatus": retryStatus } } } });
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "fixture reasoning" } } } });
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fixture final answer" } } } });
+        complete();
+        return;
+      }
+      if (mode === "plan") {
+        // Wire shape of SessionUpdate::Plan (agent-client-protocol-schema 0.11):
+        // every update carries the whole list; the client replaces its copy.
+        const plan = (entries: unknown) => out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "plan", entries } } });
+        plan([
+          { content: "Read the folder", priority: "high", status: "in_progress" },
+          { content: "Fix the bug", priority: "medium", status: "pending" },
+        ]);
+        plan("not a list");
+        plan([
+          { content: "Read the folder", priority: "high", status: "completed" },
+          { content: "Fix the bug", priority: "medium", status: "in_progress" },
+          { content: "", priority: "low", status: "pending" },
+          { content: "Report back", priority: "low", status: "someday" },
+        ]);
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fixture plan answer" } } } });
         complete();
         return;
       }

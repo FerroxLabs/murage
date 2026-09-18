@@ -9,6 +9,7 @@ import type { ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
 import type { QuestionAnswer, QuestionSpec } from "../shared/questions.ts";
+import type { AgentPlanEntry } from "../shared/agent-plan.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -128,6 +129,9 @@ export type RuntimeEvent = RuntimeEventBase &
      * duplicated through every connected window. */
     | { type: "item.completed"; itemType: "assistant_image"; data: string; alt?: string }
     | { type: "content.delta"; streamKind: "assistant_text" | "reasoning_text"; delta: string }
+    /** The agent's to-do list for this turn, whole: each update replaces the
+     * previous one (ACP `plan`). Live only — it is not a transcript message. */
+    | { type: "plan.updated"; entries: AgentPlanEntry[] }
     | {
         type: "request.opened";
         requestType: "permission" | "question";

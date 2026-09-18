@@ -285,3 +285,25 @@ describe("the chat header answers to its container, not the window", () => {
     expect(header).toContain("description: workspaceDetail(workspace)");
   });
 });
+
+/** The live tail of the 1:1 transcript: the stretch between the message list
+ *  and the working mascot, cut out so the checks cannot pass on other code. */
+const liveTail = (() => {
+  const start = chat.indexOf("{provisioning && (");
+  const end = chat.indexOf("<TurnPresence", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return chat.slice(start, end);
+})();
+
+describe("the running turn's live detail", () => {
+  it("shows the agent's plan while the bot is working", () => {
+    expect(chat).toContain("const plan = stream.plan[bot.threadId];");
+    expect(liveTail).toMatch(/\{bot\.busy && plan\?\.length \? <LivePlanCard entries=\{plan\} \/> : null\}/);
+  });
+
+  it("shows live thinking only while working, only with Tool calls on, folded once the answer streams", () => {
+    expect(chat).toContain("const showThinking = showToolCallsEnabled(state.config);");
+    expect(liveTail).toMatch(/\{bot\.busy && showThinking && reasoning \? \(\s*<LiveThinking key=\{bot\.threadId\} text=\{reasoning\} answering=\{Boolean\(streaming\)\} \/>/);
+  });
+});

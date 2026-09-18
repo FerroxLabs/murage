@@ -31,10 +31,28 @@ interface Completion {
   finishReason: string | null;
 }
 
+/** Servers disagree on the reasoning field's name. llama.cpp, DeepSeek and
+ * vLLM up to 0.11.0 send `reasoning_content`; vLLM 0.11.1 to 0.15.x send the
+ * same text under both names; vLLM 0.16.0 and later send only `reasoning`
+ * (DeltaMessage and ChatMessage in vLLM's protocol modules). */
+interface ReasoningFields {
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+}
+
+/** The reasoning text of one message or delta, under either name. `reasoning`
+ * wins when both are present, so text a server sends twice is counted once. */
+const reasoningOf = (part: ReasoningFields | undefined): string =>
+  typeof part?.reasoning === "string" && part.reasoning !== ""
+    ? part.reasoning
+    : typeof part?.reasoning_content === "string"
+      ? part.reasoning_content
+      : "";
+
 interface CompletionJson {
   choices?: Array<{
-    message?: { content?: unknown; reasoning_content?: unknown };
-    delta?: { content?: unknown; reasoning_content?: unknown };
+    message?: ReasoningFields & { content?: unknown };
+    delta?: ReasoningFields & { content?: unknown };
     finish_reason?: unknown;
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -176,7 +194,7 @@ const wholeCompletionFrom = (body: string, reasoning: boolean | undefined): Comp
   const message = choice?.message;
   return {
     text: typeof message?.content === "string" ? message.content : "",
-    reasoning: reasoning && typeof message?.reasoning_content === "string" ? message.reasoning_content : "",
+    reasoning: reasoning ? reasoningOf(message) : "",
     usage: usageFrom(json.usage),
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
   };
@@ -262,7 +280,7 @@ const isProgress = (chunk: CompletionJson): boolean => {
   const choice = chunk.choices?.[0];
   const delta = choice?.delta;
   return (typeof delta?.content === "string" && delta.content !== "")
-    || (typeof delta?.reasoning_content === "string" && delta.reasoning_content !== "")
+    || reasoningOf(delta) !== ""
     || (typeof choice?.finish_reason === "string" && choice.finish_reason !== "")
     || (chunk.usage !== undefined && chunk.usage !== null);
 };
@@ -425,9 +443,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const message = choice?.message;
       return {
         text: typeof message?.content === "string" ? message.content : "",
-        reasoning: options.reasoning && typeof message?.reasoning_content === "string"
-          ? message.reasoning_content
-          : "",
+        reasoning: options.reasoning ? reasoningOf(message) : "",
         usage: usageFrom(json.usage),
         finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
       };
@@ -481,9 +497,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (isProgress(chunk)) idle.renew();
       const choice = chunk.choices?.[0];
       const delta = choice?.delta;
-      const reasoningDelta = options.reasoning && typeof delta?.reasoning_content === "string"
-        ? delta.reasoning_content
-        : "";
+      const reasoningDelta = options.reasoning ? reasoningOf(delta) : "";
       const contentDelta = typeof delta?.content === "string" ? delta.content : "";
       if (reasoningDelta) {
         reasoning += reasoningDelta;
