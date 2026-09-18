@@ -46,6 +46,8 @@ import { StoppedRow } from "./StoppedRow";
 import { hostStoppedReason } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { FolderTrustRow } from "./FolderTrustRow";
+import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
+import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
@@ -266,6 +268,8 @@ const Transcript = memo(function Transcript({
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
+            ) : browserUnavailableReason(m.tool.name) ? (
+              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} />
             ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} />
             ) : null

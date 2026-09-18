@@ -55,6 +55,29 @@ export function classifyLocalResourceConflict(message: unknown, details?: unknow
   return resource ? { kind: "resource-busy", resource } : undefined;
 }
 
+/** Part of THIS device that a turn needed and Murage could not set up: the
+ * built-in browser, the bot's computer (Local VM, this Mac's CUA Driver, a
+ * VPS or cloud box), or its working folder. None is a model-provider problem,
+ * so none may be answered with "choose another configured model in Provider
+ * settings". The server tags the failure where it knows the source
+ * (`Message.tool.localFailure`); the tag is read from that structured field
+ * only, never inferred from engine or provider text. */
+export const LOCAL_SETUP_FAILURES = ["browser", "computer", "working-folder"] as const;
+export type LocalSetupFailure = (typeof LOCAL_SETUP_FAILURES)[number];
+
+/** The browser engine's own failure copy (server/browser-engine.ts), as
+ * earlier builds recorded it when a browser check failed the whole turn.
+ * Those turns carry no tag, so this keeps their saved card honest. Matched
+ * verbatim, and like a lease refusal only when there are no engine details:
+ * a Murage setup failure is recorded without them. */
+const LEGACY_BROWSER_SETUP_FAILURE = /^(?:agent-browser command timed out|agent-browser command failed \((?:-?\d+|null)\)|agent-browser \d+\.\d+\.\d+ is required|MURAGE_AGENT_BROWSER_PATH is not a readable executable file|No verified pinned agent-browser or executable on PATH; install the optional browser engine)$/;
+
+export function classifyLocalSetupFailure(message: unknown, details?: unknown, tagged?: unknown): LocalSetupFailure | undefined {
+  if (typeof tagged === "string" && (LOCAL_SETUP_FAILURES as readonly string[]).includes(tagged)) return tagged as LocalSetupFailure;
+  if (typeof message !== "string" || details) return undefined;
+  return LEGACY_BROWSER_SETUP_FAILURE.test(message.trim()) ? "browser" : undefined;
+}
+
 /** The renderer consumes fixed copy, never provider-supplied details or URLs. */
 export function providerErrorPresentation(info: ProviderErrorInfo): { title: string; summary: string; resolution: string; billingUrl?: string } {
   const provider = info?.provider === "flux-router" ? "Flux Router" : "Your model provider";
