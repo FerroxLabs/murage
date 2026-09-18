@@ -419,7 +419,7 @@ import { DiscordGatewayTransport } from "./channels/discord/transport.ts";
 import type { DiscordBinding } from "./channels/discord/event.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
-import { autoMountsLocalComputer, shouldMountLocalComputer } from "./local-routing.ts";
+import { autoMountsLocalComputer, botUsesHostComputer, shouldMountLocalComputer } from "./local-routing.ts";
 // 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
@@ -808,7 +808,14 @@ const guestBrowserBindings = new Map<string, string>();
 async function unifiedBrowserBinding(botId: string, profile: string | undefined) {
   const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
   const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
-  const identity = JSON.stringify([realmId, partition && partition !== "guest" ? partition : botId, partition === "guest"]);
+  // Tag the identity slot the way browserSessionId already tags its own
+  // (server/browser-engine.ts:169). Untagged, the middle slot held a
+  // partitionId OR a botId with nothing to tell them apart, and bot ids are
+  // lowercase UUIDs that satisfy BROWSER_PROFILE_ID (server/config.ts:22) —
+  // so a profile named after some bot's id memoised the two onto one native
+  // session and one cookie jar, and left the admission key (unifiedBrowserKey,
+  // which never consults this memo) disagreeing with the key dispatched.
+  const identity = JSON.stringify([realmId, partition && partition !== "guest" ? ["profile", partition] : ["bot", botId], partition === "guest"]);
   const existing = unifiedBrowserBindings.get(identity);
   if (existing) return existing;
   const engine = browserEngineStatus();
@@ -9095,7 +9102,7 @@ const server = createServer(async (req, res) => {
           && hostComputerThreads.get(internalClaim.threadId) === entry
           && entry.botId === internalClaim.botId && entry.ownerId === internalClaim.generation
           && hostControlRevision === revision
-          && !store.bots.some(bot => (bot.computer === undefined || bot.computer === "local") && computerControl.snapshot(bot.id).held);
+          && !store.bots.some(bot => botUsesHostComputer(bot.computer) && computerControl.snapshot(bot.id).held);
         if (!authorized()) return json(res, 403, { error: "computer turn is no longer authorized or a person has control" });
         const body = z.object({ method: z.enum(["tools/list", "tools/call"]), params: z.record(z.string(), z.unknown()).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
@@ -12251,9 +12258,16 @@ const server = createServer(async (req, res) => {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
-      await Promise.allSettled(
-        store.bots
-          .filter((bot) => bot.computer === "local")
+      // Every bot this machine's screen and keyboard are exposed to, which is
+      // NOT the same set as `computer === "local"`: a bot that never chose a
+      // computer is handed this Mac by the Auto fallback above, and that is
+      // the default for every bot the owner creates. One predicate
+      // (`botUsesHostComputer`) answers this for the sweep and for the host
+      // RPC gate, so the panic control cannot drift away from the thing it
+      // is meant to be able to stop.
+      const onHostComputer = store.bots.filter((bot) => botUsesHostComputer(bot.computer));
+      const swept = await Promise.allSettled(
+        onHostComputer
           .map(async (bot) => {
             const routineRun = routines!.activeBotRunForBot(bot.id);
             if (routineRun) {
@@ -12278,7 +12292,18 @@ const server = createServer(async (req, res) => {
             closeOpenApprovals(threadId);
           }),
       );
-      return json(res, 200, { ok: true });
+      // Say what was actually covered. The old answer was a bare `{ ok: true }`
+      // whatever happened, which is how a sweep that skipped every Auto bot
+      // could report success for a year; and `Promise.allSettled` drops the
+      // reason a particular bot's stop threw. `stopped` is the set this call
+      // took responsibility for and `failed` the ones it could not finish, so
+      // a caller can tell "nothing was running" from "something is still on
+      // your screen". Still 200: the Linux panel disables the driver itself
+      // straight after this call (src/components/LinuxLocalControl.tsx:38),
+      // and a throw there would abandon that far more important step.
+      const failed = onHostComputer.filter((_, index) => swept[index].status === "rejected").map((bot) => bot.id);
+      const stopped = onHostComputer.filter((bot) => !failed.includes(bot.id)).map((bot) => bot.id);
+      return json(res, 200, failed.length === 0 ? { ok: true, stopped } : { ok: false, stopped, failed });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "DELETE") {

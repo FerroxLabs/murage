@@ -507,20 +507,17 @@ it.runIf(AUTO_REACHES_HOST)("tells a bot that it can drive a computer whenever o
 // 4. Lifecycle, and two recorded defects
 // ---------------------------------------------------------------------------
 
-// DEFECT (found 2026-09-18). server/index.ts:12209 filters the
-// "stop touching my computer" sweep to `bot.computer === "local"`. But a bot
-// that never chose a computer is handed the same host Mac by the auto-fallback
-// at server/index.ts:4678-4693, and Auto is the DEFAULT for every bot the
-// owner creates. The host RPC gate at server/index.ts:9052 gets this right
-// (`bot.computer === undefined || bot.computer === "local"`); the panic sweep
-// does not. So the one control that exists to yank a bot off the owner's
-// desktop misses exactly the bots most likely to be on it, and still answers
-// `{ ok: true }`.
-//
-// This test pins the CURRENT behaviour so the gap cannot close silently. When
-// index.ts:12209 is fixed to include `undefined`, THIS TEST MUST FAIL and be
-// rewritten to assert the interrupt succeeds.
-it.runIf(AUTO_REACHES_HOST)("DEFECT: the local-computer interrupt does not stop an unassigned bot that is driving this Mac", async () => {
+// WAS A DEFECT (found by lane AT, fixed by lane AU, 2026-09-18).
+// server/index.ts filtered the "stop touching my computer" sweep to
+// `bot.computer === "local"`, while the host RPC gate asked the wider and
+// correct question (`undefined || "local"`). A bot that never chose a
+// computer is handed the same host Mac by the auto-fallback at
+// server/index.ts:4678-4693, and Auto is the DEFAULT for every bot the owner
+// creates — so the one control that exists to yank a bot off the owner's
+// desktop missed exactly the bots most likely to be on it, and still answered
+// `{ ok: true }`. Both sites now ask `botUsesHostComputer`
+// (server/local-routing.ts), so they cannot drift apart again.
+it.runIf(AUTO_REACHES_HOST)("stops an unassigned bot that is driving this Mac, not only an explicitly-local one", async () => {
   const auto = await makeBot("Panic auto", "verification", { browser: false });
   const explicit = await makeBot("Panic local", "second", { computer: "local", browser: false });
   try {
@@ -529,36 +526,66 @@ it.runIf(AUTO_REACHES_HOST)("DEFECT: the local-computer interrupt does not stop 
     expect(a, "the unassigned bot is on the host").toBeTruthy();
     expect(b).toBeTruthy();
     expect((await hostRpc(a.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status).toBe(200);
+    expect((await hostRpc(b.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status).toBe(200);
 
-    expect((await api("POST", "/api/local-computer/interrupt", {})).status).toBe(200);
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    // Success is now qualified by what it covered, so a caller can tell
+    // "nothing was running" from "something is still on your screen".
+    expect(stop.body.ok).toBe(true);
+    expect(stop.body.stopped).toContain(auto.id);
+    expect(stop.body.stopped).toContain(explicit.id);
 
-    // The explicitly-"local" bot is stopped, as intended.
-    await expect.poll(async () => (await task(explicit.id, explicit.threadId))?.busy, { timeout: 15_000 }).toBe(false);
+    // Both are stopped, and neither bearer reaches the Mac any more.
+    for (const bot of [auto, explicit]) {
+      await expect.poll(async () => (await task(bot.id, bot.threadId))?.busy, { timeout: 15_000 }).toBe(false);
+    }
+    expect([401, 403]).toContain((await hostRpc(a.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status);
     expect([401, 403]).toContain((await hostRpc(b.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status);
-
-    // The Auto bot is NOT — it is still running and still holds the Mac.
-    expect((await task(auto.id, auto.threadId))?.busy).toBe(true);
-    expect((await hostRpc(a.env.MURAGE_CONTROL_TOKEN, "fixture_ping")).status).toBe(200);
   } finally {
     for (const bot of [auto, explicit]) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
   }
 }, 90_000);
 
-// DEFECT (found 2026-09-18). server/index.ts:810 memoises browser bindings
-// under an UNTAGGED identity:
+// The other half of the same fix: widening the sweep must not turn it into
+// "stop everything". A bot that is explicitly off this computer keeps working
+// through a panic stop, and is not named in the answer either.
+it.runIf(AUTO_REACHES_HOST)("leaves a bot that is not on this computer running through a panic stop", async () => {
+  const auto = await makeBot("Panic scope auto", "verification", { browser: false });
+  const elsewhere = await makeBot("Panic scope off", "second", { computer: "off", browser: false });
+  try {
+    const a = mountedComputer(await startTurn(auto, "panic-scope-auto", false));
+    expect(a, "the unassigned bot is on the host").toBeTruthy();
+    await startTurn(elsewhere, "panic-scope-off", true);
+    expect((await task(elsewhere.id, elsewhere.threadId))?.busy).toBe(true);
+
+    const stop = await api("POST", "/api/local-computer/interrupt", {});
+    expect(stop.status).toBe(200);
+    expect(stop.body.stopped).toContain(auto.id);
+    expect(stop.body.stopped).not.toContain(elsewhere.id);
+
+    await expect.poll(async () => (await task(auto.id, auto.threadId))?.busy, { timeout: 15_000 }).toBe(false);
+    // Still working: this bot was never on the owner's screen.
+    expect((await task(elsewhere.id, elsewhere.threadId))?.busy).toBe(true);
+  } finally {
+    for (const bot of [auto, elsewhere]) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+  }
+}, 90_000);
+
+// WAS A DEFECT (found by lane AT, fixed by lane AU, 2026-09-18).
+// server/index.ts memoised browser bindings under an UNTAGGED identity:
 //     [realmId, partition && partition !== "guest" ? partition : botId, …]
-// The middle slot is a partitionId OR a botId with nothing to tell them apart.
-// Bot ids are lowercase UUIDs, which satisfy BROWSER_PROFILE_ID
-// (/^[a-z0-9_-]{1,40}$/, server/config.ts:22), so an owner can create a
+// The middle slot was a partitionId OR a botId with nothing to tell them
+// apart. Bot ids are lowercase UUIDs, which satisfy BROWSER_PROFILE_ID
+// (/^[a-z0-9_-]{1,40}$/, server/config.ts:22), so an owner could create a
 // profile whose id equals some bot's id through the ordinary config route and
-// two different bots collapse onto one native session and one cookie jar.
-// browserSessionId itself is safe — it tags ["profile", p] vs ["bot", id]
-// (server/browser-engine.ts:169) — so only the memo collides, which also
-// leaves the admission key (`unifiedBrowserKey`, which never consults the
-// memo) disagreeing with the key actually dispatched.
-//
-// Pins the CURRENT behaviour. Tagging the identity slot makes this test fail.
-it("DEFECT: a browser profile named after a bot's id puts two bots on one browser session", async () => {
+// two different bots collapsed onto one native session and one cookie jar.
+// browserSessionId itself was always safe — it tags ["profile", p] vs
+// ["bot", id] (server/browser-engine.ts:169) — so only the memo collided,
+// which also left the admission key (`unifiedBrowserKey`, which never
+// consults the memo) disagreeing with the key actually dispatched. The memo
+// now tags its slot the same way, so the collision cannot be spelled.
+it("keeps two bots apart even when a browser profile is named after a bot's id", async () => {
   const owner = await makeBot("Collision owner", "verification", { computer: "off" });
   expect(owner.id).toMatch(/^[a-z0-9_-]{1,40}$/u);
   // The ordinary, validated config route accepts it.
@@ -577,15 +604,33 @@ it("DEFECT: a browser profile named after a bot's id puts two bots on one browse
     await expect.poll(() => sessionLog().slice(before).filter(entry => entry.kind === "request").length, { timeout: 10_000 }).toBeGreaterThan(1);
 
     const driven = new Set(sessionLog().slice(before).filter(entry => entry.kind === "request").map(entry => entry.session));
-    // Both bots landed on ONE session, and it is the owner's private one.
-    expect(driven).toEqual(new Set([ownerKey]));
-    expect(driven).not.toContain(victimKey);
+    // Two bots, two sessions, two cookie jars — the collision is gone. The
+    // size check is what fails if the memo ever collapses them again.
+    expect(driven.size).toBe(2);
+    expect(driven).toContain(ownerKey);
+    expect(driven).toContain(victimKey);
+    // And the key actually dispatched is the one admission would have used.
+    expect(driven).toEqual(new Set([ownerKey, victimKey]));
   } finally {
     for (const bot of [owner, victim]) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
     await patchBrowserProfiles([]).catch(() => undefined);
   }
 }, 90_000);
 
+// Lane AT's surviving mutant M9 — dropping `entry.ownerId ===
+// internalClaim.generation` on the browser RPC path (server/index.ts:9072) —
+// is left UNCOVERED, deliberately. No public route can make that clause differ
+// from its neighbours: the route demands a "computer"-kind token, and
+// server/index.ts:8941 has already refused any claim whose generation is not
+// the thread's current one, so a claim that reaches the clause always carries
+// the thread's live generation. Making the ENTRY stale instead is the other
+// half, and that is a real, separate race (recorded by lane AU, not fixed
+// here): after an interrupt, the retired turn's `turn.completed` event calls
+// `releaseBrowserCapabilityForThread(threadId)` with no owner scope
+// (server/index.ts:2939), deleting the NEXT generation's binding — the very
+// hazard the `session.exited` branch three lines below guards against. A
+// second turn's browser RPC therefore answers 403 in 19 of 20 runs. Test it
+// here only once that is fixed; asserting it now would pin a defect.
 it("drops every browser and computer grant when the app restarts, leaving nothing dispatchable", async () => {
   expect((await patchBrowserProfiles([{ id: "restart", name: "Restart" }])).status).toBe(200);
   const bot = await makeBot("Restart", "verification", { browserProfile: "restart", ...(AUTO_REACHES_HOST ? {} : { computer: "off" }) });
