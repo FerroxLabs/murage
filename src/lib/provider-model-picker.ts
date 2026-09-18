@@ -3,9 +3,15 @@
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
 import { providerEngineProtocol } from "../../shared/provider-engine.ts";
 import { localEngineSupport, localPickerModel } from "../../shared/local-models.ts";
+import { resolveModelLabel } from "../../shared/model-label.ts";
+import { fillModelMetadata, fluxRoutePriceLabel, modelMetadataUpdatedAt, providerHint } from "./model-metadata.ts";
 export interface PickerSelection { instanceId: string; model: string; connectionId?: string }
 export interface PickerEngine { instanceId: string; driverKind: string; displayName: string; enabled?: boolean; snapshot: {state: "available"|"unavailable"; authenticated?: boolean}; models: {default:string;options:Array<{id:string;label:string;custom?:boolean;provider?:string;localServer?:string;localTools?:"pass"|"partial"|"failed"}>} }
 export interface PickerModel { key: string; selection: PickerSelection; label: string; group: string; provider: string; contextWindow?: number; pricing?: ProviderModel["pricing"]; stale?: boolean;
+  /** What this model can do, from the provider's own catalog where it says,
+   *  and otherwise from the bundled models.dev snapshot (src/lib/model-metadata.ts).
+   *  Absent means "not stated" — never "cannot". */
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
   /** Local models only (spec V3): the server serving this model, already in
    *  the form the picker shows ("llama.cpp on seanbeast"). */
   localServer?: string;
@@ -27,7 +33,79 @@ export const CUSTOM_MODELS_GROUP = "Custom models";
  *  — a state the user can act on instead of an absence they must notice. */
 export const NO_LOCAL_SERVER_ROW = "No local server detected — add one in Settings → Models";
 export const pickerKey = (s: PickerSelection): string => JSON.stringify([s.instanceId, s.connectionId ?? null, s.model]);
-export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; return typeof n==="number"&&Number.isFinite(n)&&n>=0?n<5?"$":n<25?"$$":"$$$":"Price unavailable"; }
+/** Dollars per million OUTPUT tokens, and the band each range earns.
+ *
+ *  Five tiers, not the three this shipped with (Sean, 2026-09-18). The old
+ *  `<5 / <25 / else` collapsed Claude Sonnet, Opus and Fable into one "$$$",
+ *  which is the distinction the band exists to draw: the scale has to run from
+ *  "cheap" to "frontier-ridiculous", and the frontier has moved.
+ *
+ *  Output price is the metric because it is the one that tracks the frontier —
+ *  input prices sit within a factor of a few of each other across the whole
+ *  market, output prices span three orders of magnitude.
+ *
+ *  Verified against the bundled snapshot (src/lib/price-band.test.ts walks
+ *  every priced model): DeepSeek V4 Flash 0.60 → $ · Claude Haiku 4.5 5 → $$ ·
+ *  Grok 4.6 6 → $$ · Claude Sonnet 5 10 → $$$ · Claude Sonnet 4.6 15 → $$$ ·
+ *  Claude Opus 5 25 → $$$$ · Claude Fable 5.1 50 → $$$$$ · o1-pro 600 → $$$$$. */
+export const PRICE_BANDS: ReadonlyArray<{ below: number; band: string }> = Object.freeze([
+  { below: 2, band: "$" },
+  { below: 10, band: "$$" },
+  { below: 20, band: "$$$" },
+  { below: 40, band: "$$$$" },
+  { below: Infinity, band: "$$$$$" },
+]);
+/** What a row says when no published rate could be resolved for it. An honest
+ *  and expected answer (Sean, 2026-09-18: "if we don't know a price, it's
+ *  unknown") — but it must not be mistaken for the cheap end of the scale, so
+ *  it is a word rather than a symbol, and `isPriceUnknown` lets the row style
+ *  it as the absence it is instead of as a band. */
+export const PRICE_UNKNOWN = "Price unavailable";
+export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; if(typeof n!=="number"||!Number.isFinite(n)||n<0)return PRICE_UNKNOWN; return PRICE_BANDS.find(tier=>n<tier.below)!.band; }
+/** Is this row's price cell the unknown state rather than a band or a range?
+ *  For the picker to draw it differently — muted, not $-coloured. */
+export function isPriceUnknown(row: Pick<PickerModel, "selection"|"pricing">): boolean { return modelPriceLabel(row)===PRICE_UNKNOWN; }
+/** Published rates move constantly and a band is a snapshot of one day's
+ *  prices, so the picker says so ONCE, under the list — not on every row
+ *  (Sean: "not that I need to put a disclaimer on every fucking one"). Dated
+ *  from the snapshot itself so it cannot quietly go stale. */
+export function priceBandNote(updatedAt: number = modelMetadataUpdatedAt()): string {
+  if(!Number.isFinite(updatedAt))return "Bands are approximate, from published rates";
+  const when=new Date(updatedAt).toLocaleString(undefined,{month:"long",year:"numeric",timeZone:"UTC"});
+  return `Bands are approximate, from published rates, ${when}`;
+}
+/** "$1 ≈ 20K output tokens" — the band in a unit anybody already owns an
+ *  intuition for. Tooltip only: it is an arithmetic restatement of the exact
+ *  rate that is already there, not a new claim, and it is rounded hard
+ *  (two significant figures) so it never implies precision the published rate
+ *  does not have. */
+export function dollarOfTokens(price: ProviderModel["pricing"]): string {
+  const n=price?.outputPerMillion;
+  if(typeof n!=="number"||!Number.isFinite(n)||n<=0)return "";
+  // Two significant figures, then the unit. "$1 ≈ 1.7K" and "$1 ≈ 20K" both
+  // say as much as a published rate can support; "$1 ≈ 1,666.67" would be
+  // arithmetic theatre on a number that changes without notice.
+  const tokens=1_000_000/n;
+  const magnitude=10**(Math.floor(Math.log10(tokens))-1);
+  const rounded=Math.round(tokens/magnitude)*magnitude;
+  const scale=rounded>=1_000_000?[1_000_000,"M"] as const:rounded>=1000?[1000,"K"] as const:[1,""] as const;
+  const value=rounded/scale[0];
+  return `$1 ≈ ${value<10&&!Number.isInteger(value)?value.toFixed(1):String(Math.round(value))}${scale[1]} output tokens`;
+}
+/** What one row's price cell says — the coarse band and nothing more (Sean,
+ *  2026-09-18: no per-million figures and no per-task estimate in the row).
+ *  The exact input/output numbers stay in the row's tooltip, which is what
+ *  keeps the band honest: anyone can see the real figure behind it.
+ *
+ *  A Flux route is the one row a single band cannot describe: `flux-auto`
+ *  dispatches across tiers, so it reads as their span ("$–$$$"). See
+ *  FLUX_TIER_BANDS in ./model-metadata.ts for where those four bands come
+ *  from and why they are labelled differently from every other number here.
+ *  `flux-pinned-*` is NOT a route: it names one model, resolves through the
+ *  snapshot, and gets a real band. */
+export function modelPriceLabel(row: Pick<PickerModel, "selection"|"pricing">): string {
+  return fluxRoutePriceLabel(row.selection.model) || priceBand(row.pricing);
+}
 /** Join the server's initial Flux fetch when the picker beats startup discovery.
  * Failed catalogs wait for the existing scheduled deadline or explicit Refresh. */
 export function pickerConnectionsToRefresh(connections: readonly PublicProviderConnection[], force: boolean): PublicProviderConnection[] {
@@ -50,7 +128,11 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
       if(instance.snapshot.authenticated===false&&!option.custom)continue;
       const selection={instanceId:instance.instanceId,model:option.id};
       const metadata=option as typeof option&{contextWindow?:number};
-      rows.push({key:pickerKey(selection),selection,label:option.label,group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="chat-only"?{chatOnly:true as const}:{})});
+      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="chat-only"?{chatOnly:true as const}:{})};
+      // A local model runs on this computer and costs nothing per token, so a
+      // cloud price would be a lie about the user's own hardware — local rows
+      // are left exactly as their server described them.
+      rows.push(option.localServer?row:fillModelMetadata(row,option.id,providerHint(undefined,option.provider)));
     }
   }
   if(installed||["grok","openai-compat"].includes(instance.driverKind))for(const connection of connections){
@@ -58,7 +140,9 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
     for(const model of connection.catalog.models){
       if(!model.enabled||!model.chatEligible||model.capabilities.chat!==true||!model.outputModalities.some(m=>m==="text"||m==="chat"))continue;
       const selection={instanceId:instance.instanceId,connectionId:connection.id,model:model.id};
-      rows.push({key:pickerKey(selection),selection,label:model.label,group:connection.label,provider:connection.preset,contextWindow:model.contextWindow,pricing:model.pricing,stale:connection.catalog.stale});
+      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(model.id,{catalogLabel:model.label}),group:connection.label,provider:connection.preset,contextWindow:model.contextWindow,...(model.pricing?{pricing:model.pricing}:{}),stale:connection.catalog.stale,
+        ...(model.capabilities.vision===undefined&&model.capabilities.tools===undefined&&model.capabilities.reasoning===undefined?{}:{capabilities:{...(model.capabilities.vision===undefined?{}:{vision:model.capabilities.vision}),...(model.capabilities.tools===undefined?{}:{tools:model.capabilities.tools}),...(model.capabilities.reasoning===undefined?{}:{reasoning:model.capabilities.reasoning})}})};
+      rows.push(fillModelMetadata(row,model.id,providerHint(connection.preset,undefined)));
     }
   }
   return rows;
@@ -162,10 +246,34 @@ export function localToolsWarning(row: PickerModel): string {
   if (row.localTools === "partial") return "Tools test passed with gaps — see Settings → Models";
   return "";
 }
+/** Is this row served by Flux Router — either one of Murage's own `flux-*`
+ *  routes on an engine, or any model reached through a Flux connection? Both
+ *  spellings matter: `claude-opus-5` bought through Flux is a Flux row even
+ *  though its id names Anthropic. */
+export function isFluxRouterRow(row: Pick<PickerModel, "selection"|"provider">): boolean {
+  return row.provider === "flux" || /^(?:flux::)?flux-/.test(row.selection.model);
+}
+/** The picker's order (Sean, 2026-09-18 — Flux Router leads every model list).
+ *
+ *   0  Flux Auto                the recommended default; already rank 0 before
+ *                               this change, and still the single first row
+ *   1  the user's favourites    an explicit choice outranks a promotion: a
+ *                               starred model is never demoted by this rule
+ *   2  every other Flux Router  the tiers, the pinned routes, and anything
+ *      row                      bought through a Flux connection
+ *   3  recently used            below Flux on purpose. A recent is an
+ *                               incidental signal (it is what you happened to
+ *                               run last), where a star is a deliberate one;
+ *                               this is the one place where the promotion
+ *                               costs a non-Flux row a position, and it is
+ *                               stated rather than hidden
+ *   4  everything else
+ *
+ *  Within a rank the previous tie-breaks stand: group name, then label. */
 export function orderedPickerModels(rows: readonly PickerModel[], query: string, favorites: readonly string[], recent: readonly string[]): PickerModel[] {
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean),seen=new Set<string>();
   return rows.filter(row=>{if(seen.has(row.key))return false;seen.add(row.key);return words.every(word=>`${row.label} ${row.selection.model} ${row.group} ${row.provider}`.toLowerCase().includes(word));}).sort((a,b)=>{
-    const rank=(r:PickerModel)=>/^(?:flux::)?flux-auto$/.test(r.selection.model)?0:favorites.includes(r.key)?1:recent.includes(r.key)?2:3;
+    const rank=(r:PickerModel)=>/^(?:flux::)?flux-auto$/.test(r.selection.model)?0:favorites.includes(r.key)?1:isFluxRouterRow(r)?2:recent.includes(r.key)?3:4;
     return rank(a)-rank(b)||a.group.localeCompare(b.group)||a.label.localeCompare(b.label);
   });
 }
