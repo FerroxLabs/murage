@@ -112,10 +112,30 @@ function adoptRespelledProjectScope(path:string):void {
   if(db.prepare("SELECT 1 FROM memory_scopes WHERE kind='project' AND owner_key=?").get(path))return;
   for(const row of db.prepare("SELECT id,owner_key FROM memory_scopes WHERE kind='project'").all()){
     const owner=String(row.owner_key);
-    if(owner===path||!samePath(owner,path))continue;
+    if(owner===path)continue;
+    if(!sameStoredFolder(owner,path))continue;
     db.prepare("UPDATE memory_scopes SET owner_key=?,revision=revision+1 WHERE id=?").run(path,String(row.id));
     return;
   }
+}
+
+/** Whether a stored owner_key names the same folder as the freshly canonical
+ * `path`.
+ *
+ * `samePath` settles what is left of a spelling once BOTH sides have been
+ * through `realpathSync.native` — which is the one thing a stored key has not
+ * been, because it predates that call. So the filesystem, not the string, is
+ * the authority here: resolve the stored key too. That is what answers the
+ * case this migration exists for, since `samePath` folds case only on Windows
+ * and the macOS re-spelling (`~/documents/app` for `~/Documents/app`) is a
+ * case difference on a case-insensitive volume.
+ *
+ * A stored key whose folder is gone cannot be resolved; fall back to comparing
+ * the spelling, which still catches a trailing separator or a Windows re-
+ * casing. Resolution never widens the match: two spellings resolve alike only
+ * when the filesystem says they are one folder. */
+function sameStoredFolder(owner:string,path:string):boolean {
+  try{return samePath(realpathSync.native(owner),path);}catch{return samePath(owner,path);}
 }
 
 function validSubject(roster:MemoryRoster,type:"bot"|"room",id:string){
