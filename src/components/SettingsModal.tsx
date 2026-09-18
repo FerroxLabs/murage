@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
+import { Archive, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -47,6 +47,7 @@ const SECTIONS: Array<{
   keywords: string[];
 }> = [
   { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in"] },
+  { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
   // execution surface of the app: API keys for xAI, Box, Composio and the
@@ -149,7 +150,7 @@ export function UpdatesRow() {
   if (!window.muragebox?.updater) return null;
   const updater = window.muragebox.updater;
   const label =
-    s?.status === "deferred" ? "This update is waiting for the pre-upgrade backup flow. Review Backup settings if it needs attention." : s?.status === "checking"
+    s?.status === "deferred" ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s?.status === "checking"
       ? "Checking…"
       : s?.status === "available"
         ? `${s.version} available`
@@ -746,7 +747,6 @@ export function SettingsModal() {
                 </Card>
                 {desktop === true && <NotificationSettings />}
                 {desktop === true && <StartupSettings />}
-                {desktop === true && <BackupSettings />}
                 {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
@@ -758,6 +758,8 @@ export function SettingsModal() {
                 <AnalyticsRow />
               </>
             )}
+
+            {desktop === true && section === "backups" && <BackupSettings />}
 
             {desktop === true && section === "experimental" && (
               <>

@@ -68,7 +68,7 @@ export function UpdateBanner() {
               ? "Finish in a terminal"
               : "Update could not finish";
   const subtitle =
-    deferred ? "This update is waiting for the pre-upgrade backup flow. Review Backup settings if it needs attention." : s.status === "available"
+    deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
       ? "A newer version is ready to download."
       : s.status === "downloading"
         ? // no percent yet means the transfer hasn't reported in — don't imply 0

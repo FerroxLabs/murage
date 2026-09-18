@@ -18,7 +18,7 @@ test.beforeAll(async()=>{
   configureServer(server){server.middlewares.use((req,res,next)=>{
    const path=new URL(req.url??"/","http://fixture").pathname;
    if(path.startsWith("/__recovery/")){const name=path.slice("/__recovery/".length);if(!["index.html","recovery.css","renderer.js"].includes(name)){res.statusCode=404;res.end();return;}res.setHeader("content-type",name.endsWith("html")?"text/html":name.endsWith("css")?"text/css":"text/javascript");res.end(readFileSync(join(root,"electron/recovery",name)));return;}
-   if(path!=="/__backup")return next();res.setHeader("content-type","text/html");res.end('<!doctype html><html lang="en" data-backup-fixture><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Backup settings fixture</title><style>html[data-backup-fixture],html[data-backup-fixture] body{height:auto;min-height:100%;position:static;overflow:auto}html[data-backup-fixture] #root{height:auto;overflow:visible}</style></head><body><main style="max-width:720px;margin:auto;padding:16px"><h1 class="text-ink text-lg">Settings</h1><h2 class="text-ink text-base">General</h2><div id="root"></div></main><script type="module" src="/__backup.js"></script></body></html>');
+   if(path!=="/__backup")return next();res.setHeader("content-type","text/html");res.end('<!doctype html><html lang="en" data-backup-fixture><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Backup settings fixture</title><style>html[data-backup-fixture],html[data-backup-fixture] body{height:auto;min-height:100%;position:static;overflow:auto}html[data-backup-fixture] #root{height:auto;overflow:visible}</style></head><body><main style="max-width:720px;margin:auto;padding:16px"><h1 class="text-ink text-lg">Settings</h1><h2 class="text-ink text-base">Backups</h2><div id="root"></div></main><script type="module" src="/__backup.js"></script></body></html>');
   });},
  }]});await vite.listen(0);const address=vite.httpServer!.address();if(!address||typeof address==="string")throw Error("No fixture port");origin=`http://127.0.0.1:${address.port}`;
 });
@@ -33,14 +33,17 @@ async function inspect(page:Page,info:TestInfo,surface:string,width:number){
 }
 test("BackupSettings exposes truthful states and only zero-argument host actions",async({page},info)=>{
  await page.addInitScript(()=>{const w=window as any;w.calls=[];w.outcome="cancel";w.muragebox={backup:{status:async(...args:unknown[])=>{w.calls.push({action:"status",args});return{supported:new URLSearchParams(location.search).get("supported")!=="false",pending:false};},restart:async(...args:unknown[])=>{w.calls.push({action:"restart",args});if(w.outcome==="busy")throw Error("BACKUP_WORK_ACTIVE");if(w.outcome==="error")throw Error("PRIVATE_BACKUP_CANARY");if(w.outcome==="hold")return new Promise(resolve=>{w.finish=()=>resolve({restarting:false});});return{restarting:false};}}};});
- await page.goto(origin+"/__backup");const restart=page.getByRole("button",{name:"Restart into Backup mode",exact:true});await expect(restart).toBeEnabled();
+ // Backup mode now lives in the Backups section's Restore card, opened from "Restore…".
+ // Opened by keyboard so the focus-ring audit below keeps keyboard modality.
+ const openRestore=async()=>{await page.getByRole("button",{name:"Restore…",exact:true}).focus();await page.keyboard.press("Enter");await expect(page.getByRole("button",{name:"Restore",exact:true})).toHaveAttribute("aria-expanded","true");};
+ await page.goto(origin+"/__backup");await openRestore();const restart=page.getByRole("button",{name:"Restart into Backup mode",exact:true});await expect(restart).toBeEnabled();
  for(const width of [390,820,1440])await inspect(page,info,"settings",width);
  await restart.focus();await page.keyboard.press("Enter");await expect(restart).toBeEnabled();
  await page.evaluate(()=>{(window as any).outcome="busy";});await restart.click();await expect(page.getByRole("alert")).toContainText("Work is still active");
  await page.evaluate(()=>{(window as any).outcome="error";});await restart.click();await expect(page.getByRole("alert")).toContainText("Your data is preserved");await expect(page.getByText("PRIVATE_BACKUP_CANARY")).toHaveCount(0);
  await page.evaluate(()=>{(window as any).outcome="hold";});await restart.click();await expect(page.getByRole("button",{name:"Preparing Backup mode…",exact:true})).toBeDisabled();await page.evaluate(()=>(window as any).finish());await expect(restart).toBeEnabled();
  expect(await page.evaluate(()=>(window as any).calls.every((call:any)=>call.args.length===0))).toBe(true);expect(await page.locator('input').count()).toBe(0);
- await page.goto(origin+"/__backup?supported=false");await expect(restart).toBeDisabled();
+ await page.goto(origin+"/__backup?supported=false");await openRestore();await expect(restart).toBeDisabled();
  // The schedule and remote panels now render their own status lines beside
  // this one, so the encrypted-backup status is picked out by its subject. Was:
  //   await expect(page.getByRole("status")).toContainText("verified backup tool");
