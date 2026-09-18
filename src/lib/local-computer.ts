@@ -167,6 +167,28 @@ export function autoMountsThisComputer({
   return computer === undefined && platform === "darwin";
 }
 
+/** Whether moving the "Runs on" destination TAKES THIS SCREEN AWAY from a
+ *  bot that currently has it — the gesture a person makes as "stop using my
+ *  computer, now".
+ *
+ *  The harness already interrupts the turn for one case of this
+ *  (`existingBot.computer === "local"` leaving "local", server/index.ts), but
+ *  a bot on Auto holds exactly the same desktop on macOS
+ *  (`autoMountsThisComputer`) and is not covered there, so choosing Off on
+ *  the default setting changed a label and stopped nothing. This is the same
+ *  rule stated over the destination the person can actually see. */
+export function switchRevokesThisComputer({
+  platform,
+  from,
+  to,
+}: {
+  platform: DesktopCapabilities["host"]["platform"];
+  from: Bot["computer"];
+  to: Bot["computer"];
+}): boolean {
+  return autoMountsThisComputer({ platform, computer: from }) && !autoMountsThisComputer({ platform, computer: to });
+}
+
 /** Whether moving an Auto-on bot's computer destination (the "Runs on"
  *  grid in ComputerPanel) must show the local-computer warning and send
  *  `acknowledgeLocalAuto`. Mirrors the server's profile PATCH exactly: the

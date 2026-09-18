@@ -42,9 +42,12 @@ import { transitionComputerControlLease, type ComputerControlAction } from "@/li
 import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
 import { MacLocalControl } from "./MacLocalControl";
+import { DesktopStopControl } from "./DesktopStopControl";
+import { desktopStopMessage, stopDesktopControl } from "@/lib/desktop-stop";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { Switch } from "./SettingsPrimitives";
 import {
+  autoMountsThisComputer,
   autoSelectsLocalComputer,
   computerSwitchNeedsLocalAutoWarning,
   instanceSupportsLocalComputer,
@@ -52,6 +55,7 @@ import {
   localAutoHostPlatform,
   localComputerDisabledReason,
   localComputerSelectable,
+  switchRevokesThisComputer,
   type HarnessAnnouncement,
 } from "@/lib/local-computer";
 import {
@@ -747,6 +751,35 @@ export function ComputerPanel({
     }
   }, [transitionControl]);
 
+  // ── stopping a bot that is driving THIS screen ──────────────────────────
+  // The harness platform decides, not the browser's: the same announcement
+  // `planComputerDestinationChange` consults, for the same reason.
+  const hostPlatform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
+  // Auto is the default and on macOS it mounts this very desktop, so "is this
+  // bot on my screen" is not the same question as `bot.computer === "local"`.
+  const usingThisScreen = Boolean(bot.busy) && autoMountsThisComputer({ platform: hostPlatform, computer: bot.computer });
+  const takeScreen = useCallback(async () => (await transitionControl("take")).held === true, [transitionControl]);
+  const stopTurn = useCallback(async () => {
+    await api(`/api/bots/${bot.id}/interrupt`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId }) });
+  }, [bot.id, bot.threadId]);
+  // A 200 from the stop is not proof the bot stopped; the bot list is.
+  const confirmIdle = useCallback(async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const bots: Array<{ id: string; busy?: boolean }> = (await api("/api/bots?messages=0")).bots ?? [];
+      if (bots.find((candidate) => candidate.id === bot.id)?.busy !== true) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  }, [bot.id]);
+  // Choosing a destination that takes this screen away IS "stop using my
+  // computer". The harness only interrupts for a bot explicitly on "local"
+  // (server/index.ts), so on the default Auto the click changed a label and
+  // stopped nothing; this makes the gesture mean what it says.
+  const revokeThisScreen = useCallback(async () => {
+    const outcome = await stopDesktopControl({ takeScreen, stopTurn, confirmIdle });
+    if (outcome.kind !== "stopped") setError(desktopStopMessage(outcome, bot.name));
+  }, [bot.name, confirmIdle, stopTurn, takeScreen]);
+
   const expandBrowser = useCallback(() => {
     onExpandBrowser?.(bot.id);
   }, [bot.id, onExpandBrowser]);
@@ -1301,6 +1334,17 @@ export function ComputerPanel({
         )}
 
         <LocalScreenPreview />
+        {/* Above the readiness cards and the destination grid: while a bot is
+            on this screen, stopping it is the only thing in this panel the
+            person is here for. */}
+        <DesktopStopControl
+          botName={bot.name}
+          usingThisScreen={usingThisScreen}
+          held={control.held}
+          takeScreen={takeScreen}
+          stopTurn={stopTurn}
+          confirmIdle={confirmIdle}
+        />
         <LinuxLocalControl />
         <MacLocalControl />
 
@@ -1331,6 +1375,12 @@ export function ComputerPanel({
             if (!plan) return;
             if (plan.kind === "warn") { setLocalAutoWarningChoice(plan.choice); setLocalAutoWarning(true); return; }
             dispatch({ type: "updateBot", botId: bot.id, patch: plan.patch });
+            // "Off" on a bot that is on this screen means stop, not just
+            // "stop next time". The harness covers only the explicit-"local"
+            // case, so Auto — the default — is revoked from here.
+            if (bot.busy && switchRevokesThisComputer({ platform: hostPlatform, from: bot.computer, to: mode === "auto" ? undefined : mode })) {
+              void revokeThisScreen();
+            }
           }} />
           {bot.computer === "browser" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">
             Browser tools can work with web pages without desktop access. {browserEnabled ? "Open the Browser tab above to view it." : "An interactive browser preview is unavailable here."}
