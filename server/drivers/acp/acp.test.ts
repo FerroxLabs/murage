@@ -1211,6 +1211,27 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
   });
 
+  it("ACP plan updates arrive as whole plans, never as answer text", async () => {
+    await create(GrokAgentDriver, "plan");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-plan", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true });
+    const plans = recorder.events.flatMap(event => event.type === "plan.updated" ? [event] : []);
+    expect(plans.map(event => event.entries)).toEqual([
+      [
+        { content: "Read the folder", status: "in_progress" },
+        { content: "Fix the bug", status: "pending" },
+      ],
+      [
+        { content: "Read the folder", status: "completed" },
+        { content: "Fix the bug", status: "in_progress" },
+        { content: "Report back", status: "pending" },
+      ],
+    ]);
+    expect(plans.every(event => event.turnId === turnId && event.threadId === "t-plan")).toBe(true);
+    const answer = recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []);
+    expect(answer).toEqual(["fixture plan answer"]);
+  });
+
   it("close-confirmed stop: interruptTurn resolves only after the ACP child has exited", async () => {
     const pidFile = join(scratch, "acp.pid");
     process.env.FAKE_ACP_PID_FILE = pidFile;

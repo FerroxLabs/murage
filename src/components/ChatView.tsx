@@ -42,6 +42,8 @@ import { BotAvatar } from "./Avatar";
 import { ChatHeader } from "./ChatHeader";
 import { CommAvatar } from "./CommAvatar";
 import { TurnPresence } from "./TurnPresence";
+import { LiveThinking } from "./LiveThinking";
+import { LivePlanCard } from "./LivePlanCard";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
@@ -1142,6 +1144,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const stream = useStreaming();
   const streaming = stream.streaming[bot.threadId];
   const reasoning = stream.reasoning[bot.threadId];
+  const plan = stream.plan[bot.threadId];
+  // Live thinking is activity detail: it follows Settings → Tool calls.
+  const showThinking = showToolCallsEnabled(state.config);
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const [findOpen, setFindOpen] = useState(false);
@@ -1317,7 +1322,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     // keyboardInsetPx: the pane loses clientHeight when the keyboard opens
     // while scrollHeight is unchanged, so a pinned transcript has to re-pin or
     // the last message slides up behind the composer.
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad, keyboardInsetPx]);
+  }, [bot.id, messages.length, streaming, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
 
   // Reading scrollback (follow === false): preserve the anchor rather than let
   // the shrinking pane scroll the reader's row up out of view by exactly the
@@ -1530,6 +1535,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
               </div>
             </div>
           )}
+          {bot.busy && plan?.length ? <LivePlanCard entries={plan} /> : null}
+          {bot.busy && showThinking && reasoning ? (
+            <LiveThinking key={bot.threadId} text={reasoning} answering={Boolean(streaming)} />
+          ) : null}
           <TurnPresence
             avatar={
               <BotAvatar

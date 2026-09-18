@@ -18,6 +18,7 @@ import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
 import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
@@ -1722,8 +1723,32 @@ interface StreamState {
   streaming: Record<string, string>;
   /** in-flight extended thinking per threadId (ephemeral) */
   reasoning: Record<string, string>;
+  /** the running turn's agent plan per threadId (ephemeral, whole list) */
+  plan: Record<string, AgentPlanEntry[]>;
 }
-const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {} };
+const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {}, plan: {} };
+
+/** The live plan cards after one runtime event. A plan update replaces the
+ * thread's whole list, and an emptied plan removes the card; the end of the
+ * turn removes it too. Any other event, or an update whose entries are not a
+ * list, returns the same object so the caller can skip the re-render. */
+export function agentPlansAfterEvent(
+  plans: Record<string, AgentPlanEntry[]>,
+  event: { type?: unknown; threadId?: unknown; entries?: unknown },
+): Record<string, AgentPlanEntry[]> {
+  if (typeof event.threadId !== "string") return plans;
+  const threadId = event.threadId;
+  if (event.type === "plan.updated") {
+    const entries = normalizeAgentPlan(event.entries);
+    if (!entries) return plans;
+    if (entries.length) return { ...plans, [threadId]: entries };
+  } else if (event.type !== "turn.completed") {
+    return plans;
+  }
+  if (!(threadId in plans)) return plans;
+  const { [threadId]: _dropped, ...rest } = plans;
+  return rest;
+}
 const StreamContext = createContext<StreamState>(EMPTY_STREAM);
 
 export type PendingStreamDelta = { text: string; reasoning: string };
@@ -1816,7 +1841,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (delta.text) streaming[threadId] = (streaming[threadId] ?? "") + delta.text;
             if (delta.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + delta.reasoning;
           }
-          return { streaming, reasoning };
+          return { ...prev, streaming, reasoning };
         });
       }),
     [],
@@ -1835,7 +1860,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!(threadId in prev.streaming) && !(threadId in prev.reasoning)) return prev;
       const { [threadId]: _s, ...streaming } = prev.streaming;
       const { [threadId]: _r, ...reasoning } = prev.reasoning;
-      return { streaming, reasoning };
+      return { ...prev, streaming, reasoning };
+    });
+  };
+  /** Plans outlive the settled messages of their turn (clearStream runs on
+   * each one), so they are updated and cleared on their own. */
+  const updatePlans = (event: { type?: unknown; threadId?: unknown; entries?: unknown }) => {
+    setStream((prev) => {
+      const plan = agentPlansAfterEvent(prev.plan, event);
+      return plan === prev.plan ? prev : { ...prev, plan };
     });
   };
   const botPatchQueue = useMemo(
@@ -2560,6 +2593,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "threadActive", threadId: frame.threadId, activeLeafId: frame.activeLeafId });
           // a rewind also invalidates any half-streamed text from the old branch
           clearStream(frame.threadId);
+          updatePlans({ type: "turn.completed", threadId: frame.threadId });
           break;
         case "bot": {
           let bot = frame.bot as BotAnnouncement;
@@ -2632,10 +2666,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // stream dispatches once per frame instead of once per token, so
             // the app tree re-renders at most ~60x/s while streaming.
             deltaBuffer.push(event.threadId, event.streamKind, event.delta);
+          } else if (event.type === "plan.updated") {
+            updatePlans(event);
           } else if (event.type === "turn.completed") {
             // flush any buffered tail before clearing so no tokens are lost
             flushDeltas();
             clearStream(event.threadId);
+            updatePlans(event);
           }
           break;
         }

@@ -124,6 +124,18 @@ describe("readThreadEvents", () => {
     expect(page.total).toEqual({ runtime: 3, native: 2 });
   });
 
+  it("keeps an agent plan update in the inspector and discards one without a list", () => {
+    const eventsDir = tmp();
+    const nativeDir = tmp();
+    writeFileSync(
+      join(eventsDir, "t1.ndjson"),
+      line(runtime({ eventId: "plan", createdAt: "1", type: "plan.updated", entries: [{ content: "Read", status: "pending" }] })) +
+        line(runtime({ eventId: "no-list", createdAt: "2", type: "plan.updated", entries: "Read" })),
+    );
+    const page = readThreadEvents({ eventsDir, nativeDir, threadId: "t1" });
+    expect(page.entries.map((entry) => (entry.data as { eventId?: string }).eventId)).toEqual(["plan"]);
+  });
+
   it("rejects malformed retry telemetry while retaining a valid retry event", () => {
     const eventsDir = tmp();
     const nativeDir = tmp();
