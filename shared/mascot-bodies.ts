@@ -5,16 +5,29 @@
  * `src/components/EmberAvatar.tsx` (SHAPE), so this file only names it; the server can
  * validate and persist the id without importing React.
  *
- * The other nine outlines, their fit transforms and their face anchors are copied
- * verbatim from OpenMausBot's generated `shared/mascot-bodies.ts` (OpenMausBot PR #663,
- * last changed in commit 2da55d778e747d843084f7911d96e8f47cf2b3ca, unchanged at
+ * Six of the outlines — blob, squircle, capsule, drop, diamond and star — their fit
+ * transforms and their face anchors are copied verbatim from OpenMausBot's generated
+ * `shared/mascot-bodies.ts` (OpenMausBot PR #663, last changed in commit
+ * 2da55d778e747d843084f7911d96e8f47cf2b3ca, unchanged at
  * 4feae3598a361c97b77dc36e0533b561503cd7be), Apache License 2.0; see NOTICE. Upstream's
  * `cursor` body is deliberately not carried: Murage retired that artwork.
  *
- * Upstream's generator solved each anchor against the same 25-expression face geometry
+ * The other three — `circle`, `shield` and `hexagon` — now carry the artwork from Sean's
+ * own Blob Studio (<https://www.blobstudio.xyz/>) Circle, Cone and Polygon mascot packs
+ * instead, taken from each pack's `SHAPE` constant; see NOTICE. Blob Studio and OpenMausBot's
+ * generator share a lineage, so the three silhouettes are the same geometry either way
+ * (Cone is upstream's shield to 0 units, Polygon its hexagon to 0.002, Circle the exact arc
+ * upstream approximated with four cubics, max radial error 0.027 of 200). Two things do
+ * differ and the packs win, because Sean authored them: the shapes are named Circle, Cone and
+ * Polygon, and each face sits where its pack put it, at the pack's own scale of 1 — the same
+ * full-size face the Ember flame already draws — rather than upstream's shared 0.791 clamp.
+ * The ids stay `circle`/`shield`/`hexagon` so profiles saved by 0.1.54 keep their body.
+ *
+ * Upstream's generator solved each of its anchors against the same 25-expression face geometry
  * EmberAvatar draws (identical point data, FACE_BOX 228.541, FACE_CENTRE [120, 122.5]) and
- * clamped every face to one shared scale, so the face does not clip in any of them.
- * Do not hand-edit the outline data; re-copy it from upstream instead.
+ * clamped every face to one shared scale, so the face does not clip in any of them; the Blob
+ * Studio packs solve the same face against their own silhouette. Do not hand-edit the outline
+ * data; re-copy it from upstream, or from the pack, instead.
  */
 
 import { z } from "zod";
@@ -53,13 +66,13 @@ export const MASCOT_BODY_NAMES: Record<MascotBodyId, string> = {
   squircle: "Squircle",
   capsule: "Capsule",
   drop: "Drop",
-  shield: "Shield",
-  hexagon: "Hexagon",
+  shield: "Cone",
+  hexagon: "Polygon",
   diamond: "Diamond",
   star: "Star",
 };
 
-/** The upstream-generated outlines. `ember` is supplied by the renderer. */
+/** The generated outlines. `ember` is supplied by the renderer. */
 export const MASCOT_BODIES: Record<Exclude<MascotBodyId, "ember">, MascotBody> = {
   blob: {
     id: "blob",
@@ -73,9 +86,9 @@ export const MASCOT_BODIES: Record<Exclude<MascotBodyId, "ember">, MascotBody> =
     id: "circle",
     name: "Circle",
     fit: "translate(0 0) scale(1.142705)",
-    body: "<path fill=\"{{GRADIENT}}\" d=\"M200 100C200 155.22847 155.22847 200 100 200C44.77153 200 0 155.22847 0 100C0 44.77153 44.77153 0 100 0C155.22847 0 200 44.77153 200 100Z\"/>",
-    clip: "<path d=\"M200 100C200 155.22847 155.22847 200 100 200C44.77153 200 0 155.22847 0 100C0 44.77153 44.77153 0 100 0C155.22847 0 200 44.77153 200 100Z\"/>",
-    anchor: { x: 113.82, y: 110.27, scale: 0.791 },
+    body: "<path fill=\"{{GRADIENT}}\" d=\"M0 100A100 100 0 0 1 200 100A100 100 0 0 1 0 100Z\"/>",
+    clip: "<path d=\"M0 100A100 100 0 0 1 200 100A100 100 0 0 1 0 100Z\"/>",
+    anchor: { x: 113.82, y: 113.82, scale: 1 },
   },
   squircle: {
     id: "squircle",
@@ -103,19 +116,19 @@ export const MASCOT_BODIES: Record<Exclude<MascotBodyId, "ember">, MascotBody> =
   },
   shield: {
     id: "shield",
-    name: "Shield",
-    fit: "translate(-12.1611 -24.3222) scale(1.264316)",
-    body: "<path fill=\"{{GRADIENT}}\" d=\"M57.25 38.475C85.75 12.825 114.25 12.825 142.75 38.475C153.89667 76.64167 165.04333 114.80833 176.19 152.975C188.73 184.325 179.325 200 147.975 200C115.99167 200 84.00833 200 52.025 200C20.675 200 11.27 184.325 23.81 152.975C34.95667 114.80833 46.10333 76.64167 57.25 38.475Z\"/>",
-    clip: "<path d=\"M57.25 38.475C85.75 12.825 114.25 12.825 142.75 38.475C153.89667 76.64167 165.04333 114.80833 176.19 152.975C188.73 184.325 179.325 200 147.975 200C115.99167 200 84.00833 200 52.025 200C20.675 200 11.27 184.325 23.81 152.975C34.95667 114.80833 46.10333 76.64167 57.25 38.475Z\"/>",
-    anchor: { x: 112.38, y: 170.61, scale: 0.791 },
+    name: "Cone",
+    fit: "translate(-12.1611 -24.3223) scale(1.264316)",
+    body: "<path fill=\"{{GRADIENT}}\" d=\"M57.25 38.475Q100 0 142.75 38.475L176.19 152.975Q195 200 147.975 200L52.025000000000006 200Q5 200 23.810000000000002 152.975Z\"/>",
+    clip: "<path d=\"M57.25 38.475Q100 0 142.75 38.475L176.19 152.975Q195 200 147.975 200L52.025000000000006 200Q5 200 23.810000000000002 152.975Z\"/>",
+    anchor: { x: 113.82, y: 107.91, scale: 1 },
   },
   hexagon: {
     id: "hexagon",
-    name: "Hexagon",
+    name: "Polygon",
     fit: "translate(-4.1077 -4.1077) scale(1.183782)",
-    body: "<path fill=\"{{GRADIENT}}\" d=\"M94.90777 4.94C98.30259 2.98 101.69741 2.98 105.09223 4.94C129.98757 19.31333 154.88292 33.68667 179.77826 48.06C183.17308 50.02 184.87049 52.96 184.87049 56.88C184.87049 85.62667 184.87049 114.37333 184.87049 143.12C184.87049 147.04 183.17308 149.98 179.77826 151.94C154.88292 166.31333 129.98757 180.68667 105.09223 195.06C101.69741 197.02 98.30259 197.02 94.90777 195.06C70.01243 180.68667 45.11708 166.31333 20.22174 151.94C16.82692 149.98 15.12951 147.04 15.12951 143.12C15.12951 114.37333 15.12951 85.62667 15.12951 56.88C15.12951 52.96 16.82692 50.02 20.22174 48.06C45.11708 33.68667 70.01243 19.31333 94.90777 4.94Z\"/>",
-    clip: "<path d=\"M94.90777 4.94C98.30259 2.98 101.69741 2.98 105.09223 4.94C129.98757 19.31333 154.88292 33.68667 179.77826 48.06C183.17308 50.02 184.87049 52.96 184.87049 56.88C184.87049 85.62667 184.87049 114.37333 184.87049 143.12C184.87049 147.04 183.17308 149.98 179.77826 151.94C154.88292 166.31333 129.98757 180.68667 105.09223 195.06C101.69741 197.02 98.30259 197.02 94.90777 195.06C70.01243 180.68667 45.11708 166.31333 20.22174 151.94C16.82692 149.98 15.12951 147.04 15.12951 143.12C15.12951 114.37333 15.12951 85.62667 15.12951 56.88C15.12951 52.96 16.82692 50.02 20.22174 48.06C45.11708 33.68667 70.01243 19.31333 94.90777 4.94Z\"/>",
-    anchor: { x: 112.26, y: 110.7, scale: 0.791 },
+    body: "<path fill=\"{{GRADIENT}}\" d=\"M94.91 4.94Q100.00 2.00 105.09 4.94L179.78 48.06Q184.87 51.00 184.87 56.88L184.87 143.12Q184.87 149.00 179.78 151.94L105.09 195.06Q100.00 198.00 94.91 195.06L20.22 151.94Q15.13 149.00 15.13 143.12L15.13 56.88Q15.13 51.00 20.22 48.06Z\"/>",
+    clip: "<path d=\"M94.91 4.94Q100.00 2.00 105.09 4.94L179.78 48.06Q184.87 51.00 184.87 56.88L184.87 143.12Q184.87 149.00 179.78 151.94L105.09 195.06Q100.00 198.00 94.91 195.06L20.22 151.94Q15.13 149.00 15.13 143.12L15.13 56.88Q15.13 51.00 20.22 48.06Z\"/>",
+    anchor: { x: 113.82, y: 113.82, scale: 1 },
   },
   diamond: {
     id: "diamond",

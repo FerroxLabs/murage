@@ -103,9 +103,38 @@ They do not imply import of a complete upstream release.
     anchors, copied verbatim; a per-bot body field; and a body picker.
     Upstream's cursor outline, generator scripts and phone renderers were not
     taken; Murage's Ember flame stays the default body.
+    Three of the nine outlines (circle, shield, hexagon) have since been
+    replaced with Blob Studio artwork; see the Blob Studio entry below. Six
+    remain as copied: blob, squircle, capsule, drop, diamond, star.
     Murage: shared/mascot-bodies.ts, src/components/Avatar.tsx,
     src/components/BotProfileAvatarCard.tsx, server/bot-profile.ts and the
     team/package appearance fields
+
+  Blob Studio mascot packs (Circle, Cone, Polygon)
+    https://www.blobstudio.xyz/ — packs CircleMascot, ConeMascot and
+    PolygonMascot as supplied by Sean Donahoe, 2026-09-18.
+    Taken from each pack: the `SHAPE` constant only — the silhouette `body`
+    and `clip` path, the `fit` transform, and the face `anchor` — copied
+    verbatim but for the dropped `xmlns` attribute on each path. These now
+    supply Murage's `circle`, `shield` and `hexagon` catalog entries, renamed
+    in the picker to the packs' own Circle, Cone and Polygon; the ids are
+    unchanged so bodies chosen in 0.1.54 still resolve. The three silhouettes
+    are the same geometry the OpenMausBot generator had produced (Cone matches
+    upstream's shield exactly, Polygon its hexagon to 0.002 of 200, Circle is
+    the exact arc upstream approximated with four cubics); the packs differ
+    only in name and in each face's authored anchor and scale.
+    Not taken: each pack's <Name>Avatar.tsx component, its 65 standalone SVG
+    files (svg/states, svg/expressions, svg/sprite.svg), its manifest.json and
+    its README.md. No pack file is vendored into this repository. Murage's own
+    src/components/EmberAvatar.tsx already is the same generated renderer.
+    Licence: the packs carry no licence file. Each pack's README states that
+    the expression geometry originates in Sebastien Montlouis-Calixte's
+    GrokBot prototype gist
+    (https://gist.github.com/smontlouis/49a4c9303de70118a90dc43badc1aba5),
+    which carries no explicit licence. What is copied here is silhouette
+    geometry and a face anchor, not that expression geometry; Murage's
+    expression point data predates these packs and came in with PR #663.
+    Murage: shared/mascot-bodies.ts
 
   OpenMausBot PR #1069
     commit bac90598261115eb2f68868f1a6420e79b74d0c4

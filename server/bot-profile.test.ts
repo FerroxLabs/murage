@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { parseBotProfilePatch } from "./bot-profile.ts";
+import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 
 describe("parseBotProfilePatch (strict — the paired boundary)", () => {
   it("refuses every privilege-bearing bot field by name", () => {
@@ -74,6 +75,9 @@ describe("parseBotProfilePatch (both modes)", () => {
   });
 
   it("accepts every mascot body and names the choices when one is unknown", () => {
+    for (const body of MASCOT_BODY_IDS) {
+      expect(parseBotProfilePatch({ mascotBody: body }, true), body).toEqual({ ok: true, patch: { mascotBody: body } });
+    }
     expect(parseBotProfilePatch({ mascotBody: "hexagon" }, true)).toEqual({ ok: true, patch: { mascotBody: "hexagon" } });
     expect(parseBotProfilePatch({ mascotBody: "ember" }, false)).toEqual({ ok: true, patch: { mascotBody: "ember" } });
     expect(parseBotProfilePatch({ mascotBody: "cursor" } as never, true)).toEqual({

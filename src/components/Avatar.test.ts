@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BotAvatar } from "./Avatar";
 import { DEFAULT_SILHOUETTE } from "./EmberAvatar";
-import { MASCOT_BODIES } from "../../shared/mascot-bodies";
+import { MASCOT_BODIES, MASCOT_BODY_IDS } from "../../shared/mascot-bodies";
 
 const vega = { name: "Vega", color: "orange" as const };
 const html = (bot: Parameters<typeof BotAvatar>[0]["bot"]) =>
@@ -42,6 +42,21 @@ describe("BotAvatar shapes for a mascot", () => {
     expect(star).toContain(MASCOT_BODIES.star.clip.match(/d="([^"]{40})/)![1]);
     expect(star).not.toContain(DEFAULT_SILHOUETTE.clip.slice(0, 60));
     expect(html({ ...vega, mascotBody: "cursor" as never })).toContain(DEFAULT_SILHOUETTE.clip.slice(0, 60));
+  });
+
+  it("draws every body in the catalog, each with its own outline and face anchor", () => {
+    const seen = new Set<string>();
+    for (const body of MASCOT_BODY_IDS) {
+      const markup = html({ ...vega, mascotBody: body });
+      const shape = body === "ember" ? DEFAULT_SILHOUETTE : MASCOT_BODIES[body];
+      const outline = shape.clip.match(/d="([^"]{40})/)![1];
+      expect(markup, body).toContain(outline);
+      const { x, y, scale } = shape.anchor;
+      expect(markup, body).toContain(`translate(${x} ${y}) scale(${scale})`);
+      expect(seen.has(outline), `${body} duplicates another body's outline`).toBe(false);
+      seen.add(outline);
+    }
+    expect(seen.size).toBe(MASCOT_BODY_IDS.length);
   });
 
   it("frames the mascot too when the stored image is unusable", () => {

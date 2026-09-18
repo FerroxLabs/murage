@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { createBotPackageExport, getBotPackageExportSelectionCandidates, type BotPackageExportInput } from "./package-export.ts";
 import type { BotRecord } from "./store.ts";
+import { packageAgentAsMember, parseBotPackage } from "./bot-package.ts";
+import { importedMemberProfile } from "./team-manifest.ts";
+import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 
 describe("package export", () => {
   function selectionFixture(): BotPackageExportInput {
@@ -218,5 +221,26 @@ describe("package export", () => {
       ["qualify"],
       ["qualify"],
     ]);
+  });
+});
+
+// A body the user picked is part of the bot's identity, so it has to survive
+// the package boundary the same way a colour does — including the three Blob
+// Studio silhouettes, which keep their 0.1.54 ids so old packages still import.
+describe("package export carries the mascot body", () => {
+  it("round-trips every catalog body, and defaults a retired id to the flame", () => {
+    const bots = MASCOT_BODY_IDS.map((mascotBody, index): BotRecord => ({
+      id: `bot-${index}`, threadId: `private-thread-${index}`, name: `Bot ${index}`, title: "", description: "",
+      color: "green", notifications: true, unread: false, createdAt: 1, resumeCursors: {},
+      modelSelection: { instanceId: "private-engine", model: "private-model" }, mascotBody,
+    }));
+    const pkg = createBotPackageExport({ name: "Bodies", bots, groups: [], routines: [] });
+    const parsed = parseBotPackage(JSON.parse(JSON.stringify(pkg)) as never);
+    const agents = parsed.package.agents;
+    expect(agents.map(agent => agent.appearance.mascotBody)).toEqual([...MASCOT_BODY_IDS]);
+    expect(agents.map(agent => importedMemberProfile(packageAgentAsMember(agent), new Set()).mascotBody)).toEqual([...MASCOT_BODY_IDS]);
+
+    const stale = { ...agents[0]!, appearance: { ...agents[0]!.appearance, mascotBody: "cursor" } };
+    expect(importedMemberProfile(packageAgentAsMember(stale), new Set()).mascotBody).toBe("ember");
   });
 });
