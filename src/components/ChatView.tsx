@@ -817,8 +817,10 @@ function ActivityChip({ message }: { message: Message }) {
             )}
           </span>
           <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
+          {/* not mono: the argument reads as prose beside the tool's name, and
+              inherits the chip's colour so a failed call stays one piece */}
           {tool.summary && (
-            <span data-testid="tool-chip-summary" className="min-w-0 truncate text-ink-secondary">
+            <span data-testid="tool-chip-summary" className="min-w-0 truncate">
               {tool.summary}
             </span>
           )}
