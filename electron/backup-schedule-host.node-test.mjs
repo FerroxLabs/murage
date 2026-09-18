@@ -320,3 +320,70 @@ test("real isolated private worker verifies an encrypted handoff under delegated
     await next.resumeOffline();const s=f.coordinator().status();assert.equal(s.phase,"return-pending");assert.equal(digest(readFileSync(path.join(f.destination,s.job.id+".age"))),s.lastVerified.sha256);assert.equal(readFileSync(path.join(data.data,"config.json")).equals(original),true);next.completeReturn();assert.equal(f.coordinator().status().phase,"returned");diagnostic.stages.push("host-return-verified");success=true;
   }finally{owner?.release();rmSync(f.keyFile,{force:true});console.log("B21 safe worker diagnostic:",JSON.stringify(diagnostic));if(success){f.cleanup();safeWipeSync(data.parent);}else{writeFileSync(path.join(f.root,"safe-worker-diagnostic.json"),JSON.stringify(diagnostic),{mode:0o600});f.controller.stopPolling();console.error("B21 isolated failure artifacts retained:",f.root,data.parent);}}
 });
+test("back up now hands off through the armed restart and records the receipt a daily run would",async()=>{
+  const f=fixture();try{
+    await f.enable();const before=await f.controller.status();assert.equal(before.phase,"idle");
+    const armed=await f.controller.runNow(before.revision);
+    assert.equal(armed.phase,"handoff-armed");assert.deepEqual(f.calls,["prepare","cleanup","backup"]);
+    const job=f.coordinator().status().job;assert.match(job.occurrence,/^\d+:manual:/);
+    const resumed=f.create();await resumed.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");
+    resumed.completeReturn();assert.equal(f.coordinator().status().phase,"returned");
+    const receipt=f.coordinator().status().lastVerified;assert.equal(receipt.jobId,job.id);assert.equal(receipt.destinationRef,before.refs.destinationRef);
+    const selected=await resumed.latestVerifiedArtifact();assert.equal(selected.receipt.jobId,job.id);
+    // Before the daily time nothing else runs; the manual request never replays.
+    await resumed.tick();assert.equal(f.calls.filter(call=>call==="capture").length,1);assert.equal(f.calls.filter(call=>call==="backup").length,1);
+  }finally{f.cleanup();}
+});
+test("back up now runs with the daily schedule off while saved references keep idle-restart consent",async()=>{
+  const f=fixture();try{
+    await f.enable();const enabled=await f.controller.status();
+    const off=await f.controller.configure(enabled.revision,{...enabled.schedule,enabled:false});f.controller.stopPolling();assert.equal(off.enabled,false);
+    await f.controller.runNow(off.revision);assert.equal(f.coordinator().status().phase,"handoff-armed");
+    await f.create().resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");
+    assert.equal(f.coordinator().status().lastVerified.jobId,f.coordinator().status().job.id);
+  }finally{f.cleanup();}
+});
+test("back up now refuses without saved references, consent or the current revision, before any restart",async()=>{
+  const fresh=fixture();try{await assert.rejects(fresh.controller.runNow(0),/BACKUP_SCHEDULE_CONSENT_REQUIRED/);assert.deepEqual(fresh.calls,[]);
+    const selected=await fresh.controller.selectReferences();await assert.rejects(fresh.controller.runNow(selected.revision),/BACKUP_SCHEDULE_CONSENT_REQUIRED/);assert.deepEqual(fresh.calls,[]);assert.equal(fresh.coordinator().status().job,undefined);
+  }finally{fresh.cleanup();}
+  const f=fixture();try{await f.enable();const s=await f.controller.status();
+    for(const stale of [s.revision-1,s.revision+1])await assert.rejects(f.controller.runNow(stale),/BACKUP_SCHEDULE_CHANGED/);
+    await assert.rejects(f.controller.runNow("1"),/INVALID_BACKUP_REQUEST/);
+    writeFileSync(f.keyFile,fakeKey+"# changed\n");await assert.rejects(f.controller.runNow(s.revision),/BACKUP_REFERENCE_CHANGED/);
+    assert.deepEqual(f.calls,[]);assert.equal(f.coordinator().status().job,undefined);
+  }finally{f.cleanup();}
+  const u=fixture();try{await u.enable();const s=await u.controller.status();await assert.rejects(u.create({supported:()=>false}).runNow(s.revision),/BACKUP_UNAVAILABLE/);assert.deepEqual(u.calls,[]);}finally{u.cleanup();}
+});
+test("back up now with active work stays idle and its request never runs later on its own",async()=>{
+  let busy=true;const f=fixture({prepare:async()=>{if(busy)throw Error("BACKUP_WORK_ACTIVE");f.calls.push("prepare");return async()=>f.calls.push("release");}});try{
+    await f.enable();const s=await f.controller.status();
+    await assert.rejects(f.controller.runNow(s.revision),/BACKUP_WORK_ACTIVE/);
+    assert.equal(f.calls.includes("backup"),false);assert.equal(f.coordinator().status().phase,"skipped");assert.equal(f.controller.isPreparing(),false);
+    busy=false;await f.controller.tick();assert.equal(f.calls.includes("backup"),false);assert.equal(f.coordinator().status().phase,"skipped");
+    // The user can simply ask again once the work finishes.
+    await f.controller.runNow(s.revision);assert.equal(f.coordinator().status().phase,"handoff-armed");
+  }finally{f.cleanup();}
+});
+test("back up now is serialized with other backup work and refuses unresolved backups",async()=>{
+  let proceed;const f=fixture({prepare:async()=>{await new Promise(resolve=>{proceed=resolve;});return async()=>{};}});try{
+    await f.enable();const s=await f.controller.status();const first=f.controller.runNow(s.revision);
+    for(let attempt=0;attempt<100&&!proceed;attempt++)await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof proceed,"function");
+    await assert.rejects(f.controller.runNow(s.revision),/BACKUP_BUSY/);await f.controller.tick();await assert.rejects(f.controller.selectReferences(),/BACKUP_BUSY/);
+    proceed();await first;assert.equal(f.coordinator().status().phase,"handoff-armed");
+    await assert.rejects(f.create().runNow(s.revision),/BACKUP_BUSY/);
+  }finally{proceed?.();f.cleanup();}
+  const r=fixture();try{await r.enable();const s=await r.controller.status();
+    const file=path.join(r.root,"control","backup-coordinator.json"),saved=JSON.parse(readFileSync(file));saved.job={id:"f".repeat(64),occurrence:`${s.revision}:daily:2026-09-12`,revision:s.revision,scheduledAt:0,phase:"needs-review",error:"interrupted"};writeFileSync(file,JSON.stringify(saved));
+    await assert.rejects(r.create().runNow(s.revision),/BACKUP_REVIEW_REQUIRED/);assert.deepEqual(r.calls,[]);
+  }finally{r.cleanup();}
+});
+test("back up now while a daily backup waits hands off that same job instead of a second one",async()=>{
+  let busy=true;const f=fixture({prepare:async()=>{if(busy)throw Error("BACKUP_WORK_ACTIVE");f.calls.push("prepare");return async()=>{};}});try{
+    await f.arm();const waiting=f.coordinator().status();assert.equal(waiting.phase,"waiting-backup-mode");assert.match(waiting.job.occurrence,/:daily:/);
+    busy=false;await f.controller.runNow(waiting.revision);const armed=f.coordinator().status();
+    assert.equal(armed.phase,"handoff-armed");assert.equal(armed.job.id,waiting.job.id);
+    const resumed=f.create();await resumed.resumeOffline();resumed.completeReturn();await resumed.tick();
+    assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(call=>call==="capture").length,1);assert.equal(f.calls.filter(call=>call==="backup").length,1);
+  }finally{f.cleanup();}
+});

@@ -10,6 +10,16 @@ Murage keeps its application state under `~/.murage`, including configuration, t
 
 Close Murage before taking a filesystem-level backup so SQLite and configuration files are captured consistently. Preserve the entire `.murage` directory rather than selecting individual database files.
 
+## Create your recovery key
+
+Encrypted backups from the desktop app need a recovery key. It is the only thing that can open them, so Murage never keeps a copy. In the Backups settings, choose **Create my recovery key** and pick where to save the file. Keep it somewhere other than your backup folder, such as a password manager or a USB drive. Murage refuses to save it inside its own data folder or inside the backup folder you chose, and never replaces an existing file.
+
+When you then choose your backup folder and key, the key picker opens in the folder where you saved it. You still pick the file yourself.
+
+## Back up now
+
+Once your backup folder and recovery key are chosen and you have allowed Murage to restart for backups, **Back up now** runs one backup straight away instead of waiting for the daily time. Murage closes its idle services, restarts to take the backup, then reopens. It will not start while a bot is working or another backup is in progress. The result shows as your latest verified backup, just like a scheduled one.
+
 ## Do not copy secrets casually
 
 Packaged desktop builds may protect credentials using operating-system secure storage. Copying the JSON directory to another machine does not necessarily make protected credentials usable there, and it should not be treated as a portable credential export.

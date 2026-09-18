@@ -5,6 +5,7 @@ import { createNotificationAuthorization } from "./notification-authorization.mj
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
+import { createRecoveryKeyFlow } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
@@ -300,8 +301,23 @@ const backupMode = createBackupModeController({
 });
 ipcMain.handle("backup-mode:status", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.status(); });
 ipcMain.handle("backup-mode:restart", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.restart(); });
+// The age identity is generated and written here; only its file name and
+// public recipient cross IPC.
+const backupRecoveryKeys=createRecoveryKeyFlow({
+  isUsable:()=>Boolean(app.isPackaged&&desktopDataOwner&&!desktopShutdownStarted&&!desktopRecoveryMode&&backupScheduleHost&&!backupMode.isPreparing()&&!backupScheduleHost.isPreparing()),
+  installation:()=>ownedDesktopDataDir(),
+  selectedDestination:()=>backupScheduleHost.selectedDestination(),
+  chooseFile:async()=>{
+    const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
+      defaultPath:path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
+    return answer.canceled||!answer.filePath?null:answer.filePath;
+  },
+});
+ipcMain.handle("backup-mode:create-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupRecoveryKeys.create();});
 ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});
 ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.selectReferences();});
+ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
 ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
@@ -3180,7 +3196,7 @@ async function initializeBackupScheduleHost(){
     backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),provider,backup:()=>backupScheduleHost,
     confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Install backup job"],defaultId:0,cancelId:0,noLink:true,message:"Install an owning-user backup job?",detail:"This registers the staged job for this profile. Backups remain off until you explicitly enable closed-app backups. The job runs in your user session and does not save account passwords."});return answer.response===1;},
   });
-  const choose=async(properties,title)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties});return answer.canceled?null:answer.filePaths[0]??null;};
+  const choose=async(properties,title,defaultPath)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties,...(defaultPath?{defaultPath}:{})});return answer.canceled?null:answer.filePaths[0]??null;};
   backupScheduleHost=createBackupScheduleHost({
     coordinator,installation:()=>installation,
     assertUpgradeAllowed:()=>{
@@ -3209,7 +3225,8 @@ async function initializeBackupScheduleHost(){
       await updateSecureCredentialDocument(current=>({...current,[key]:value}));
     },
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
-    chooseKey:()=>choose(["openFile"],"Choose independent age recovery key"),
+    // Start where a key was just created here; the user still picks it.
+    chooseKey:()=>choose(["openFile"],"Choose independent age recovery key",backupRecoveryKeys.lastFolder()),
     confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Save references"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent recovery-key copy",detail:"The key must remain outside this installation and available for scheduled backups. Keep a separate safe recovery copy. Saving these references does not enable backups or authorize a restart."});return answer.response===1;},
     prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
     cleanupIdle:cleanupDesktopForExit,

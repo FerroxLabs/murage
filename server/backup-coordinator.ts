@@ -17,6 +17,15 @@ const stateSchema = z.object({ version:z.literal(1),revision:z.number().int().no
   job:jobSchema.optional(),seen:z.array(z.string().max(200)).max(256),watermark:z.number().int().nonnegative(),lastVerified:backupReceiptSchema.optional(),lastClosedResult:backupClosedResultSchema.optional(),
 }).strict();
 type State = z.infer<typeof stateSchema>;
+type Job = z.infer<typeof jobSchema>;
+const waitingPhases:Job["phase"][]=["due","waiting-idle","waiting-backup-mode"];
+const settledPhases:Job["phase"][]=["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"];
+/** A user-requested backup is named by its revision, so a changed schedule
+ * never inherits one. It is only ever started by the request that made it. */
+const manualJob=(s:State,job=s.job)=>Boolean(job&&job.revision===s.revision&&job.occurrence.startsWith(`${s.revision}:manual:`));
+/** Manual runs do not need the daily time, but they need every reference and
+ * budget an enabled schedule must name. */
+const manualReady=(schedule:BackupSchedule)=>backupScheduleSchema.safeParse({...schedule,enabled:true}).success;
 export interface BackupCaptureRequest { jobId:string; installationRef:string; destinationRef:string; recoveryRef:string; selectionHash:string; selection:NonNullable<BackupSchedule["selection"]>; maxBytes:number; maxDurationMs:number }
 interface Lease { release(): void }
 interface Options {
@@ -59,7 +68,7 @@ export class BackupCoordinator {
   /** Read-only wake eligibility. Final owner admission and due selection remain
    * mandatory after the GUI job acquires its installation lease. */
   closedEligibility():{status:"disabled"|"not-due"|"due"|"needs-review"}{
-    const s=this.read(),job=s.job;
+    const s=this.read(),job=manualJob(s)&&waitingPhases.includes(s.job!.phase)?undefined:s.job;
     if(!s.schedule.enabled||s.schedule.closedApp!==true)return {status:"disabled"};
     if(job&&!["due","waiting-idle","waiting-backup-mode","local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"].includes(job.phase))return {status:"needs-review"};
     const latest=latestBackupOccurrence(s.schedule,this.now());
@@ -74,6 +83,34 @@ export class BackupCoordinator {
     const lease=this.lease();try{
       const s=this.read();s.lastClosedResult=backupClosedResultSchema.parse({...input,at:this.now(),revision:s.revision,...(s.job?{jobId:s.job.id}:{})});
       this.save(s);return s.lastClosedResult;
+    }finally{lease.release();}
+  }
+  /** One immediate backup through the same prepared and armed handoff as a
+   * daily run. A daily job already waiting is handed off instead of a second
+   * one, so the two never both run. */
+  requestManual(expectedRevision:number,requestId:string){
+    const lease=this.lease();try{
+      const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
+      const request=backupReferenceSchema.safeParse(requestId);if(!request.success)throw new Error("BACKUP_HANDOFF_REJECTED");
+      if(!manualReady(s.schedule))throw new Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");
+      const job=s.job;
+      if(job&&waitingPhases.includes(job.phase)){
+        if(s.schedule.enabled&&job.revision===s.revision&&job.occurrence.includes(":daily:")&&this.now()-job.scheduledAt<=s.schedule.catchupMs!)return this.status();
+        if(!manualJob(s)&&!job.occurrence.includes(":daily:"))throw new Error("BACKUP_BUSY");
+        job.phase="skipped";job.error=manualJob(s)?"cancelled":"catchup-expired";
+      }else if(job&&["handoff-armed","return-pending","install-requested"].includes(job.phase))throw new Error("BACKUP_BUSY");
+      else if(job&&!settledPhases.includes(job.phase))throw new Error("BACKUP_REVIEW_REQUIRED");
+      const occurrence=`${s.revision}:manual:${request.data}`;
+      if(s.seen.includes(occurrence))throw new Error("BACKUP_HANDOFF_CHANGED");
+      s.job={id:hash([s.schedule.installationRef,occurrence]),occurrence,revision:s.revision,scheduledAt:this.now(),phase:"due"};
+      s.seen=[...s.seen,occurrence].slice(-256);this.save(s);return this.status();
+    }finally{lease.release();}
+  }
+  /** Withdraws a manual request that never reached the handoff. */
+  cancelManual(jobId:string){
+    const lease=this.lease();try{
+      const s=this.read();if(s.job?.id!==jobId||!manualJob(s)||!waitingPhases.includes(s.job.phase))throw new Error("BACKUP_HANDOFF_CHANGED");
+      s.job.phase="skipped";s.job.error="cancelled";this.save(s);return this.status();
     }finally{lease.release();}
   }
   private checkedCandidate(input:unknown){const candidate=parseUpdateCandidate(input);if(candidate.candidateId!=="update-"+createHash("sha256").update(canonicalUpdateDescriptor(candidate)).digest("hex"))throw Error("BACKUP_UPDATE_CANDIDATE_INVALID");return candidate;}
@@ -105,10 +142,10 @@ export class BackupCoordinator {
   requestUpgradeInstall(id:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"return-pending","install-requested",s=>this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity));}
   completeUpgrade(id:string,currentVersion:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"install-requested","upgrade-complete",s=>{this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity);if(currentVersion!==candidate.version)throw Error("BACKUP_UPGRADE_VERSION_MISMATCH");});}
   cancelUpgrade(id:string){return this.transitionHandoff(id,"return-pending","upgrade-cancelled",s=>{if(!s.job!.handoff!.upgrade)throw Error("BACKUP_UPGRADE_REJECTED");});}
-  prepareHandoff(jobId:string,input:BackupHandoff){const lease=this.lease();try{const s=this.read(),handoff=backupHandoffSchema.parse(input);if(!s.schedule.enabled||s.job?.id!==jobId||s.job.revision!==s.revision||!["due","waiting-idle","waiting-backup-mode"].includes(s.job.phase)||handoff.expiresAt<=this.now()||handoff.expiresAt>this.now()+30*60000)throw new Error("BACKUP_HANDOFF_REJECTED");s.job.phase="handoff-prepared";s.job.handoff=handoff;this.save(s);return this.status();}finally{lease.release();}}
+  prepareHandoff(jobId:string,input:BackupHandoff){const lease=this.lease();try{const s=this.read(),handoff=backupHandoffSchema.parse(input);if(!(s.schedule.enabled||(manualJob(s)&&manualReady(s.schedule)))||s.job?.id!==jobId||s.job.revision!==s.revision||!["due","waiting-idle","waiting-backup-mode"].includes(s.job.phase)||handoff.expiresAt<=this.now()||handoff.expiresAt>this.now()+30*60000)throw new Error("BACKUP_HANDOFF_REJECTED");s.job.phase="handoff-prepared";s.job.handoff=handoff;this.save(s);return this.status();}finally{lease.release();}}
   private transitionHandoff(id:string,from:string,to:z.infer<typeof jobSchema>["phase"],check?:(s:State)=>void){const lease=this.lease();try{const s=this.read();if(s.job?.handoff?.id!==id||s.job.phase!==from)throw new Error("BACKUP_HANDOFF_CHANGED");check?.(s);s.job.phase=to;this.save(s);return this.status();}finally{lease.release();}}
   armHandoff(id:string){return this.transitionHandoff(id,"handoff-prepared","handoff-armed");}
-  claimHandoff(id:string,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"handoff-armed","offline-claimed",s=>{if(!s.schedule.enabled||s.job!.revision!==s.revision||s.job!.handoff!.expiresAt<=this.now()||s.job!.handoff!.bindingRevision!==bindingRevision||s.job!.handoff!.installationIdentity!==installationIdentity)throw new Error("BACKUP_HANDOFF_REJECTED");if(s.job!.handoff!.upgrade)this.checkedCandidate(s.job!.handoff!.upgrade);});}
+  claimHandoff(id:string,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"handoff-armed","offline-claimed",s=>{if(!(s.schedule.enabled||(manualJob(s)&&manualReady(s.schedule)))||s.job!.revision!==s.revision||s.job!.handoff!.expiresAt<=this.now()||s.job!.handoff!.bindingRevision!==bindingRevision||s.job!.handoff!.installationIdentity!==installationIdentity)throw new Error("BACKUP_HANDOFF_REJECTED");if(s.job!.handoff!.upgrade)this.checkedCandidate(s.job!.handoff!.upgrade);});}
   beginHandoffCapture(id:string){return this.transitionHandoff(id,"offline-claimed","capturing",s=>{s.job!.attemptAt=this.now();});}
   completeHandoff(id:string,input:BackupReceipt){return this.transitionHandoff(id,"capturing","return-pending",s=>{const r=backupReceiptSchema.parse(input),job=s.job!;if(r.jobId!==job.id||r.installationRef!==s.schedule.installationRef||r.destinationRef!==s.schedule.destinationRef||r.selectionHash!==hash(s.schedule.selection)||r.bytes>s.schedule.maxBytes!||r.verifiedAt<job.attemptAt!||r.verifiedAt>this.now()||r.candidateId!==job.handoff?.upgrade?.candidateId||(job.handoff?.upgrade&&r.artifactRef!==job.id))throw new Error("BACKUP_RECEIPT_MISMATCH");job.receipt=r;s.lastVerified=r;});}
   completeReturn(id:string){return this.transitionHandoff(id,"return-pending","returned",s=>{if(s.job!.handoff!.upgrade)throw Error("BACKUP_UPGRADE_PENDING");});}
@@ -120,6 +157,9 @@ export class BackupCoordinator {
       const s=this.read();
       if(s.job&&["claiming","capturing","handoff-prepared","offline-claimed"].includes(s.job.phase)){s.job.phase="needs-review";s.job.error="interrupted";this.save(s);return this.status();}
       if(s.job&&["handoff-armed","return-pending","install-requested"].includes(s.job.phase))return this.status();
+      // Only the request that created a manual job hands it off; a leftover
+      // one is withdrawn rather than run later without the user.
+      if(manualJob(s)&&waitingPhases.includes(s.job!.phase)){s.job!.phase="skipped";s.job!.error="cancelled";this.save(s);}
       if(!s.schedule.enabled||s.job?.phase==="needs-review")return this.status();
       let job=s.job;
       if(job&&["due","waiting-idle","waiting-backup-mode"].includes(job.phase)&&job.occurrence.includes(":daily:")){

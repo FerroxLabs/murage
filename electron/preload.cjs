@@ -72,11 +72,13 @@ contextBridge.exposeInMainWorld("muragebox", {
   backup: {
     status: () => ipcRenderer.invoke("backup-mode:status"),
     restart: () => ipcRenderer.invoke("backup-mode:restart"),
+    createRecoveryKey: () => ipcRenderer.invoke("backup-mode:create-recovery-key"),
   },
   backupSchedule: {
     status: () => ipcRenderer.invoke("backup-schedule:status"),
     selectReferences: () => ipcRenderer.invoke("backup-schedule:select"),
     configure: (revision, choices) => ipcRenderer.invoke("backup-schedule:configure", revision, choices),
+    runNow: (revision) => ipcRenderer.invoke("backup-schedule:run-now", revision),
   },
   backupClosed: {
     status: () => ipcRenderer.invoke("backup-closed:status"),
