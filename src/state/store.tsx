@@ -537,6 +537,7 @@ export interface InstanceInfo {
 export type AppSettingsSection =
   | "models"
   | "general"
+  | "backups"
   | "experimental"
   | "connections"
   | "engines"
