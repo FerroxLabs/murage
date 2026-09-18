@@ -457,4 +457,152 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const instance = create();
     await expect(instance.generateText?.("hello")).rejects.toThrow("TestProvider error: model unavailable");
   });
+
+  // ---------------------------------------------------------------------
+  // F3 vs F11 — the unreachable-endpoint wrapper must not eat a dropped
+  // stream. `isEndpointUnreachable` matches ECONNRESET / UND_ERR_SOCKET /
+  // EPIPE / ETIMEDOUT, which are exactly the codes a connection carries when
+  // it dies HALFWAY THROUGH a reply. Applied after bytes have already
+  // arrived, it threw away every streamed word and told the person the
+  // server "could not be reached" — while its answer was on their screen.
+  // The old regression test missed this only because its fixture threw an
+  // error with no `code` at all, which no real transport does.
+  // ---------------------------------------------------------------------
+
+  /** What undici throws when the socket dies mid-body: a TypeError whose
+   *  cause carries the errno. Identical in shape to a connect failure. */
+  const midStreamDrop = (code: string, syscall: string, message: string): Error =>
+    Object.assign(new TypeError("terminated"), {
+      cause: Object.assign(new Error(message), { code, syscall }),
+    });
+
+  it("keeps partial output when a mid-stream drop carries ECONNRESET", async () => {
+    const { completed, events } = await runTurn(
+      "t-drop-econnreset",
+      [
+        () => sse([contentFrame("streamed ")], midStreamDrop("ECONNRESET", "read", "read ECONNRESET")),
+        () => sse([contentFrame("replayed", "stop"), DONE]),
+      ],
+      { retryScale: 0.001 },
+    );
+
+    expect(replies(events)).toEqual(["streamed "]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(errors(events)).toEqual(["The connection to the model server dropped before the answer finished."]);
+    // The endpoint plainly answered — it streamed. Never claim otherwise.
+    expect(errors(events).join(" ")).not.toMatch(/could not reach|nothing answered/i);
+    expect(errorDetails(events)).toEqual(["TestProvider stream failed: terminated"]);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps partial output when a mid-stream drop carries UND_ERR_SOCKET", async () => {
+    const { completed, events } = await runTurn(
+      "t-drop-und-err-socket",
+      [
+        () => sse([contentFrame("half an ans")], midStreamDrop("UND_ERR_SOCKET", "read", "other side closed")),
+        () => sse([contentFrame("replayed", "stop"), DONE]),
+      ],
+      { retryScale: 0.001 },
+    );
+
+    expect(replies(events)).toEqual(["half an ans"]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(errors(events)).toEqual(["The connection to the model server dropped before the answer finished."]);
+    expect(errors(events).join(" ")).not.toMatch(/could not reach|nothing answered/i);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps reasoning-only partial output when a drop carries EPIPE", async () => {
+    const { completed, events } = await runTurn(
+      "t-drop-epipe-reasoning",
+      [() => sse(
+        [frame({ choices: [{ delta: { reasoning_content: "thinking out loud" } }] })],
+        midStreamDrop("EPIPE", "write", "write EPIPE"),
+      )],
+      { reasoning: true },
+    );
+
+    expect(replies(events)).toEqual(["thinking out loud"]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(errors(events).join(" ")).not.toMatch(/could not reach|nothing answered/i);
+  });
+
+  it("still says which address never answered when the connection never happened", async () => {
+    responders = [() => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), {
+          code: "ECONNREFUSED",
+          syscall: "connect",
+        }),
+      });
+    }];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-dead-endpoint", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "error" });
+    expect(replies(recorder.events)).toEqual([]);
+    expect(errors(recorder.events)).toEqual([
+      "Could not reach chat.invalid — nothing answered there. Check that the server is running and that its address is right.",
+    ]);
+    expect(errors(recorder.events)[0]).not.toContain("fetch failed");
+  });
+
+  it("still names the address when a response object never arrived after a retry", async () => {
+    // A connect failure that is retried and fails again: nothing has ever been
+    // received on either attempt, so the honest unreachable copy still wins.
+    const refuse = () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), { code: "ECONNREFUSED" }),
+      });
+    };
+    const { completed, events } = await runTurn("t-dead-retry", [refuse, refuse, refuse], { retryScale: 0.001 });
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "error" });
+    expect(errors(events)).toEqual([
+      "Could not reach chat.invalid — nothing answered there. Check that the server is running and that its address is right.",
+    ]);
+  });
+
+  it("never rewrites a user Stop as an unreachable endpoint", async () => {
+    // The socket a Stop tears down reports ECONNRESET too. STOP1: a stopped
+    // turn is cancelled, keeps its partial, and raises no error at all.
+    responders = [(signal) => {
+      let sent = false;
+      return new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (!sent) {
+                sent = true;
+                controller.enqueue(encoder.encode(contentFrame("working on it")));
+                return;
+              }
+              return new Promise<void>((resolve) => {
+                signal?.addEventListener("abort", () => {
+                  controller.error(midStreamDrop("ECONNRESET", "read", "read ECONNRESET"));
+                  resolve();
+                }, { once: true });
+              });
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-stop-econnreset", text: "question" });
+    await recorder.until((event) => event.type === "content.delta");
+    await instance.adapter.interruptTurn("t-stop-econnreset");
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(errors(recorder.events)).toEqual([]);
+    expect(replies(recorder.events)).toEqual(["working on it"]);
+  });
 });
