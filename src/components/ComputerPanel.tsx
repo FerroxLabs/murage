@@ -1358,8 +1358,8 @@ export function ComputerPanel({
                     ? "Auto reuses a ready VPS when one is configured; otherwise computer use stays off. "
                     : `${linuxAutoDescription()} `
                   : cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one exists, otherwise this computer. "
-                    : "Auto uses a cloud box when one exists, otherwise this computer. ")}
+                    ? "Auto reuses a ready VPS when one exists, otherwise this computer, and asks you once before it first uses this computer. "
+                    : "Auto uses a cloud box when one exists, otherwise this computer, and asks you once before it first uses this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine, free and separate from your own desktop. Set it up in App
               Settings → Local VM.
@@ -1382,6 +1382,29 @@ export function ComputerPanel({
               void revokeThisScreen();
             }
           }} />
+          {!bot.computer && !isLinux && localSelectable && (
+            <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-[13px] text-ink">Using this computer on Auto</div>
+                <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                  {bot.hostComputerConsent === "allowed"
+                    ? "Allowed for this bot."
+                    : bot.hostComputerConsent === "declined"
+                      ? "Not allowed. Auto keeps this bot off your screen."
+                      : "Asks you the first time this bot would use your screen."}
+                </div>
+              </div>
+              {(bot.hostComputerConsent === "allowed" || bot.hostComputerConsent === "declined") && (
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { hostComputerConsent: "ask" } })}
+                  className="shrink-0 rounded-full border border-hairline/50 px-3 py-1 text-[12px] text-ink hover:bg-control"
+                >
+                  Ask again
+                </button>
+              )}
+            </div>
+          )}
           {bot.computer === "browser" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">
             Browser tools can work with web pages without desktop access. {browserEnabled ? "Open the Browser tab above to view it." : "An interactive browser preview is unavailable here."}
           </p>}

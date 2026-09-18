@@ -16,7 +16,9 @@ Ubuntu 24.04 GNOME host control is temporarily disabled while the real-seat inpu
 
 ## Safety model
 
-- On macOS, a bot left on **Auto** uses this computer as soon as local control is installed. Set a bot to **Off** if it should never touch your screen.
+- On macOS, a bot left on **Auto** can use this computer once local control is installed, but it asks you once before it first acts on your screen. Choose **Allow for this bot** and Murage remembers it for that bot. Choose **Don't allow** and Auto keeps that bot off your screen. To change your answer, open the bot's Computer panel and choose **Ask again**.
+- Bots that already used this computer before this check existed keep working without the question: bots with Auto mode on, and bots you had already approved on this computer.
+- A bot you set to **This computer** is never asked, because choosing it is your answer. Set a bot to **Off** if it should never touch your screen.
 - On Linux, a bot receives this computer only when you choose **This computer** for it.
 - Risky actions still surface through the approval flow.
 - Missing permissions, unexpected binaries, unsupported desktop sessions, and failed health checks fail closed.

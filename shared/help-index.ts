@@ -112,7 +112,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
     "url": "https://murage.app/docs/computers/local-computer#safety-model",
-    "text": "- On macOS, a bot left on Auto uses this computer as soon as local control is installed. Set a bot to Off if it should never touch your screen.\n- On Linux, a bot receives this computer only when you choose This computer for it.\n- Risky actions still surface through the approval flow.\n- Missing permissions, unexpected binaries, unsupported desktop sessions, and failed health checks fail closed."
+    "text": "- On macOS, a bot left on Auto can use this computer once local control is installed, but it asks you once before it first acts on your screen. Choose Allow for this bot and Murage remembers it for that bot. Choose Don't allow and Auto keeps that bot off your screen. To change your answer, open the bot's Computer panel and choose Ask again.\n- Bots that already used this computer before this check existed keep working without the question: bots with Auto mode on, and bots you had already approved on this computer.\n- A bot you set to This computer is never asked, because choosing it is your answer. Set a bot to Off if it should never touch your screen.…"
   },
   {
     "id": "computers/local-vm#overview",

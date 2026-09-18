@@ -113,7 +113,9 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
       const created = await api("POST", "/api/bots", { name: `${destination} concurrency ${instanceId}`, modelSelection: { instanceId, model } });
       expect(created.status).toBe(201);
       const bot = created.body.bot; bots.push(bot);
-      const configured = await api("PATCH", `/api/bots/${bot.id}`, { ...(destination === "local" ? { computer: "local" } : {}), browser: false, composio: false });
+      // Auto bots are pre-confirmed for this computer; the one-time confirmation
+      // itself is covered by server/auto-computer-consent-api.test.ts.
+      const configured = await api("PATCH", `/api/bots/${bot.id}`, { ...(destination === "local" ? { computer: "local" } : { hostComputerConsent: "allowed" }), browser: false, composio: false });
       expect(configured.status).toBe(200);
       expect((await state(bot.id)).computer).toBe(destination === "local" ? "local" : undefined);
     }

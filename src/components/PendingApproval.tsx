@@ -38,6 +38,12 @@ export function isSkillApproval(pending: Pending): boolean {
   return Boolean(pending.message.card?.skillRequest);
 }
 
+/** The one-time "may this bot on Auto use this computer?" card
+ * (server/host-computer-consent.ts). Its answer is remembered for the bot. */
+export function isHostConsentApproval(pending: Pending): boolean {
+  return pending.message.card?.tool === "local_computer_consent";
+}
+
 function needsRoutineReview(pending: Pending): boolean {
   const card = pending.message.card;
   return isRoutineApproval(pending) && !card?.answered && !/^[a-f0-9]{64}$/.test(card?.routineProposalDigest ?? "");
@@ -68,6 +74,9 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
     const title = pending.message.card?.title.trim() || (updating ? "Update this skill?" : "Enable this skill?");
     return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the skill on screen. Should I ${updating ? "update" : "enable"} it?`;
   }
+  if (isHostConsentApproval(pending)) {
+    return `${requester} wants to use this computer: your screen, mouse and keyboard. Should I allow it for this bot from now on?`;
+  }
   if (!isRoutineRequest) {
     return `${requester} wants to ${pending.tool}. ${pending.detail}. Should I allow it?`;
   }
@@ -86,6 +95,7 @@ function label(pending: Pending): string {
       ? "Confirm this routine"
       : "Confirm this routine change";
   }
+  if (isHostConsentApproval(pending)) return pending.message.card?.title || "Use this computer?";
   const nice: ApprovalLabels = {
     Bash: "Command approval requested",
     shell: "Command approval requested",
@@ -163,6 +173,7 @@ export function PendingApprovalActions({
   const desktop = useDesktopSurface();
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
+  const hostConsent = isHostConsentApproval(pending);
   const durableRequest = isRoutineRequest || isSkillRequest;
   const reviewedSha256 = pending.message.card?.skillRequest
     ? reviewedSkillSha256(pending.message.card.skillRequest)
@@ -190,7 +201,7 @@ export function PendingApprovalActions({
         onClick={() => decide("deny")}
         className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
       >
-        {isRoutineRequest ? "Cancel" : "Deny"}
+        {isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : "Deny"}
       </button>
       {desktop === true && !durableRequest && bot && pending.allowKey && (
         <button
@@ -211,7 +222,7 @@ export function PendingApprovalActions({
       >
         {isSkillRequest
           ? pending.message.card?.skillRequest?.action === "update" ? "Update" : "Enable"
-          : isRoutineRequest ? "Confirm" : "Allow once"}
+          : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : "Allow once"}
       </button>
     </div>
   );

@@ -211,6 +211,20 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
+/** Threads holding an allowed "Local computer approval" card: evidence that
+ * the owner already let a bot act on this computer (grandfathering for the
+ * one-time Auto confirmation, server/host-computer-consent.ts). */
+export function threadsWithAllowedHostActions(): Set<string> {
+  const rows = db()
+    .prepare(
+      "SELECT DISTINCT thread_id FROM messages " +
+      "WHERE kind = 'options' AND json_extract(json, '$.card.approvalScope') = 'local-computer' " +
+      "AND json_extract(json, '$.card.answered') = 'allow'",
+    )
+    .all() as Array<{ thread_id: string }>;
+  return new Set(rows.map((row) => row.thread_id));
+}
+
 /** Threads whose visible conversation ends on a user message. After a restart
  * these are the 1:1 turns that were running when the process died: the person
  * asked, and nothing ever answered. Routines, memory turns and room goals all

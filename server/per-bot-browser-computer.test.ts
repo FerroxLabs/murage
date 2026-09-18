@@ -257,11 +257,11 @@ it("gives an explicitly-off bot no computer, and hands an unassigned bot this Ma
 
     const autoTurn = await startTurn(auto, "assignment-auto", true);
     if (AUTO_REACHES_HOST) {
-      // DOCUMENTED RISK, not an endorsement. A bot the owner never gave a
-      // computer to is handed the owner's real desktop by the auto-fallback
-      // at server/index.ts:4678-4693, with no per-bot consent step: the
-      // acknowledgeLocalAuto gate at server/index.ts:12100 fires only when
-      // autoApprove is switched on in the same request.
+      // A bot the owner never gave a computer to is still handed the tools
+      // for the owner's real desktop by the Auto fallback. Mounting touches
+      // nothing: its first actual action waits on a one-time, per-bot
+      // confirmation (server/host-computer-consent.ts, covered end to end in
+      // server/auto-computer-consent-api.test.ts).
       const mounted = mountedComputer(autoTurn);
       expect(mounted, "unassigned bot reached the host computer").toBeTruthy();
       expect(mounted.args.some((arg: string) => arg.includes("host-computer-proxy"))).toBe(true);
@@ -323,7 +323,7 @@ it("gives a browser-off bot no browser and an unassigned bot its own private one
 
 it.runIf(AUTO_REACHES_HOST)("revokes only the stopped bot's computer, never its peer's", async () => {
   const first = await makeBot("Isolation A", "verification", { computer: "local", browser: false });
-  const second = await makeBot("Isolation B", "second", { browser: false });
+  const second = await makeBot("Isolation B", "second", { browser: false, hostComputerConsent: "allowed" });
   const clients: EngineClient[] = [];
   try {
     const a = await startTurn(first, "isolation-a", false);
@@ -518,7 +518,7 @@ it.runIf(AUTO_REACHES_HOST)("tells a bot that it can drive a computer whenever o
 // `{ ok: true }`. Both sites now ask `botUsesHostComputer`
 // (server/local-routing.ts), so they cannot drift apart again.
 it.runIf(AUTO_REACHES_HOST)("stops an unassigned bot that is driving this Mac, not only an explicitly-local one", async () => {
-  const auto = await makeBot("Panic auto", "verification", { browser: false });
+  const auto = await makeBot("Panic auto", "verification", { browser: false, hostComputerConsent: "allowed" });
   const explicit = await makeBot("Panic local", "second", { computer: "local", browser: false });
   try {
     const a = mountedComputer(await startTurn(auto, "panic-auto", false));
@@ -551,7 +551,7 @@ it.runIf(AUTO_REACHES_HOST)("stops an unassigned bot that is driving this Mac, n
 // "stop everything". A bot that is explicitly off this computer keeps working
 // through a panic stop, and is not named in the answer either.
 it.runIf(AUTO_REACHES_HOST)("leaves a bot that is not on this computer running through a panic stop", async () => {
-  const auto = await makeBot("Panic scope auto", "verification", { browser: false });
+  const auto = await makeBot("Panic scope auto", "verification", { browser: false, hostComputerConsent: "allowed" });
   const elsewhere = await makeBot("Panic scope off", "second", { computer: "off", browser: false });
   try {
     const a = mountedComputer(await startTurn(auto, "panic-scope-auto", false));
