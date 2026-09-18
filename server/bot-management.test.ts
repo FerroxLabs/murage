@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store, canReach } from "./store.ts";
+import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 import { managedBotProfile, manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -87,4 +88,18 @@ it("checks model changes through the provider boundary and refuses them while bu
   expect(specialist.modelSelection.connectionId).toBe("provider-account");
   expect(store.taskByThread(specialist.id, specialist.threadId)?.resumeCursors.fixture).toBeUndefined();
   expect(options.revoke).toHaveBeenCalledWith(specialist.id);
+});
+
+// Duplicating a bot re-creates it from the source profile and then PATCHes the
+// rest, so the chosen mascot body has to survive createBot as well as the patch
+// parser — otherwise a copy silently reverts to the flame.
+it("keeps a bot's mascot body when it is created from another bot's profile, as duplication does", () => {
+  const store = new Store(() => ({ instanceId: "fixture", model: "model" }));
+  for (const mascotBody of MASCOT_BODY_IDS) {
+    const source = store.createBot({ name: `Src ${mascotBody}`, mascotBody });
+    expect(source.mascotBody, mascotBody).toBe(mascotBody);
+    const copy = store.createBot({ name: `${source.name} copy`, color: source.color, mascotBody: source.mascotBody });
+    expect(copy.mascotBody, mascotBody).toBe(mascotBody);
+  }
+  expect(store.createBot({ name: "Plain" }).mascotBody).toBeUndefined();
 });

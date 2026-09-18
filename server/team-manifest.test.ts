@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./team-manifest.ts";
+import { MASCOT_BODY_IDS } from "../shared/mascot-bodies.ts";
 
 describe("team manifests", () => {
   it("exports portable member keys without room or runtime state", () => {
@@ -208,6 +209,16 @@ describe("team manifests", () => {
     expect(importedMemberProfile(star, new Set()).mascotBody).toBe("star");
     const stale = { ...star, appearance: { ...star.appearance, mascotBody: "cursor" } };
     expect(importedMemberProfile(stale, new Set()).mascotBody).toBe("ember");
+  });
+
+  it("carries every catalog body, Sean's Circle, Cone and Polygon among them", () => {
+    const manifest = createTeamManifest(
+      { name: "Bodies", memberIds: MASCOT_BODY_IDS.map((_, i) => `b${i}`) },
+      MASCOT_BODY_IDS.map((mascotBody, i) => ({ id: `b${i}`, name: `B${i}`, title: "", description: "", color: "blue", mascotBody })),
+    );
+    const parsed = parseTeamManifest(JSON.parse(JSON.stringify(manifest)));
+    expect(parsed.team.members.map((m) => m.appearance.mascotBody)).toEqual([...MASCOT_BODY_IDS]);
+    expect(parsed.team.members.map((m) => importedMemberProfile(m, new Set()).mascotBody)).toEqual([...MASCOT_BODY_IDS]);
   });
 
   it("builds import profiles from persona fields only and numbers colliding names", () => {

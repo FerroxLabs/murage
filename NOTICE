@@ -103,9 +103,49 @@ They do not imply import of a complete upstream release.
     anchors, copied verbatim; a per-bot body field; and a body picker.
     Upstream's cursor outline, generator scripts and phone renderers were not
     taken; Murage's Ember flame stays the default body.
+    Seven of the nine outlines (blob, circle, capsule, drop, shield, hexagon,
+    star) have since been superseded by Blob Studio artwork; see the Blob
+    Studio entry below. Two remain as copied: squircle and diamond.
     Murage: shared/mascot-bodies.ts, src/components/Avatar.tsx,
     src/components/BotProfileAvatarCard.tsx, server/bot-profile.ts and the
     team/package appearance fields
+
+  Blob Studio mascot packs (Blob, Circle, Capsule, Drop, Cone, Polygon, Star)
+    https://www.blobstudio.xyz/ — packs BlobMascot, CircleMascot,
+    CapsuleMascot, DropMascot, ConeMascot, PolygonMascot and StarMascot as
+    supplied by Sean Donahoe, 2026-09-18.
+    Taken from each pack: the `SHAPE` constant only — the silhouette `body`
+    and `clip` path, the `fit` transform, and the face `anchor` — copied
+    verbatim but for the dropped `xmlns` attribute on each path. These now
+    supply seven of Murage's nine catalog outlines, superseding the
+    OpenMausBot artwork that stood at blob, circle, capsule, drop, shield,
+    hexagon and star. The shield and hexagon entries are renamed in the picker
+    to the packs' own Cone and Polygon; all seven ids are unchanged so bodies
+    chosen in 0.1.54 still resolve. Only squircle and diamond remain
+    OpenMausBot's.
+    Five of the seven are the same silhouette the OpenMausBot generator had
+    produced, to within the curve form each writes: Cone matches upstream's
+    shield exactly, Polygon its hexagon to 0.002 of 200, Blob to 0.011, Drop
+    to 0.046 and Circle to 0.027 (upstream approximates a true arc with
+    cubics; the packs write the arc). Two are genuinely different drawings:
+    the pack's Capsule has quadratic rather than circular corners (4.55 of
+    200) and its Star a different inner radius (12.74 of 200). Each pack's
+    face anchor is taken as authored, which is what the rest differ on.
+    Not taken: each pack's <Name>Avatar.tsx component, its 65 standalone SVG
+    files (svg/states, svg/expressions, svg/sprite.svg), its manifest.json and
+    its README.md, and its DEFAULT_GRADIENT (Blob Studio's green — Murage
+    paints each body with the bot's own colour). No pack file is vendored into
+    this repository. Murage's own src/components/EmberAvatar.tsx already is
+    the same generated renderer: each pack's component is byte-identical to it
+    apart from the SHAPE constant and that gradient.
+    Licence: the packs carry no licence file. Each pack's README states that
+    the expression geometry originates in Sebastien Montlouis-Calixte's
+    GrokBot prototype gist
+    (https://gist.github.com/smontlouis/49a4c9303de70118a90dc43badc1aba5),
+    which carries no explicit licence. What is copied here is silhouette
+    geometry and a face anchor, not that expression geometry; Murage's
+    expression point data predates these packs and came in with PR #663.
+    Murage: shared/mascot-bodies.ts
 
   OpenMausBot PR #1069
     commit bac90598261115eb2f68868f1a6420e79b74d0c4

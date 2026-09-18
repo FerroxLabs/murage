@@ -12,6 +12,8 @@ globalThis.window ??= { location: { href: "http://localhost/" } } as unknown as 
 import { AVATAR_COPY, avatarGeneratorPlan, type AvatarGeneratorFacts } from "@/lib/avatar-generation";
 import { AVATAR_IMAGE_TYPE_ERROR, AVATAR_ONE_FILE_ERROR, avatarDropHandlers, type FileDropEvent } from "@/lib/file-drop-zone";
 import { AvatarDropZone, AvatarGenerateSection, type AvatarGenerateSectionProps } from "./BotProfileAvatarCard";
+import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
+import { MASCOT_BODIES, MASCOT_BODY_IDS, MASCOT_BODY_NAMES } from "../../shared/mascot-bodies";
 
 const facts = (over: Partial<AvatarGeneratorFacts> = {}): AvatarGeneratorFacts => ({
   flux: false,
@@ -191,5 +193,74 @@ describe("dropping an image onto the avatar", () => {
     expect(hovering).toContain("Drop image to set avatar");
     expect(hovering).toContain("border-accent");
     expect(hovering).toContain('data-drag-active="true"');
+  });
+});
+
+// The Body picker. The card reaches the store for the image-generation facts
+// only, so a stub with no config is enough to render the pickers themselves.
+vi.mock("./bot-settings-drafts", () => ({ useBotSettingsDraft: () => {} }));
+vi.mock("@/state/store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/store")>()),
+  useStore: () => ({ state: { config: null }, dispatch: vi.fn(), flushBotPatches: vi.fn() }),
+}));
+
+describe("the Body picker", () => {
+  const card = (bot: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      createElement(BotProfileAvatarCard, {
+        bot: { id: "b1", name: "Vega", color: "orange", ...bot } as never,
+        activeState: "idle",
+        mascotMotion: null,
+        onPatch: vi.fn(),
+      }),
+    );
+
+  it("offers every catalog body by name, Sean's three among them", () => {
+    const markup = card();
+    for (const body of MASCOT_BODY_IDS) {
+      expect(markup, body).toContain(`aria-label="Use the ${MASCOT_BODY_NAMES[body]} body"`);
+    }
+    for (const name of ["Circle", "Cone", "Polygon"]) {
+      expect(markup).toContain(`aria-label="Use the ${name} body"`);
+    }
+    expect(markup).not.toContain("Use the Shield body");
+    expect(markup).not.toContain("Use the Hexagon body");
+  });
+
+  it("stays condensed: one labelled group of shape-only tiles, ten across once there is room", () => {
+    const markup = card();
+    const group = markup.match(/<div role="group" aria-label="Mascot body"[^>]*class="([^"]+)"/)
+      ?? markup.match(/<div class="([^"]+)" role="group" aria-label="Mascot body"/);
+    expect(group, "the Body grid is a labelled group").not.toBeNull();
+    // five columns at phone width, ten once the card is wide enough: two rows, then one
+    expect(group![1]).toContain("grid-cols-5");
+    expect(group![1]).toContain("sm:grid-cols-10");
+    // the tiles carry the shape only; the name lives on the tooltip and the label
+    const tiles = markup.split("<button").map((b) => `<button${b.split("</button>")[0]}</button>`).filter((b) => /aria-label="Use the [A-Za-z]+ body"/.test(b));
+    expect(tiles).toHaveLength(MASCOT_BODY_IDS.length);
+    for (const tile of tiles) {
+      expect(tile).toContain("aspect-square");
+      expect(tile).toContain("focus-visible:ring-2");
+      const visible = tile.replace(/<[^>]*>/g, "").replace(/&[a-z]+;/g, "").trim();
+      expect(visible, "a body tile shows no text label").toBe("");
+    }
+    // smaller mascots than the five-up expression tiles it sits under
+    expect(tiles.every((tile) => /(?:width|size)[=:"]*"?30/.test(tile)), "body tiles draw a 30px mascot").toBe(true);
+  });
+
+  it("marks the bot's own body as chosen, and the flame when the stored id is unknown", () => {
+    // one button per body; read each button on its own so the crop and
+    // expression pickers' own pressed states cannot be mistaken for this one
+    const chosen = (bot: Record<string, unknown>) =>
+      card(bot)
+        .split("<button")
+        .filter((b) => b.includes('aria-pressed="true"') && /aria-label="Use the [A-Za-z]+ body"/.test(b))
+        .map((b) => b.match(/aria-label="Use the ([A-Za-z]+) body"/)![1]);
+    expect(card({ mascotBody: "shield" })).toContain(MASCOT_BODIES.shield.clip.match(/d="([^"]{40})/)![1]);
+    expect(chosen({ mascotBody: "shield" })).toEqual(["Cone"]);
+    expect(chosen({ mascotBody: "hexagon" })).toEqual(["Polygon"]);
+    expect(chosen({ mascotBody: "circle" })).toEqual(["Circle"]);
+    expect(chosen({ mascotBody: "cursor" })).toEqual(["Ember"]);
+    expect(chosen({})).toEqual(["Ember"]);
   });
 });
