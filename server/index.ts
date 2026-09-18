@@ -6441,9 +6441,15 @@ async function runGroupMemberTurn(
       const imageSelectionText = latestUser?.text ?? "";
       // Same rule as the direct path: engine capability AND model vision, not
       // one hard-coded driver kind.
-      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline"
-        ? (await collectTurnImages(instance.driverKind, threadId, bot.id, imageSelectionText)).images
+      const imagePlan = turnImageDelivery(instance, providerRoute);
+      const collectedImages = imagePlan === "inline"
+        ? await collectTurnImages(instance.driverKind, threadId, bot.id, imageSelectionText)
         : undefined;
+      const incomingImages = collectedImages?.images;
+      // And the same sentence the direct path puts beside its image tools,
+      // from what the attachments turned out to be: a room member is told
+      // whether the picture is in front of it or only a path to open.
+      const imagePrompt = integrations.agents ? IMAGE_DELIVERY_PROMPT[imageDeliveryOutcome(imagePlan, collectedImages)] : "";
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
@@ -6459,7 +6465,7 @@ async function runGroupMemberTurn(
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text,
-        system: roomSystem,
+        system: roomSystem + imagePrompt,
         cwd,
         integrations,
         folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
