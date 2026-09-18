@@ -59,16 +59,34 @@ export class TurnImages {
       return item ? [{ kind: "image" as const, path: item.path, mime: item.mime }] : [];
     });
   }
-  async read(threadId: string, botId: string, text: string): Promise<NonNullable<SendTurnInput["images"]>> {
+  /** The bytes for every image this conversation is allowed to inline, and
+   * the canonical paths it is not. Every other refusal still throws.
+   *
+   * Two things can be wrong with an `<attached-image path>` and they are not
+   * the same thing:
+   *  - the path is not one Murage wrote into its attachments directory, or
+   *    it is a link, a hard-linked alias, a masquerading file, or over
+   *    budget. That is refused, as it always was, whatever the engine.
+   *  - the path IS one of Murage's own uploads, but nothing bound it to this
+   *    conversation: a legacy upload the composer made without a thread, or
+   *    a tag carried in from another thread. No bytes are read on the text's
+   *    say-so — that is the invariant in this file's header — but the tag is
+   *    still in the message, and until 0.1.55 every engine other than Fuigo
+   *    simply received it as text and opened the file with its own tools.
+   *    Those paths come back in `unbound` so the dispatch can keep doing
+   *    exactly that instead of losing the whole turn. */
+  async collect(threadId: string, botId: string, text: string): Promise<{ images: NonNullable<SendTurnInput["images"]>; unbound: string[] }> {
     const paths = [...new Set(splitTranscriptAttachments(text).images)];
-    if (!paths.length) return [];
+    if (!paths.length) return { images: [], unbound: [] };
     if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     if (paths.length > IMAGE_REFERENCE_LIMITS.maxCount) throw Object.assign(new Error("Attach at most four images per turn."), { status: 413 });
     const allowed = new Set(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => item.path)));
-    const result: NonNullable<SendTurnInput["images"]> = [];
+    const images: NonNullable<SendTurnInput["images"]> = [];
+    const unbound: string[] = [];
     let total = 0;
     for (const path of paths) {
-      if (!this.canonical(path) || !allowed.has(path)) throw fail();
+      if (!this.canonical(path)) throw fail();
+      if (!allowed.has(path)) { unbound.push(path); continue; }
       const directory = join(this.dataDir, "attachments");
       let parent, stat;
       try { parent = lstatSync(directory); stat = lstatSync(path); } catch { throw fail(); }
@@ -79,8 +97,16 @@ export class TurnImages {
       if (!bytes || !turnImageAudience(this.store, threadId, botId)) throw fail();
       const sniffed = sniffMedia(bytes, bytes.length);
       if (!sniffed.supported || sniffed.kind !== "image" || !(IMAGE_REFERENCE_MIMES as readonly string[]).includes(sniffed.mime)) throw Object.assign(new Error("Attach a valid PNG, JPEG or WebP image."), { status: 415 });
-      result.push({ mimeType: sniffed.mime, data: bytes.toString("base64") });
+      images.push({ mimeType: sniffed.mime, data: bytes.toString("base64") });
     }
-    return result;
+    return { images, unbound };
+  }
+  /** `collect`, but an unbound path is a refusal of the whole turn. This is
+   * what the Fuigo dispatch has done since inline images arrived; see
+   * `unboundImagePolicy` in turn-image-dispatch.ts for which engines keep it. */
+  async read(threadId: string, botId: string, text: string): Promise<NonNullable<SendTurnInput["images"]>> {
+    const { images, unbound } = await this.collect(threadId, botId, text);
+    if (unbound.length) throw fail();
+    return images;
   }
 }

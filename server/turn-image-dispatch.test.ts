@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sendsInlineImages } from "./turn-image-dispatch.ts";
+import { imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, sendsInlineImages, unboundImagePolicy } from "./turn-image-dispatch.ts";
 import { ClaudeDriver } from "./drivers/claude.ts";
 import { CodexDriver } from "./drivers/codex.ts";
 import { PiDriver } from "./drivers/pi.ts";
@@ -63,5 +63,48 @@ describe("declared driver image capabilities", () => {
     expect(declared.images).toBe(true);
     // … but only the two whose protocol takes an image is shown one.
     expect(declared.imagesInline === true).toBe(inline);
+  });
+});
+
+
+describe("unboundImagePolicy", () => {
+  // Fuigo refused an unbound tag since it could first inline; nothing else
+  // ever reached that read before 0.1.55. Each keeps what it shipped with.
+  it("keeps the turn-refusing form only where it already shipped", () => {
+    expect(unboundImagePolicy("fuigoAgent")).toBe("refuse");
+    for (const kind of ["claude", "codex", "cursor", "gemini", "qwen", "kimi", "hermes", "opencode-go", "droid", "custom"]) {
+      expect(unboundImagePolicy(kind), kind).toBe("path");
+    }
+  });
+});
+
+describe("imageDeliveryOutcome", () => {
+  const image = { mimeType: "image/png", data: "x" };
+  it("leaves an inline plan alone when every tag was bound", () => {
+    expect(imageDeliveryOutcome("inline", { images: [image], unbound: [] })).toBe("inline");
+    expect(imageDeliveryOutcome("inline", { images: [], unbound: [] })).toBe("inline");
+    expect(imageDeliveryOutcome("inline", undefined)).toBe("inline");
+  });
+  // The regression: an inline engine on an unbound tag. Nothing is inlined,
+  // the turn goes on, and the bot is told it has a path, not a picture.
+  it("downgrades an inline plan to path when nothing could be bound", () => {
+    expect(imageDeliveryOutcome("inline", { images: [], unbound: ["/a.png"] })).toBe("path");
+  });
+  it("reports mixed when some tags were bound and some were not", () => {
+    expect(imageDeliveryOutcome("inline", { images: [image], unbound: ["/a.png"] })).toBe("mixed");
+  });
+  // Only an inline plan can be revised: nothing was ever going to be inlined
+  // on a path engine, and an unsighted bot is unsighted whatever the tags say.
+  it("never revises a path or unsighted plan", () => {
+    expect(imageDeliveryOutcome("path", { images: [], unbound: ["/a.png"] })).toBe("path");
+    expect(imageDeliveryOutcome("unsighted", { images: [image], unbound: ["/a.png"] })).toBe("unsighted");
+  });
+  it("tells a downgraded or mixed bot to open the path, never that the picture is in front of it", () => {
+    for (const outcome of ["path", "mixed"] as const) {
+      expect(IMAGE_DELIVERY_PROMPT[outcome]).toMatch(/open .* with your file-read tool/);
+      expect(IMAGE_DELIVERY_PROMPT[outcome]).not.toMatch(/ask for a description/);
+    }
+    expect(IMAGE_DELIVERY_PROMPT.mixed).toMatch(/cannot see reached you only as that path/);
+    expect(IMAGE_DELIVERY_PROMPT.path).not.toMatch(/already in front of you/);
   });
 });

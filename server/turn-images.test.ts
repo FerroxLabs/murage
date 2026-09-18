@@ -88,3 +88,45 @@ it("bounds pending metadata, releases durable grants and expires abandoned ones"
   expect(() => f.images.register("t", f.file())).not.toThrow();
   f.tick(); expect(() => f.images.register("t", f.file())).not.toThrow();
 });
+it("collects a bound image and carries an unbound one as a path, reading nothing on the tag's say-so", async () => {
+  // A legacy upload made without a thread, or a tag carried in from another
+  // thread: Murage wrote the file, but nothing bound it to this conversation.
+  const f = fixture(), bound = f.file(), unbound = f.file(Buffer.from("never read"));
+  f.append("t", { attachments: [{ kind: "image", ...bound }] });
+  const text = `${f.text(bound.path)}\n${f.text(unbound.path)}`;
+  const collected = await f.images.collect("t", "a", text);
+  expect(collected.images).toEqual([{ mimeType: "image/png", data: png.toString("base64") }]);
+  expect(collected.unbound).toEqual([unbound.path]);
+  // The bytes of the unbound file were never opened: a file that is not an
+  // image at all sails through with no MIME refusal, because no sniff ran.
+  expect(JSON.stringify(collected)).not.toContain(Buffer.from("never read").toString("base64"));
+  // The turn-refusing form still refuses the same text.
+  await expect(f.images.read("t", "a", text)).rejects.toThrow("Reattach");
+  // And a turn made only of unbound tags inlines nothing and refuses nothing.
+  expect(await f.images.collect("t", "a", f.text(unbound.path))).toEqual({ images: [], unbound: [unbound.path] });
+});
+it("still refuses a forged path that merely looks canonical, from collect as from read", async () => {
+  const f = fixture(), real = f.file();
+  f.append("t", { attachments: [{ kind: "image", ...real }] });
+  // Outside the attachments directory, under a canonical-looking name.
+  const outside = join(f.root, `${randomUUID()}.png`); writeFileSync(outside, png);
+  await expect(f.images.collect("t", "a", f.text(outside))).rejects.toThrow("Reattach");
+  // Traversal into the directory from elsewhere, kept un-normalised: the
+  // string comparison in canonical() is what refuses it.
+  const traversal = `${f.root}/elsewhere/../attachments/${randomUUID()}.png`;
+  await expect(f.images.collect("t", "a", f.text(traversal))).rejects.toThrow("Reattach");
+  // A symlink at a canonical name, bound to the conversation, is refused at
+  // the file, not waved through as unbound.
+  const link = join(f.root, "attachments", `${randomUUID()}.png`); symlinkSync(real.path, link);
+  f.append("t", { attachments: [{ kind: "image", path: link, mime: "image/png" }] });
+  await expect(f.images.collect("t", "a", f.text(link))).rejects.toThrow("Reattach");
+  // Another bot's own thread naming this thread's upload is the cross-thread
+  // case: canonical, so not forged, but unbound THERE — carried as a path,
+  // never inlined, and still a refusal on the turn-refusing form.
+  expect(await f.images.collect("u", "b", f.text(real.path))).toEqual({ images: [], unbound: [real.path] });
+  await expect(f.images.read("u", "b", f.text(real.path))).rejects.toThrow("Reattach");
+  // A thread that is nobody's is not an audience at all, bound or not.
+  await expect(f.images.collect("missing", "a", f.text(real.path))).rejects.toThrow("Reattach");
+  // Five tags, bound or not, is over the per-turn count before anything is read.
+  await expect(f.images.collect("t", "a", Array.from({ length: 5 }, () => f.text(f.file().path)).join("\n"))).rejects.toThrow("four");
+});

@@ -67,7 +67,7 @@ import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
-import { imageDelivery, IMAGE_DELIVERY_PROMPT, type ImageDelivery } from "./turn-image-dispatch.ts";
+import { imageDelivery, imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, unboundImagePolicy, type ImageDelivery, type ImageDeliveryOutcome } from "./turn-image-dispatch.ts";
 import { TurnImages, turnImageAudience } from "./turn-images.ts";
 import {
   chooseIntakeProfile,
@@ -2363,6 +2363,15 @@ function turnImageDelivery(
   providerRoute: { connectionId: string; model: string } | undefined,
 ): ImageDelivery {
   return imageDelivery(instance.adapter.capabilities, routedModelAcceptsImages(providerRoute));
+}
+
+/** The bytes to inline for this turn, under the engine's own rule for a tag
+ * the conversation never bound: Fuigo refuses the turn (`read`), everything
+ * else inlines what is bound and carries the rest as text (`collect`). */
+function collectTurnImages(driverKind: string, threadId: string, botId: string, text: string) {
+  return unboundImagePolicy(driverKind) === "refuse"
+    ? turnImages.read(threadId, botId, text).then(images => ({ images, unbound: [] as string[] }))
+    : turnImages.collect(threadId, botId, text);
 }
 
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
@@ -4800,9 +4809,13 @@ async function startTurn(
       // prompt as the primer's "ask for a description". The primer's image
       // line and this one are held to one answer by
       // server/turn-image-prompt-agreement.test.ts.
-      const imagePrompt = integrations.agents
+      // Evaluated once the attachments have been looked at (below), because
+      // an inline plan can still end in a path: a tag this conversation never
+      // bound is not inlined, and the sentence has to say so rather than tell
+      // the bot a picture is in front of it when only its path is.
+      const imagePromptFor = (outcome: ImageDeliveryOutcome) => integrations.agents
         ? " To create or edit an image, use generate_image; list_image_models shows the configured connections and models. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with resolve_image_reference." +
-          IMAGE_DELIVERY_PROMPT[turnImageDelivery(instance, providerRoute)] +
+          IMAGE_DELIVERY_PROMPT[outcome] +
           " Never search the computer for provider API keys, and never call an image provider directly."
         : "";
       const routinePrompt = integrations.agents
@@ -4924,7 +4937,14 @@ async function startTurn(
       // (drivers/acp/fuigo.ts DRIVER_KIND is "fuigoAgent"), so no inline image
       // reached any model at all; 0.1.54 fixed the spelling
       // and 0.1.55 removes the single-engine gate behind it.
-      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline" ? await turnImages.read(threadId, bot.id, text) : undefined;
+      // An `<attached-image path>` the conversation never bound is never
+      // inlined, but only Fuigo loses the turn over it; every other engine
+      // keeps the tag as text and goes on, as it did before it could inline
+      // at all (unboundImagePolicy).
+      const imagePlan = turnImageDelivery(instance, providerRoute);
+      const collectedImages = imagePlan === "inline" ? await collectTurnImages(instance.driverKind, threadId, bot.id, text) : undefined;
+      const incomingImages = collectedImages?.images;
+      const imagePrompt = imagePromptFor(imageDeliveryOutcome(imagePlan, collectedImages));
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
@@ -6421,7 +6441,9 @@ async function runGroupMemberTurn(
       const imageSelectionText = latestUser?.text ?? "";
       // Same rule as the direct path: engine capability AND model vision, not
       // one hard-coded driver kind.
-      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline" ? await turnImages.read(threadId, bot.id, imageSelectionText) : undefined;
+      const incomingImages = turnImageDelivery(instance, providerRoute) === "inline"
+        ? (await collectTurnImages(instance.driverKind, threadId, bot.id, imageSelectionText)).images
+        : undefined;
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
