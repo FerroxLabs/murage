@@ -87,6 +87,53 @@ describe("OpenAICompatDriver", () => {
     await lan.dispose();
   });
 
+  // A model that failed the Local models tools test (e.g. a role-play model)
+  // can still chat here: this driver lists Local models rows, answers for
+  // them without an endpoint key, and sends them to that server with no tools.
+  it("chats with a Local models server model without a key and never sends tools", async () => {
+    const chats: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "http://127.0.0.1:11434/v1/models") {
+          return new Response(JSON.stringify({ data: [{ id: "companion:latest" }] }), { status: 200 });
+        }
+        if (url === "http://127.0.0.1:11434/v1/chat/completions") {
+          chats.push({ url, auth: new Headers(init?.headers).get("authorization"), body: JSON.parse(String(init?.body)) });
+          return new Response('data: {"choices":[{"delta":{"content":"hi there"}}]}\n' + "data: [DONE]\n", {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        if (url.startsWith("https://openrouter.ai")) throw new Error(`unexpected cloud request: ${url}`);
+        return new Response("", { status: 404 });
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "companion",
+      displayName: "Companion",
+      enabled: true,
+      config: { url: "https://openrouter.ai/api/v1", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      environment: { MURAGE_PROBE_LOCAL_INJECT: "1" },
+    });
+    await vi.waitFor(() => expect(inst.models.options.map((option) => option.id)).toContain("ollama::companion:latest"));
+    expect(inst.models.default).toBe("ollama::companion:latest");
+    expect((await inst.snapshot()).state).toBe("available");
+
+    const recorder = recordEvents(inst.adapter);
+    await inst.adapter.sendTurn({ threadId: "thread", text: "hello", model: "ollama::companion:latest" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    expect(completed).toMatchObject({ ok: true });
+    expect(chats).toHaveLength(1);
+    expect(chats[0]!.auth).toBe("Bearer ollama");
+    expect(chats[0]!.body.model).toBe("companion:latest");
+    expect(chats[0]!.body).not.toHaveProperty("tools");
+    expect(chats[0]!.body).not.toHaveProperty("tool_choice");
+    recorder.stop();
+    await inst.dispose();
+  });
+
   it("exposes a refreshed model catalog", async () => {
     vi.stubGlobal(
       "fetch",

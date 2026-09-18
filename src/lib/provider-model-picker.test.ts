@@ -134,6 +134,26 @@ describe("a local row names its machine (spec V3)", () => {
   });
 });
 
+describe("local rows on a chat-only engine", () => {
+  it("lists a failed-test model as chat only instead of warning it off", () => {
+    const compat: PickerEngine = {
+      instanceId: "openaiCompat", driverKind: "openai-compat", displayName: "OpenAI-compatible",
+      snapshot: { state: "available", authenticated: true },
+      models: { default: "ollama::companion:latest", options: [
+        { id: "ollama::companion:latest", label: "companion:latest · Ollama", custom: true, localServer: "Ollama", localTools: "failed" },
+      ] },
+    };
+    const [row] = pickerModels(compat, []);
+    expect(row).toMatchObject({ group: LOCAL_MODELS_GROUP, chatOnly: true, localTools: "failed" });
+    expect(localToolsWarning(row!)).toContain("Chat only");
+    expect(localToolsWarning(row!)).not.toContain("Tools test failed");
+    // The same model on a tools engine keeps the agent-work warning.
+    const [onFuigo] = pickerModels({ ...compat, instanceId: "fuigo", driverKind: "fuigoAgent" }, []);
+    expect(onFuigo!.chatOnly).toBeUndefined();
+    expect(localToolsWarning(onFuigo!)).toContain("Tools test failed");
+  });
+});
+
 describe("a pick that outlived its server", () => {
   it("names the model and the fact on the chip, never the raw picker id", () => {
     expect(unavailableSelectionLabel("srv_abcdefgh::qwen3.8-27b")).toBe("qwen3.8-27b · local server unavailable");
@@ -166,11 +186,10 @@ describe("the rail is a state, not an absence", () => {
   });
 
   it("never claims 'no local server' on a chat-only engine (openai-compat, grok)", () => {
-    // These drivers reach a server but never receive local rows (they do not
-    // merge the Local models inject), so the row would be shown permanently —
-    // even while a server is detected and tested in Settings → Models, and
-    // even when openai-compat is pointed at that very server. Their Engines
-    // line already says "chat only (no tools)"; the rail stays quiet.
+    // These drivers are not local engines (grok never merges the Local models
+    // inject; openai-compat lists it only as chat-only extras), so the row
+    // would be a false nudge. Their Engines line already says "chat only
+    // (no tools)"; the rail stays quiet.
     for (const driverKind of ["openai-compat", "grok"]) {
       const chatOnly: PickerEngine = {
         ...engine([{ id: "qwen3.8-27b", label: "qwen3.8-27b", custom: true }]),

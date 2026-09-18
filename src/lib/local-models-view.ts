@@ -216,7 +216,7 @@ export function nextActionFor(server: LocalServerView, model: LocalModelView): L
         help: "Copies the setting to start this server with, then test again.",
       };
     case "text-instead-of-tools":
-      return { kind: "pick-other-model", label: "Try another model", help: "This model cannot run agents. Pick another one on this server and test it." };
+      return { kind: "pick-other-model", label: "Try another model", help: "This model cannot run agents. Pick another one on this server and test it, or chat with it on the OpenAI-compatible engine (chat only, no tools)." };
     case "model-not-found":
       return { kind: "retest", label: "Check again", help: "Reads this server's model list again." };
     case "unreachable":

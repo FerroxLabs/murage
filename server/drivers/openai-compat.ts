@@ -5,6 +5,7 @@ import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding } from "../memory/extract.ts";
 import { classifyLocalHostname } from "../../shared/local-models.ts";
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "./local-inject.ts";
 
 const DRIVER_KIND = "openai-compat";
 const DEFAULT_MODELS: ModelCatalog = {
@@ -117,7 +118,45 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         }
       : DEFAULT_MODELS;
 
+    // Local models rows (spec E4): a server added in Settings → Models is
+    // offered here as a chat-only model, whatever its tools test said —
+    // this driver never sends tools, so a role-play model that failed the
+    // test still chats. Kept apart from the endpoint's own catalog.
+    let localOptions: ModelCatalog["options"] = [];
+    const withLocal = (base: ModelCatalog): ModelCatalog => {
+      const ids = new Set(base.options.map((option) => option.id));
+      const extra = localOptions.filter((option) => !ids.has(option.id));
+      if (!extra.length) return base;
+      // With no key for the endpoint, a local model is the only one that can answer.
+      return { default: apiKey ? base.default : extra[0].id, options: [...base.options, ...extra] };
+    };
+    const localEnv = { ...process.env, ...input.environment };
+    // The catalog refresh is daily; a server added in Settings → Models should
+    // show up the next time the picker asks, so reads re-probe at most every 30s.
+    let localProbedAt = 0;
+    const refreshLocal = async () => {
+      localProbedAt = Date.now();
+      try {
+        localOptions = (await mergeLocalInject({ default: "", options: [] }, localEnv, fetch, { driver: DRIVER_KIND })).options;
+      } catch {
+        // Local discovery is opportunistic, like the catalog refresh below.
+      }
+    };
+    const localEndpoint = (model: string) => {
+      const inject = decodeInjectId(model);
+      const host = inject ? localHost(inject.host) : undefined;
+      if (!inject || !host) return null;
+      // Ollama, LM Studio and llama.cpp accept any bearer; a server added with a key gets its own.
+      return { baseUrl: host.baseUrl.replace(/\/+$/, ""), apiKey: hostApiKey(host, localEnv) || LOOPBACK_PLACEHOLDER_KEY, model: inject.model, label: host.label };
+    };
+    void refreshLocal();
+    const currentModels = () => {
+      if (Date.now() - localProbedAt > 30_000) void refreshLocal();
+      return withLocal(catalog);
+    };
+
     const fetchModels = async () => {
+      await refreshLocal();
       if (!apiKey) return;
       try {
         const response = await fetch(`${config.url}/models`, {
@@ -155,8 +194,9 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       driverKind: DRIVER_KIND,
       apiKey,
       apiUrl: config.url,
-      models: () => catalog,
+      models: currentModels,
       refreshModels: fetchModels,
+      localEndpoint,
       requestBody: (model, messages, stream) => ({
         model,
         messages,
