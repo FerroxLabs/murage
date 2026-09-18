@@ -444,7 +444,16 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   const picker = page.getByRole("dialog", { name: "Choose model", exact: true });
   await page.locator('[data-chat-header] button[aria-haspopup="dialog"]').first().click();
   await expect(picker).toBeVisible();
-  await picker.getByRole("combobox", { name: "Engine", exact: true }).selectOption({ label: "Fixture Claude" });
+  // Was: await picker.getByRole("combobox", { name: "Engine", exact: true }).selectOption({ label: "Fixture Claude" });
+  // The Engine control is no longer a native <select>: an <option> cannot draw
+  // the engine's icon, and the <optgroup> around each single-connection family
+  // repeated that family's only name. It is now the ARIA select-only combobox,
+  // under the same "Engine" name — opened here from the keyboard and chosen
+  // from its listbox, so the smoke covers the replacement end to end.
+  const engineControl = picker.getByRole("combobox", { name: "Engine", exact: true });
+  await engineControl.press("Enter");
+  await picker.getByRole("option", { name: "Fixture Claude", exact: true }).click();
+  await expect(engineControl).toContainText("Fixture Claude");
   await picker.getByRole("button", { name: /^Claude Sonnet 5 / }).click();
   await expect(picker).toHaveCount(0);
   await say(page, bot.name, "Hello from smoke round two.");

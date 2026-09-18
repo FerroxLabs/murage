@@ -14,7 +14,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
+import { EngineOptionRows, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
+import { ENGINE_DISABLED_SUFFIX, engineMenuFamilies, type PickerEngine } from "@/lib/provider-model-picker";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
   id, label: id, enabled: true, catalog: { models: [], ...catalog },
@@ -138,5 +139,80 @@ describe("B14 busy-thread inspection", () => {
     expect(pickerSource).toMatch(/const pick=.*if\(threadModelMutationLocked\)return/);
     expect(pickerSource).toMatch(/data-model-choice disabled=\{threadModelMutationLocked\}/);
     expect(pickerSource).toMatch(/Thread effort<select[\s\S]{0,500}disabled=\{threadModelMutationLocked\}[\s\S]{0,500}if\(threadModelMutationLocked\)return/);
+  });
+});
+
+// ── The Engine control's rows ─────────────────────────────────────────────
+// Two defects in one native <select> (Sean's screenshot, 2026-09-18): every
+// family was an <optgroup label={primary.displayName}> wrapping options that
+// carried that same displayName, so the normal one-connection-per-driver case
+// printed each engine's name twice; and an <option> cannot draw an icon, so
+// the ProviderMark the picker's own trigger already showed was missing from
+// the list it opened. The rows render without a DOM, so the markup is the
+// assertion.
+const fleet = (instanceId: string, driverKind: string, displayName: string, enabled = true): PickerEngine =>
+  ({ instanceId, driverKind, displayName, enabled, snapshot: { state: "available", authenticated: true }, models: { default: "m", options: [] } });
+const rowsMarkup = (instances: PickerEngine[], selectedId?: string) =>
+  renderToStaticMarkup(createElement(EngineOptionRows, { id: "engine-bot-list", labelId: "engine-bot-label", families: engineMenuFamilies(instances), selectedId, activeIndex: 0, onPick: () => {} }));
+
+describe("Engine control rows", () => {
+  it("draws one row and no header for a family of one, so no name is printed twice", () => {
+    const markup = rowsMarkup([fleet("claude", "claudeAgent", "Claude"), fleet("codex", "codex", "Codex")]);
+    expect(markup).not.toContain("data-engine-family-header");
+    expect(markup.match(/data-engine-choice/g)).toHaveLength(2);
+    // The list as a person reads it: each engine named once, not "Claude /
+    // Claude / Codex / Codex" (tags stripped, so the truncation title on each
+    // row does not count as something drawn).
+    const drawn = markup.replace(/<[^>]*>/g, "|");
+    expect(drawn.match(/Claude/g)).toHaveLength(1);
+    expect(drawn.match(/Codex/g)).toHaveLength(1);
+  });
+
+  it("draws the header for a family of more than one, where it is the only thing that groups them", () => {
+    const markup = rowsMarkup([fleet("claude", "claudeAgent", "Claude"), fleet("claude-work", "claudeAgent", "Claude work"), fleet("codex", "codex", "Codex")]);
+    expect(markup.match(/data-engine-family-header/g)).toHaveLength(1);
+    expect(markup).toContain('role="group"');
+    expect(markup).toContain('aria-labelledby="engine-bot-list-claudeAgent"');
+    expect(markup.match(/data-engine-choice/g)).toHaveLength(3);
+  });
+
+  it("gives every row its engine's own icon, the mark the trigger button already shows", () => {
+    const instances = [fleet("claude", "claudeAgent", "Claude"), fleet("codex", "codex", "Codex"), fleet("droid", "droidAgent", "Droid")];
+    const markup = rowsMarkup(instances);
+    expect(markup.match(/data-engine-icon/g)).toHaveLength(instances.length);
+    // An icon, not a placeholder gap: each marked span carries a real drawing.
+    for (const span of markup.split("data-engine-icon").slice(1)) expect(span.slice(0, 200)).toContain("<svg");
+    expect(markup.match(/<svg/g)?.length).toBeGreaterThanOrEqual(instances.length);
+  });
+
+  it("keeps the listbox semantics the <select> gave for free, and marks the current choice", () => {
+    const markup = rowsMarkup([fleet("claude", "claudeAgent", "Claude"), fleet("codex", "codex", "Codex")], "codex");
+    expect(markup).toContain('role="listbox"');
+    expect(markup).toContain('aria-labelledby="engine-bot-label"');
+    expect(markup.match(/role="option"/g)).toHaveLength(2);
+    expect(markup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expect(markup).toMatch(/aria-selected="true"[^>]*>(?:(?!<\/button>)[\s\S])*Codex/);
+    // Roving tabindex: one row in the tab order, the rest reached by arrows.
+    expect(markup.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(markup.match(/tabindex="-1"/g)).toHaveLength(1);
+    expect(markup).toContain("focus-visible:ring-2 focus-visible:ring-accent");
+  });
+
+  it("keeps the disabled suffix visible on the row, not only in a title", () => {
+    const markup = rowsMarkup([fleet("codex", "codex", "Codex", false)]);
+    expect(markup).toContain(`${ENGINE_DISABLED_SUFFIX.replace(/ /g, " ")}`);
+    expect(markup).toContain("Disabled");
+    expect(markup.replace(/<[^>]*>/g, "")).toContain("Codex · Disabled");
+  });
+
+  it("names the control through its visible label and answers for the empty state in the source", () => {
+    // The old control was <select aria-label="Engine"> with a placeholder
+    // <option value="">Choose an engine</option>. Both survive: the combobox
+    // takes its name from the same visible "Engine" label, and the placeholder
+    // is what the combobox reads when nothing is chosen.
+    expect(pickerSource).toMatch(/role="combobox" aria-labelledby=\{labelId\}/);
+    expect(pickerSource).toMatch(/placeholder=\{CHOOSE_ENGINE_OPTION\}/);
+    expect(pickerSource).toMatch(/onPick=\{instanceId=>\{setEngineId\(instanceId\);setLimit\(30\);\}\}/);
+    expect(pickerSource).not.toContain("<optgroup");
   });
 });

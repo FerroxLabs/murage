@@ -113,8 +113,9 @@ export function unavailableSelectionLabel(model: string): string {
 }
 /** What the chip says before anything is set up. */
 export const NO_MODEL_CHOSEN = "No model chosen";
-/** The first row of the engine `<select>` when nothing is selected, so the
- *  control is never a blank box with no clue what it wants. */
+/** What the engine control reads when nothing is selected, so it is never a
+ *  blank box with no clue what it wants. It was the `<select>`'s first
+ *  `<option>`; it is now the combobox's own text. */
 export const CHOOSE_ENGINE_OPTION = "Choose an engine";
 /** The chip's tooltip / aria-label. Every part is optional and the separator
  *  is joined, never concatenated, so a missing part can never leave a
@@ -173,4 +174,99 @@ export function engineFamilies<T extends PickerEngine>(instances: readonly T[]):
   const groups=new Map<string,T[]>(),seen=new Set<string>();
   for(const instance of instances){if(seen.has(instance.instanceId))continue;seen.add(instance.instanceId);const key=instance.driverKind;const group=groups.get(key)??[];group.push(instance);groups.set(key,group);}
   return [...groups.values()].map(members=>({primary:members.find(i=>i.instanceId===i.driverKind.replace(/Agent$/,""))??members.find(i=>i.enabled!==false&&i.snapshot.state==="available")??members[0]!,members}));
+}
+/** The heading one model row is drawn under, as an ordered ladder rather than
+ *  a ternary chain — because it has to stay in step with the rank ladder in
+ *  `orderedPickerModels`, and a chain buried in JSX is the shape that let them
+ *  drift. A row matched by no zone falls back to its own group name.
+ *
+ *  The two ladders are a pair: `orderedPickerModels` decides the ORDER, this
+ *  decides the HEADING over each run. If a rank exists with no zone of its
+ *  own, its rows fall through to `row.group`, another rank's rows further down
+ *  carry that same group, and the list prints one heading twice with a
+ *  different heading between them — a name drawn twice, which is the whole
+ *  reason this lane exists. `pickerHeadings` below is the guard.
+ *
+ *  Lives here, at the end of the file rather than beside `orderedPickerModels`,
+ *  so this lane's additions stay clear of the concurrent metadata lane's hunks. */
+export interface PickerZone { name: string; match: (row: PickerModel, favorites: readonly string[], recent: readonly string[]) => boolean }
+export const PICKER_ZONES: readonly PickerZone[] = Object.freeze([
+  { name: "Flux Auto", match: row => /^(?:flux::)?flux-auto$/.test(row.selection.model) },
+  { name: "Favorites", match: (row, favorites) => favorites.includes(row.key) },
+  { name: "Recent", match: (row, _favorites, recent) => recent.includes(row.key) },
+]);
+export function pickerZone(row: PickerModel, favorites: readonly string[], recent: readonly string[]): string {
+  return PICKER_ZONES.find(zone => zone.match(row, favorites, recent))?.name ?? row.group;
+}
+/** The headings a drawn list prints, in order — the picker's own fold over the
+ *  ordered rows, extracted so a test can read it without a DOM. A heading is
+ *  drawn when the zone changes, so a repeated entry in this list means one
+ *  heading was printed twice with something else in between. */
+export function pickerHeadings(ordered: readonly PickerModel[], favorites: readonly string[], recent: readonly string[]): string[] {
+  const headings: string[] = [];
+  let previous = "";
+  for (const row of ordered) { const zone = pickerZone(row, favorites, recent); if (zone !== previous) headings.push(zone); previous = zone; }
+  return headings;
+}
+/** The suffix an engine the user switched off still carries, so "why can I not
+ *  pick this" is answered in the list rather than in Settings. */
+export const ENGINE_DISABLED_SUFFIX = " · Disabled";
+/** One engine as the Engine control draws it: its own icon comes from
+ *  `driverKind`, its name from `displayName`, and the disabled suffix is part
+ *  of the label so the row's text reads the same as the old `<option>` did. */
+export interface EngineChoice<T extends PickerEngine> { instance: T; label: string; disabled: boolean }
+/** A family of engines sharing one driver. `header` is the empty string for a
+ *  family of one.
+ *
+ *  Why: the Engine control used to wrap every family in an `<optgroup
+ *  label={primary.displayName}>` whose single `<option>` carried that same
+ *  displayName, so the normal case — one connection per driver — printed every
+ *  engine's name twice ("Claude / Claude / Codex / Codex", Sean's screenshot,
+ *  2026-09-18). A header only carries information when it groups more than one
+ *  row, so only then is one emitted. */
+export interface EngineMenuFamily<T extends PickerEngine> { key: string; header: string; options: Array<EngineChoice<T>> }
+/** The one rule, for every surface that draws engine families: a family header
+ *  is the family's name only when it groups more than one connection, and the
+ *  empty string otherwise. `engineFamilies` picks `primary` out of `members`,
+ *  so for a family of one the header and its only row are the same string and
+ *  drawing both just prints the engine's name twice. */
+export function engineFamilyHeader<T extends PickerEngine>(primary: T, members: readonly T[]): string {
+  return members.length>1?primary.displayName:"";
+}
+export function engineMenuFamilies<T extends PickerEngine>(instances: readonly T[]): Array<EngineMenuFamily<T>> {
+  return engineFamilies(instances).map(({primary,members})=>({
+    key: primary.driverKind,
+    header: engineFamilyHeader(primary,members),
+    options: members.map(instance=>({instance,label:`${instance.displayName}${instance.enabled===false?ENGINE_DISABLED_SUFFIX:""}`,disabled:instance.enabled===false})),
+  }));
+}
+/** Every selectable row of the Engine control, in the order it is drawn.
+ *  Headers are not selectable, so arrow keys never land on one. */
+export function engineMenuOptions<T extends PickerEngine>(instances: readonly T[]): Array<EngineChoice<T>> {
+  return engineMenuFamilies(instances).flatMap(family=>family.options);
+}
+/** What one key press does to the Engine control, decided without a DOM so it
+ *  can be tested and so the component stays a thin renderer. Wrapping matches
+ *  the model rows below, whose own ArrowDown/ArrowUp handler wraps. */
+export type EngineMenuKeyAction =
+  | { type: "open"; index: number }
+  | { type: "move"; index: number }
+  | { type: "select"; index: number }
+  | { type: "close" }
+  | { type: "none" };
+export function engineMenuKey(key: string, state: { open: boolean; index: number; count: number }): EngineMenuKeyAction {
+  const{open,count}=state,index=Math.min(Math.max(state.index,0),Math.max(count-1,0));
+  if(open&&(key==="Escape"||key==="Tab"))return{type:"close"};
+  if(!count)return{type:"none"};
+  if(!open){
+    if(key==="ArrowDown"||key==="Enter"||key===" "||key==="Home")return{type:"open",index:key==="Home"?0:index};
+    if(key==="ArrowUp"||key==="End")return{type:"open",index:key==="End"?count-1:index};
+    return{type:"none"};
+  }
+  if(key==="ArrowDown")return{type:"move",index:(index+1)%count};
+  if(key==="ArrowUp")return{type:"move",index:(index-1+count)%count};
+  if(key==="Home")return{type:"move",index:0};
+  if(key==="End")return{type:"move",index:count-1};
+  if(key==="Enter"||key===" ")return{type:"select",index};
+  return{type:"none"};
 }
