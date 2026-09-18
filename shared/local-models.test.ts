@@ -87,6 +87,9 @@ describe("local server address rule (spec A1)", () => {
 
   it("classifies resolved IP addresses, v4 and v6", () => {
     expect(classifyIpAddress("169.254.10.1")).toBe("private");
+    // The cloud metadata address hands out credentials to anything that asks,
+    // so it never counts as somebody's own machine.
+    expect(classifyIpAddress("169.254.169.254")).toBe("public");
     expect(classifyIpAddress("100.100.100.100")).toBe("tailnet");
     expect(classifyIpAddress("::1")).toBe("loopback");
     expect(classifyIpAddress("::ffff:192.168.1.2")).toBe("private");

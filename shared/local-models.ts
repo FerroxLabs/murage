@@ -96,8 +96,12 @@ function ipv4Octets(hostname: string): [number, number, number, number] | null {
 }
 
 function classifyIpv4(octets: readonly [number, number, number, number]): LocalAddressClass {
-  const [a, b] = octets;
+  const [a, b, c, d] = octets;
   if (a === 127) return "loopback";
+  // The cloud instance-metadata address answers on every major provider and
+  // hands out credentials to whatever asks. It is link-local, but it is never
+  // somebody's model server, so it never earns plain http.
+  if (a === 169 && b === 254 && c === 169 && d === 254) return "public";
   if (a === 10) return "private";
   if (a === 172 && b >= 16 && b <= 31) return "private";
   if (a === 192 && b === 168) return "private";
