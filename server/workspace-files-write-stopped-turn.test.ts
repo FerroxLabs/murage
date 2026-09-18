@@ -13,7 +13,7 @@ import { openSse, type SseRecorder } from "./testing/sse.ts";
 // engine. The Claude driver's interrupt is "requested, not observed": the
 // bot reads idle as soon as Stop returns, while the turn's project-folder
 // writer lease is released only when the CLI child closes and
-// `turn.completed` reaches the bus. Before this lane an overwrite saved in
+// `turn.completed` reaches the bus. Before this fix an overwrite saved in
 // that window was refused 423 `bot-writing`. Now it waits for the release —
 // bounded by the engine's close budget, providerCloseDeadlineMs (5 s,
 // MURAGE_PROVIDER_CLOSE_MS) — exactly as a Restore does (STOPRESTORE1).

@@ -597,7 +597,7 @@ it.runIf(AUTO_REACHES_HOST)("tells a bot that it can drive a computer whenever o
 // 4. Lifecycle, and two recorded defects
 // ---------------------------------------------------------------------------
 
-// WAS A DEFECT (found by lane AT, fixed by lane AU, 2026-09-18).
+// WAS A DEFECT (found and fixed 2026-09-18).
 // server/index.ts filtered the "stop touching my computer" sweep to
 // `bot.computer === "local"`, while the host RPC gate asked the wider and
 // correct question (`undefined || "local"`). A bot that never chose a
@@ -736,7 +736,7 @@ it.runIf(AUTO_REACHES_HOST)("reports a channel member whose engine does not conf
   }
 }, 90_000);
 
-// WAS A DEFECT (found by lane AT, fixed by lane AU, 2026-09-18).
+// WAS A DEFECT (found and fixed 2026-09-18).
 // server/index.ts memoised browser bindings under an UNTAGGED identity:
 //     [realmId, partition && partition !== "guest" ? partition : botId, …]
 // The middle slot was a partitionId OR a botId with nothing to tell them
@@ -781,7 +781,7 @@ it("keeps two bots apart even when a browser profile is named after a bot's id",
   }
 }, 90_000);
 
-// Lane AT's surviving mutant M9 — dropping `entry.ownerId ===
+// A mutant that survived verification — dropping `entry.ownerId ===
 // internalClaim.generation` on the browser RPC path (server/index.ts:9072) —
 // is left UNCOVERED, deliberately. No public route can make that clause differ
 // from its neighbours: the route demands a "computer"-kind token, and
