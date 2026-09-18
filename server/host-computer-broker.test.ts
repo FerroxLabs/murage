@@ -69,4 +69,37 @@ describe("host computer operation admission", () => {
     expect(() => broker.dispatch(spec, "tools/call", { name: "type" }, () => true)).toThrow("in progress");
     await expect(broker.drain()).rejects.toThrow("cleanup is unconfirmed");
   });
+  it("settles an in-flight action as cancelled when stopped, withdraws it, and stays exclusive until the driver answers", async () => {
+    const action = deferred(); const closed = deferred<void>();
+    const signals: Array<AbortSignal | undefined> = [];
+    const request = vi.fn(async (method: string, _params?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+      if (method === "initialize") return {};
+      signals.push(options?.signal); return action.promise;
+    });
+    const broker = new HostComputerBroker(() => ({ request, close: () => closed.promise }));
+    const stop = new AbortController();
+    const call = broker.dispatch(spec, "tools/call", { name: "type_text" }, () => true, stop.signal);
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0]?.aborted).toBe(false);
+    stop.abort();
+    // The request's own signal fires, which is what sends the driver its
+    // cancel notification; the caller is answered without waiting.
+    expect(signals[0]?.aborted).toBe(true);
+    await expect(call).rejects.toMatchObject({ status: 409, code: "cancelled", message: expect.stringMatching(/may still have taken effect/) });
+    expect(() => broker.dispatch(spec, "tools/call", { name: "click" }, () => true)).toThrow("in progress");
+    action.resolve({ content: [] }); closed.resolve();
+    await vi.waitFor(() => expect(() => broker.dispatch(spec, "tools/call", { name: "click" }, () => true)).not.toThrow());
+  });
+  it("never sends an action stopped before it reached the driver", async () => {
+    const initialized = deferred();
+    const request = vi.fn(async (method: string) => method === "initialize" ? initialized.promise : {});
+    const broker = new HostComputerBroker(() => ({ request, close: async () => {} }));
+    const stop = new AbortController();
+    const call = broker.dispatch(spec, "tools/call", { name: "click" }, () => true, stop.signal);
+    stop.abort();
+    await expect(call).rejects.toMatchObject({ code: "cancelled", message: expect.stringMatching(/nothing was performed/) });
+    initialized.resolve({});
+    await vi.waitFor(() => expect(() => broker.dispatch(spec, "tools/call", { name: "type" }, () => true)).not.toThrow());
+    expect(request.mock.calls.map(([method]) => method)).not.toContain("tools/call");
+  });
 });

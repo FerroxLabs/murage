@@ -7,8 +7,8 @@
 // cannot type on a real screen here, so what is proven is the authority: the
 // person's hold refuses the next host-computer action, and the stop ends the
 // turn. What is NOT provable — an action already inside the desktop driver is
-// awaited, not aborted (server/host-computer-broker.ts) — is why the control's
-// wording never claims the screen is safe.
+// withdrawn but may still have taken effect (server/desktop-action-cancel-api.test.ts)
+// — is why the control's wording never claims the screen is safe.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
