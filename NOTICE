@@ -147,6 +147,24 @@ They do not imply import of a complete upstream release.
     expression point data predates these packs and came in with PR #663.
     Murage: shared/mascot-bodies.ts
 
+  models.dev model price and capability catalog
+    https://github.com/anomalyco/models.dev — MIT licensed, Copyright (c) 2025
+    models.dev. The full licence text is vendored at
+    third_party/models-dev/LICENSE and ships in every desktop distribution as
+    licenses/models-dev/LICENSE.
+    Taken: seven fields per model — the display name, input and output cost
+    per million tokens, context window, and the vision / tool-calling /
+    reasoning flags — for all 221 providers and 7,842 models the API carries.
+    Fetched once by hand from https://models.dev/api.json and committed as
+    src/data/model-metadata.json; the app makes no request to models.dev at
+    any time.
+    Not taken: every other upstream field (description, family, knowledge
+    cutoff, release dates, open_weights, structured_output, cache pricing,
+    output limits, provider env/npm/api/doc).
+    third_party/models-dev/README.md records the full field mapping.
+    Murage: src/data/model-metadata.json, src/lib/model-metadata.ts,
+    scripts/build-model-metadata.mjs
+
   OpenMausBot PR #1069
     commit bac90598261115eb2f68868f1a6420e79b74d0c4
     Parent thread/turn scoping for Codex notifications, adapted to Murage's

@@ -64,6 +64,33 @@ describe("EnginesSettings", () => {
     expect(codex).toBeGreaterThan(accounts);
   });
 
+  // The family eyebrow repeated the row directly beneath it: `engineFamilies`
+  // picks `primary` out of `members`, so a family of one drew its engine's
+  // name as an uppercase heading and then again as its only row ("DROID /
+  // Droid"). Same defect, and now the same rule, as the model picker's engine
+  // list (`engineFamilyHeader`). The card's own border is the section
+  // boundary, so nothing is left unanchored by dropping it.
+  it("gives a family of one no eyebrow, so the card does not print the engine's name twice", () => {
+    store.instances = [instance("droid", "droidAgent", "Droid"), instance("codex", "codex", "Codex")];
+    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    // Drawn text only (tags stripped): the truncation `title` on the row is
+    // not something a person reads off the screen.
+    const drawn = markup.replace(/<[^>]*>/g, "|");
+    expect(drawn.match(/Droid/g)).toHaveLength(1);
+    expect(drawn.match(/Codex/g)).toHaveLength(1);
+    expect(markup).not.toContain("uppercase tracking-[0.08em]");
+  });
+
+  it("keeps the eyebrow for a family that groups more than one connection, where it is the only thing grouping them", () => {
+    store.instances = [instance("claude", "claudeAgent", "Claude"), instance("claude-work", "claudeAgent", "Claude work"), instance("codex", "codex", "Codex")];
+    const markup = renderToStaticMarkup(createElement(EnginesSettings));
+    // One eyebrow in the whole pane, and it is Claude's.
+    expect(markup.match(/uppercase tracking-\[0\.08em\]/g)).toHaveLength(1);
+    const eyebrow = markup.indexOf("uppercase tracking-[0.08em]");
+    expect(markup.slice(eyebrow, eyebrow + 200)).toContain("Claude");
+    expect(markup).toContain("Other accounts and installations");
+  });
+
   it("renders the section once, standalone, when no Claude engine is listed", () => {
     const refreshInstances = vi.fn(async () => {});
     store.refreshInstances = refreshInstances;

@@ -3,9 +3,15 @@
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
 import { providerEngineProtocol } from "../../shared/provider-engine.ts";
 import { localEngineSupport, localPickerModel } from "../../shared/local-models.ts";
+import { resolveModelLabel } from "../../shared/model-label.ts";
+import { fillModelMetadata, fluxRoutePriceLabel, modelMetadataUpdatedAt, providerHint } from "./model-metadata.ts";
 export interface PickerSelection { instanceId: string; model: string; connectionId?: string }
 export interface PickerEngine { instanceId: string; driverKind: string; displayName: string; enabled?: boolean; snapshot: {state: "available"|"unavailable"; authenticated?: boolean}; models: {default:string;options:Array<{id:string;label:string;custom?:boolean;provider?:string;localServer?:string;localTools?:"pass"|"partial"|"failed"}>} }
 export interface PickerModel { key: string; selection: PickerSelection; label: string; group: string; provider: string; contextWindow?: number; pricing?: ProviderModel["pricing"]; stale?: boolean;
+  /** What this model can do, from the provider's own catalog where it says,
+   *  and otherwise from the bundled models.dev snapshot (src/lib/model-metadata.ts).
+   *  Absent means "not stated" — never "cannot". */
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
   /** Local models only (spec V3): the server serving this model, already in
    *  the form the picker shows ("llama.cpp on seanbeast"). */
   localServer?: string;
@@ -27,7 +33,79 @@ export const CUSTOM_MODELS_GROUP = "Custom models";
  *  — a state the user can act on instead of an absence they must notice. */
 export const NO_LOCAL_SERVER_ROW = "No local server detected — add one in Settings → Models";
 export const pickerKey = (s: PickerSelection): string => JSON.stringify([s.instanceId, s.connectionId ?? null, s.model]);
-export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; return typeof n==="number"&&Number.isFinite(n)&&n>=0?n<5?"$":n<25?"$$":"$$$":"Price unavailable"; }
+/** Dollars per million OUTPUT tokens, and the band each range earns.
+ *
+ *  Five tiers, not the three this shipped with (Sean, 2026-09-18). The old
+ *  `<5 / <25 / else` collapsed Claude Sonnet, Opus and Fable into one "$$$",
+ *  which is the distinction the band exists to draw: the scale has to run from
+ *  "cheap" to "frontier-ridiculous", and the frontier has moved.
+ *
+ *  Output price is the metric because it is the one that tracks the frontier —
+ *  input prices sit within a factor of a few of each other across the whole
+ *  market, output prices span three orders of magnitude.
+ *
+ *  Verified against the bundled snapshot (src/lib/price-band.test.ts walks
+ *  every priced model): DeepSeek V4 Flash 0.60 → $ · Claude Haiku 4.5 5 → $$ ·
+ *  Grok 4.6 6 → $$ · Claude Sonnet 5 10 → $$$ · Claude Sonnet 4.6 15 → $$$ ·
+ *  Claude Opus 5 25 → $$$$ · Claude Fable 5.1 50 → $$$$$ · o1-pro 600 → $$$$$. */
+export const PRICE_BANDS: ReadonlyArray<{ below: number; band: string }> = Object.freeze([
+  { below: 2, band: "$" },
+  { below: 10, band: "$$" },
+  { below: 20, band: "$$$" },
+  { below: 40, band: "$$$$" },
+  { below: Infinity, band: "$$$$$" },
+]);
+/** What a row says when no published rate could be resolved for it. An honest
+ *  and expected answer (Sean, 2026-09-18: "if we don't know a price, it's
+ *  unknown") — but it must not be mistaken for the cheap end of the scale, so
+ *  it is a word rather than a symbol, and `isPriceUnknown` lets the row style
+ *  it as the absence it is instead of as a band. */
+export const PRICE_UNKNOWN = "Price unavailable";
+export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; if(typeof n!=="number"||!Number.isFinite(n)||n<0)return PRICE_UNKNOWN; return PRICE_BANDS.find(tier=>n<tier.below)!.band; }
+/** Is this row's price cell the unknown state rather than a band or a range?
+ *  For the picker to draw it differently — muted, not $-coloured. */
+export function isPriceUnknown(row: Pick<PickerModel, "selection"|"pricing">): boolean { return modelPriceLabel(row)===PRICE_UNKNOWN; }
+/** Published rates move constantly and a band is a snapshot of one day's
+ *  prices, so the picker says so ONCE, under the list — not on every row
+ *  (Sean: "not that I need to put a disclaimer on every fucking one"). Dated
+ *  from the snapshot itself so it cannot quietly go stale. */
+export function priceBandNote(updatedAt: number = modelMetadataUpdatedAt()): string {
+  if(!Number.isFinite(updatedAt))return "Bands are approximate, from published rates";
+  const when=new Date(updatedAt).toLocaleString(undefined,{month:"long",year:"numeric",timeZone:"UTC"});
+  return `Bands are approximate, from published rates, ${when}`;
+}
+/** "$1 ≈ 20K output tokens" — the band in a unit anybody already owns an
+ *  intuition for. Tooltip only: it is an arithmetic restatement of the exact
+ *  rate that is already there, not a new claim, and it is rounded hard
+ *  (two significant figures) so it never implies precision the published rate
+ *  does not have. */
+export function dollarOfTokens(price: ProviderModel["pricing"]): string {
+  const n=price?.outputPerMillion;
+  if(typeof n!=="number"||!Number.isFinite(n)||n<=0)return "";
+  // Two significant figures, then the unit. "$1 ≈ 1.7K" and "$1 ≈ 20K" both
+  // say as much as a published rate can support; "$1 ≈ 1,666.67" would be
+  // arithmetic theatre on a number that changes without notice.
+  const tokens=1_000_000/n;
+  const magnitude=10**(Math.floor(Math.log10(tokens))-1);
+  const rounded=Math.round(tokens/magnitude)*magnitude;
+  const scale=rounded>=1_000_000?[1_000_000,"M"] as const:rounded>=1000?[1000,"K"] as const:[1,""] as const;
+  const value=rounded/scale[0];
+  return `$1 ≈ ${value<10&&!Number.isInteger(value)?value.toFixed(1):String(Math.round(value))}${scale[1]} output tokens`;
+}
+/** What one row's price cell says — the coarse band and nothing more (Sean,
+ *  2026-09-18: no per-million figures and no per-task estimate in the row).
+ *  The exact input/output numbers stay in the row's tooltip, which is what
+ *  keeps the band honest: anyone can see the real figure behind it.
+ *
+ *  A Flux route is the one row a single band cannot describe: `flux-auto`
+ *  dispatches across tiers, so it reads as their span ("$–$$$"). See
+ *  FLUX_TIER_BANDS in ./model-metadata.ts for where those four bands come
+ *  from and why they are labelled differently from every other number here.
+ *  `flux-pinned-*` is NOT a route: it names one model, resolves through the
+ *  snapshot, and gets a real band. */
+export function modelPriceLabel(row: Pick<PickerModel, "selection"|"pricing">): string {
+  return fluxRoutePriceLabel(row.selection.model) || priceBand(row.pricing);
+}
 /** Join the server's initial Flux fetch when the picker beats startup discovery.
  * Failed catalogs wait for the existing scheduled deadline or explicit Refresh. */
 export function pickerConnectionsToRefresh(connections: readonly PublicProviderConnection[], force: boolean): PublicProviderConnection[] {
@@ -50,7 +128,11 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
       if(instance.snapshot.authenticated===false&&!option.custom)continue;
       const selection={instanceId:instance.instanceId,model:option.id};
       const metadata=option as typeof option&{contextWindow?:number};
-      rows.push({key:pickerKey(selection),selection,label:option.label,group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="chat-only"?{chatOnly:true as const}:{})});
+      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="chat-only"?{chatOnly:true as const}:{})};
+      // A local model runs on this computer and costs nothing per token, so a
+      // cloud price would be a lie about the user's own hardware — local rows
+      // are left exactly as their server described them.
+      rows.push(option.localServer?row:fillModelMetadata(row,option.id,providerHint(undefined,option.provider)));
     }
   }
   if(installed||["grok","openai-compat"].includes(instance.driverKind))for(const connection of connections){
@@ -58,7 +140,9 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
     for(const model of connection.catalog.models){
       if(!model.enabled||!model.chatEligible||model.capabilities.chat!==true||!model.outputModalities.some(m=>m==="text"||m==="chat"))continue;
       const selection={instanceId:instance.instanceId,connectionId:connection.id,model:model.id};
-      rows.push({key:pickerKey(selection),selection,label:model.label,group:connection.label,provider:connection.preset,contextWindow:model.contextWindow,pricing:model.pricing,stale:connection.catalog.stale});
+      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(model.id,{catalogLabel:model.label}),group:connection.label,provider:connection.preset,contextWindow:model.contextWindow,...(model.pricing?{pricing:model.pricing}:{}),stale:connection.catalog.stale,
+        ...(model.capabilities.vision===undefined&&model.capabilities.tools===undefined&&model.capabilities.reasoning===undefined?{}:{capabilities:{...(model.capabilities.vision===undefined?{}:{vision:model.capabilities.vision}),...(model.capabilities.tools===undefined?{}:{tools:model.capabilities.tools}),...(model.capabilities.reasoning===undefined?{}:{reasoning:model.capabilities.reasoning})}})};
+      rows.push(fillModelMetadata(row,model.id,providerHint(connection.preset,undefined)));
     }
   }
   return rows;
@@ -113,8 +197,9 @@ export function unavailableSelectionLabel(model: string): string {
 }
 /** What the chip says before anything is set up. */
 export const NO_MODEL_CHOSEN = "No model chosen";
-/** The first row of the engine `<select>` when nothing is selected, so the
- *  control is never a blank box with no clue what it wants. */
+/** What the engine control reads when nothing is selected, so it is never a
+ *  blank box with no clue what it wants. It was the `<select>`'s first
+ *  `<option>`; it is now the combobox's own text. */
 export const CHOOSE_ENGINE_OPTION = "Choose an engine";
 /** The chip's tooltip / aria-label. Every part is optional and the separator
  *  is joined, never concatenated, so a missing part can never leave a
@@ -162,10 +247,34 @@ export function localToolsWarning(row: PickerModel): string {
   if (row.localTools === "partial") return "Tools test passed with gaps — see Settings → Models";
   return "";
 }
+/** Is this row served by Flux Router — either one of Murage's own `flux-*`
+ *  routes on an engine, or any model reached through a Flux connection? Both
+ *  spellings matter: `claude-opus-5` bought through Flux is a Flux row even
+ *  though its id names Anthropic. */
+export function isFluxRouterRow(row: Pick<PickerModel, "selection"|"provider">): boolean {
+  return row.provider === "flux" || /^(?:flux::)?flux-/.test(row.selection.model);
+}
+/** The picker's order (Sean, 2026-09-18 — Flux Router leads every model list).
+ *
+ *   0  Flux Auto                the recommended default; already rank 0 before
+ *                               this change, and still the single first row
+ *   1  the user's favourites    an explicit choice outranks a promotion: a
+ *                               starred model is never demoted by this rule
+ *   2  every other Flux Router  the tiers, the pinned routes, and anything
+ *      row                      bought through a Flux connection
+ *   3  recently used            below Flux on purpose. A recent is an
+ *                               incidental signal (it is what you happened to
+ *                               run last), where a star is a deliberate one;
+ *                               this is the one place where the promotion
+ *                               costs a non-Flux row a position, and it is
+ *                               stated rather than hidden
+ *   4  everything else
+ *
+ *  Within a rank the previous tie-breaks stand: group name, then label. */
 export function orderedPickerModels(rows: readonly PickerModel[], query: string, favorites: readonly string[], recent: readonly string[]): PickerModel[] {
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean),seen=new Set<string>();
   return rows.filter(row=>{if(seen.has(row.key))return false;seen.add(row.key);return words.every(word=>`${row.label} ${row.selection.model} ${row.group} ${row.provider}`.toLowerCase().includes(word));}).sort((a,b)=>{
-    const rank=(r:PickerModel)=>/^(?:flux::)?flux-auto$/.test(r.selection.model)?0:favorites.includes(r.key)?1:recent.includes(r.key)?2:3;
+    const rank=(r:PickerModel)=>/^(?:flux::)?flux-auto$/.test(r.selection.model)?0:favorites.includes(r.key)?1:isFluxRouterRow(r)?2:recent.includes(r.key)?3:4;
     return rank(a)-rank(b)||a.group.localeCompare(b.group)||a.label.localeCompare(b.label);
   });
 }
@@ -173,4 +282,104 @@ export function engineFamilies<T extends PickerEngine>(instances: readonly T[]):
   const groups=new Map<string,T[]>(),seen=new Set<string>();
   for(const instance of instances){if(seen.has(instance.instanceId))continue;seen.add(instance.instanceId);const key=instance.driverKind;const group=groups.get(key)??[];group.push(instance);groups.set(key,group);}
   return [...groups.values()].map(members=>({primary:members.find(i=>i.instanceId===i.driverKind.replace(/Agent$/,""))??members.find(i=>i.enabled!==false&&i.snapshot.state==="available")??members[0]!,members}));
+}
+/** The heading one model row is drawn under, as an ordered ladder rather than
+ *  a ternary chain — because it has to stay in step with the rank ladder in
+ *  `orderedPickerModels`, and a chain buried in JSX is the shape that let them
+ *  drift. A row matched by no zone falls back to its own group name.
+ *
+ *  The two ladders are a pair: `orderedPickerModels` decides the ORDER, this
+ *  decides the HEADING over each run. If a rank exists with no zone of its
+ *  own, its rows fall through to `row.group`, another rank's rows further down
+ *  carry that same group, and the list prints one heading twice with a
+ *  different heading between them — a name drawn twice, which is the whole
+ *  reason this lane exists. `pickerHeadings` below is the guard.
+ *
+ *  Lives here, at the end of the file rather than beside `orderedPickerModels`,
+ *  so this lane's additions stay clear of the concurrent metadata lane's hunks. */
+export interface PickerZone { name: string; match: (row: PickerModel, favorites: readonly string[], recent: readonly string[]) => boolean }
+export const PICKER_ZONES: readonly PickerZone[] = Object.freeze([
+  { name: "Flux Auto", match: row => /^(?:flux::)?flux-auto$/.test(row.selection.model) },
+  { name: "Favorites", match: (row, favorites) => favorites.includes(row.key) },
+  // Between Favorites and Recent, mirroring the rank in orderedPickerModels:
+  // Flux rows are promoted above recents, and a star still outranks the
+  // promotion. Without this row those rows fall through to `row.group` and the
+  // list prints one group heading twice with another heading between them.
+  { name: "Flux Router", match: row => isFluxRouterRow(row) },
+  { name: "Recent", match: (row, _favorites, recent) => recent.includes(row.key) },
+]);
+export function pickerZone(row: PickerModel, favorites: readonly string[], recent: readonly string[]): string {
+  return PICKER_ZONES.find(zone => zone.match(row, favorites, recent))?.name ?? row.group;
+}
+/** The headings a drawn list prints, in order — the picker's own fold over the
+ *  ordered rows, extracted so a test can read it without a DOM. A heading is
+ *  drawn when the zone changes, so a repeated entry in this list means one
+ *  heading was printed twice with something else in between. */
+export function pickerHeadings(ordered: readonly PickerModel[], favorites: readonly string[], recent: readonly string[]): string[] {
+  const headings: string[] = [];
+  let previous = "";
+  for (const row of ordered) { const zone = pickerZone(row, favorites, recent); if (zone !== previous) headings.push(zone); previous = zone; }
+  return headings;
+}
+/** The suffix an engine the user switched off still carries, so "why can I not
+ *  pick this" is answered in the list rather than in Settings. */
+export const ENGINE_DISABLED_SUFFIX = " · Disabled";
+/** One engine as the Engine control draws it: its own icon comes from
+ *  `driverKind`, its name from `displayName`, and the disabled suffix is part
+ *  of the label so the row's text reads the same as the old `<option>` did. */
+export interface EngineChoice<T extends PickerEngine> { instance: T; label: string; disabled: boolean }
+/** A family of engines sharing one driver. `header` is the empty string for a
+ *  family of one.
+ *
+ *  Why: the Engine control used to wrap every family in an `<optgroup
+ *  label={primary.displayName}>` whose single `<option>` carried that same
+ *  displayName, so the normal case — one connection per driver — printed every
+ *  engine's name twice ("Claude / Claude / Codex / Codex", Sean's screenshot,
+ *  2026-09-18). A header only carries information when it groups more than one
+ *  row, so only then is one emitted. */
+export interface EngineMenuFamily<T extends PickerEngine> { key: string; header: string; options: Array<EngineChoice<T>> }
+/** The one rule, for every surface that draws engine families: a family header
+ *  is the family's name only when it groups more than one connection, and the
+ *  empty string otherwise. `engineFamilies` picks `primary` out of `members`,
+ *  so for a family of one the header and its only row are the same string and
+ *  drawing both just prints the engine's name twice. */
+export function engineFamilyHeader<T extends PickerEngine>(primary: T, members: readonly T[]): string {
+  return members.length>1?primary.displayName:"";
+}
+export function engineMenuFamilies<T extends PickerEngine>(instances: readonly T[]): Array<EngineMenuFamily<T>> {
+  return engineFamilies(instances).map(({primary,members})=>({
+    key: primary.driverKind,
+    header: engineFamilyHeader(primary,members),
+    options: members.map(instance=>({instance,label:`${instance.displayName}${instance.enabled===false?ENGINE_DISABLED_SUFFIX:""}`,disabled:instance.enabled===false})),
+  }));
+}
+/** Every selectable row of the Engine control, in the order it is drawn.
+ *  Headers are not selectable, so arrow keys never land on one. */
+export function engineMenuOptions<T extends PickerEngine>(instances: readonly T[]): Array<EngineChoice<T>> {
+  return engineMenuFamilies(instances).flatMap(family=>family.options);
+}
+/** What one key press does to the Engine control, decided without a DOM so it
+ *  can be tested and so the component stays a thin renderer. Wrapping matches
+ *  the model rows below, whose own ArrowDown/ArrowUp handler wraps. */
+export type EngineMenuKeyAction =
+  | { type: "open"; index: number }
+  | { type: "move"; index: number }
+  | { type: "select"; index: number }
+  | { type: "close" }
+  | { type: "none" };
+export function engineMenuKey(key: string, state: { open: boolean; index: number; count: number }): EngineMenuKeyAction {
+  const{open,count}=state,index=Math.min(Math.max(state.index,0),Math.max(count-1,0));
+  if(open&&(key==="Escape"||key==="Tab"))return{type:"close"};
+  if(!count)return{type:"none"};
+  if(!open){
+    if(key==="ArrowDown"||key==="Enter"||key===" "||key==="Home")return{type:"open",index:key==="Home"?0:index};
+    if(key==="ArrowUp"||key==="End")return{type:"open",index:key==="End"?count-1:index};
+    return{type:"none"};
+  }
+  if(key==="ArrowDown")return{type:"move",index:(index+1)%count};
+  if(key==="ArrowUp")return{type:"move",index:(index-1+count)%count};
+  if(key==="Home")return{type:"move",index:0};
+  if(key==="End")return{type:"move",index:count-1};
+  if(key==="Enter"||key===" ")return{type:"select",index};
+  return{type:"none"};
 }

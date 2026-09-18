@@ -141,3 +141,60 @@ it("does not automatically refresh a conflicting legacy Flux credential",async()
   legacyConnections:()=>[{id:"legacy-flux",preset:"flux",label:"Flux",enabled:true,key:"fake-only",revision:"r1",legacy:true,managedIn:"connections",legacyError:"Choose the existing connection"}]});
  await service.refreshDue();expect(f.fetcher).not.toHaveBeenCalled();expect(service.list()[0].catalog.error?.code).toBe("unavailable");
 });
+
+it("never ships a raw model id as a label when the provider's catalog omits names",()=>{
+ // Sean, 2026-09-18: the picker showed the SAME model twice — "Flux Auto"
+ // from the engine catalog (server/flux-routing.ts:227) and the literal
+ // `flux-auto` from this connection, because Flux's /v1/models carries no
+ // `name` and the fallback chain ended at row.id.
+ const f=fixture("flux"),connection=parseProviderBank(f.bank())[0]!;
+ const models=normalizeProviderModels(connection,{data:[
+  {id:"flux-auto",capability:"chat"},
+  {id:"flux-reasoning",capability:"chat"},
+  {id:"flux-pinned-deepseek-flash-max",capability:"chat"},
+  {id:"claude-opus-5",capability:"chat",name:"Claude Opus 5"},
+ ]},1);
+ expect(models.map(model=>model.label)).toEqual(["Flux Auto","Flux Reasoning","Flux Pinned Deepseek Flash Max","Claude Opus 5"]);
+});
+it("still prefers a name the provider actually supplied over the Flux table",()=>{
+ const f=fixture("flux"),connection=parseProviderBank(f.bank())[0]!;
+ const [model]=normalizeProviderModels(connection,{data:[{id:"flux-auto",capability:"chat",name:"Flux Automatic"}]},1);
+ expect(model!.label).toBe("Flux Automatic");
+});
+
+it("keeps flux-voice out of the chat picker even when Flux states no capability",async()=>{
+ // The whole defect: `flux-image` was excluded by MEDIA's `image`, `flux-voice`
+ // by nothing, so the only thing keeping a voice model out of the chat list was
+ // Flux always populating an OPTIONAL `capability` field. These rows carry none.
+ const f=fixture("flux"),connection=parseProviderBank(f.bank())[0]!;
+ // Text output declared and no `capability`: this is the shape that makes
+ // MEDIA the ONLY thing standing between flux-voice and the chat list, because
+ // a declared `output` short-circuits knownChat's own alias test.
+ const text={architecture:{output_modalities:["text"]}};
+ const models=normalizeProviderModels(connection,{data:[
+  {id:"flux-voice",...text},{id:"flux-image",...text},
+  {id:"flux-auto",...text},{id:"flux-fast",...text},{id:"flux-reasoning",...text},{id:"flux-standard",...text},
+  {id:"flux-pinned-claude-opus-5",...text},
+ ]},1);
+ const chat=models.filter(model=>model.chatEligible).map(model=>model.id);
+ expect(chat).toEqual(["flux-auto","flux-fast","flux-reasoning","flux-standard","flux-pinned-claude-opus-5"]);
+ expect(models.find(model=>model.id==="flux-voice")!.chatEligible).toBe(false);
+ expect(models.find(model=>model.id==="flux-image")!.chatEligible).toBe(false);
+ // With nothing declared at all, knownChat's flux alias test is a second
+ // defence — but it is the only one MEDIA does not back up, which is why the
+ // case above exists.
+ const bare=normalizeProviderModels(connection,{data:[{id:"flux-voice"},{id:"flux-auto"}]},1);
+ expect(bare.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["flux-auto"]);
+});
+it("excludes rerankers by id, and still admits the chat model named Musica",()=>{
+ // `rerank` was added with `voice`; `music` was rejected because it would have
+ // excluded gemma-4-26b-a4b-it-musica, which is a chat model.
+ const f=fixture("openrouter"),connection=parseProviderBank(f.bank())[0]!;
+ const models=normalizeProviderModels(connection,{data:[
+  // text output declared on all three, so MEDIA's id test is what decides
+  {id:"cohere/rerank-v4-pro",architecture:{output_modalities:["text"]}},
+  {id:"voyage/rerank-2.5",architecture:{output_modalities:["text"]}},
+  {id:"gemma-4-26b-a4b-it-musica",architecture:{output_modalities:["text"]}},
+ ]},1);
+ expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gemma-4-26b-a4b-it-musica"]);
+});

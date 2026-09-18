@@ -66,6 +66,13 @@ extraResources:
     to: licenses/installation-archive
   - from: third_party/restic
     to: licenses/restic
+  # models.dev's MIT licence and the record of what was taken from it. The
+  # snapshot itself is NOT a resource: Vite inlines src/data/model-metadata.json
+  # into the renderer bundle, so it ships inside `dist` → `ui` below and there
+  # is nothing for the packaged app to read from disk. MIT still requires the
+  # licence and copyright notice travel with the distribution, so they do.
+  - from: third_party/models-dev
+    to: licenses/models-dev
   # cloudflared is distributed under Apache-2.0 as a separate executable.
   # Murage itself uses the same full license text; ship another named
   # copy so the third-party executable's terms remain unambiguous.

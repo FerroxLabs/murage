@@ -10,6 +10,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHOOSE_ENGINE_OPTION,
+  ENGINE_DISABLED_SUFFIX,
+  PICKER_ZONES,
+  engineFamilies,
+  engineFamilyHeader,
+  engineMenuFamilies,
+  engineMenuKey,
+  engineMenuOptions,
+  orderedPickerModels,
+  pickerHeadings,
+  pickerZone,
   CUSTOM_MODELS_GROUP,
   LOCAL_MODELS_GROUP,
   NO_LOCAL_SERVER_ROW,
@@ -27,8 +37,12 @@ import {
   showNoLocalServerRow,
   unavailableSelectionLabel,
   type PickerEngine,
+  type PickerModel,
 } from "./provider-model-picker";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+const pickerSource = readFileSync(fileURLToPath(new URL("../components/ModelPicker.tsx", import.meta.url)), "utf8");
 
 function fluxConnection(): PublicProviderConnection {
   const ids=["flux-auto","flux-reasoning","flux-standard","flux-fast","flux-pinned-glm-5-3","future-vendor-choice"];
@@ -268,5 +282,191 @@ describe("the picker with nothing configured", () => {
   it("stands aside once an engine is chosen, or while the user is searching", () => {
     expect(pickerEmptyState(true, false)).toBeNull();
     expect(pickerEmptyState(false, true)).toBeNull();
+  });
+});
+
+// ── The Engine control ────────────────────────────────────────────────────
+// It used to be a native <select> whose every family was an <optgroup
+// label={primary.displayName}> around options carrying that same displayName.
+// One connection per driver is the normal case, so the list read
+// "Claude / Claude / Codex / Codex …" — a header repeating its only row
+// (Sean's screenshot, 2026-09-18).
+function fleetEngine(instanceId: string, driverKind: string, displayName: string, enabled = true): PickerEngine {
+  return { instanceId, driverKind, displayName, enabled, snapshot: { state: "available", authenticated: true }, models: { default: "m", options: [] } };
+}
+
+describe("engineMenuFamilies", () => {
+  it("gives a family of one no header, so its name is printed once", () => {
+    const families = engineMenuFamilies([fleetEngine("claude", "claudeAgent", "Claude"), fleetEngine("codex", "codex", "Codex")]);
+    expect(families.map(f => f.header)).toEqual(["", ""]);
+    expect(families.flatMap(f => f.options.map(o => o.label))).toEqual(["Claude", "Codex"]);
+    // The whole drawn text of the list, headers included: each name once.
+    expect(families.flatMap(f => (f.header ? [f.header] : []).concat(f.options.map(o => o.label)))).toEqual(["Claude", "Codex"]);
+  });
+
+  it("keeps the header for a family that groups more than one connection, where it is the only thing telling them apart", () => {
+    const families = engineMenuFamilies([
+      fleetEngine("claude", "claudeAgent", "Claude"),
+      fleetEngine("claude-work", "claudeAgent", "Claude · work account"),
+      fleetEngine("codex", "codex", "Codex"),
+    ]);
+    expect(families[0]!.header).toBe("Claude");
+    expect(families[0]!.options.map(o => o.label)).toEqual(["Claude", "Claude · work account"]);
+    expect(families[1]!.header).toBe("");
+  });
+
+  it("keeps the disabled suffix on the row itself, where the old <option> carried it", () => {
+    const [family] = engineMenuFamilies([fleetEngine("codex", "codex", "Codex", false)]);
+    expect(ENGINE_DISABLED_SUFFIX).toBe(" · Disabled");
+    expect(family!.options[0]!.label).toBe("Codex · Disabled");
+    expect(family!.options[0]!.disabled).toBe(true);
+  });
+
+  it("flattens to the selectable rows only, so arrow keys never land on a header", () => {
+    const instances = [fleetEngine("claude", "claudeAgent", "Claude"), fleetEngine("claude-work", "claudeAgent", "Claude · work"), fleetEngine("codex", "codex", "Codex")];
+    expect(engineMenuOptions(instances).map(o => o.instance.instanceId)).toEqual(["claude", "claude-work", "codex"]);
+  });
+});
+
+describe("engineFamilyHeader", () => {
+  // One rule, two surfaces: the model picker's engine list and Settings →
+  // Engines. Both used to draw a header that repeated its only row.
+  const claude = fleetEngine("claude", "claudeAgent", "Claude");
+
+  it("is empty for a family of one, because the header would repeat the row", () => {
+    expect(engineFamilyHeader(claude, [claude])).toBe("");
+  });
+
+  it("is the family's name once it groups more than one connection", () => {
+    const work = fleetEngine("claude-work", "claudeAgent", "Claude work");
+    expect(engineFamilyHeader(claude, [claude, work])).toBe("Claude");
+  });
+
+  it("is the rule engineMenuFamilies itself uses, so the two surfaces cannot drift", () => {
+    const work = fleetEngine("claude-work", "claudeAgent", "Claude work"), codex = fleetEngine("codex", "codex", "Codex");
+    for (const family of engineFamilies([claude, work, codex])) {
+      const menu = engineMenuFamilies([claude, work, codex]).find(f => f.key === family.primary.driverKind)!;
+      expect(menu.header).toBe(engineFamilyHeader(family.primary, family.members));
+    }
+  });
+});
+
+describe("engineMenuKey", () => {
+  const shut = { open: false, index: 0, count: 3 }, listing = { open: true, index: 0, count: 3 };
+
+  it("opens on the keys a <select> opened on, landing on the current choice", () => {
+    for (const key of ["ArrowDown", "ArrowUp", "Enter", " "]) expect(engineMenuKey(key, { ...shut, index: 2 })).toEqual({ type: "open", index: 2 });
+    expect(engineMenuKey("Home", shut)).toEqual({ type: "open", index: 0 });
+    expect(engineMenuKey("End", shut)).toEqual({ type: "open", index: 2 });
+  });
+
+  it("wraps on the arrows, the way the model rows below this control wrap", () => {
+    expect(engineMenuKey("ArrowDown", listing)).toEqual({ type: "move", index: 1 });
+    expect(engineMenuKey("ArrowUp", listing)).toEqual({ type: "move", index: 2 });
+    expect(engineMenuKey("ArrowDown", { ...listing, index: 2 })).toEqual({ type: "move", index: 0 });
+    expect(engineMenuKey("Home", { ...listing, index: 2 })).toEqual({ type: "move", index: 0 });
+    expect(engineMenuKey("End", listing)).toEqual({ type: "move", index: 2 });
+  });
+
+  it("chooses on Enter or Space and closes on Escape or Tab", () => {
+    expect(engineMenuKey("Enter", { ...listing, index: 1 })).toEqual({ type: "select", index: 1 });
+    expect(engineMenuKey(" ", { ...listing, index: 1 })).toEqual({ type: "select", index: 1 });
+    expect(engineMenuKey("Escape", listing)).toEqual({ type: "close" });
+    expect(engineMenuKey("Tab", listing)).toEqual({ type: "close" });
+  });
+
+  it("leaves every other key, and a closed control's Escape, to the menu around it", () => {
+    expect(engineMenuKey("a", listing)).toEqual({ type: "none" });
+    expect(engineMenuKey("Escape", shut)).toEqual({ type: "none" });
+    expect(engineMenuKey("ArrowDown", { open: false, index: 0, count: 0 })).toEqual({ type: "none" });
+  });
+});
+
+// ── Zones and ranks, as a pair ────────────────────────────────────────────
+// orderedPickerModels decides the ORDER; pickerZone decides the HEADING over
+// each run. They are two ladders describing one partition, so a rank with no
+// zone of its own does not fail loudly — its rows quietly fall through to
+// row.group, and a later rank carrying that same group prints the heading a
+// SECOND time with another heading in between. That is a name drawn twice,
+// which is the defect this lane exists to fix, arriving from the ordering side.
+const modelRow = (model: string, label: string, group: string, provider = "Fuigo"): PickerModel =>
+  ({ key: JSON.stringify(["e", null, model]), selection: { instanceId: "e", model }, label, group, provider } as PickerModel);
+
+describe("pickerZone", () => {
+  const rows = { auto: modelRow("flux-auto", "Flux Auto", "Engine models"), star: modelRow("gpt-5", "GPT-5", "Engine models"), last: modelRow("claude-sonnet-5", "Claude Sonnet 5", "Engine models"), plain: modelRow("kimi-k2", "Kimi K2", "Engine models") };
+
+  it("draws the zones the picker has always drawn, in the same precedence", () => {
+    const favorites = [rows.star.key], recent = [rows.last.key];
+    expect(pickerZone(rows.auto, favorites, recent)).toBe("Flux Auto");
+    expect(pickerZone(rows.star, favorites, recent)).toBe("Favorites");
+    expect(pickerZone(rows.last, favorites, recent)).toBe("Recent");
+    expect(pickerZone(rows.plain, favorites, recent)).toBe("Engine models");
+  });
+
+  it("prefers Flux Auto over a star, and a star over a recent, as the order does", () => {
+    expect(pickerZone(rows.auto, [rows.auto.key], [rows.auto.key])).toBe("Flux Auto");
+    expect(pickerZone(rows.star, [rows.star.key], [rows.star.key])).toBe("Favorites");
+  });
+
+  it("falls back to the row's own group when no zone claims it", () => {
+    expect(pickerZone(modelRow("kimi-k2", "Kimi K2", "Engine models"), [], [])).toBe("Engine models");
+    // Was: expect(PICKER_ZONES.map(...)).toEqual(["Flux Auto","Favorites","Recent"]);
+    // "Flux Router" joined the ladder with the rank that promotes those rows
+    // above recents; the order here is the precedence, and it mirrors the rank.
+    expect(PICKER_ZONES.map(zone => zone.name)).toEqual(["Flux Auto", "Favorites", "Flux Router", "Recent"]);
+  });
+
+  it("claims a Flux row for the Flux Router zone, under a star but over a recent", () => {
+    const flux = modelRow("flux-fast", "Flux Fast", "Engine models");
+    const bought = modelRow("claude-opus-5", "Claude Opus 5", "Flux Router", "flux");
+    expect(pickerZone(flux, [], [])).toBe("Flux Router");
+    expect(pickerZone(bought, [], [])).toBe("Flux Router");
+    expect(pickerZone(flux, [flux.key], [])).toBe("Favorites");
+    expect(pickerZone(flux, [], [flux.key])).toBe("Flux Router");
+  });
+});
+
+describe("the picker's headings never repeat", () => {
+  // Deliberately rank-agnostic: it names no rank and no constant. It drives
+  // WHATEVER ladder orderedPickerModels currently has through WHATEVER ladder
+  // pickerZone currently has, over a fleet that puts Flux routes, a star, a
+  // recent and ordinary models in one group. If the two ladders ever stop
+  // describing the same partition, a heading repeats and this fails.
+  const fleet = [
+    modelRow("flux-auto", "Flux Auto", "Engine models"),
+    modelRow("flux-fast", "Flux Fast", "Engine models"),
+    modelRow("flux-reasoning", "Flux Reasoning", "Engine models"),
+    modelRow("gpt-5", "GPT-5", "Engine models"),
+    modelRow("kimi-k2", "Kimi K2", "Engine models"),
+    modelRow("claude-sonnet-5", "Claude Sonnet 5", "Engine models"),
+    modelRow("gemini-3-pro", "Gemini 3 Pro", "Flux Router", "flux"),
+  ];
+  const favorites = [modelRow("gpt-5", "", "").key], recent = [modelRow("claude-sonnet-5", "", "").key];
+
+  it("gives every rank a zone of its own, so no heading is drawn twice", () => {
+    const headings = pickerHeadings(orderedPickerModels(fleet, "", favorites, recent), favorites, recent);
+    expect(headings).toEqual([...new Set(headings)]);
+  });
+
+  it("still draws a heading for each run, not one heading for the whole list", () => {
+    const headings = pickerHeadings(orderedPickerModels(fleet, "", favorites, recent), favorites, recent);
+    expect(headings.length).toBeGreaterThan(1);
+    expect(headings[0]).toBe("Flux Auto");
+    expect(headings).toContain("Favorites");
+    expect(headings).toContain("Recent");
+  });
+
+  it("reports a heading drawn twice instead of hiding it — the guard above is only as honest as this fold", () => {
+    // Hand-ordered so one group is split by another zone. A fold that
+    // de-duplicated (rather than only collapsing consecutive runs) would make
+    // the no-repeat assertion above vacuously true, so it is pinned here.
+    const first = modelRow("a", "A", "Engine models"), starred = modelRow("b", "B", "Engine models"), later = modelRow("c", "C", "Engine models");
+    expect(pickerHeadings([first, starred, later], [starred.key], [])).toEqual(["Engine models", "Favorites", "Engine models"]);
+    // And a run really is collapsed: two adjacent rows of one zone, one heading.
+    expect(pickerHeadings([first, later], [], [])).toEqual(["Engine models"]);
+  });
+
+  it("is the same fold the picker itself runs", () => {
+    expect(pickerSource).toContain("const zone=pickerZone(row,prefs.favorites,prefs.recent);const heading=zone!==previousGroup;previousGroup=zone;");
   });
 });

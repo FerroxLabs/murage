@@ -13,7 +13,7 @@ import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
-import { engineFamilies } from "@/lib/provider-model-picker";
+import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker";
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
@@ -376,7 +376,12 @@ export function EnginesSettings() {
         <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>
       )}
       {engineFamilies(rows).map(({primary,members})=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
-        <EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>
+        {/* The card's own border is the section boundary; the eyebrow is only
+            worth its line when it groups more than one connection. For a
+            family of one it repeated the row directly beneath it word for
+            word — the same doubling the model picker's engine list had
+            (engineFamilyHeader, the one rule both surfaces use). */}
+        {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
         <EngineRow instance={primary}/>
         {members.length>1&&<details className="mt-3 border-t border-hairline/30 pt-2"><summary className="cursor-pointer text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</summary><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></details>}
         {primary.driverKind === "claudeAgent" && <ClaudeAccountsSettings onChanged={refreshInstances} />}
