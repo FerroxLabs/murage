@@ -323,8 +323,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const label = endpoint?.preset ?? options.httpErrorLabel;
     const idle = createIdleBudget(options.timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+    // Whether this request ever heard back from the address. Set the instant
+    // `fetch` resolves — a response object is proof the endpoint answered —
+    // and read only by the unreachable-endpoint branch below. It has to be
+    // carried out of `completeWithin` explicitly: the error alone cannot say
+    // it, because a connect failure and a socket that dies mid-body raise the
+    // same errno.
+    const reached = { value: false };
     try {
-      return await completeWithin(requestSignal, idle, messages, model, stream, onDelta, endpoint);
+      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -348,7 +355,20 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       // commonest local-model failure there is — the box is off, or the tailnet
       // dropped. Say which address and what to check instead. The Stop path is
       // untouched: an aborted turn is never rewritten.
-      if (!signal?.aborted && isEndpointUnreachable(value)) {
+      //
+      // F11 guard — `reached.value` is the whole distinction. The codes
+      // `isEndpointUnreachable` matches (ECONNRESET, EPIPE, UND_ERR_SOCKET,
+      // ETIMEDOUT) are raised both by a connection that never opened AND by
+      // one that died halfway through a reply, so the error's shape cannot
+      // tell them apart. Without this guard a server that streamed half an
+      // answer and then dropped had that answer thrown away — the
+      // StreamOutcomeError carrying the partial was replaced by a plain Error,
+      // so the turn loop found no `.partial` to keep and no `.stopReason`, and
+      // the person was told the endpoint "could not be reached" while its
+      // words were still on their screen. Once anything has been received the
+      // endpoint was plainly reachable; the failure is a dropped stream and
+      // the reader's own reporting is the honest one.
+      if (!signal?.aborted && !reached.value && isEndpointUnreachable(value)) {
         throw new Error(unreachableEndpointMessage(providerRoute?.baseUrl ?? options.apiUrl), { cause: value });
       }
       throw value;
@@ -360,6 +380,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   const completeWithin = async (
     requestSignal: AbortSignal,
     idle: IdleBudget,
+    /** Flipped the moment the endpoint answers, so a later failure is never
+     *  mistaken for one that never connected. See `complete`. */
+    reached: { value: boolean },
     messages: OpenAIChatMessage[],
     model: string,
     stream: boolean,
@@ -385,6 +408,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       body: JSON.stringify(options.requestBody(model, messages, stream)),
       signal: requestSignal,
     });
+    // Headers are back: something is listening at that address. Everything
+    // after this point is a server that answered, however badly.
+    reached.value = true;
     if (!response.ok) {
       const rawBody = await response.text().catch(() => "");
       const body = redact(rawBody);

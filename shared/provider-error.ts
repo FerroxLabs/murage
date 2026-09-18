@@ -141,7 +141,14 @@ const CONNECT_FAILURE_CODES = new Set([
 
 /** True when this error means "the address never answered", not "the server
  *  answered with something I did not like". Walks `cause`, because that is
- *  where undici puts the real errno. */
+ *  where undici puts the real errno.
+ *
+ *  CONNECT FAILURES ONLY. Several of these codes — ECONNRESET, EPIPE,
+ *  UND_ERR_SOCKET, ETIMEDOUT — are raised just as readily by a connection that
+ *  died halfway through a reply, and nothing in the error distinguishes the
+ *  two. Call this only where the caller knows nothing has been received yet
+ *  (see `reached` in server/drivers/openai-chat.ts); asked about a failure
+ *  after bytes have arrived it answers true and the answer is wrong. */
 export function isEndpointUnreachable(error: unknown): boolean {
   for (let step: unknown = error, depth = 0; step instanceof Error && depth < 5; depth++) {
     const code = (step as NodeJS.ErrnoException).code;
