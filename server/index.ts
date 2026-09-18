@@ -3022,7 +3022,13 @@ bus.subscribe((event: RuntimeEvent) => {
   else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
   else if (event.type === "turn.completed") {
     watchdog.settle(event.threadId);
-    void releaseBrowserCapabilityForThread(event.threadId);
+    // Scoped to the generation that dispatched this provider turn. A stopped
+    // turn's completion lands when its engine closes, after Stop has already
+    // let the next turn bind this thread's browser; unscoped, it revoked that
+    // newer turn's browser for its whole life. An unbound turn (no id, or one
+    // that completed before its dispatch resolved) keeps the thread-wide release.
+    void releaseBrowserCapabilityForThread(event.threadId,
+      event.turnId ? internalCapabilities.dispatchingGeneration(event.threadId, event.turnId) : undefined);
   } else if (event.type === "session.exited") {
     // A retained provider session can exit after a newer turn reused the same
     // thread. An unscoped session event must never revoke that newer turn's
@@ -12427,15 +12433,18 @@ const server = createServer(async (req, res) => {
             if (groupTurn) {
               cancelGroupTurnOperations(groupTurn.group.id, groupTurn.threadId);
               await releaseBrowserCapabilityForThread(groupTurn.threadId);
-              await instance?.adapter.interruptTurn(groupTurn.threadId).catch(() => {});
+              // Confirmed like a direct stop below: an engine that refuses,
+              // or answers that its child has not closed, is not "stopped".
+              const confirmed = await Promise.resolve(instance?.adapter.interruptTurn(groupTurn.threadId))
+                .then(stopCloseConfirmed, () => false);
               closeOpenApprovals(groupTurn.threadId);
+              if (confirmed === false) throw new Error("provider stop is unconfirmed");
               return;
             }
-            const directClaim = cancelDirectTurnDispatch(bot.id);
-            const threadId = directClaim?.threadId ?? bot.threadId;
-            await releaseBrowserCapabilityForThread(threadId);
-            await instance?.adapter.interruptTurn(threadId).catch(() => {});
-            closeOpenApprovals(threadId);
+            // The per-bot Stop's own close-confirmed path: an unconfirmed stop
+            // keeps the turn and its leases, tells the thread, and throws —
+            // which lands this bot in `failed` rather than `stopped`.
+            await interruptDirectThread(bot.id, bot.threadId);
           }),
       );
       // Say what was actually covered. The old answer was a bare `{ ok: true }`

@@ -31,6 +31,10 @@ export class InternalCapabilities {
   readonly #generations = new Map<string, Generation>();
   readonly #providers = new Map<string, { threadId: string; generation: string }>();
   readonly #completed = new Set<string>();
+  /** Which generation dispatched each provider turn. Unlike #providers this
+   * outlives the generation's revocation, which a Stop performs at once while
+   * the stopped turn's terminal event arrives only when its engine closes. */
+  readonly #dispatchedBy = new Map<string, string>();
 
   constructor(options: { now?: () => number; orphanMs?: number; tombstoneLimit?: number } = {}) {
     this.#now = options.now ?? Date.now;
@@ -91,6 +95,12 @@ export class InternalCapabilities {
 
   bindProviderTurn(threadId: string, generation: string, turnId: string): boolean {
     const key = this.#providerKey(threadId, turnId);
+    if (turnId && !this.#dispatchedBy.has(key)) {
+      this.#dispatchedBy.set(key, generation);
+      while (this.#dispatchedBy.size > this.#tombstoneLimit) {
+        this.#dispatchedBy.delete(this.#dispatchedBy.keys().next().value!);
+      }
+    }
     if (!turnId || this.#completed.has(key)) {
       this.revokeGeneration(threadId, generation);
       return false;
@@ -111,6 +121,12 @@ export class InternalCapabilities {
     }
     const owner = this.#providers.get(key);
     if (owner) this.revokeGeneration(owner.threadId, owner.generation);
+  }
+
+  /** The generation that dispatched this provider turn, whether or not it is
+   * still active; undefined when the turn was never bound (or has aged out). */
+  dispatchingGeneration(threadId: string, turnId: string): string | undefined {
+    return turnId ? this.#dispatchedBy.get(this.#providerKey(threadId, turnId)) : undefined;
   }
 
   /** The generation that currently owns `threadId`, or undefined once it was
