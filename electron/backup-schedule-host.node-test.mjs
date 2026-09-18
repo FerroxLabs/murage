@@ -366,13 +366,15 @@ test("back up now with active work stays idle and its request never runs later o
   }finally{f.cleanup();}
 });
 test("back up now is serialized with other backup work and refuses unresolved backups",async()=>{
-  let proceed;const f=fixture({prepare:async()=>{await new Promise(resolve=>{proceed=resolve;});return async()=>{};}});try{
+  const waits=[],proceed=()=>{for(const resume of waits.splice(0))resume();};const f=fixture({prepare:async()=>{await new Promise(resolve=>{waits.push(resolve);});return async()=>{};}});try{
     await f.enable();const s=await f.controller.status();const first=f.controller.runNow(s.revision);
-    for(let attempt=0;attempt<100&&!proceed;attempt++)await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof proceed,"function");
-    await assert.rejects(f.controller.runNow(s.revision),/BACKUP_BUSY/);await f.controller.tick();await assert.rejects(f.controller.selectReferences(),/BACKUP_BUSY/);
+    for(let attempt=0;attempt<100&&!waits.length;attempt++)await new Promise(resolve=>setImmediate(resolve));assert.equal(waits.length,1);
+    const second=f.controller.runNow(s.revision);second.catch(()=>{});
+    for(let attempt=0;attempt<100;attempt++)await new Promise(resolve=>setImmediate(resolve));assert.equal(waits.length,1,"one workspace close at a time");
+    proceed();await assert.rejects(second,/BACKUP_BUSY/);await f.controller.tick();await assert.rejects(f.controller.selectReferences(),/BACKUP_BUSY/);
     proceed();await first;assert.equal(f.coordinator().status().phase,"handoff-armed");
     await assert.rejects(f.create().runNow(s.revision),/BACKUP_BUSY/);
-  }finally{proceed?.();f.cleanup();}
+  }finally{proceed();f.cleanup();}
   const r=fixture();try{await r.enable();const s=await r.controller.status();
     const file=path.join(r.root,"control","backup-coordinator.json"),saved=JSON.parse(readFileSync(file));saved.job={id:"f".repeat(64),occurrence:`${s.revision}:daily:2026-09-12`,revision:s.revision,scheduledAt:0,phase:"needs-review",error:"interrupted"};writeFileSync(file,JSON.stringify(saved));
     await assert.rejects(r.create().runNow(s.revision),/BACKUP_REVIEW_REQUIRED/);assert.deepEqual(r.calls,[]);

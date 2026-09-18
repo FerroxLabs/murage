@@ -82,8 +82,9 @@ test("the dialog flow returns only a label and public key, remembers the folder 
     assert.equal(JSON.stringify(result).includes("AGE-SECRET"),false);assert.equal(JSON.stringify(result).includes(p.root),false);
     assert.equal(flow.lastFolder(),p.safe);
     chosen=path.join(p.destination,"key.txt");await assert.rejects(flow.create(),/INSIDE_DESTINATION/);
-    let release;const slow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>null,chooseFile:()=>new Promise(resolve=>{release=resolve;})});
-    const first=slow.create();await assert.rejects(slow.create(),/BACKUP_BUSY/);release(null);assert.deepEqual(await first,{cancelled:true});
+    const dialogs=[];const slow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>null,chooseFile:()=>new Promise(resolve=>{dialogs.push(resolve);})});
+    const first=slow.create(),second=slow.create();assert.equal(dialogs.length,1,"one save dialog at a time");for(const close of dialogs)close(null);
+    await assert.rejects(second,/BACKUP_BUSY/);assert.deepEqual(await first,{cancelled:true});
     const locked=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>{throw Error("locked");},chooseFile:async()=>path.join(p.safe,"locked.txt")});
     await assert.rejects(locked.create(),/BACKUP_BINDINGS_UNAVAILABLE/);assert.throws(()=>lstatSync(path.join(p.safe,"locked.txt")));
     let asked=false;const off=createRecoveryKeyFlow({isUsable:()=>false,installation:()=>p.installation,selectedDestination:async()=>null,chooseFile:async()=>{asked=true;return null;}});
