@@ -283,11 +283,17 @@ function isNativeEngineRow(row: PickerModel): boolean { return !row.selection.co
  *  A tier the engine already offers natively is also listed by a Flux Router
  *  connection; that second copy is hidden, and the context size it carried
  *  moves onto the row that stays. The copy the user actually has selected is
- *  never hidden, so their checkmark cannot vanish. */
+ *  never hidden, so their checkmark cannot vanish.
+ *
+ *  Only when there is a single Flux connection. The native row bills the one
+ *  Flux key Murage hands the engine, so with one connection both rows are the
+ *  same model on the same account. A second Flux connection may hold a
+ *  different account, and its tiers are then a real choice, not a copy. */
 export function orderedPickerModels(rows: readonly PickerModel[], query: string, favorites: readonly string[], _recent: readonly string[], selectedKey?: string): PickerModel[] {
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean),seen=new Set<string>();
   const nativeTiers=new Map<number,PickerModel>();
-  for(const row of rows){const tier=fluxTierIndex(row);if(tier>=0&&!row.selection.connectionId&&!nativeTiers.has(tier))nativeTiers.set(tier,row);}
+  const fluxConnections=new Set(rows.filter(row=>row.provider==="flux"&&row.selection.connectionId).map(row=>row.selection.connectionId));
+  if(fluxConnections.size<=1)for(const row of rows){const tier=fluxTierIndex(row);if(tier>=0&&!row.selection.connectionId&&!nativeTiers.has(tier))nativeTiers.set(tier,row);}
   const contextFor=new Map<string,number>();
   const kept=rows.filter(row=>{
     const tier=fluxTierIndex(row),native=tier>=0&&row.selection.connectionId?nativeTiers.get(tier):undefined;

@@ -469,6 +469,12 @@ describe("the picker's section order", () => {
     expect(autos.map(row => row.key)).toContain(chosen.key);
   });
 
+  it("keeps both copies when a second Flux connection may be a different account", () => {
+    const second = conn("flux-2", "flux-auto", "Flux Auto", "Flux Router (work)", "flux");
+    const autos = orderedPickerModels([...fleet, second], "", [], []).filter(row => row.label === "Flux Auto");
+    expect(autos).toHaveLength(3);
+  });
+
   it("never hides a pinned route, even beside a native model of the same name", () => {
     expect(orderedPickerModels(fleet, "", [], []).some(row => row.selection.model === "flux-pinned-claude-opus-5")).toBe(true);
   });
