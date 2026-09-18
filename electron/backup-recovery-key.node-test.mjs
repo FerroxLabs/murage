@@ -5,6 +5,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { ageIdentityRecipient, bech32Decode, bech32Encode, createRecoveryKeyFile, createRecoveryKeyFlow, generateAgeIdentity } from "./backup-recovery-key.mjs";
@@ -16,6 +17,10 @@ const invalid=["\x201nwldj5","\x7f1axkwrx","\x801eym55h","an84characterslonghuma
   "pzry9x0s0muk","1pzry9x0s0muk","x1b4n0q5v","li1dgmt3","de1lg7wt\xff","A1G7SGD8","10a06t8","1qzzfhee",
   // Mixed case, and a valid bech32m string: age keys are plain bech32.
   "A12uEL5L","a1lqfn3a"];
+// The real-tool checks need this host's verified age tools from
+// MURAGE_BACKUP_TEST_AGE_DIR. Windows has no pinned age build, as in
+// backup-schedule-host.node-test.mjs; the in-process checks still run there.
+const noRealAge=!backupAgePinForTarget(process.platform,process.arch)&&"no pinned age build for this host";
 const ageTools=()=>{const keys=testAgeKeys();return{...keys,keygen:path.join(path.dirname(keys.ageExecutable),"age-keygen")};};
 function place(){
   const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-recovery-key-"))),installation=path.join(root,"installation"),destination=path.join(root,"backups"),safe=path.join(root,"usb");
@@ -28,7 +33,7 @@ test("bech32 follows BIP-173 exactly, including its checksum constant and limits
   for(const vector of invalid)assert.throws(()=>bech32Decode(vector),/BECH32_INVALID/,JSON.stringify(vector));
 });
 
-test("a real age-keygen identity re-derives to the recipient age-keygen printed",()=>{
+test("a real age-keygen identity re-derives to the recipient age-keygen printed",{skip:noRealAge},()=>{
   const {identity,recipient}=ageTools();const secret=identity.split("\n").find(line=>line.startsWith("AGE-SECRET-KEY-1"));
   assert.equal(ageIdentityRecipient(secret),recipient);
   assert.throws(()=>ageIdentityRecipient(secret.replace(/.$/,last=>last==="Q"?"P":"Q")),/BECH32_INVALID/);
@@ -42,7 +47,7 @@ test("generated identities are age's own encoding",()=>{
   }finally{key.dispose();}
 });
 
-test("a created key file is age-keygen's format and works with the real age tools",()=>{
+test("a created key file is age-keygen's format and works with the real age tools",{skip:noRealAge},()=>{
   const p=place(),{ageExecutable,keygen}=ageTools();try{
     const file=path.join(p.safe,"murage-recovery-key.txt"),created=createRecoveryKeyFile({file,installation:p.installation,destination:p.destination,now:Date.parse("2026-09-18T01:02:03.456Z")});
     const text=readFileSync(file,"utf8");
