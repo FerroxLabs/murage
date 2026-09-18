@@ -27,8 +27,9 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, parse, posix as posixPath, resolve, win32 as winPath } from "node:path";
+import { isAbsolute, join, parse, resolve } from "node:path";
 
+import { samePath } from "../shared/path-identity.mjs";
 import { DATA_DIR } from "./config.ts";
 
 export const CHECKPOINTS_DIR = join(DATA_DIR, "checkpoints");
@@ -147,47 +148,6 @@ function gitAvailable(): Promise<boolean> {
     execFile("git", ["--version"], { windowsHide: true }, (err) => resolveProbe(!err));
   });
   return gitProbe;
-}
-
-/** One folder, one spelling — because a guard that compares the string it was
- * handed refuses one spelling of a folder and waves every other one through.
- *
- * Windows names the same folder several ways and its filesystem treats them
- * all as equal: `c:\users\me` and `C:\Users\Me` differ only in case,
- * `C:\Users\me\DOCUME~1` is the 8.3 alias of `Documents`, a trailing separator
- * changes nothing, and `\\?\C:\Users\me` / `\\?\UNC\server\share` are the
- * extended-length spellings of the same place. Callers resolve with
- * `realpathSync.native` first, which returns Windows' own casing and long
- * names (the JavaScript `realpathSync` follows links but keeps the spelling it
- * was given, so it settles neither); this folds what is left.
- *
- * macOS volumes are case-insensitive by default too, but `realpathSync.native`
- * already answers there in the filesystem's own casing, so folding case off
- * Windows would only make genuinely distinct folders collide on a
- * case-sensitive volume. `turn-resources.ts` draws the same line for workspace
- * claims; keep the two in step. Exported for its tests, which check the
- * Windows spellings on any platform. */
-export function samePath(a: string, b: string): boolean {
-  return oneSpelling(a) === oneSpelling(b);
-}
-
-function oneSpelling(path: string): string {
-  const windows = process.platform === "win32";
-  let out = path;
-  if (windows) {
-    if (out.startsWith("\\\\?\\UNC\\")) out = `\\\\${out.slice("\\\\?\\UNC\\".length)}`;
-    else if (/^\\\\\?\\[A-Za-z]:/.test(out)) out = out.slice("\\\\?\\".length);
-  }
-  // A trailing separator names the same folder — but a root is all separator,
-  // so never shorten one away to nothing. Name the Windows path rules
-  // explicitly rather than taking the ambient ones: identical in production,
-  // and it lets the tests put a Windows path through this on any platform.
-  const rules = windows ? winPath : posixPath;
-  const root = rules.parse(out).root;
-  while (out.length > root.length && (out.endsWith(rules.sep) || out.endsWith("/"))) {
-    out = out.slice(0, -1);
-  }
-  return windows ? out.toLowerCase() : out;
 }
 
 /** Folders a checkpoint must never be taken in: missing paths, the sprawling

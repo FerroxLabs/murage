@@ -18,7 +18,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-checkpoints-"));
 process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
 
-const { checkpointsEnabled, listCheckpoints, refusalReason, restore, samePath, snapshot } = await import(
+const { checkpointsEnabled, listCheckpoints, refusalReason, restore, snapshot } = await import(
   "./checkpoints.ts"
 );
 
@@ -401,32 +401,4 @@ describe("Windows spellings of a protected folder", () => {
     }
   });
 
-  it("treats the Windows spellings of one path as one path", () => {
-    asPlatform("win32");
-    // realpathSync.native has already turned an 8.3 alias such as
-    // C:\Users\Me\DOCUME~1 into C:\Users\Me\Documents by the time these are
-    // compared; case, a trailing separator and the extended-length prefix are
-    // what is left for samePath to settle.
-    expect(samePath("C:\\Users\\Me", "c:\\users\\me")).toBe(true);
-    expect(samePath("C:\\Users\\Me\\Documents", "C:\\USERS\\ME\\DOCUMENTS")).toBe(true);
-    expect(samePath("C:\\Users\\Me\\", "C:\\Users\\Me")).toBe(true);
-    expect(samePath("C:\\Users\\Me/", "C:\\Users\\Me")).toBe(true);
-    expect(samePath("\\\\?\\C:\\Users\\Me", "C:\\Users\\Me")).toBe(true);
-    expect(samePath("\\\\?\\UNC\\server\\share\\me", "\\\\server\\share\\me")).toBe(true);
-    // A root must stay a root: shortened to "" it would match everything.
-    expect(samePath("C:\\", "C:\\")).toBe(true);
-    expect(samePath("C:\\", "D:\\")).toBe(false);
-    expect(samePath("C:\\", "C:\\Users")).toBe(false);
-    // Different folders stay different — a prefix is not a match.
-    expect(samePath("C:\\Users\\Me", "C:\\Users\\Meredith")).toBe(false);
-    expect(samePath("C:\\Users\\Me\\Documents", "C:\\Users\\Me\\Downloads")).toBe(false);
-  });
-
-  it("keeps case significant off Windows, where a volume may be case-sensitive", () => {
-    asPlatform("linux");
-    expect(samePath("/home/me", "/home/ME")).toBe(false);
-    expect(samePath("/home/me/", "/home/me")).toBe(true);
-    expect(samePath("/", "/")).toBe(true);
-    expect(samePath("/", "/home")).toBe(false);
-  });
 });
