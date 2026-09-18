@@ -21,14 +21,23 @@ the IDs in `wrangler.jsonc`, deploy under their own Worker name, and set
 server with a Composio project key remains the no-Cloudflare self-host path.
 
 The committed `vars` in `wrangler.jsonc` are the live state after FluxRouter
-rollout step 8 (the day the 0.1.52 desktop moves to FluxRouter): registration
-closed, claims open, `MIGRATION_GATE` on, a 15-minute claim grace, the 7-day
-issuance fallback, the call ceiling off, and no cut-off yet
-(`LEGACY_BROKER_UNTIL` and `CLAIM_UNTIL` are set at step 9). A `--var` override
-lasts only for that deploy: the next plain `pnpm broker:deploy` ships the
-committed values again, so commit any value you mean to keep.
-`src/wrangler-config.test.ts` fails if `CLAIM_MODE` or `REGISTRATION_MODE`
-drifts back.
+rollout step 9 (the cut-off): registration closed, claims open,
+`MIGRATION_GATE` on, a 15-minute claim grace, the 7-day issuance fallback, the
+per-install call ceiling on at FluxRouter parity (`DAILY_CALL_CEILING` 2000
+tool executions per UTC day), and `LEGACY_BROKER_UNTIL` set to the same instant
+the shipped desktop already honours. `CLAIM_UNTIL` stays `""`: claims are the
+migration path off this Worker and are worth accepting past the cut-off. A
+`--var` override lasts only for that deploy: the next plain `pnpm broker:deploy`
+ships the committed values again, so commit any value you mean to keep.
+`src/wrangler-config.test.ts` fails if `CLAIM_MODE`, `REGISTRATION_MODE`,
+`DAILY_CALL_CEILING` or `LEGACY_BROKER_UNTIL` drifts back, and if the cut-off
+stops matching the desktop's `COMPOSIO_LEGACY_BROKER_UNTIL`.
+
+Both spend controls are deliberate and a revert costs money quietly. Every
+install still here spends the one shared Composio key: with the ceiling `"off"`
+there is no per-install fuse and the D1 counters are not written either, and
+with `LEGACY_BROKER_UNTIL` `""` the only end date is a desktop constant a
+client can ignore.
 
 - `REGISTRATION_MODE` `closed` stops issuing new installation tokens without
   affecting existing users; `--var REGISTRATION_MODE:open` reopens it.

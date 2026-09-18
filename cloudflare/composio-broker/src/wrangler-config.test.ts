@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { experimental_readRawConfig } from "wrangler";
@@ -14,6 +15,29 @@ import { migrationGate, route } from "./index";
  * wrangler's own config reader, so a revert is caught the way deploy sees it.
  */
 const CONFIG_PATH = fileURLToPath(new URL("../wrangler.jsonc", import.meta.url));
+
+/**
+ * The cut-off the desktop already ships.
+ *
+ * `COMPOSIO_LEGACY_BROKER_UNTIL` is baked into every packaged 0.1.52 and
+ * later, so the Worker's own `LEGACY_BROKER_UNTIL` is not free to differ: set
+ * it earlier and installs are refused while their UI still expects the broker
+ * to work, set it later and a client that honours its constant stops asking
+ * while Ferrox keeps paying for the ones that do not. Read from the release
+ * config rather than retyped, so the two can only move together.
+ */
+const RELEASE_CONFIG_PATH = fileURLToPath(
+  new URL("../../../electron/composio-release-config.mjs", import.meta.url),
+);
+
+function desktopLegacyBrokerUntil(): string {
+  const source = readFileSync(RELEASE_CONFIG_PATH, "utf8");
+  const match = source.match(/COMPOSIO_LEGACY_BROKER_UNTIL\s*=\s*"([^"]*)"/);
+  if (!match) throw new Error("COMPOSIO_LEGACY_BROKER_UNTIL not found in the release config");
+  return match[1];
+}
+
+const LEGACY_BROKER_CUTOFF = "2026-11-10T00:00:00Z";
 
 function committedVars(): Record<string, unknown> {
   const { rawConfig } = experimental_readRawConfig({ config: CONFIG_PATH }) as {
@@ -42,15 +66,52 @@ describe("committed Worker config (wrangler.jsonc)", () => {
     expect(vars.REGISTRATION_MODE).toBe("closed");
   });
 
-  it("matches the rest of the post-step-8 rollout state", () => {
+  it("matches the rest of the post-step-9 rollout state", () => {
     expect(committedVars()).toMatchObject({
       MIGRATION_GATE: "on",
       CLAIM_GRACE_SECONDS: "900",
       CLAIM_ISSUED_FALLBACK_SECONDS: "604800",
-      DAILY_CALL_CEILING: "off",
-      // Step 9 (the cut-off) sets both; until then no install is retired by date.
-      LEGACY_BROKER_UNTIL: "",
+      DAILY_CALL_CEILING: "2000",
+      LEGACY_BROKER_UNTIL: LEGACY_BROKER_CUTOFF,
+      // Claims are the way off this Worker, so they outlive the cut-off.
       CLAIM_UNTIL: "",
+    });
+  });
+
+  /**
+   * The two values that decide what Ferrox pays.
+   *
+   * Every install still on this Worker spends the one shared Composio key, so
+   * both of these were switched on deliberately and a revert costs real money
+   * silently. `DAILY_CALL_CEILING` back to "off" removes the per-install fuse
+   * (and stops the D1 counters being written at all, so nothing would even
+   * show it); `LEGACY_BROKER_UNTIL` back to "" removes the server-side end
+   * date and leaves only a desktop constant any client can ignore.
+   */
+  it("keeps the spend fuse on and the cut-off set", () => {
+    const vars = committedVars();
+    expect(vars.DAILY_CALL_CEILING).toBe("2000");
+    expect(vars.DAILY_CALL_CEILING).not.toBe("off");
+    expect(vars.LEGACY_BROKER_UNTIL).toBe(LEGACY_BROKER_CUTOFF);
+  });
+
+  it("uses the same cut-off the shipped desktop already honours", () => {
+    expect(desktopLegacyBrokerUntil()).toBe(LEGACY_BROKER_CUTOFF);
+    expect(committedVars().LEGACY_BROKER_UNTIL).toBe(desktopLegacyBrokerUntil());
+  });
+
+  it("serves data calls before the cut-off and retires them after it", async () => {
+    const env = committedVars();
+    const cutoff = Date.parse(LEGACY_BROKER_CUTOFF);
+    expect(Number.isFinite(cutoff)).toBe(true);
+
+    expect(migrationGate(claimedRow(), env as never, cutoff - 1)).toBeNull();
+
+    const retired = migrationGate(claimedRow(), env as never, cutoff);
+    expect(retired?.status).toBe(410);
+    await expect(retired?.json()).resolves.toMatchObject({
+      code: "legacy_broker_retired",
+      error: "Murage's connected-apps service has ended. Connect FluxRouter in Settings to keep using connected apps.",
     });
   });
 

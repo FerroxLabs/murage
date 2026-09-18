@@ -21,11 +21,18 @@
     // with `--var REGISTRATION_MODE:open` only if the desktop release is
     // pulled and new installs must register here again.
     "REGISTRATION_MODE": "closed",
-    // Left unset on purpose for the pre-migration population: the ceiling now
-    // counts tool executions rather than every POST, and turning it on at the
-    // old value would 429 installs that were never near it. Set it to "2000"
-    // (FluxRouter parity) once those installs have moved.
-    "DAILY_CALL_CEILING": "off",
+    // On at FluxRouter parity (2000 tool executions per install per UTC day).
+    // It was left "off" for the pre-migration population; every install that
+    // has not moved is still billed entirely to the shared Ferrox Composio
+    // key, so the fuse is back on to cap one runaway install's blast radius.
+    // Only JSON-RPC `tools/call` counts (billableCallCount) — `initialize`
+    // and `tools/list` are free — and the panel routes are not charged at
+    // all, so connecting an app is never refused by this. Over the ceiling
+    // the install gets 429 `daily_call_ceiling`, which the desktop's
+    // connector bridge renders as a normal failed tool call carrying the
+    // Worker's own sentence (server/connector-proxy.ts). Set to "off" or "0"
+    // to disable the fuse again.
+    "DAILY_CALL_CEILING": "2000",
     // Claims: "open" lets a desktop ask this Worker to sign an assertion.
     // Opened at rollout step 5 (live Worker fa297f66 since 2026-09-11; Flux
     // claims on at step 6). Roll back per §8.4 "Claims paused": deploy with
@@ -42,11 +49,21 @@
     "CLAIM_GRACE_SECONDS": "900",
     // Backstop for an install that redeemed at FluxRouter and never confirmed.
     "CLAIM_ISSUED_FALLBACK_SECONDS": "604800",
-    // ISO-8601 instants; "" means no cut-off. LEGACY_BROKER_UNTIL must match
-    // the desktop's COMPOSIO_LEGACY_BROKER_UNTIL. Claims stay open past it.
-    // Both stay "" until rollout step 9 (the cut-off, a later date), which sets
-    // LEGACY_BROKER_UNTIL to that date and CLAIM_UNTIL to cut-off + 90 days.
-    "LEGACY_BROKER_UNTIL": "",
+    // ISO-8601 instants; "" means no cut-off. An unparseable value is treated
+    // as unset, never as "now" (configuredInstant), so a typo cannot retire
+    // the fleet. Claims stay open past the cut-off.
+    //
+    // Rollout step 9 (the cut-off). This is the same instant as the desktop's
+    // COMPOSIO_LEGACY_BROKER_UNTIL in electron/composio-release-config.mjs,
+    // already shipped in 0.1.52/0.1.53/0.1.54 — those builds stop *asking*
+    // this Worker at that moment, and from it the Worker also stops answering
+    // data calls, so a client that ignores its own constant is refused too.
+    // Until then nothing changes: migrationGate only fires at now >= this.
+    // After it, every data call gets 410 `legacy_broker_retired`.
+    "LEGACY_BROKER_UNTIL": "2026-11-10T00:00:00Z",
+    // Deliberately still "": claims are the migration path off this Worker,
+    // and they are worth accepting after the cut-off, not before it. Set this
+    // to cut-off + 90 days only when the Worker is about to be deleted.
     "CLAIM_UNTIL": ""
   },
   "secrets": { "required": ["COMPOSIO_API_KEY"] },
