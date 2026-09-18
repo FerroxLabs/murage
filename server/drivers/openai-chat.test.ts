@@ -605,4 +605,77 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(errors(recorder.events)).toEqual([]);
     expect(replies(recorder.events)).toEqual(["working on it"]);
   });
+
+  // vLLM 0.16.0 and later stream reasoning as `delta.reasoning` only (the
+  // `reasoning_content` alias was deprecated in 0.11.1 and removed in 0.16.0;
+  // DeltaMessage in vllm/entrypoints/generate/base/protocol.py at v0.29.0).
+  // 0.11.1 through 0.15.x send the same text under both names on every frame.
+  const reasoningDeltas = (events: RuntimeEvent[]) =>
+    events.flatMap((event) => (event.type === "content.delta" && event.streamKind === "reasoning_text" ? [event.delta] : []));
+
+  it("streams reasoning a current vLLM sends as delta.reasoning", async () => {
+    const { completed, events } = await runTurn(
+      "t-vllm-reasoning",
+      [() => sse([
+        frame({ choices: [{ delta: { role: "assistant", content: "" } }] }),
+        frame({ choices: [{ delta: { reasoning: "weigh " } }] }),
+        frame({ choices: [{ delta: { reasoning: "options" } }] }),
+        contentFrame("answer", "stop"),
+        DONE,
+      ])],
+      { reasoning: true },
+    );
+
+    expect(completed).toMatchObject({ ok: true, stopReason: null });
+    expect(reasoningDeltas(events)).toEqual(["weigh ", "options"]);
+    expect(replies(events)).toEqual(["answer"]);
+  });
+
+  it("counts reasoning once when a server sends it under both names", async () => {
+    const { events } = await runTurn(
+      "t-vllm-both-names",
+      [() => sse([
+        frame({ choices: [{ delta: { reasoning: "once", reasoning_content: "once" } }] }),
+        contentFrame("answer", "stop"),
+        DONE,
+      ])],
+      { reasoning: true },
+    );
+
+    expect(reasoningDeltas(events)).toEqual(["once"]);
+  });
+
+  it("still reads reasoning_content from servers that only send the older name", async () => {
+    const { events } = await runTurn(
+      "t-reasoning-content",
+      [() => sse([frame({ choices: [{ delta: { reasoning_content: "legacy" } }] }), contentFrame("answer", "stop"), DONE])],
+      { reasoning: true },
+    );
+
+    expect(reasoningDeltas(events)).toEqual(["legacy"]);
+  });
+
+  it("uses message.reasoning from a whole completion when there is no answer text", async () => {
+    responders = [() => new Response(JSON.stringify({ choices: [{ message: { content: "", reasoning: "only thought" }, finish_reason: "stop" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })];
+    const instance = create({ reasoning: true });
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-vllm-whole", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+
+    expect(completed).toMatchObject({ ok: true });
+    expect(replies(recorder.events)).toEqual(["only thought"]);
+  });
+
+  it("returns message.reasoning from a non-streamed helper call with no answer text", async () => {
+    responders = [() => new Response(JSON.stringify({ choices: [{ message: { content: "", reasoning: "helper thought" }, finish_reason: "stop" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })];
+    const instance = create({ reasoning: true });
+    await expect(instance.generateText?.("hello")).resolves.toBe("helper thought");
+  });
 });

@@ -19,6 +19,8 @@ const IDLE_MS = 600;
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 const content = (text: string) => frame({ choices: [{ delta: { content: text } }] });
 const reasoningFrame = (text: string) => frame({ choices: [{ delta: { reasoning_content: text } }] });
+/** vLLM 0.16.0+ sends reasoning only under `reasoning`. */
+const vllmReasoningFrame = (text: string) => frame({ choices: [{ delta: { reasoning: text } }] });
 const finish = frame({ choices: [{ delta: {}, finish_reason: "stop" }] });
 const DONE = "data: [DONE]\n\n";
 
@@ -239,6 +241,29 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
 
     expect(completed).toMatchObject({ ok: true, stopReason: null });
     expect(settledMs).toBeGreaterThan(IDLE_MS * 2);
+    expect(replies(events)).toEqual(["answer"]);
+    expect(requests).toBe(1);
+  });
+
+  it.each([true, false])("renews on vLLM delta.reasoning progress (reasoning surfaced: %s)", async (reasoning) => {
+    handler = (_req, res) => {
+      sse(res);
+      let sent = 0;
+      const stop = every(150, () => {
+        if (sent < 10) {
+          res.write(vllmReasoningFrame("thinking "));
+          sent++;
+          return;
+        }
+        stop();
+        res.end(content("answer") + finish + DONE);
+      });
+    };
+    const { completed, events, settledMs } = await runTurn(create({ reasoning }), `t-vllm-reasoning-${reasoning}`);
+
+    expect(completed).toMatchObject({ ok: true, stopReason: null });
+    expect(settledMs).toBeGreaterThan(IDLE_MS * 2);
+    expect(errors(events)).toEqual([]);
     expect(replies(events)).toEqual(["answer"]);
     expect(requests).toBe(1);
   });
