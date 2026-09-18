@@ -12238,6 +12238,16 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      // The archived-bots list deletes with `ifArchived=1`: what the person
+      // confirmed was an ARCHIVED bot, so if another client restored it in
+      // the meantime the confirmation no longer describes this bot and the
+      // delete is refused whole. The sidebar's own Delete on an active bot
+      // sends no precondition and is unchanged.
+      if (url.searchParams.get("ifArchived") === "1" && !bot.hidden) {
+        return json(res, 409, {
+          error: `${bot.name} is no longer archived (it was restored elsewhere), so nothing was deleted. Archive it again to delete it.`,
+        });
+      }
       const activeRoutine = routines!.activeRunForBot(bot.id);
       if (activeRoutine) {
         return json(res, 409, {
@@ -12308,10 +12318,17 @@ const server = createServer(async (req, res) => {
         const acknowledged = await browserCleanup.ensure(committedCleanup);
         requireBrowserCleanupAcknowledged(acknowledged, `Browser data for ${bot.name}`);
       }
+      // every task's event/native log, not only the open thread's, and the
+      // rotated copy beside each
+      const loggedThreads = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
-        try {
-          unlinkSync(join(dir, `${bot.threadId}.ndjson`));
-        } catch {}
+        for (const threadId of loggedThreads) {
+          for (const file of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) {
+            try {
+              unlinkSync(join(dir, file));
+            } catch {}
+          }
+        }
       }
       return json(res, 200, { ok: true });
     }

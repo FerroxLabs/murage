@@ -1186,29 +1186,77 @@ function BotListItem({
   );
 }
 
+/** What deleting one archived bot takes and what it leaves. Specific on
+ * purpose: the count of conversations that go, and the channels that stay
+ * with the bot's lines still in them. A generic "are you sure" is exactly
+ * what this dialog must not be. No em dashes: this is read under stress. */
+export function archivedBotDeleteDetail(bot: Bot, groups: Group[]): string {
+  const conversations = Math.max(1, bot.tasks?.length ?? 1);
+  const channels = groups.filter((group) => !group.dm && group.memberIds.includes(bot.id));
+  const going = `Permanently deletes ${bot.name}: ${conversations} ${conversations === 1 ? "conversation" : "conversations"} with it, plus its files, memory and any skills it was given. There is no undo and nothing to restore from.`;
+  if (!channels.length) return `${going} It was in no channels, so nothing else changes.`;
+  const names = channels.map((group) => group.name).join(", ");
+  return `${going} Kept: ${channels.length === 1 ? "the channel" : `the ${channels.length} channels`} it was in (${names}), with every message it said there.`;
+}
+
+/** The bulk form of the above. The names go in the dialog's own list
+ * (archivedBotsDeleteItems), so this paragraph carries the totals and the
+ * rule for a bot that cannot be deleted right now. */
+export function archivedBotsDeleteDetail(bots: Bot[], groups: Group[]): string {
+  const conversations = bots.reduce((sum, bot) => sum + Math.max(1, bot.tasks?.length ?? 1), 0);
+  const channels = new Set(
+    groups.filter((group) => !group.dm && bots.some((bot) => group.memberIds.includes(bot.id))).map((group) => group.id),
+  );
+  const kept = channels.size
+    ? ` Kept: ${channels.size === 1 ? "the 1 channel" : `all ${channels.size} channels`} they were in, with every message said there.`
+    : " None of them was in a channel, so nothing else changes.";
+  return `Permanently deletes these ${bots.length} archived bots and their ${conversations} conversations, plus their files, memory and skills. There is no undo and nothing to restore from.${kept} A bot that is busy, or was restored on another device meanwhile, is left alone and named afterwards.`;
+}
+
+/** One line per bot, so the person can read every name before confirming. */
+export function archivedBotsDeleteItems(bots: Bot[]): string[] {
+  return bots.map((bot) => {
+    const conversations = Math.max(1, bot.tasks?.length ?? 1);
+    return `${bot.name}${bot.title ? ` (${bot.title})` : ""}: ${conversations} ${conversations === 1 ? "conversation" : "conversations"}`;
+  });
+}
+
+/** The phrase typed to confirm a bulk delete: the count, so it cannot be
+ * typed from muscle memory for a different list. */
+export const archivedBotsDeletePhrase = (count: number) => `delete ${count} bots`;
+
 function ArchivedBotsPanel({
   bots,
+  groups,
   onClose,
   onRestored,
+  onDeleted,
 }: {
   bots: Bot[];
+  groups: Group[];
   onClose: () => void;
   onRestored: (message: string) => void;
+  onDeleted: (message: string) => void;
 }) {
   const { dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [restoringAll, setRestoringAll] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Confirmation state lives here, like the sidebar's own, because the row
+  // that asked for it must stay mounted underneath the dialog.
+  const [pendingDelete, setPendingDelete] = useState<Bot[] | null>(null);
   const [error, setError] = useState("");
+  const working = Boolean(busyId) || restoringAll || deleting;
 
   useEffect(() => {
     dialogRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busyId && !restoringAll) onClose();
+      if (event.key === "Escape" && !working && !pendingDelete) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [busyId, onClose, restoringAll]);
+  }, [onClose, pendingDelete, working]);
 
   const restore = async (bot: Bot) => {
     setBusyId(bot.id);
@@ -1253,10 +1301,38 @@ function ArchivedBotsPanel({
     }
   };
 
+  // One bot at a time, in order, each its own server-side transaction with
+  // the archived precondition. A refusal (busy, restored elsewhere) stops
+  // nothing else and is reported by name; a success drops the bot from
+  // state at once rather than waiting on the SSE frame that also carries it.
+  const deleteBots = async (targets: Bot[]) => {
+    setPendingDelete(null);
+    setDeleting(true);
+    setError("");
+    let deleted = 0;
+    const refused: string[] = [];
+    for (const bot of targets) {
+      try {
+        await api(`/api/bots/${bot.id}?ifArchived=1`, { method: "DELETE" });
+        dispatch({ type: "botRemoved", botId: bot.id });
+        deleted += 1;
+      } catch (cause) {
+        refused.push(`${bot.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    setDeleting(false);
+    if (deleted) onDeleted(`${deleted === 1 ? (targets.length === 1 ? `${targets[0]!.name} deleted` : "1 bot deleted") : `${deleted} bots deleted`}`);
+    if (refused.length) {
+      setError(`${refused.length === 1 ? "Not deleted" : `${refused.length} not deleted`}: ${refused.join("; ")}`);
+    } else if (deleted === bots.length) {
+      onClose();
+    }
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
-      onMouseDown={(event) => event.target === event.currentTarget && !busyId && !restoringAll && onClose()}
+      onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
     >
       <div
         ref={dialogRef}
@@ -1275,16 +1351,26 @@ function ArchivedBotsPanel({
             {bots.length > 1 && (
               <button
                 onClick={() => void restoreAll()}
-                disabled={restoringAll || Boolean(busyId)}
+                disabled={working}
                 className="flex items-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
               >
                 {restoringAll && <Loader2 size={13} className="animate-spin" />}
                 Restore all
               </button>
             )}
+            {bots.length > 1 && (
+              <button
+                onClick={() => setPendingDelete(bots)}
+                disabled={working}
+                className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12.5px] text-danger hover:bg-danger/10 disabled:opacity-40"
+              >
+                {deleting && <Loader2 size={13} className="animate-spin" />}
+                Delete all {bots.length}
+              </button>
+            )}
             <button
               onClick={onClose}
-              disabled={restoringAll || Boolean(busyId)}
+              disabled={working}
               className="flex size-10 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
               aria-label="Close archived bots"
             >
@@ -1304,11 +1390,20 @@ function ArchivedBotsPanel({
                 </div>
                 <button
                   onClick={() => void restore(bot)}
-                  disabled={restoringAll || Boolean(busyId)}
+                  disabled={working}
                   className="flex min-w-[78px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
                 >
                   {busyId === bot.id && <Loader2 size={13} className="animate-spin" />}
                   Restore
+                </button>
+                <button
+                  onClick={() => setPendingDelete([bot])}
+                  disabled={working}
+                  aria-label={`Delete ${bot.name}`}
+                  title="Delete permanently"
+                  className="flex size-9 items-center justify-center rounded-full text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                >
+                  <Trash2 size={15} />
                 </button>
               </div>
             ))}
@@ -1316,6 +1411,26 @@ function ArchivedBotsPanel({
           {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
       </div>
+      {pendingDelete && pendingDelete.length === 1 && (
+        <ConfirmDelete
+          name={pendingDelete[0]!.name}
+          kind="bot"
+          detail={archivedBotDeleteDetail(pendingDelete[0]!, groups)}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void deleteBots(pendingDelete)}
+        />
+      )}
+      {pendingDelete && pendingDelete.length > 1 && (
+        <ConfirmDelete
+          title={`Delete all ${pendingDelete.length} archived bots?`}
+          name={archivedBotsDeletePhrase(pendingDelete.length)}
+          kind={`${pendingDelete.length} archived bots`}
+          detail={archivedBotsDeleteDetail(pendingDelete, groups)}
+          items={archivedBotsDeleteItems(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void deleteBots(pendingDelete)}
+        />
+      )}
     </div>,
     document.body,
   );
@@ -2321,8 +2436,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {archivedBotsOpen && (
         <ArchivedBotsPanel
           bots={archivedBots}
+          groups={state.groups}
           onClose={() => setArchivedBotsOpen(false)}
           onRestored={(message) => setTeamFeedback({ error: false, text: message })}
+          onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
       {state.teamLibrary.open && (

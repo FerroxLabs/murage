@@ -871,6 +871,143 @@ describe("Store", () => {
     expect(existsSync(skillState)).toBe(false);
     expect(store.deleteBot(bot.id)).toBe(false);
   });
+
+  describe("deleteBot blast radius", () => {
+    const record = (store: Store) => {
+      const events: Array<Record<string, unknown>> = [];
+      store.onChange((e) => events.push(e as unknown as Record<string, unknown>));
+      return events;
+    };
+    // The whole point of these: a delete must take exactly the bot's own
+    // record, transcripts and workspace, and nothing that belongs to anyone
+    // else. A mutation that widens the cascade (deleting a channel the bot
+    // sat in, or another bot's thread) must turn one of these red.
+    it("keeps a shared channel and its whole history, dropping only the seat", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const keeper = store.createBot({ name: "Keeper" }, { seedMessages: false });
+      const channel = store.createGroup("Launch", [doomed.id, keeper.id]);
+      // the doomed bot is the channel's lead responder — the case that
+      // otherwise strands every later plain message with no reply
+      store.patchGroup(channel.id, { defaultResponder: { kind: "member", botId: doomed.id } });
+      store.appendMessage(channel.threadId, { role: "user", kind: "text", text: "hello both" });
+      store.appendMessage(channel.threadId, {
+        role: "bot", kind: "text", text: "doomed here",
+        from: { botId: doomed.id, name: "Doomed", color: "red" },
+      });
+      store.appendMessage(channel.threadId, {
+        role: "bot", kind: "text", text: "keeper here",
+        from: { botId: keeper.id, name: "Keeper", color: "blue" },
+      });
+      const events = record(store);
+
+      expect(store.deleteBot(doomed.id)).toBe(true);
+
+      const after = new Store(selection);
+      const survivor = after.group(channel.id)!;
+      expect(survivor).toBeTruthy();
+      expect(survivor.memberIds).toEqual([keeper.id]);
+      expect(survivor.defaultResponder).toEqual({ kind: "member", botId: keeper.id });
+      // every message survives, the deleted bot's lines included, still
+      // wearing the name and colour they were said with (a tombstone the
+      // renderer already knows how to draw)
+      const history = after.messagesFor(channel.threadId);
+      expect(history.map((m) => m.text)).toEqual(["hello both", "doomed here", "keeper here"]);
+      expect(history[1]!.from).toEqual({ botId: doomed.id, name: "Doomed", color: "red" });
+      // the other member is untouched: record, transcript, workspace
+      expect(after.bot(keeper.id)).toBeTruthy();
+      expect(after.messagesFor(keeper.threadId)).toEqual(store.messagesFor(keeper.threadId));
+      // the channel change is announced so open clients drop the seat too
+      expect(events).toContainEqual({ type: "group", groupId: channel.id });
+      expect(events).not.toContainEqual({ type: "group.deleted", groupId: channel.id });
+      expect(events).not.toContainEqual({ type: "thread.deleted", threadId: channel.threadId });
+      expect(events.at(-1)).toEqual({ type: "bot.deleted", botId: doomed.id });
+    });
+
+    it("leaves a channel it was the only member of standing, empty, for the user to decide", () => {
+      const store = new Store(selection);
+      const only = store.createBot({ name: "Only" }, { seedMessages: false });
+      const channel = store.createGroup("Solo", [only.id]);
+      store.appendMessage(channel.threadId, { role: "user", kind: "text", text: "kept" });
+      store.deleteBot(only.id);
+      const after = new Store(selection);
+      expect(after.group(channel.id)?.memberIds).toEqual([]);
+      expect(after.group(channel.id)?.defaultResponder).toEqual({ kind: "mentions" });
+      expect(after.messagesFor(channel.threadId).map((m) => m.text)).toEqual(["kept"]);
+    });
+
+    it("takes every task transcript of the deleted bot and none of a neighbour's", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const second = store.createTask(doomed.id, "second")!;
+      store.appendMessage(second.threadId, { role: "user", kind: "text", text: "task two" });
+      const neighbour = store.createBot({ name: "Neighbour" }, { seedMessages: false });
+      store.appendMessage(neighbour.threadId, { role: "user", kind: "text", text: "mine" });
+      for (const dir of ["workspaces", "checkpoints", "skill-state"]) {
+        mkdirSync(join(DATA_DIR, dir, doomed.id, "inner"), { recursive: true });
+        mkdirSync(join(DATA_DIR, dir, neighbour.id, "inner"), { recursive: true });
+      }
+
+      store.deleteBot(doomed.id);
+
+      const after = new Store(selection);
+      expect(after.messagesFor(doomed.threadId)).toHaveLength(0);
+      expect(after.messagesFor(second.threadId)).toHaveLength(0);
+      expect(after.messagesFor(neighbour.threadId).map((m) => m.text)).toEqual(["mine"]);
+      // workspace, checkpoint shadow repos and approval state go with the
+      // bot; the neighbour's copies of all three stay exactly where they were
+      for (const dir of ["workspaces", "checkpoints", "skill-state"]) {
+        expect(existsSync(join(DATA_DIR, dir, doomed.id)), dir).toBe(false);
+        expect(existsSync(join(DATA_DIR, dir, neighbour.id, "inner")), dir).toBe(true);
+      }
+      expect(after.bots.map((b) => b.id)).toEqual([neighbour.id]);
+    });
+
+    it("commits the roster before it removes anything, so a failed write leaves the bot whole", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      store.appendMessage(doomed.threadId, { role: "user", kind: "text", text: "still here" });
+      const workspace = join(DATA_DIR, "workspaces", doomed.id);
+      mkdirSync(workspace, { recursive: true });
+      // bots.json cannot be replaced while a directory squats on its name;
+      // the atomic rename fails exactly where a full disk or a permissions
+      // change would
+      const botsFile = join(DATA_DIR, "bots.json");
+      const original = readFileSync(botsFile, "utf8");
+      rmSync(botsFile);
+      mkdirSync(botsFile);
+      try {
+        expect(() => store.deleteBot(doomed.id)).toThrow();
+      } finally {
+        rmSync(botsFile, { recursive: true, force: true });
+        writeFileSync(botsFile, original);
+      }
+      // nothing was dismembered: record still listed, transcript and
+      // workspace intact, and the delete can be retried
+      expect(store.bot(doomed.id)).toBeTruthy();
+      expect(store.messagesFor(doomed.threadId).map((m) => m.text)).toEqual(["still here"]);
+      expect(new Store(selection).messagesFor(doomed.threadId).map((m) => m.text)).toEqual(["still here"]);
+      expect(existsSync(workspace)).toBe(true);
+      expect(store.deleteBot(doomed.id)).toBe(true);
+      expect(new Store(selection).bot(doomed.id)).toBeNull();
+    });
+
+    it("is idempotent: a second delete finds nothing and changes nothing", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const keeper = store.createBot({ name: "Keeper" }, { seedMessages: false });
+      const channel = store.createGroup("Launch", [doomed.id, keeper.id]);
+      expect(store.deleteBot(doomed.id)).toBe(true);
+      const groupsBefore = readFileSync(join(DATA_DIR, "groups.json"), "utf8");
+      const botsBefore = readFileSync(join(DATA_DIR, "bots.json"), "utf8");
+      const events = record(store);
+      expect(store.deleteBot(doomed.id)).toBe(false);
+      expect(events).toEqual([]);
+      expect(readFileSync(join(DATA_DIR, "groups.json"), "utf8")).toBe(groupsBefore);
+      expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe(botsBefore);
+      expect(store.group(channel.id)?.memberIds).toEqual([keeper.id]);
+    });
+  });
   it("migrates a pre-branching flat transcript file", () => {
     const store = new Store(selection);
     // seedMessages:false — a legacy-era thread has its history ONLY in the

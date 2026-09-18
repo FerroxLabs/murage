@@ -992,6 +992,44 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("deletes an archived bot for good, hands its lead seat over, and keeps the room", async () => {
+    const [archived, keeper] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then((created) =>
+      created.map((response) => response.body.bot),
+    );
+    const room = (await api("POST", "/api/groups", { name: "Survivor", memberIds: [archived.id, keeper.id] })).body.group;
+    let roomAlive = true;
+    try {
+      expect(room.defaultResponder).toEqual({ kind: "member", botId: archived.id });
+      // the archived list's delete carries a precondition: an active bot is
+      // refused whole, because what the person confirmed was an archived one
+      const stillActive = await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`);
+      expect(stillActive.status).toBe(409);
+      expect(stillActive.body.error).toMatch(/no longer archived/i);
+      const listed = async () => (await api("GET", "/api/bots")).body.bots.some((bot: { id: string }) => bot.id === archived.id);
+      expect(await listed()).toBe(true);
+
+      expect((await desktopApi("PATCH", `/api/bots/${archived.id}`, { hidden: true })).status).toBe(200);
+      const deleted = await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`);
+      expect(deleted.status).toBe(200);
+      expect(await listed()).toBe(false);
+      // a repeat is a clean 404, not a second teardown
+      expect((await desktopApi("DELETE", `/api/bots/${archived.id}?ifArchived=1`)).status).toBe(404);
+
+      const state = (await api("GET", "/api/bots")).body;
+      const survivor = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
+      expect(survivor).toBeTruthy();
+      expect(survivor.memberIds).toEqual([keeper.id]);
+      expect(survivor.defaultResponder).toEqual({ kind: "member", botId: keeper.id });
+      expect(state.bots.some((bot: { id: string }) => bot.id === keeper.id)).toBe(true);
+      expect(state.bots.some((bot: { id: string }) => bot.id === archived.id)).toBe(false);
+    } finally {
+      if (roomAlive) await desktopApi("DELETE", `/api/groups/${room.id}`);
+      roomAlive = false;
+      await desktopApi("DELETE", `/api/bots/${keeper.id}`);
+      await desktopApi("DELETE", `/api/bots/${archived.id}`).catch(() => undefined);
+    }
+  });
+
   it("persists room setup and blocks the first message until it is finished", async () => {
     const bot = (await api("GET", "/api/bots")).body.bots[0];
     const created = await api("POST", "/api/groups", { name: "Setup probe", memberIds: [bot.id] });
