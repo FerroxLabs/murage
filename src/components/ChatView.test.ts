@@ -302,8 +302,9 @@ describe("the running turn's live detail", () => {
     expect(liveTail).toMatch(/\{bot\.busy && plan\?\.length \? <LivePlanCard entries=\{plan\} \/> : null\}/);
   });
 
-  it("shows live thinking only while working, only with Tool calls on, folded once the answer streams", () => {
-    expect(chat).toContain("const showThinking = showToolCallsEnabled(state.config);");
-    expect(liveTail).toMatch(/\{bot\.busy && showThinking && reasoning \? \(\s*<LiveThinking key=\{bot\.threadId\} text=\{reasoning\} answering=\{Boolean\(streaming\)\} \/>/);
+  it("shows live thinking to everyone while working, folded once the answer streams", () => {
+    expect(liveTail).toMatch(/\{bot\.busy && reasoning \? \(\s*<LiveThinking key=\{bot\.threadId\} text=\{reasoning\} answering=\{Boolean\(streaming\)\} \/>/);
+    // not behind Settings → Tool calls, and not opened by default
+    expect(liveTail).not.toMatch(/showToolCalls|showThinking|defaultOpen/);
   });
 });

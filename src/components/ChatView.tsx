@@ -1145,8 +1145,6 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const streaming = stream.streaming[bot.threadId];
   const reasoning = stream.reasoning[bot.threadId];
   const plan = stream.plan[bot.threadId];
-  // Live thinking is activity detail: it follows Settings → Tool calls.
-  const showThinking = showToolCallsEnabled(state.config);
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const [findOpen, setFindOpen] = useState(false);
@@ -1536,7 +1534,10 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             </div>
           )}
           {bot.busy && plan?.length ? <LivePlanCard entries={plan} /> : null}
-          {bot.busy && showThinking && reasoning ? (
+          {/* Everyone sees it, collapsed: a long think must not look like a
+              hang. It is not tool detail, so Settings → Tool calls does not
+              hide it. */}
+          {bot.busy && reasoning ? (
             <LiveThinking key={bot.threadId} text={reasoning} answering={Boolean(streaming)} />
           ) : null}
           <TurnPresence

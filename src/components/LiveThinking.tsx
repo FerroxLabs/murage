@@ -1,9 +1,9 @@
 // The model's reasoning while the turn runs: a quiet, collapsible row above
-// the working mascot. Open while the model is only thinking, folded the
-// moment answer text starts arriving (the person can open it again). It is
-// stream state, not a message: it has no copy control, never enters the
-// Markdown export, and is gone once the answer settles.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// the working mascot, shown to everyone. Collapsed until the person opens it,
+// and folded again the moment answer text starts arriving (it can be opened
+// again). It is stream state, not a message: it has no copy control, never
+// enters the Markdown export, and is gone once the answer settles.
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CHIP } from "@/lib/transcript-chrome";
@@ -20,26 +20,72 @@ export function thinkingTail(text: string, max = THINKING_TAIL_CHARS): { text: s
   return { text: boundary > 0 && boundary < 200 ? tail.slice(boundary + 1) : tail, clipped: true };
 }
 
-export function LiveThinking({ text, answering }: { text: string; answering: boolean }) {
-  // null = follow the turn (open while thinking, folded once answering);
-  // a click pins the person's own choice until the answer starts.
-  const [pinned, setPinned] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (answering) setPinned(null);
-  }, [answering]);
-  const open = pinned ?? !answering;
+export interface ThinkingFold {
+  open: boolean;
+  /** whether answer text was streaming when this state was last updated */
+  answering: boolean;
+}
+
+/** The row's open state. A click toggles it; the answer starting folds it,
+ * once, and a later click may open it again. */
+export function thinkingFoldAfter(
+  state: ThinkingFold,
+  event: { type: "toggle" } | { type: "answering"; value: boolean },
+): ThinkingFold {
+  if (event.type === "toggle") return { ...state, open: !state.open };
+  if (event.value === state.answering) return state;
+  return { open: event.value ? false : state.open, answering: event.value };
+}
+
+/** The reasoning itself, as the open row shows it. */
+export function LiveThinkingText({ text }: { text: string }) {
   const body = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = body.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [text, open]);
+  }, [text]);
   const tail = thinkingTail(text);
+  return (
+    <div
+      ref={body}
+      data-testid="live-thinking-text"
+      // The transcript is a polite live region; a token-by-token think
+      // inside it would be read aloud without end.
+      aria-live="off"
+      className="max-h-48 min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-hairline/40 pl-3 text-[12.5px] italic leading-relaxed text-ink-secondary"
+    >
+      {tail.clipped ? "…" : null}
+      {tail.text}
+    </div>
+  );
+}
+
+export function LiveThinking({
+  text,
+  answering,
+  defaultOpen = false,
+}: {
+  text: string;
+  answering: boolean;
+  /** Collapsed unless the person opens it. */
+  defaultOpen?: boolean;
+}) {
+  const [stored, setStored] = useState<ThinkingFold>({ open: defaultOpen, answering });
+  // Derived during render (React's "adjust state when a prop changes"), so
+  // the fold lands in the same paint as the first answer token.
+  let fold = stored;
+  const next = thinkingFoldAfter(stored, { type: "answering", value: answering });
+  if (next !== stored) {
+    fold = next;
+    setStored(next);
+  }
+  const { open } = fold;
   return (
     <div className="flex justify-start" data-testid="live-thinking">
       <div className="flex min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full flex-col items-start gap-1">
         <button
           type="button"
-          onClick={() => setPinned(!open)}
+          onClick={() => setStored((current) => thinkingFoldAfter(current, { type: "toggle" }))}
           aria-expanded={open}
           title={open ? "Hide thinking" : "Show thinking"}
           className={cn(CHIP, "text-ink-secondary hover:bg-control")}
@@ -47,19 +93,7 @@ export function LiveThinking({ text, answering }: { text: string; answering: boo
           <ChevronRight size={13} className={cn("shrink-0", open && "rotate-90")} />
           <span>{answering ? "Thought" : "Thinking"}</span>
         </button>
-        {open ? (
-          <div
-            ref={body}
-            data-testid="live-thinking-text"
-            // The transcript is a polite live region; a token-by-token think
-            // inside it would be read aloud without end.
-            aria-live="off"
-            className="max-h-48 min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-hairline/40 pl-3 text-[12.5px] italic leading-relaxed text-ink-secondary"
-          >
-            {tail.clipped ? "…" : null}
-            {tail.text}
-          </div>
-        ) : null}
+        {open ? <LiveThinkingText text={text} /> : null}
       </div>
     </div>
   );

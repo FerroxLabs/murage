@@ -291,7 +291,7 @@ function ToolCallsRow() {
         <div className="min-w-0">
           <div className="text-[14px] font-medium text-ink">Show tool calls</div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Named chips for Bash, search, and other tools, and the model's thinking while it works. Errors and bot-to-bot messages still appear.
+            Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.
           </div>
         </div>
         <Switch
