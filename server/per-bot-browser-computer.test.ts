@@ -24,6 +24,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { browserSessionId } from "./browser-engine.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+import { fakeHostDescriptorSource } from "./testing/fake-host-descriptor.ts";
 
 /** Auto ("no computer chosen") only reaches this Mac on darwin — see
  * server/local-routing.ts:14. Everywhere else the auto-fallback assertions
@@ -72,13 +73,11 @@ process.env.MURAGE_USER_DATA = process.env.MURAGE_DATA_DIR;
 const dataDir = fs.realpathSync(process.env.MURAGE_DATA_DIR);
 
 // --- computer: a host CUA descriptor pointing at the blocking fake driver ---
-const driver = path.join(dataDir, 'fake-host-driver.mjs');
-fs.writeFileSync(driver, ${JSON.stringify(fakeHostSource)});
-fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({
-  mcpCommand: process.execPath,
-  mcpArgs: [driver],
-  mcpEnv: { FIXTURE_HOST_SECRET: 'synthetic-host-only', FIXTURE_HOLD_GATE: path.join(dataDir, 'hold-gate') },
-}));
+// (macOS's legacy descriptor, or Linux's supervised one; see the helper)
+${fakeHostDescriptorSource({ driverSource: fakeHostSource, driverEnv: {
+  FIXTURE_HOST_SECRET: "'synthetic-host-only'",
+  FIXTURE_HOLD_GATE: "path.join(dataDir, 'hold-gate')",
+} })}
 
 // --- browser: a resolvable "binary" plus a native relay that never launches ---
 // resolveAgentBrowserBinary only requires MURAGE_AGENT_BROWSER_PATH to be a

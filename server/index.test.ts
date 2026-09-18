@@ -2107,7 +2107,9 @@ describe("harness HTTP API", () => {
       expect(unbound.status).toBe(201);
       const unboundPath = ((await unbound.json()) as { path: string }).path;
       const degraded = await startInternalFixtureTurn(bot.id, room.id, `And this?\n\n<attached-image path="${unboundPath}" />`);
-      expect(JSON.stringify(degraded.dump)).toContain(`<attached-image path=\\"${unboundPath}\\" />`);
+      // Matched inside the JSON dump, so the tag is JSON-escaped the same way
+      // (a Windows path's backslashes are doubled there).
+      expect(JSON.stringify(degraded.dump)).toContain(JSON.stringify(`<attached-image path="${unboundPath}" />`).slice(1, -1));
       expect(systemPrompt(degraded.dump)).toMatch(/open that path with your file-read tool/);
       expect(systemPrompt(degraded.dump)).not.toMatch(/[Ii]mages attached to this turn are already in front of you/);
     } finally {
