@@ -74,6 +74,9 @@
 //                     drained turn was sent)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
+//   FAKE_ACP_PROMPT_DUMP  path to write the last session/prompt's content
+//                   blocks as JSON, so a test can assert what reached the
+//                   engine (text, and any inline image parts)
 //   FAKE_ACP_MODELS      comma-separated model ids. Enables the opencode-shaped
 //                        surface: session/new and session/load return
 //                        configOptions, and session/set_config_option switches
@@ -655,6 +658,7 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (process.env.FAKE_ACP_PROMPT_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params?.prompt ?? null));
       if (mode.startsWith("fuigo18-contract:")) {
         const variant = mode.slice("fuigo18-contract:".length);
         dumpState.promptRequests = Number(dumpState.promptRequests ?? 0) + 1;
