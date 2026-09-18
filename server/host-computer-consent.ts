@@ -193,7 +193,7 @@ export function resolveHostComputerConsent(
 /** A stopped turn cannot act, so its open card closes unanswered (and the
  *  next action asks again). */
 export function cancelHostComputerConsentForThread(threadId: string): void {
-  for (const pending of [...pendingByBot.values()]) {
+  for (const pending of pendingByBot.values()) {
     if (pending.threadId !== threadId) continue;
     settle(pending, "deny", "system");
     finish(pending, "waiting");
