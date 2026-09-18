@@ -82,6 +82,14 @@ jobs:
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm i18n:check
+      - name: Validate the bundled model metadata snapshot
+        # Offline on purpose: this compares the committed snapshot against what
+        # scripts/build-model-metadata.mjs renders from it, and checks its
+        # digest. models.dev being down must never redden CI — refreshing the
+        # snapshot is the only step that touches the network, and a person runs
+        # that deliberately with `pnpm models:build`.
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm models:check
       - name: Prepare Electron test runtime
         # Electron 43 lazily downloads its runtime on first import. Resolve it
         # before Vitest starts so a cold download cannot consume the fixture

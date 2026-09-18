@@ -4,13 +4,29 @@ import { join } from "node:path";
 import { PROVIDER_PRESETS, parseProviderBank } from "../electron/provider-connections.mjs";
 import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
+import { resolveModelLabel } from "../shared/model-label.ts";
 import type { ProviderCatalog, ProviderCatalogError, ProviderConnectionRecord, ProviderModel, ProviderPreset, PublicProviderConnection } from "../shared/provider-connections.ts";
 
 const MAX_BYTES = 4 * 1024 * 1024, MAX_MODELS = 5000, CACHE_TTL = MODEL_CATALOG_REFRESH_MS;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const finite = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-const MEDIA = /(?:image|imagen|video|veo|embedding|embed-|whisper|transcrib|tts|audio|speech|realtime|moderation|dall-e|ocr)/i;
+// Ids that are not chat, tested against the RAW model id. This is the ONLY
+// defence when a provider's catalog row carries no capability field.
+//
+// `voice` and `rerank` added 2026-09-18. `flux-image` was excluded by `image`
+// and `flux-voice` was not excluded by anything — Flux's own `capability`
+// field was the single thing keeping it out of the chat picker, which made a
+// chat/voice distinction depend on another service always populating an
+// optional field. Both terms were run over all 7,842 ids in
+// src/data/model-metadata.json: `voice` newly excludes 4 (nemotron-voicechat,
+// studiovoice, grok-voice-think-fast 1.0/2.0), `rerank` newly excludes 11 (BGE,
+// Qwen3, Cohere, Voyage and NVIDIA rerankers) and NEITHER matches a single
+// chat model. `music` was considered and REJECTED: it would exclude
+// `gemma-4-26b-a4b-it-musica`, which is a chat model. `sora` and `lyria` were
+// also rejected — brand names age badly and each covers 2 ids on gateways
+// Murage has no preset for.
+const MEDIA = /(?:image|imagen|video|veo|embedding|embed-|whisper|transcrib|tts|audio|speech|voice|rerank|realtime|moderation|dall-e|ocr)/i;
 // Direct DeepSeek contract checked 2026-09-12: these legacy IDs now alias
 // vision-capable Flash. Do not apply this inference to other providers.
 const DEEPSEEK_FLASH_VISION = new Set(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]);
@@ -63,7 +79,15 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
   const tools=typeof capabilities.function_calling==="boolean"?capabilities.function_calling:params.includes("tools")?true:undefined;
   const vision=typeof capabilities.vision==="boolean"?capabilities.vision:input.length?input.includes("image"):documentedVision(connection.preset,row.id);
   const reasoning=typeof capabilities.reasoning==="boolean"?capabilities.reasoning:params.includes("reasoning")?true:undefined;
-  const model: ProviderModel={connectionId:connection.id,preset:connection.preset,id:row.id,label:typeof row.name==="string"?row.name.slice(0,160):typeof row.display_name==="string"?row.display_name.slice(0,160):row.id,enabled:row.active!==false,chatEligible:chat,capabilities:{chat,...(tools===undefined?{}:{tools}),...(vision===undefined?{}:{vision}),...(reasoning===undefined?{}:{reasoning})},outputModalities:output.length?output:chat?["text"]:["unknown"]};
+  // The label used to end `… : row.id`, so any provider whose catalog omits
+  // names shipped its raw ids to the UI. The Flux Router connection is exactly
+  // that provider: GET /v1/models returns no `name`, so its copy of every Flux
+  // row rendered as the literal `flux-auto` beside the engine catalog's
+  // properly-labelled "Flux Auto" (Sean, 2026-09-18). resolveModelLabel is the
+  // one ordered rule — provider name, then the Flux tier table, then a
+  // title-cased id ("Flux Pinned Deepseek Flash Max").
+  const catalogLabel=typeof row.name==="string"?row.name.slice(0,160):typeof row.display_name==="string"?row.display_name.slice(0,160):undefined;
+  const model: ProviderModel={connectionId:connection.id,preset:connection.preset,id:row.id,label:resolveModelLabel(row.id,{catalogLabel}).slice(0,160),enabled:row.active!==false,chatEligible:chat,capabilities:{chat,...(tools===undefined?{}:{tools}),...(vision===undefined?{}:{vision}),...(reasoning===undefined?{}:{reasoning})},outputModalities:output.length?output:chat?["text"]:["unknown"]};
   const context=finite(row.context_length ?? row.context_window ?? row.max_context_length ?? row.max_input_tokens);if(context && context<=10_000_000)model.contextWindow=context;
   if(connection.preset==="openrouter"&&object(row.pricing)) {
    const price=(value:unknown)=>{if(typeof value!=="string"&&typeof value!=="number")return undefined;const parsed=Number(value);return Number.isFinite(parsed)&&parsed>=0&&String(value).trim()!==""?parsed*1_000_000:undefined;};
