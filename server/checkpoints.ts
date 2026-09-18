@@ -229,6 +229,12 @@ export function refusalReason(cwd: string): string | null {
   return null;
 }
 
+/** The shadow repo for a folder — and, through `serialize`, the lock that
+ * keeps two turns in that folder off one work tree. Callers must hand this a
+ * `realpathSync.native` path: the key is a digest of the string, so a second
+ * spelling of one folder would otherwise open a second repo, hiding the
+ * folder's checkpoints ("no checkpoints exist for this folder") and letting a
+ * restore's `git clean -fd` run beside a snapshot it never waited for. */
 function shadowDir(botId: string, cwd: string): string {
   const key = createHash("sha256").update(resolve(cwd)).digest("hex").slice(0, 16);
   return join(CHECKPOINTS_DIR, botId, key);
@@ -362,7 +368,7 @@ export async function snapshot(botId: string, cwd: string, label: string): Promi
   if (!(await gitAvailable())) return null;
   if (refusalReason(cwd) !== null) return null;
   try {
-    const worktree = realpathSync(resolve(cwd));
+    const worktree = realpathSync.native(resolve(cwd));
     const shadow = shadowDir(botId, worktree);
     return await serialize(shadow, async () => {
       const env = gitEnv(shadow, worktree);
@@ -383,7 +389,7 @@ export async function listCheckpoints(botId: string, cwd: string): Promise<Check
   if (!(await gitAvailable())) return [];
   if (refusalReason(cwd) !== null) return [];
   try {
-    const worktree = realpathSync(resolve(cwd));
+    const worktree = realpathSync.native(resolve(cwd));
     const shadow = shadowDir(botId, worktree);
     if (!existsSync(join(shadow, ".git", "HEAD"))) return [];
     return await serialize(shadow, async () => {
@@ -421,7 +427,7 @@ export async function restore(botId: string, cwd: string, hash: string, options:
   if (reason !== null) return { ok: false, error: reason };
   if (!COMMIT_HASH.test(hash)) return { ok: false, error: "hash must be a full 40-character checkpoint hash" };
   try {
-    const worktree = realpathSync(resolve(cwd));
+    const worktree = realpathSync.native(resolve(cwd));
     const shadow = shadowDir(botId, worktree);
     if (!existsSync(join(shadow, ".git", "HEAD"))) {
       return { ok: false, error: "no checkpoints exist for this folder" };

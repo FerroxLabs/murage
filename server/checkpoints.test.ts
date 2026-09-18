@@ -290,6 +290,31 @@ describe("refusals", () => {
   });
 });
 
+describe("folder identity", () => {
+  // The shadow repo is keyed on a digest of the path string, so the spelling
+  // has to settle before the digest is taken. It did not: one folder reached
+  // by two spellings opened two repos, so a re-spelled folder answered "no
+  // checkpoints exist" over a history that was sitting right there, and two
+  // turns in it took two different locks over one work tree — with a restore's
+  // `git clean -fd` on the other side of that missing lock.
+  it("keeps one shadow repo for a folder reached by two spellings", async () => {
+    const { bot, cwd } = workspace();
+    const project = join(cwd, "Project");
+    mkdirSync(project);
+    const respelled = join(cwd, "project");
+    if (!existsSync(respelled)) return; // case-sensitive volume: a real second folder
+
+    writeFileSync(join(project, "a.txt"), "one");
+    const checkpoint = await snapshot(bot, project, "turn 1");
+    expect(checkpoint).toMatch(/^[0-9a-f]{40}$/);
+    expect((await listCheckpoints(bot, respelled)).map((c) => c.hash)).toEqual([checkpoint]);
+
+    writeFileSync(join(project, "a.txt"), "two");
+    expect(await restore(bot, respelled, checkpoint!)).toEqual({ ok: true });
+    expect(readFileSync(join(project, "a.txt"), "utf8")).toBe("one");
+  });
+});
+
 // Windows names one folder several ways. These run everywhere, because a
 // refusal that only holds on the reviewer's Mac is no refusal at all: the
 // platform is stubbed and the fixture home is built under the real, already
