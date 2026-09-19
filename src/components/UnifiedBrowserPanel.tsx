@@ -18,7 +18,15 @@ export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { bot
     <div className="flex gap-2"><button disabled={pending} onClick={onConfirm} className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Use my Chrome</button><button onClick={onCancel} className="rounded-lg bg-control px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-accent">Cancel</button></div>
   </div>;
 }
-type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; url: string };
+type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string };
+/** The locked-page note, in the owner's words: why the bot cannot use the
+ * page and the one step that gives it back. */
+export function ProtectedBrowserNotice({ botName, reason, held, pending, onReopen }: { botName: string; reason?: Status["protectedReason"]; held: boolean; pending: boolean; onReopen: () => void }) {
+  const why = reason === "sensitive-page"
+    ? `${botName} can't use this page because it has a password, code or card field, an embedded frame, or content Murage can't check. ${botName} can open a different page itself, or you can take control and reopen a blank page to give ${botName} its browser back.`
+    : `${botName} can't use this page because you typed or clicked in it. Take control, then reopen a blank page to give ${botName} its browser back.`;
+  return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{why}<button disabled={!held || pending} onClick={onReopen} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>;
+}
 export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void }) {
   const { state, dispatch } = useStore();
   const [status, setStatus] = useState<Status | null>(null);
@@ -99,7 +107,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
       <button disabled={!pageText || pending} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Send text</button>
     </form>}
     <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{connectionError ? "Unavailable" : status?.connected ? "Live" : "Disconnected"} · {status?.held ? "Human control" : "Agent control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to agent" : "Take control"}</button></div>
-    {status?.protectedDocument && <div className="rounded-lg bg-card p-3 text-xs text-ink-secondary">This session contains protected interaction. The agent cannot read or act on it. Take control and reopen a blank page to clear the protected document.<button disabled={!status.held || pending} onClick={() => void action("reopen")} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>}
+    {status?.protectedDocument && <ProtectedBrowserNotice botName={bot.name} reason={status.protectedReason} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
     <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
       const patch = browserChoicePatch(bot, event.target.value);
       // Nothing changes until the owner confirms what attaching means.

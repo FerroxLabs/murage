@@ -32,6 +32,7 @@
  *    bot does NOT have is named, with what to say instead of guessing.
  */
 import type { SendTurnInput } from "./contracts.ts";
+import type { BrowserProtection } from "./browser-lock.ts";
 
 /** Exactly the integrations the harness can hand a driver. Taken from the
  * contract rather than restated, so the two cannot drift. */
@@ -177,6 +178,9 @@ export interface PrimerFacts {
   readonly peers: number;
   /** Whether a person is at the keyboard for this turn. */
   readonly canAskOwner: boolean;
+  /** The mounted browser starts this turn protected. Persisted profile state,
+   * not turn state: it holds until the page is left or the owner reopens it. */
+  readonly browserLock?: BrowserProtection;
 }
 
 function sentence(text: string): string {
@@ -239,7 +243,12 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
     // of a clause comes out here, at the one place that also decides what goes
     // into `cannot` below, so the two halves are chosen together.
     const present = facts.peers === 0 ? fact.presentWithoutPeers ?? fact.present : fact.present;
-    const clause = facts.mounted[key] ? present : fact.absent;
+    // A locked browser is still mounted (its tools are listed), but "you can
+    // browse" would be a promise every call refuses. The browser prompt above
+    // says why it is locked and how it clears.
+    const clause = facts.mounted[key]
+      ? key === "browser" && facts.browserLock ? "use Murage's built-in browser once its lock is cleared (your browser instructions say how; never use another browser instead)" : present
+      : fact.absent;
     if (!clause) continue;
     (facts.mounted[key] ? can : cannot).push(clause);
   }
@@ -361,6 +370,7 @@ export function turnCapabilityFacts(input: {
   memory: MemoryMode;
   imageProvider: boolean;
   canAskOwner: boolean;
+  browserLock?: BrowserProtection;
 }): PrimerFacts {
   const modelId = input.providerRoute?.model ?? input.model ?? input.instance.models.default;
   const label = input.instance.models.options.find((option) => option.id === modelId)?.label ?? modelId;
@@ -402,5 +412,6 @@ export function turnCapabilityFacts(input: {
           : "untrusted",
     peers: input.peers,
     canAskOwner: input.canAskOwner,
+    ...(input.browserLock && mounted.browser ? { browserLock: input.browserLock } : {}),
   };
 }

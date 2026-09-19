@@ -6,13 +6,22 @@ import { writeFileAtomic } from "./atomic.ts";
 import type { AgentBrowserSpec } from "./browser-engine.ts";
 import { createNativeBrowser, type NativeBrowser, type BrowserFrame } from "./browser-native-relay.ts";
 import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "./browser-engine-policy.ts";
+import { browserRefusal, protectionRefusal, type BrowserProtection } from "./browser-lock.ts";
 
-export type BrowserStatus = { generation: number; held: boolean; owner: string | null; connected: boolean; protectedDocument: boolean; url: string };
+export type BrowserStatus = { generation: number; held: boolean; owner: string | null; connected: boolean; protectedDocument: boolean; protectedReason: BrowserProtection | null; url: string };
 type Entry = BrowserStatus & { native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void> };
-const refusal = () => Object.assign(new Error("Browser control changed, is held by a person, or the document requires human review"), { status: 409 });
+const refusal = () => browserRefusal("browser_control_changed");
 // Conservative document barrier: never deliver any DOM/text/pixels from a page
 // containing a protected input. Human input taints the session until explicit
 // owner reopen; returning control alone cannot disclose a transformed secret.
+// A page the guard flagged on its own (no human input) is different: the bot
+// never received it, and a navigation to a new address discloses nothing of
+// it, so the bot may leave it; the guard re-checks every open page after the
+// navigation and the lock clears only when none of them is protected.
+function protect(e: Entry, reason: BrowserProtection) {
+  if (e.protectedReason !== "owner-input") e.protectedReason = reason;
+  e.protectedDocument = true;
+}
 
 
 export class UnifiedBrowserController {
@@ -26,22 +35,25 @@ export class UnifiedBrowserController {
       if (!Array.isArray(saved) || saved.length > 1000) throw new Error("Invalid browser control state");
       for (const [key, state] of saved) {
         if (typeof key !== "string" || !Number.isSafeInteger(state.generation) || typeof state.held !== "boolean") throw new Error("Invalid browser control state");
-        this.entries.set(key, { ...state, generation: state.generation + 1, connected: false, url: "", lastSeq: -1 });
+        // A lock saved before its cause was recorded is treated as the
+        // owner's: only the owner's reopen clears it.
+        const protectedReason: BrowserProtection | null = state.protectedDocument === true ? (state.protectedReason === "sensitive-page" ? "sensitive-page" : "owner-input") : null;
+        this.entries.set(key, { ...state, protectedDocument: protectedReason !== null, protectedReason, generation: state.generation + 1, connected: false, url: "", lastSeq: -1 });
       }
     }
   }
   private save() {
-    writeFileAtomic(this.stateFile, JSON.stringify([...this.entries].map(([key, e]) => [key, { generation: e.generation, held: e.held, owner: e.owner, protectedDocument: e.protectedDocument }])), { mode: 0o600 });
+    writeFileAtomic(this.stateFile, JSON.stringify([...this.entries].map(([key, e]) => [key, { generation: e.generation, held: e.held, owner: e.owner, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason }])), { mode: 0o600 });
   }
   register(key: string, spec: AgentBrowserSpec) {
     const old = this.entries.get(key);
     if (old?.spec && JSON.stringify(old.spec) !== JSON.stringify(spec)) throw new Error("Browser profile binding changed; close it before rebinding");
     if (!old && this.entries.size >= 256) throw new Error("Browser profile capacity reached");
-    const e = old ?? { generation: 1, held: false, owner: null, connected: false, protectedDocument: false, url: "", lastSeq: -1 };
+    const e = old ?? { generation: 1, held: false, owner: null, connected: false, protectedDocument: false, protectedReason: null, url: "", lastSeq: -1 };
     e.spec = spec; this.entries.set(key, e); this.save();
   }
   private entry(key: string): Entry { const e = this.entries.get(key); if (!e?.spec) throw new Error("Browser profile is unavailable"); return e; }
-  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, url: e.url }; }
+  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, url: e.url }; }
   private native(e: Entry) { return e.native ??= this.factory(e.spec!); }
   async connect(key: string) {
     const e = this.entry(key);
@@ -99,7 +111,7 @@ export class UnifiedBrowserController {
     if (JSON.stringify(event).length > 8192 || !["input_mouse", "input_keyboard", "input_touch"].includes(String(event.type))) throw new Error("Invalid browser input");
     if (event.type === "input_mouse" && (!["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel"].includes(String(event.eventType)) || ![event.x, event.y].every(v => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 10000))) throw new Error("Invalid pointer input");
     if (event.type === "input_keyboard" && (!["keyDown", "keyUp", "char"].includes(String(event.eventType)) || ["key", "code", "text"].some(k => event[k] !== undefined && (typeof event[k] !== "string" || (event[k] as string).length > 100)))) throw new Error("Invalid keyboard input");
-    if (!e.protectedDocument && (event.type !== "input_mouse" || event.eventType === "mousePressed")) { e.protectedDocument = true; this.save(); }
+    if (e.protectedReason !== "owner-input" && (event.type !== "input_mouse" || event.eventType === "mousePressed")) { e.protectedDocument = true; e.protectedReason = "owner-input"; this.save(); }
     this.native(e).input(event);
   }
   async reopen(key: string, owner: string, generation: number) {
@@ -107,33 +119,48 @@ export class UnifiedBrowserController {
     this.fence(e);
     await e.native?.close(); e.native = undefined; e.lastSeq = -1;
     await this.native(e).command(["open", "about:blank"]);
-    e.protectedDocument = false; e.url = ""; this.save(); await this.connect(key); return this.status(key);
+    e.protectedDocument = false; e.protectedReason = null; e.url = ""; this.save(); await this.connect(key); return this.status(key);
   }
   async dispatch(key: string, method: string, params: Record<string, unknown> = {}, authorize: () => boolean = () => false): Promise<unknown> {
     const e = this.entry(key); const generation = e.generation;
-    const allowed = () => { if (!authorize() || e.held || e.generation !== generation || e.protectedDocument) throw refusal(); };
+    // Listing tools reads nothing from any page, so neither a protected page
+    // nor the owner's hold refuses it: the bot keeps its tools and learns the
+    // reason from the refusal of the call itself.
+    if (method === "tools/list") {
+      if (!authorize()) throw browserRefusal("browser_not_authorized");
+      const result = await this.native(e).request(method) as { tools?: unknown };
+      if (!authorize()) throw browserRefusal("browser_not_authorized");
+      return { tools: listHeadlessBrowserTools(result.tools) };
+    }
+    if (method !== "tools/call") throw new Error("Unsupported browser method");
+    const call = validateHeadlessBrowserCall(params.name, params.arguments ?? {});
+    // Leaving a page the guard flagged by itself. Never a page the owner typed in.
+    const leaving = call.name === "agent_browser_open" && typeof call.arguments.url === "string";
+    const allowed = () => {
+      if (!authorize()) throw browserRefusal("browser_not_authorized");
+      if (e.held) throw browserRefusal("browser_held");
+      if (e.generation !== generation) throw refusal();
+      if (e.protectedDocument && !(leaving && e.protectedReason === "sensitive-page")) throw protectionRefusal(e.protectedReason ?? "owner-input");
+    };
     allowed(); if (e.pending) throw new Error("This browser profile already has an action in progress");
     const run = async () => {
       const native = this.native(e);
-      if (method === "tools/list") {
-        const result = await native.request(method) as { tools?: unknown }; allowed(); return { tools: listHeadlessBrowserTools(result.tools) };
-      }
-      if (method !== "tools/call") throw new Error("Unsupported browser method");
-      const call = validateHeadlessBrowserCall(params.name, params.arguments ?? {});
       // Native Windows navigation can wait on an attached screencast. Keep
       // the viewer detached for the operation; connect() refuses to race the
       // in-flight action and the next owner status read restores the stream.
       native.resetStream(); e.connected = false; e.frame = undefined;
       // All frame/tab/value reads use this same barrier. No direct MCP mount.
       const before = await native.protected();
-      if (before) { e.protectedDocument = true; this.save(); throw refusal(); }
+      if (before && !leaving) { protect(e, "sensitive-page"); this.save(); throw protectionRefusal(e.protectedReason!); }
       allowed();
       const result = await native.request(method, call);
       const after = await native.protected();
-      if (after) { e.protectedDocument = true; this.save(); throw refusal(); }
-      allowed(); await this.connect(key); allowed(); return result;
+      if (after) { protect(e, "sensitive-page"); this.save(); throw protectionRefusal(e.protectedReason!); }
+      allowed();
+      if (e.protectedDocument) { e.protectedDocument = false; e.protectedReason = null; this.save(); }
+      await this.connect(key); allowed(); return result;
     };
-    const pending = run().finally(async () => { try { await e.native?.protected(false); } catch { e.protectedDocument = true; this.save(); } }); e.pending = pending;
+    const pending = run().finally(async () => { try { await e.native?.protected(false); } catch { protect(e, "sensitive-page"); this.save(); } }); e.pending = pending;
     try { const result = await pending; allowed(); return result; } finally { if (e.pending === pending) e.pending = undefined; }
   }
   async forget(key: string) { const e = this.entry(key); this.fence(e); await e.pending?.catch(() => {}); await e.native?.close(); this.entries.delete(key); this.save(); }

@@ -173,6 +173,24 @@ const facts = (overrides: Partial<Parameters<typeof turnCapabilityFacts>[0]> = {
     ...overrides,
   });
 
+describe("a locked browser", () => {
+  it("is not promised as a browser the bot can use, and names where the way out is", () => {
+    const locked = primer({ mounted: { agents: true, browser: true }, browserLock: "owner-input" });
+    expect(locked).not.toContain("browse in Murage's built-in browser");
+    expect(locked).toMatch(/In this conversation you can [^\n]*use Murage's built-in browser once its lock is cleared \(your browser instructions say how; never use another browser instead\)/);
+  });
+  it("leaves an unlocked browser's line exactly as it was", () => {
+    expect(primer({ mounted: { agents: true, browser: true } })).toContain("browse in Murage's built-in browser");
+    expect(primer({ mounted: { agents: true, browser: true }, browserLock: undefined })).toBe(primer({ mounted: { agents: true, browser: true } }));
+  });
+  it("carries the lock only when the browser actually mounted", () => {
+    const instance = { driverKind: "claude", models: { default: "m", options: [] }, adapter: { capabilities: {} } };
+    const base = { instance, peers: 1, memory: "off" as const, imageProvider: false, canAskOwner: true };
+    expect(turnCapabilityFacts({ ...base, integrations: { browser: {} }, browserLock: "sensitive-page" }).browserLock).toBe("sensitive-page");
+    expect(turnCapabilityFacts({ ...base, integrations: {}, browserLock: "sensitive-page" }).browserLock).toBeUndefined();
+  });
+});
+
 describe("turnCapabilityFacts", () => {
   it("reads image input from the model, not only from the engine", () => {
     // The engine accepts images; the routed MODEL does not. Before this, a bot
