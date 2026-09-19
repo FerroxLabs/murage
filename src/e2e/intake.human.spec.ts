@@ -32,7 +32,7 @@ test("team descriptions explain the customer outcome in cards and previews", asy
   await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
   await openSidebar(app);
   await app.getByRole("button", { name: "New or share", exact: true }).click();
-  await app.getByRole("button", { name: "From Template", exact: true }).click();
+  await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
   const library = app.getByRole("dialog", { name: "Library", exact: true });
   await library.getByRole("tab", { name: "Teams", exact: true }).click();
   await expect(library.getByText("66 teams", { exact: true })).toBeVisible();
@@ -54,14 +54,14 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   await openSidebar(app);
   const trigger = app.getByRole("button", { name: "New or share", exact: true });
   await trigger.click();
-  await expect(app.getByRole("button", { name: "Blank Bot", exact: true })).toBeVisible();
-  await expect(app.getByRole("button", { name: "From Template", exact: true })).toBeVisible();
+  await expect(app.getByRole("button", { name: "New Bot", exact: true })).toBeVisible();
+  await expect(app.getByRole("button", { name: "New Bot from Template", exact: true })).toBeVisible();
   await app.screenshot({ path: testInfo.outputPath("bot-creation-options.png") });
-  await app.getByRole("button", { name: "Blank Bot", exact: true }).press("Escape");
+  await app.getByRole("button", { name: "New Bot", exact: true }).press("Escape");
   await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await trigger.click();
-  await app.getByRole("button", { name: "From Template", exact: true }).click();
+  await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
   const library = app.getByRole("dialog", { name: "Library", exact: true });
   await expect(library).toBeVisible();
   await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -73,8 +73,63 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
     await openSidebar(app);
   }
   await trigger.click();
-  await app.getByRole("button", { name: "Blank Bot", exact: true }).click();
+  await app.getByRole("button", { name: "New Bot", exact: true }).click();
   await expect.poll(async () => (await api("GET", "/api/bots")).bots.length).toBe(before + 1);
+});
+
+test("New Team files the chosen bots under a new heading with its instructions", async ({ app }, testInfo) => {
+  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  const first = (await api("POST", "/api/bots", { name: "Team Scout" })).bot;
+  const second = (await api("POST", "/api/bots", { name: "Team Writer" })).bot;
+  const team = `Research ${testInfo.project.name}`;
+  try {
+    await openSidebar(app);
+    const trigger = app.getByRole("button", { name: "New or share", exact: true });
+    await trigger.click();
+    await expect(app.getByRole("button", { name: "New Team", exact: true })).toBeVisible();
+    expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 5)).toEqual(
+      ["New Bot", "New Bot from Template", "New Team", "New Channel", "Export bots…"],
+    );
+    for (const skin of ["light", "dark"] as const) {
+      await app.evaluate((value) => { document.documentElement.dataset.skin = value; }, skin);
+      await app.screenshot({ path: testInfo.outputPath(`plus-menu-${skin}.png`) });
+    }
+    await app.getByRole("button", { name: "New Team", exact: true }).click();
+    const dialog = app.getByRole("dialog", { name: "New Team", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("status")).toHaveText("Give the team a name.");
+    await dialog.getByRole("textbox", { name: "Team name", exact: true }).fill(team);
+    await dialog.getByRole("checkbox", { name: /^Team Scout/ }).click();
+    await dialog.getByRole("checkbox", { name: /^Team Writer/ }).click();
+    await dialog.getByRole("textbox", { name: "Team instructions", exact: true }).fill("Work only from the brief.");
+    for (const skin of ["light", "dark"] as const) {
+      await app.evaluate((value) => { document.documentElement.dataset.skin = value; }, skin);
+      await app.screenshot({ path: testInfo.outputPath(`new-team-dialog-${skin}.png`) });
+    }
+    expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await dialog.getByRole("button", { name: "Create Team · 2 bots", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(async () => {
+      const bots = (await api("GET", "/api/bots")).bots as { id: string; section?: string }[];
+      return [first.id, second.id].map((id) => bots.find((bot) => bot.id === id)?.section);
+    }).toEqual([team, team]);
+    expect((await api("GET", `/api/section-context?section=${encodeURIComponent(team)}`)).text).toBe("Work only from the brief.");
+    const sidebar = await openSidebar(app);
+    await expect(sidebar.locator(`[data-section="${team}"]`)).toBeVisible();
+
+    // The same name again, in any case, is the existing team.
+    await trigger.click();
+    await app.getByRole("button", { name: "New Team", exact: true }).click();
+    await dialog.getByRole("textbox", { name: "Team name", exact: true }).fill(team.toUpperCase());
+    await expect(dialog.getByRole("status")).toHaveText(`There is already a team called ${team}. To add bots to it, use Move to team… on each bot.`);
+    await expect(dialog.getByRole("button", { name: "Create Team", exact: true })).toBeDisabled();
+    await app.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  } finally {
+    await app.evaluate(() => { delete document.documentElement.dataset.skin; });
+    await api("DELETE", `/api/bots/${first.id}`).catch(() => {});
+    await api("DELETE", `/api/bots/${second.id}`).catch(() => {});
+  }
 });
 
 const openBot = async (page: Page, name: string) => {

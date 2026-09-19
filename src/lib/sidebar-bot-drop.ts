@@ -3,7 +3,7 @@
 // A team is a sidebar section, and a bot joins one through the harness's
 // section-filing route (`POST /api/sidebar-sections`). That route is the one
 // that refuses to seat a second lead in a team, so a drag can never quietly
-// demote somebody — the "Move to section" menu's PATCH hands leadership over
+// demote somebody — the "Move to team…" menu's PATCH hands leadership over
 // instead, which is an explicit role change and stays behind that menu.
 import { botRole, type RoleBot } from "./bot-role";
 import { BOTS_SECTION_ID, userSectionName, type SidebarSectionId } from "./sidebar-layout";

@@ -11,12 +11,15 @@ export function BotPickerList({
   picked,
   onToggle,
   emptyHint,
+  detail,
 }: {
   bots: Bot[];
   picked: Set<string>;
   onToggle: (id: string) => void;
   /** shown in place of the list when there is nothing to pick from */
   emptyHint: string;
+  /** an optional second line under a bot's name */
+  detail?: (bot: Bot, picked: boolean) => string | undefined;
 }) {
   return (
     <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
@@ -30,7 +33,14 @@ export function BotPickerList({
           className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50"
         >
           <BotAvatar bot={b} state="happy" size={28} />
-          <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
+          {detail?.(b, picked.has(b.id)) ? (
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-[14px] text-ink">{b.name}</span>
+              <span className="truncate text-[12px] text-ink-secondary">{detail(b, picked.has(b.id))}</span>
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
+          )}
           <span
             className={cn(
               "flex size-[18px] shrink-0 items-center justify-center rounded-full border",

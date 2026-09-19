@@ -108,6 +108,8 @@ import { InboxDialog } from "./InboxDialog";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { NewTeamDialog } from "./NewTeamDialog";
+import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
  *  quieter line: present when something about the thing that just happened
@@ -565,7 +567,7 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <FolderPlus size={16} className="text-ink-secondary" />
-          Move to context
+          Move to team…
         </button>
       )}
       <button
@@ -646,8 +648,8 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Context (optional): Work, Personal, Client…"
-          aria-label="Channel context"
+          placeholder="Team (optional): Work, Personal, Client…"
+          aria-label="Channel team"
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <BotPickerList
@@ -728,7 +730,7 @@ function SectionPicker({
       className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        Move to context
+        Move to team
       </div>
       {sections.length > 0 && (
         <div className="flex flex-col gap-0.5 px-1.5 py-1">
@@ -760,8 +762,8 @@ function SectionPicker({
           maxLength={60}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New context…"
-          aria-label="New context name"
+          placeholder="New team name…"
+          aria-label="New team name"
           className="w-full rounded-lg bg-raised/70 px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <button
@@ -783,7 +785,7 @@ function SectionPicker({
             className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
-            Remove from context
+            Remove from team
           </button>
         </>
       )}
@@ -791,8 +793,60 @@ function SectionPicker({
   );
 }
 
-export function leadershipPromotionBlocked(role: ReturnType<typeof botRole>, canCoordinate: boolean): boolean {
-  return role !== "chief" && role !== "leader" && !canCoordinate;
+export { leadershipPromotionBlocked } from "@/lib/new-team";
+
+/** The + menu. Every create action starts with "New" and names what it makes;
+ * the two things that are not creating sit below a line. */
+export function SidebarCreateMenu({
+  archivedCount,
+  onNewBot,
+  onTemplate,
+  onNewTeam,
+  onNewChannel,
+  onExport,
+  onArchived,
+}: {
+  archivedCount: number;
+  onNewBot: () => void;
+  onTemplate: () => void;
+  onNewTeam: () => void;
+  onNewChannel: () => void;
+  onExport: () => void;
+  onArchived: () => void;
+}) {
+  const row = "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70";
+  return (
+    <>
+      <button autoFocus onClick={onNewBot} className={row}>
+        <BotIcon size={16} className="text-ink-secondary" />
+        New Bot
+      </button>
+      <button onClick={onTemplate} className={row}>
+        <Library size={16} className="text-ink-secondary" />
+        New Bot from Template
+      </button>
+      <button onClick={onNewTeam} className={row}>
+        <Network size={16} className="text-ink-secondary" />
+        New Team
+      </button>
+      <button onClick={onNewChannel} className={row}>
+        <Users size={16} className="text-ink-secondary" />
+        New Channel
+      </button>
+      <div role="separator" className="mx-2 my-1 border-t border-hairline/40" />
+      <button onClick={onExport} className={row}>
+        <ArrowDownToLine size={16} className="text-ink-secondary" />
+        Export bots…
+      </button>
+      {archivedCount > 0 && (
+        <button onClick={onArchived} className={row}>
+          <Archive size={16} className="text-ink-secondary" />
+          <span className="flex-1">Archived bots</span>
+          <span className="text-[11.5px] text-ink-secondary">{archivedCount}</span>
+        </button>
+      )}
+    </>
+  );
 }
 
 export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, showHidden: boolean): boolean {
@@ -939,10 +993,10 @@ export function BotContextMenu({
             }),
           {
             disabled: leadershipPromotionBlocked(role, canCoordinate),
-            hint: leadershipPromotionBlocked(role, canCoordinate) ? "Choose an engine with Murage delegation support first" : undefined,
+            hint: leadershipPromotionBlocked(role, canCoordinate) ? LEADERSHIP_BLOCKED_HINT : undefined,
           },
         ),
-        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
+        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to team…", () => {
           onClose();
           onMoveToSection(bot.id);
         }),
@@ -1476,6 +1530,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
+  const [newTeamOpen, setNewTeamOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2002,64 +2057,37 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   importReturnRef.current?.focus();
                 }
               }} className={cn(
-                "absolute top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
+                "absolute top-full z-40 mt-1 w-56 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
                 density === "icons" ? "left-0" : "right-0",
               )}>
-                <button
-                  autoFocus
-                  onClick={() => {
+                <SidebarCreateMenu
+                  archivedCount={archivedBots.length}
+                  onNewBot={() => {
                     setPlusOpen(false);
                     track("bot_created");
                     dispatch({ type: "newBot" });
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <BotIcon size={16} className="text-ink-secondary" />
-                  Blank Bot
-                </button>
-                <button
-                  onClick={() => {
+                  onTemplate={() => {
                     setPlusOpen(false);
                     dispatch({ type: "showTeamLibrary", view: "bots" });
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <Library size={16} className="text-ink-secondary" />
-                  From Template
-                </button>
-                <button
-                  onClick={() => {
+                  onNewTeam={() => {
+                    setPlusOpen(false);
+                    setNewTeamOpen(true);
+                  }}
+                  onNewChannel={() => {
                     setPlusOpen(false);
                     setNewRoom(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <Users size={16} className="text-ink-secondary" />
-                  New Channel
-                </button>
-                <button
-                  onClick={() => {
+                  onExport={() => {
                     setPlusOpen(false);
                     setExportTeamOpen(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <ArrowDownToLine size={16} className="text-ink-secondary" />
-                  Export selected contents
-                </button>
-                {archivedBots.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setPlusOpen(false);
-                      setArchivedBotsOpen(true);
-                    }}
-                    className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                  >
-                    <Archive size={16} className="text-ink-secondary" />
-                    <span className="flex-1">Archived bots</span>
-                    <span className="text-[11.5px] text-ink-secondary">{archivedBots.length}</span>
-                  </button>
-                )}
+                  onArchived={() => {
+                    setPlusOpen(false);
+                    setArchivedBotsOpen(true);
+                  }}
+                />
               </div>
             </>
           )}
@@ -2453,6 +2481,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {newTeamOpen && (
+        <NewTeamDialog
+          onClose={() => setNewTeamOpen(false)}
+          onDone={(feedback) => {
+            setTeamFeedback(feedback);
+            setReorderAnnouncement(feedback.text);
+          }}
+        />
+      )}
       {archivedBotsOpen && (
         <ArchivedBotsPanel
           bots={archivedBots}
