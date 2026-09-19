@@ -8597,7 +8597,7 @@ describe("internal capability authority", () => {
       expect(mounted.env).not.toHaveProperty("AGENT_BROWSER_SESSION");
       const token = mounted.env.MURAGE_CONTROL_TOKEN;
       const endpoint = `${BASE}/api/internal/unified-browser`;
-      const request = (url = endpoint, bearer = token) => fetch(url, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify({ method: "tools/list" }) });
+      const request = (url = endpoint, bearer = token, method = "tools/list", params?: unknown) => fetch(url, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify({ method, params }) });
       const response = await request();
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
@@ -8610,7 +8610,12 @@ describe("internal capability authority", () => {
       const taken = await desktopApi("POST", `/api/bots/${bot.id}/browser`, { action: "take" });
       expect(taken.status).toBe(200);
       expect(taken.body.held).toBe(true);
-      expect((await request()).status).toBe(409);
+      // While the owner holds the browser the bot keeps its tool list, so the
+      // engine never connects a browser with no tools; its actions are refused.
+      expect((await request()).status).toBe(200);
+      const heldCall = await request(endpoint, token, "tools/call", { name: "agent_browser_snapshot", arguments: {} });
+      expect(heldCall.status).toBe(409);
+      expect(await heldCall.json()).toMatchObject({ code: "browser_held" });
       expect((await desktopApi("POST", `/api/bots/${bot.id}/browser`, { action: "release", generation: taken.body.generation })).status).toBe(200);
       expect((await request()).status).toBe(200);
       await api("POST", `/api/bots/${bot.id}/interrupt`);
