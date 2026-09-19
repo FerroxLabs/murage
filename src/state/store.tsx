@@ -1098,7 +1098,18 @@ export function reducer(state: AppState, action: Action): AppState {
     case "groupPatched": {
       const exists = state.groups.some((g) => g.id === action.group.id);
       const groups = exists
-        ? state.groups.map((g) => (g.id === action.group.id ? { ...g, ...action.group, messages: action.group.messages ?? g.messages } : g))
+        ? state.groups.map((g) => {
+            if (g.id !== action.group.id) return g;
+            const next: Group = { ...g, ...action.group, messages: action.group.messages ?? g.messages };
+            // The server omits an unset task pin, so a switch to another task
+            // (New task, or picking one) must not keep the previous task's
+            // folder lock or pinned message on screen.
+            if (action.group.threadId !== undefined && action.group.threadId !== g.threadId) {
+              if (!("pinnedCwd" in action.group)) delete next.pinnedCwd;
+              if (!("pinnedMessageId" in action.group)) delete next.pinnedMessageId;
+            }
+            return next;
+          })
         : [{ ...(action.group as Group), messages: action.group.messages ?? [] }, ...state.groups];
       return { ...state, groups };
     }

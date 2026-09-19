@@ -434,6 +434,28 @@ describe("task rename", () => {
   });
 });
 
+describe("groupPatched task pins", () => {
+  const group = {
+    id: "room", threadId: "task-1", name: "Launch", memberIds: [], defaultResponder: { kind: "everyone" },
+    bulletin: "", unread: false, createdAt: 1, messages: [], pinnedCwd: "/work/launch", pinnedMessageId: "m1",
+    tasks: [{ threadId: "task-1", title: "First", createdAt: 1, pinnedCwd: "/work/launch" }],
+  } satisfies Group;
+
+  it("drops the previous task's folder lock and pin when the server switches to a task without them", () => {
+    const next = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", threadId: "task-2" } });
+    expect(next.groups[0]?.pinnedCwd).toBeUndefined();
+    expect(next.groups[0]?.pinnedMessageId).toBeUndefined();
+  });
+
+  it("keeps pins the switch carries, and keeps them on a same-task partial update", () => {
+    const switched = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", threadId: "task-2", pinnedCwd: null } });
+    expect(switched.groups[0]?.pinnedCwd).toBeNull();
+    const renamed = reducer({ ...initialState, groups: [group] }, { type: "groupPatched", group: { id: "room", name: "Launch 2" } });
+    expect(renamed.groups[0]?.pinnedCwd).toBe("/work/launch");
+    expect(renamed.groups[0]?.pinnedMessageId).toBe("m1");
+  });
+});
+
 describe("Teach a skill feature flag", () => {
   const config = configStatusFromFrame({
     composio: { configured: false },
