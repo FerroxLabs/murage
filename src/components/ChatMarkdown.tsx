@@ -16,8 +16,8 @@ import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
-import { relativeFileLink, workspaceFilePath } from "@/lib/workspace-links";
-import { conversationWorkspaceRoot } from "@/lib/media-resolve";
+import { relativeFileLink } from "@/lib/workspace-links";
+import { conversationLinkPath } from "@/lib/media-resolve";
 import { api } from "@/state/store";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
@@ -226,18 +226,17 @@ function LocalFileLink({ filePath, children, scope }: { filePath: string; childr
  * button that says so; it never becomes an href. A link that climbs out of
  * the folder or names a hidden file ("" from relativeFileLink) is plain text. */
 function WorkspaceRelativeLink({ relativePath, scope, children }: { relativePath: string; scope?: WorkspaceScopeRef; children?: ReactNode }) {
-  const [root, setRoot] = useState<string | null | undefined>(scope && relativePath ? undefined : null);
+  const [filePath, setFilePath] = useState<string | null | undefined>(scope && relativePath ? undefined : null);
   const [told, setTold] = useState(false);
   const botId = scope?.botId, threadId = scope?.threadId;
   useEffect(() => {
-    if (botId === undefined || threadId === undefined || !relativePath) { setRoot(null); return; }
+    if (botId === undefined || threadId === undefined || !relativePath) { setFilePath(null); return; }
     let alive = true;
-    setRoot(undefined);
-    void conversationWorkspaceRoot({ botId, threadId }, api).then(value => { if (alive) setRoot(value); });
+    setFilePath(undefined);
+    void conversationLinkPath({ botId, threadId }, relativePath, api).then(value => { if (alive) setFilePath(value); }, () => { if (alive) setFilePath(null); });
     return () => { alive = false; };
   }, [botId, threadId, relativePath]);
   if (!relativePath) return <span className="[overflow-wrap:anywhere]">{children}</span>;
-  const filePath = root ? workspaceFilePath(root, relativePath) : null;
   if (filePath) return <LocalFileLink filePath={filePath} scope={scope}>{children}</LocalFileLink>;
   return (
     <>
@@ -251,7 +250,7 @@ function WorkspaceRelativeLink({ relativePath, scope, children }: { relativePath
       </button>
       {told && (
         <span role="status" className="ml-1.5 text-[12px] text-ink-secondary">
-          {root === undefined ? t("chatLinks.findingFolder") : t("chatLinks.folderUnavailable", { path: relativePath })}
+          {filePath === undefined ? t("chatLinks.findingFolder") : t("chatLinks.folderUnavailable", { path: relativePath })}
         </span>
       )}
     </>

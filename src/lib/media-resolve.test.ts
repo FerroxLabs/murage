@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  conversationLinkPath,
   forgetLocalMedia,
   localMedia,
   MEDIA_LIST_MAX_PAGES,
@@ -245,5 +246,52 @@ describe("one answer per file, shared", () => {
   it("answers unavailable rather than rejecting when the harness itself breaks", async () => {
     const broken: MediaApi = async () => { throw new Error("harness down"); };
     await expect(localMedia({ scope: SCOPE, absolutePath: AUDIO }, broken)).resolves.toEqual({ state: "unavailable" });
+  });
+});
+
+describe("where a relative link in a reply points", () => {
+  // The root answer is cached per conversation, so each case uses its own.
+  let n = 0;
+  const scope = () => ({ botId: "research", threadId: `link-${++n}` });
+  /** A conversation folder at ROOT whose listed directories hold these files. */
+  const withDirectories = (directories: Record<string, string[]>): MediaApi => async path => {
+    if (path.startsWith("/api/workspace-files/root")) return { state: "ready", label: "Research", displayPath: ROOT, managed: true };
+    if (path.startsWith("/api/workspace-files/list")) {
+      const directory = new URL(path, "http://x").searchParams.get("directory") ?? "";
+      return { entries: (directories[directory] ?? []).map(name => entry(name)), incomplete: false };
+    }
+    throw new Error(`unexpected route ${path}`);
+  };
+
+  it("opens the file the bot saved under outputs/ when it is there", async () => {
+    const api = withDirectories({ "outputs/reports": ["today.md"] });
+    expect(await conversationLinkPath(scope(), "reports/today.md", api)).toBe(`${ROOT}/outputs/reports/today.md`);
+  });
+
+  it("reads the link against the conversation folder when outputs/ has no such file", async () => {
+    const api = withDirectories({ reports: ["today.md"] });
+    expect(await conversationLinkPath(scope(), "reports/today.md", api)).toBe(`${ROOT}/reports/today.md`);
+  });
+
+  it("does not add outputs/ twice to a link that already starts with it", async () => {
+    const api = withDirectories({ "outputs/outputs": ["x.md"] });
+    expect(await conversationLinkPath(scope(), "outputs/x.md", api)).toBe(`${ROOT}/outputs/x.md`);
+  });
+
+  it("falls back to the conversation folder when the listing fails, and gives nothing without a folder", async () => {
+    const failing = harness({ throwOn: "list" }).api;
+    expect(await conversationLinkPath(scope(), "reports/today.md", failing)).toBe(`${ROOT}/reports/today.md`);
+    const noRoot = harness({ throwOn: "root" }).api;
+    expect(await conversationLinkPath(scope(), "reports/today.md", noRoot)).toBeNull();
+  });
+
+  it("keeps a Windows folder's backslashes", async () => {
+    const windowsRoot = "C:\\Users\\me\\.murage\\workspaces\\research\\threads\\t1";
+    const api: MediaApi = async path => {
+      if (path.startsWith("/api/workspace-files/root")) return { state: "ready", label: "Research", displayPath: windowsRoot, managed: true };
+      const directory = new URL(path, "http://x").searchParams.get("directory");
+      return { entries: directory === "outputs/reports" ? [entry("today.md")] : [], incomplete: false };
+    };
+    expect(await conversationLinkPath(scope(), "reports/today.md", api)).toBe(`${windowsRoot}\\outputs\\reports\\today.md`);
   });
 });

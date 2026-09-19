@@ -22,8 +22,9 @@
 // was. Failure is never a reason to fall back to loading the path directly.
 import { mediaHintForPath, type MediaHint } from "./composer-attachments.ts";
 import { MEDIA_ROUTES, type MediaAsset, type MediaResolveResponse } from "../../shared/media-assets";
+import { workspaceFilePath } from "./workspace-links.ts";
 import {
-  isWorkspaceRelativePath, WORKSPACE_FILES_ROUTES,
+  isOutputNamespacePath, isWorkspaceRelativePath, OUTPUT_NAMESPACE, WORKSPACE_FILES_ROUTES,
   type FileRevision, type WorkspaceListResponse, type WorkspaceRootInfo, type WorkspaceScopeRef,
 } from "../../shared/workspace-files";
 
@@ -225,4 +226,19 @@ export function conversationWorkspaceRoot(scope: WorkspaceScopeRef, api: MediaAp
   rootCache.set(key, { at: now, promise });
   while (rootCache.size > 64) rootCache.delete(rootCache.keys().next().value!);
   return promise;
+}
+
+/** Where a relative link in a reply points. Bots save deliverables under the
+ * conversation's outputs/ folder and link them relative to it, so a file
+ * found there wins; otherwise the link is read against the conversation's
+ * folder itself. Null when the conversation has no folder this surface may
+ * use. Never throws. */
+export async function conversationLinkPath(scope: WorkspaceScopeRef, relativePath: string, api: MediaApi): Promise<string | null> {
+  const root = await conversationWorkspaceRoot(scope, api);
+  if (!root) return null;
+  if (!isOutputNamespacePath(relativePath)) {
+    const published = `${OUTPUT_NAMESPACE}/${relativePath}`;
+    if (await fileRevision(api, scope, published)) return workspaceFilePath(root, published);
+  }
+  return workspaceFilePath(root, relativePath);
 }
