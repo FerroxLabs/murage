@@ -4,14 +4,29 @@
 // the only clean slate is a second bot. A task is a real boundary — its
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
-import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Check, ChevronDown, ChevronRight, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
+import { useStore, type Bot, type Group, type Task } from "@/state/store";
+import type { RoutineRun } from "@/lib/routines";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
-import { formatTaskTokens } from "@/lib/usage";
 import { nextRename } from "@/lib/rename";
 import { downloadConversation } from "@/lib/conversation-export";
+import {
+  TASK_FILTERS,
+  TASK_SORTS,
+  buildTaskListView,
+  formatTaskMoment,
+  formatTaskTokenLabel,
+  formatTaskWhen,
+  readableTaskTitle,
+  searchTasks,
+  taskSortTime,
+  type RoutineRef,
+  type TaskFilter,
+  type TaskKind,
+  type TaskSort,
+} from "@/lib/task-list";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -35,18 +50,10 @@ export function taskPickerPointerIntent(
 
 /** Filter the task switcher. Prefix matches float first so a few letters
  * still find the right row in a long list; within a tier the caller's
- * order (newest first) is preserved. */
+ * order (newest first) is preserved. Matches the stored title and the
+ * readable one ("From Kessler: …"). */
 export function filterTasks<T extends { title: string }>(tasks: readonly T[], query: string): T[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [...tasks];
-  const prefix: T[] = [];
-  const substring: T[] = [];
-  for (const task of tasks) {
-    const title = task.title.toLowerCase();
-    if (title.startsWith(needle)) prefix.push(task);
-    else if (title.includes(needle)) substring.push(task);
-  }
-  return [...prefix, ...substring];
+  return searchTasks(tasks, query);
 }
 
 /** Pinned tasks first; inside each group the caller's order (newest first)
@@ -55,23 +62,52 @@ export function orderPickerTasks<T extends { pinned?: boolean }>(tasks: readonly
   return [...tasks.filter((task) => task.pinned), ...tasks.filter((task) => !task.pinned)];
 }
 
-/** Quiet per-task token tally — input+output combined, because one honest
- * total reads faster than a split; the split lives in the hover title. */
-function TaskUsage({ usage }: { usage: Task["usage"] }) {
-  if (!usage) return null;
-  const label = formatTaskTokens(usage.input + usage.output);
-  if (!label) return null;
-  return (
-    <span title={`${usage.input.toLocaleString()} in · ${usage.output.toLocaleString()} out`}>
-      {" · "}
-      {label}
-    </span>
-  );
+const TASK_SORT_KEY = "murage-task-sort";
+
+/** The sort is a per-viewer convenience; storage can be missing or blocked
+ * (private window, preview), and the list works the same without it. */
+function readTaskSort(): TaskSort {
+  try {
+    return localStorage.getItem(TASK_SORT_KEY) === "created" ? "created" : "activity";
+  } catch {
+    return "activity";
+  }
 }
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "busy" | "unread" | "pinned"> & { usage?: Task["usage"] };
+function writeTaskSort(sort: TaskSort) {
+  try {
+    localStorage.setItem(TASK_SORT_KEY, sort);
+  } catch {
+    // remembered next time storage is available; this session keeps it
+  }
+}
 
-function ConversationTaskPicker({
+/** Which task threads are routine runs, keyed by thread, from the run
+ * receipts the client already holds (newest first, so the newest run's
+ * routine name wins). */
+export function routineRunIndex<R extends Pick<RoutineRun, "threadId" | "routineId" | "routineName">>(
+  runs: readonly R[],
+  belongs: (run: R) => boolean,
+  thread: (run: R) => string | undefined = (run) => run.threadId,
+): Map<string, RoutineRef> {
+  const index = new Map<string, RoutineRef>();
+  for (const run of runs) {
+    const threadId = thread(run);
+    if (!threadId || index.has(threadId) || !belongs(run)) continue;
+    index.set(threadId, { routineId: run.routineId, routineName: run.routineName });
+  }
+  return index;
+}
+
+const NO_ROUTINES = () => undefined;
+
+const KIND_BADGE: Record<TaskKind, string | null> = { chat: null, routine: "Routine", bot: null };
+
+type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned"> & {
+  usage?: Task["usage"];
+};
+
+export function ConversationTaskPicker({
   threadId,
   tasks,
   busy,
@@ -80,6 +116,11 @@ function ConversationTaskPicker({
   onRename,
   onDelete,
   onTogglePin,
+  routineOf = NO_ROUTINES,
+  initialOpen = false,
+  now,
+  timeZone,
+  locale,
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -90,8 +131,25 @@ function ConversationTaskPicker({
   onDelete: (threadId: string) => void;
   /** Bots only for now; a channel's task switcher has no pin. */
   onTogglePin?: (threadId: string, pinned: boolean) => void;
+  /** which routine a task thread is a run of, if any */
+  routineOf?: (threadId: string) => RoutineRef | undefined;
+  /** Render with the menu open (static-markup tests). */
+  initialOpen?: boolean;
+  /** Clock overrides for tests; the device's clock, zone and language otherwise. */
+  now?: number;
+  timeZone?: string;
+  locale?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
+  const [filter, setFilter] = useState<TaskFilter>("all");
+  const [sort, setSort] = useState<TaskSort>(readTaskSort);
+  // The fold holding the open task starts expanded, so the check mark is
+  // on screen; the user can close it.
+  const openFoldFor = (id: string) => routineOf(id)?.routineId;
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialOpen ? [openFoldFor(threadId)].filter((x): x is string => Boolean(x)) : []));
+  const list = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const baseId = useId();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -205,14 +263,186 @@ function ConversationTaskPicker({
 
   // the picker button stays as-is — a token count next to a truncated title
   // and count would crowd it; the open task's tally rides the hover title
-  const u = current?.usage;
-  const currentLabel = u ? formatTaskTokens(u.input + u.output) : null;
-  const switchTitle =
-    u && currentLabel
-      ? `Switch task · ${currentLabel} (${u.input.toLocaleString()} in · ${u.output.toLocaleString()} out)`
-      : "Switch task";
-  const visible = filterTasks(orderPickerTasks(tasks), query);
+  const currentTokens = formatTaskTokenLabel(current?.usage, locale);
+  const switchTitle = currentTokens ? `Switch task · ${currentTokens.detail}` : "Switch task";
   const looking = query.trim();
+  const clock = { timeZone, locale };
+  const nowAt = now ?? Date.now();
+  const view = useMemo(
+    () => buildTaskListView(tasks, { query, filter, sort, now: nowAt, activeId: threadId, routineOf, expanded, timeZone, locale }),
+    [tasks, query, filter, sort, nowAt, threadId, routineOf, expanded, timeZone, locale],
+  );
+
+  const chooseSort = (next: TaskSort) => {
+    setSort(next);
+    writeTaskSort(next);
+  };
+
+  const toggleFold = (id: string, open?: boolean) => {
+    clearDismiss();
+    setExpanded((before) => {
+      const next = new Set(before);
+      if (open ?? !next.has(id)) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  /** Arrow keys walk every row, across group headers and into open folds;
+   * Home/End jump; Up from the first row returns to search. */
+  const navigate = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const items = [...(list.current?.querySelectorAll<HTMLElement>("[data-task-nav]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const focus = (index: number) => {
+      e.preventDefault();
+      items[Math.max(0, Math.min(items.length - 1, index))]?.focus();
+    };
+    if (e.key === "ArrowDown") focus(at + 1);
+    else if (e.key === "ArrowUp") {
+      if (at <= 0) {
+        e.preventDefault();
+        search.current?.focus();
+      } else focus(at - 1);
+    } else if (e.key === "Home") focus(0);
+    else if (e.key === "End") focus(items.length - 1);
+    else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      const target = document.activeElement as HTMLElement | null;
+      const fold = target?.dataset.fold;
+      if (fold) {
+        e.preventDefault();
+        toggleFold(fold, e.key === "ArrowRight");
+        return;
+      }
+      const parent = target?.dataset.inFold;
+      if (parent && e.key === "ArrowLeft") {
+        e.preventDefault();
+        list.current?.querySelector<HTMLElement>(`[data-fold="${CSS.escape(parent)}"]`)?.focus();
+      }
+    }
+  };
+
+  const renderTask = (task: PickerTask, kind: TaskKind, inFold?: string) => {
+    const active = task.threadId === threadId;
+    const readable = readableTaskTitle(task.title);
+    const name = readable.text;
+    const at = taskSortTime(task, sort);
+    const moment = [
+      task.lastActivityAt !== undefined ? `Last message ${formatTaskMoment(task.lastActivityAt, clock)}` : null,
+      `Created ${formatTaskMoment(task.createdAt, clock)}`,
+    ].filter(Boolean).join(" · ");
+    const badge = readable.via === "delegation" ? "Delegated" : readable.via === "message" ? "Message" : inFold ? null : KIND_BADGE[kind];
+    const status = [task.busy ? "Working" : null, task.unread ? "Unread" : null].filter(Boolean).map((part) => ` · ${part}`).join("");
+    const tokens = formatTaskTokenLabel(task.usage, locale);
+    return (
+      <div
+        key={task.threadId}
+        className={cn("group flex items-center gap-2 py-2 pr-2.5", inFold ? "pl-6" : "pl-2.5", active ? "bg-raised/60" : "hover:bg-raised/40")}
+      >
+        <Check size={13} className={cn("shrink-0", active ? "text-accent" : "opacity-0")} />
+        {renaming === task.threadId ? (
+          <input
+            autoFocus
+            value={draft}
+            maxLength={80}
+            aria-label="Rename task"
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onBlur={() => commitRename(task.threadId, true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                e.stopPropagation();
+                commitRename(task.threadId, true);
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                commitRename(task.threadId, false);
+              }
+            }}
+            className="min-w-0 flex-1 rounded bg-inset px-1.5 py-0.5 text-[13px] text-ink focus:outline-none"
+          />
+        ) : (
+          <button
+            type="button"
+            data-task-nav=""
+            data-in-fold={inFold}
+            aria-current={active ? "true" : undefined}
+            onClick={(e) => {
+              if (taskPickerPointerIntent("click", e.detail) !== "select") return;
+              if (!active) onSwitch(task.threadId);
+              queueDismiss();
+            }}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              startRename(task);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              startRename(task);
+            }}
+            className="min-w-0 flex-1 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            title={TASK_RENAME_HINT}
+          >
+            <div className="truncate text-[13px] text-ink">{name}</div>
+            <div className="flex min-w-0 items-center gap-1 text-[11px] text-ink-secondary">
+              {badge && (
+                <span className="shrink-0 rounded border border-hairline/60 px-1 text-[10px] leading-[14px]">{badge}</span>
+              )}
+              <span className="min-w-0 truncate">
+                <time dateTime={new Date(at).toISOString()} title={moment}>{formatTaskWhen(at, nowAt, clock)}</time>
+                {status}
+                {tokens && <span title={tokens.detail}>{` · ${tokens.label}`}</span>}
+              </span>
+            </div>
+          </button>
+        )}
+        {renaming !== task.threadId && (
+          <button
+            type="button"
+            onClick={() => startRename(task)}
+            aria-label={`Rename ${name}`}
+            title="Rename this task"
+            className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
+        {onTogglePin && renaming !== task.threadId && (
+          <button
+            type="button"
+            onClick={() => {
+              clearDismiss();
+              onTogglePin(task.threadId, !task.pinned);
+            }}
+            aria-label={task.pinned ? `Unpin ${name}` : `Pin ${name}`}
+            aria-pressed={Boolean(task.pinned)}
+            title={task.pinned ? "Unpin this task" : "Pin this task to the top"}
+            className={cn(
+              "rounded p-1 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
+              task.pinned ? "text-accent" : "text-ink-secondary opacity-0",
+            )}
+          >
+            <Pin size={13} className={task.pinned ? "fill-current" : undefined} />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onDelete(task.threadId)}
+          disabled={Boolean(task.busy)||(busy && active)}
+          aria-label="Delete task"
+          title="Delete this task and its conversation"
+          className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-20"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="relative" ref={ref}>
@@ -223,9 +453,11 @@ function ConversationTaskPicker({
         onClick={() => {
           if (open) closeMenu();
           else {
-            const right = ref.current?.getBoundingClientRect().right ?? 300;
-            const width = Math.min(300, window.innerWidth - 16);
+            const right = ref.current?.getBoundingClientRect().right ?? 320;
+            const width = Math.min(320, window.innerWidth - 16);
             setMenuOffset(Math.max(8, Math.min(right - width, window.innerWidth - width - 8)) - (right - width));
+            const fold = openFoldFor(threadId);
+            if (fold) setExpanded((before) => (before.has(fold) ? before : new Set([...before, fold])));
             setOpen(true);
           }
         }}
@@ -238,18 +470,19 @@ function ConversationTaskPicker({
           COMPACT_BUBBLE_LAST,
         )}
       >
-        <span className="truncate chip-fold:hidden">{current?.title ?? "Task"}</span>
+        <span className="truncate chip-fold:hidden">{current ? readableTaskTitle(current.title).text : "Task"}</span>
         {/* folded: just the count in the bubble — the title rides the tooltip */}
         <span className="shrink-0 tabular-nums opacity-60 chip-fold:opacity-100">{tasks.length}</span>
         <ChevronDown size={12} className="shrink-0 chip-fold:hidden" />
       </button>
 
       {open && (
-        <div style={{ transform: `translateX(${menuOffset}px)` }} className="absolute right-0 top-full z-40 mt-1 w-[300px] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
-          <div className="px-2 pb-1 pt-1.5">
-            <div className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
+        <div style={{ transform: `translateX(${menuOffset}px)` }} className="absolute right-0 top-full z-40 mt-1 w-[320px] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
+          <div className="flex items-center gap-2 px-2 pb-1.5 pt-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
               <Search size={13} className="shrink-0 text-ink-secondary" />
               <input
+                ref={search}
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -263,9 +496,14 @@ function ConversationTaskPicker({
                     else closeMenu();
                     return;
                   }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    list.current?.querySelector<HTMLElement>("[data-task-nav]")?.focus();
+                    return;
+                  }
                   if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                     e.preventDefault();
-                    const first = visible[0];
+                    const first = view.navigable[0];
                     if (!first) return;
                     if (first.threadId !== threadId) onSwitch(first.threadId);
                     closeMenu();
@@ -273,116 +511,113 @@ function ConversationTaskPicker({
                 }}
                 placeholder="Search tasks"
                 aria-label="Search tasks"
-                className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
+                className="w-full min-w-0 bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
               />
             </div>
+            <label className="flex shrink-0 items-center gap-1 text-[11px] text-ink-secondary">
+              <span aria-hidden="true">Sort</span>
+              <select
+                aria-label="Sort tasks"
+                value={sort}
+                onChange={(e) => chooseSort(e.target.value === "created" ? "created" : "activity")}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="rounded bg-transparent py-0.5 text-[11px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+              >
+                {TASK_SORTS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
           </div>
-          <div className="max-h-[320px] overflow-y-auto" role="group" aria-label={looking ? `${visible.length} matching tasks` : "Tasks"}>
-            {visible.length === 0 ? (
-              <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
-                Nothing matches “{looking}”
-              </div>
-            ) : visible.map((task) => {
-              const active = task.threadId === threadId;
-              return (
-                <div
-                  key={task.threadId}
-                  className={cn("group flex items-center gap-2 px-2.5 py-2", active ? "bg-raised/60" : "hover:bg-raised/40")}
+          <div className="px-2 pb-1.5">
+            <div role="group" aria-label="Filter tasks" className="flex flex-wrap gap-1">
+              {TASK_FILTERS.map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  aria-pressed={filter === chip.id && !looking}
+                  title={looking ? "Search looks at every task; choosing a filter clears it" : undefined}
+                  onClick={() => {
+                    clearDismiss();
+                    setFilter(chip.id);
+                    setQuery("");
+                  }}
+                  className={cn(
+                    "rounded-full border px-1.5 py-0.5 text-[11px] leading-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
+                    filter === chip.id && !looking
+                      ? "border-accent/60 bg-accent/15 text-ink"
+                      : "border-hairline/50 text-ink-secondary hover:bg-raised hover:text-ink",
+                  )}
                 >
-                  <Check size={13} className={cn("shrink-0", active ? "text-accent" : "opacity-0")} />
-                  {renaming === task.threadId ? (
-                    <input
-                      autoFocus
-                      value={draft}
-                      maxLength={80}
-                      aria-label="Rename task"
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onBlur={() => commitRename(task.threadId, true)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          commitRename(task.threadId, true);
-                        }
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          commitRename(task.threadId, false);
-                        }
-                      }}
-                      className="min-w-0 flex-1 rounded bg-inset px-1.5 py-0.5 text-[13px] text-ink focus:outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        if (taskPickerPointerIntent("click", e.detail) !== "select") return;
-                        if (!active) onSwitch(task.threadId);
-                        queueDismiss();
-                      }}
-                      onDoubleClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        startRename(task);
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        startRename(task);
-                      }}
-                      className="min-w-0 flex-1 text-left"
-                      title={TASK_RENAME_HINT}
-                    >
-                      <div className="truncate text-[13px] text-ink">{task.title}</div>
-                      <div className="text-[11px] text-ink-secondary">
-                        {formatTime(task.createdAt)}
-                        {task.busy?" · Working":""}{task.unread?" · Unread":""}
-                        <TaskUsage usage={task.usage} />
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div
+            ref={list}
+            onKeyDown={navigate}
+            className="max-h-[320px] overflow-y-auto overflow-x-hidden border-t border-hairline/40"
+            role="group"
+            aria-label={looking ? `${view.navigable.length} matching ${view.navigable.length === 1 ? "task" : "tasks"}` : "Tasks"}
+          >
+            {view.sections.length === 0 ? (
+              <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
+                {looking ? `Nothing matches “${looking}”` : filter === "all" ? "No tasks yet" : "No tasks in this view"}
+              </div>
+            ) : view.sections.map((section) => {
+              const headerId = `${baseId}-${section.key}`;
+              return (
+                <div key={section.key} role="group" aria-labelledby={headerId}>
+                  <div
+                    id={headerId}
+                    className="sticky top-0 z-10 bg-card px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-ink-secondary"
+                  >{section.label}</div>
+                  {section.entries.map((entry) => {
+                    if (entry.type === "task") return renderTask(entry.task, entry.kind);
+                    const runsId = `${baseId}-runs-${entry.id}`;
+                    const holdsActive = entry.runs.some((run) => run.threadId === threadId);
+                    const working = entry.runs.some((run) => run.busy);
+                    const unread = entry.runs.filter((run) => run.unread).length;
+                    const at = taskSortTime(entry.latest, sort);
+                    const summary = [
+                      formatTaskWhen(at, nowAt, clock),
+                      working ? "Working" : null,
+                      unread === 1 ? "Unread" : unread > 1 ? `${unread} unread` : null,
+                    ].filter(Boolean).join(" · ");
+                    return (
+                      <div key={`fold-${entry.id}`}>
+                        <div className={cn("flex items-center gap-2 px-2.5 py-2", holdsActive && !entry.expanded ? "bg-raised/60" : "hover:bg-raised/40")}>
+                          {holdsActive && !entry.expanded
+                            ? <Check size={13} className="shrink-0 text-accent" />
+                            : <ChevronRight size={13} aria-hidden="true" className={cn("shrink-0 text-ink-secondary transition-transform", entry.expanded && "rotate-90")} />}
+                          <button
+                            type="button"
+                            data-task-nav=""
+                            data-fold={entry.id}
+                            aria-expanded={entry.expanded}
+                            aria-controls={entry.expanded ? runsId : undefined}
+                            onClick={() => toggleFold(entry.id)}
+                            className="min-w-0 flex-1 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                            title={entry.expanded ? "Hide the runs" : "Show every run"}
+                          >
+                            <div className="truncate text-[13px] text-ink">{`${entry.name} · ${entry.runs.length} runs`}</div>
+                            <div className="flex min-w-0 items-center gap-1 text-[11px] text-ink-secondary">
+                              <span className="shrink-0 rounded border border-hairline/60 px-1 text-[10px] leading-[14px]">Routine</span>
+                              <span className="min-w-0 truncate">
+                                <time dateTime={new Date(at).toISOString()} title={`Latest run ${formatTaskMoment(at, clock)}`}>{summary}</time>
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                        {entry.expanded && (
+                          <div id={runsId} role="group" aria-label={`${entry.name} runs`}>
+                            {entry.runs.map((run) => renderTask(run, "routine", entry.id))}
+                          </div>
+                        )}
                       </div>
-                    </button>
-                  )}
-                  {renaming !== task.threadId && (
-                    <button
-                      type="button"
-                      onClick={() => startRename(task)}
-                      aria-label={`Rename ${task.title}`}
-                      title="Rename this task"
-                      className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  )}
-                  {onTogglePin && renaming !== task.threadId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearDismiss();
-                        onTogglePin(task.threadId, !task.pinned);
-                      }}
-                      aria-label={task.pinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
-                      aria-pressed={Boolean(task.pinned)}
-                      title={task.pinned ? "Unpin this task" : "Pin this task to the top"}
-                      className={cn(
-                        "rounded p-1 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
-                        task.pinned ? "text-accent" : "text-ink-secondary opacity-0",
-                      )}
-                    >
-                      <Pin size={13} className={task.pinned ? "fill-current" : undefined} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onDelete(task.threadId)}
-                    disabled={Boolean(task.busy)||(busy && active)}
-                    aria-label="Delete task"
-                    title="Delete this task and its conversation"
-                    className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger group-hover:opacity-100 disabled:opacity-20"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -416,9 +651,17 @@ function ConversationTaskPicker({
 }
 
 export function TaskPicker({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  // A detached run's own task; a channel-triggered run shares the channel's
+  // conversation, which is not a routine task.
+  const routines = useMemo(
+    () => routineRunIndex(state.routineRuns, (run) => run.botId === bot.id && run.target !== "room-goal" && run.triggerSource !== "channel"),
+    [state.routineRuns, bot.id],
+  );
+  const routineOf = useMemo(() => (threadId: string) => routines.get(threadId), [routines]);
   return (
     <ConversationTaskPicker
+      routineOf={routineOf}
       threadId={bot.threadId}
       tasks={bot.tasks ?? []}
       busy={false}
@@ -434,9 +677,19 @@ export function TaskPicker({ bot }: { bot: Bot }) {
 /** The same task affordance in a channel. DMs never render it because their
  * transcript is the private bot-to-bot exchange rather than user work. */
 export function GroupTaskPicker({ group }: { group: Group }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  const routines = useMemo(
+    () => routineRunIndex(
+      state.routineRuns,
+      (run) => run.target === "room-goal" && run.groupId === group.id,
+      (run) => run.executionThreadId ?? run.threadId,
+    ),
+    [state.routineRuns, group.id],
+  );
+  const routineOf = useMemo(() => (threadId: string) => routines.get(threadId), [routines]);
   return (
     <ConversationTaskPicker
+      routineOf={routineOf}
       threadId={group.threadId}
       tasks={group.tasks ?? []}
       busy={Boolean(group.working || group.busyBotId)}

@@ -239,6 +239,8 @@ export interface GroupTask {
   threadId: string;
   title: string;
   createdAt: number;
+  /** when the thread last had a message (server-derived); absent = none yet */
+  lastActivityAt?: number;
   pinnedCwd?: string | null;
   pinnedMessageId?: string;
 }
@@ -256,6 +258,8 @@ export interface Task {
   threadId: string;
   title: string;
   createdAt: number;
+  /** when the thread last had a message (server-derived); absent = none yet */
+  lastActivityAt?: number;
   modelSelection?: ModelSelection;
   autoApprove?: boolean;
   /** Full access for this task (only while autoApprove is on) */
