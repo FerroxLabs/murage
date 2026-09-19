@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const macAdmission = vi.hoisted(() => vi.fn());
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
-import { agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
+import { UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
@@ -177,5 +177,26 @@ describe("owned engine process commands", () => {
     expect(readFileSync(receipt, "utf8")).toBe("--session\nowned-session\nclose\n");
     writeFileSync(binary, "#!/bin/sh\necho agent-browser 0.1.0\n", { mode: 0o700 });
     await expect(verifyAgentBrowserBinary(binary, { PATH: "/bin" })).rejects.toThrow(/0.36.0/u);
+  });
+});
+
+describe("browser prompt for a protected profile", () => {
+  it("is the unchanged browser prompt while the profile is not locked", () => {
+    expect(unifiedBrowserSystemPrompt(null)).toBe(UNIFIED_BROWSER_SYSTEM_PROMPT);
+  });
+  it("says the owner's lock is the owner's to clear, and forbids routing around it", () => {
+    const text = unifiedBrowserSystemPrompt("owner-input");
+    expect(text.startsWith(UNIFIED_BROWSER_SYSTEM_PROMPT)).toBe(true);
+    expect(text).toContain("Your browser is locked: the owner typed or clicked in its page");
+    expect(text).toContain("Take control and then Reopen blank page");
+    expect(text).not.toContain("agent_browser_open with a different address");
+    expect(text).toContain("never use another browser, a browser plugin, or run the browser program yourself instead");
+  });
+  it("tells a bot on a sensitive page it may leave it, and still forbids routing around it", () => {
+    const text = unifiedBrowserSystemPrompt("sensitive-page");
+    expect(text.startsWith(UNIFIED_BROWSER_SYSTEM_PROMPT)).toBe(true);
+    expect(text).toContain("Your browser is locked: its page has a password, one-time-code or payment field, an embedded frame");
+    expect(text).toContain("Opening a different address with agent_browser_open clears the lock");
+    expect(text).toContain("Never use another browser, a browser plugin, or run the browser program yourself instead");
   });
 });

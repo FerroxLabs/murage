@@ -151,7 +151,8 @@ import * as composio from "./composio.ts";
 import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
-import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
+import { unifiedBrowserSystemPrompt, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { readUserChromeEndpoint, USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
@@ -880,6 +881,12 @@ function unifiedBrowserKey(bot: BotRecord): string | null {
 function unifiedBrowserHeld(bot: BotRecord): boolean {
   const key = unifiedBrowserKey(bot); if (!key) return false;
   try { return unifiedBrowser.status(key).held; } catch { return false; }
+}
+/** Why the browser bound to this turn is protected, read when the turn's
+ * prompt is built, or null when it is not (or no browser is bound). */
+function unifiedBrowserProtection(threadId: string): BrowserProtection | null {
+  const entry = unifiedBrowserThreads.get(threadId); if (!entry) return null;
+  try { const status = unifiedBrowser.status(entry.profileKey); return status.protectedDocument ? status.protectedReason ?? "owner-input" : null; } catch { return null; }
 }
 async function forgetGuestBrowser(botId: string) {
   const key = guestBrowserBindings.get(botId); if (!key) return;
@@ -5090,6 +5097,7 @@ async function startTurn(
         // cannot make.
         imageProvider: cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0,
         canAskOwner: humanIsOwner && opts?.automationSource === undefined,
+        browserLock: integrations.browser ? unifiedBrowserProtection(threadId) ?? undefined : undefined,
       }));
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
@@ -5145,7 +5153,7 @@ async function startTurn(
           // its other reader (package-export.ts) merely round-trips the
           // field back out into a blueprint.
           composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-          (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
+          (integrations.browser ? unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)) : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           credentialPrompt +
           imagePrompt +
@@ -6389,7 +6397,7 @@ async function runGroupMemberTurn(
     // What the profile said this assistant's job needs. A packaged bot does
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-    (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
+    (integrations.browser ? unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)) : "") +
     (workspace ? pinnedProcedures.importedPrompt : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, pinnedProcedures.playbooks);
@@ -9346,7 +9354,11 @@ const server = createServer(async (req, res) => {
           && store.bot(entry.botId)?.browserProfile === entry.profile;
         if (!authorized()) return json(res, 403, { error: "browser turn is no longer authorized" });
         const body = await readBody(req); requireActiveInternal();
-        const result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized);
+        let result: unknown;
+        try { result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized); }
+        // Murage's own refusal carries its code so the proxy can hand the
+        // bot the reason; any other error keeps the generic path.
+        catch (error) { if (isBrowserRefusal(error)) return json(res, error.status, { error: error.message, code: error.code }); throw error; }
         res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
       if (path === "/api/internal/headless-browser") {

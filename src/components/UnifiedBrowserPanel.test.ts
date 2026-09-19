@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { browserChoicePatch, MY_CHROME, MyChromeConsent } from "./UnifiedBrowserPanel";
+import { browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
 
 describe("Use my Chrome choice", () => {
   it("asks before attaching, and changes nothing until confirmed", () => {
@@ -23,3 +23,27 @@ describe("Use my Chrome choice", () => {
     expect(html).toContain(">Cancel</button>");
   });
 });
+
+describe("a locked browser page, told to the owner", () => {
+  const render = (reason: "owner-input" | "sensitive-page" | null | undefined, held = false) =>
+    renderToStaticMarkup(createElement(ProtectedBrowserNotice, { botName: "Petra", reason, held, pending: false, onReopen: () => {} }));
+  it("says the owner's typing locked it and how to give the bot its browser back", () => {
+    const html = render("owner-input");
+    expect(html).toContain("Petra can&#x27;t use this page because you typed or clicked in it.");
+    expect(html).toContain("Take control, then reopen a blank page to give Petra its browser back.");
+    expect(html).not.toContain("protected interaction");
+  });
+  it("names the sensitive page as the cause and that the bot can leave it itself", () => {
+    const html = render("sensitive-page");
+    expect(html).toContain("Petra can&#x27;t use this page because it has a password, code or card field, an embedded frame, or content Murage can&#x27;t check.");
+    expect(html).toContain("Petra can open a different page itself");
+  });
+  it("reads a lock with no recorded cause as the owner's", () => {
+    expect(render(undefined)).toContain("because you typed or clicked in it");
+  });
+  it("offers Reopen blank page only once the owner holds control", () => {
+    expect(render("owner-input", false)).toMatch(/<button disabled=""[^>]*>.*Reopen blank page<\/button>/);
+    expect(render("owner-input", true)).not.toMatch(/<button disabled=""/);
+  });
+});
+
