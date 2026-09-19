@@ -62,7 +62,10 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
       setPreview(null);
     } catch (cause) {
       setPreview(null); setAcknowledged(false);
-      setError((cause as { status?: number }).status === 409
+      const refusal = cause as { status?: number; message?: string };
+      setError(refusal.status === 409 && /already has bots or groups/.test(refusal.message ?? "")
+        ? refusal.message!
+        : refusal.status === 409
         ? "This review changed or was already imported. Check your workspace, then review the profile again."
         : "Could not confirm the import. Check your workspace, then review again before retrying.");
     } finally { gate.current = false; setBusy(null); }

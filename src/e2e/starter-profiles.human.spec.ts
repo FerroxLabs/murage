@@ -42,7 +42,7 @@ const profiles = [
 ];
 const importedBot = { id: "new-bot", threadId: "new-thread", name: "Planner", chiefOfStaff: false, composio: false, computer: "off", browser: false };
 const draftId = "bot:new-bot:new-thread";
-async function fixture(page: Page, options: { stale?: boolean; fail?: boolean } = {}) {
+async function fixture(page: Page, options: { stale?: boolean; fail?: boolean; taken?: boolean } = {}) {
   const requests: any[] = [];
   let stale = options.stale ?? false;
   await page.route("**/api/starter-profiles", route => {
@@ -50,6 +50,7 @@ async function fixture(page: Page, options: { stale?: boolean; fail?: boolean } 
     if (body.action === "catalog") return route.fulfill({ json: { profiles } });
     if (body.action === "preview") return route.fulfill({ json: { archiveSha256: "archive-sha", reviewHash: "review-hash", summary: { name: "Personal and home", agents: 2, routines: body.selection.routines.length }, missingDependencies: [], scan: { blocked: false, reviewRequired: false, findings: [] } } });
     if (stale) { stale = false; return route.fulfill({ status: 409, json: { error: "Stale review" } }); }
+    if (options.taken) return route.fulfill({ status: 409, json: { error: "This workspace already has bots or groups. Continue from your existing workspace or add a starter from Settings." } });
     if (options.fail) return route.fulfill({ status: 503, json: { error: "Failed import" } });
     return route.fulfill({ json: { bots: [importedBot], groups: [], routines: [] } });
   });
@@ -60,6 +61,16 @@ async function chooseAndReview(page: Page) {
   await page.getByRole("button", { name: "Review profile", exact: true }).click();
   await expect(page.getByRole("button", { name: "Import starter profile" })).toBeEnabled();
 }
+
+test("a workspace that is no longer new says so, in the server's words", async ({ page }) => {
+  await fixture(page, { taken: true });
+  await page.goto(origin + "/__starters");
+  await page.getByRole("button", { name: /^Personal and home/ }).click();
+  await page.getByRole("button", { name: "Review profile", exact: true }).click();
+  await page.getByRole("button", { name: "Import starter profile" }).click();
+  await expect(page.getByRole("alert")).toContainText("This workspace already has bots or groups.");
+  await expect(page.getByRole("alert")).not.toContainText("This review changed");
+});
 
 test("three starters require selection and fresh review, import inert records, then prepare a draft without sending", async ({ page }) => {
   const requests = await fixture(page, { stale: true });

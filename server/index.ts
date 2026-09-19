@@ -407,6 +407,7 @@ import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "
 import { scanBotPackageContents } from "./bot-package-scan.ts";
 import { previewBotPackageImport, importBotPackageArchive, previewBotPackageContents, importBotPackageContents, packageImportSelectionHash } from "./bot-package-import.ts";
 import { listStarterProfiles, starterProfileContents, STARTER_PROFILE_IDS } from "./starter-profiles.ts";
+import { firstRunImportAllowed } from "../shared/seed-workspace.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, SearchError } from "./web-search.ts";
@@ -11070,7 +11071,9 @@ const server = createServer(async (req, res) => {
       if (body.action !== "import" || typeof body.archiveSha256 !== "string" || typeof body.reviewHash !== "string") return json(res, 400, { error: "Reviewed archive hash is required" });
       const selectionHash = packageImportSelectionHash(body.selection);
       const refuseRepeatedImport = () => {
-        if (starter && body.firstRun === true && (store.bots.length > 0 || store.groups.length > 0)) {
+        // A new workspace holds one seeded bot, untouched; the welcome screen
+        // counts that as empty, so this check must too.
+        if (starter && body.firstRun === true && !firstRunImportAllowed({ bots: store.bots, groups: store.groups }, threadId => store.messagesFor(threadId))) {
           throw Object.assign(new Error("This workspace already has bots or groups. Continue from your existing workspace or add a starter from Settings."), { status: 409 });
         }
         if (store.bots.some(bot => bot.packageImportReceipt?.archiveSha256 === body.archiveSha256
