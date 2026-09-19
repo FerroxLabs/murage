@@ -22,17 +22,17 @@ test.beforeAll(async()=>{
 test.afterAll(async()=>{try{await vite?.close();}finally{await fixture?.close();}if(fixture)expect(existsSync(fixture.info.dataDir)).toBe(false);});
 test.beforeEach(async({page})=>{await page.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());});
 
-test("seeded first entry stays chat-led and server restart does not create another bot",async({page},info)=>{
+test("a fresh install opens on the welcome screen despite the seeded bot, and a server restart does not create another bot",async({page},info)=>{
   expect(seeded.chiefOfStaff).not.toBe(true);
   await page.addInitScript(()=>{localStorage.removeItem("murage-email-gate");localStorage.setItem("murage-flux-invite-dismissed","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
-  await expect(page.getByRole("textbox",{name:"Message Fixture Chief",exact:true})).toBeVisible();
-  await expect(page.getByRole("main",{name:"Set up your workspace",exact:true})).toHaveCount(0);await expect(page.getByLabel("Choose your first outcome",{exact:true})).toHaveCount(0);
-  await expect(page.getByTestId("chat-scroll").getByText("What do you actually want me for?",{exact:true})).toBeVisible();
+  // The only thing here is the untouched seeded bot, so this is a first run.
+  // The first load compiles the app in this spec's own Vite server.
+  await expect(page.getByRole("main",{name:"Set up your workspace",exact:true})).toBeVisible({timeout:60_000});await expect(page.getByLabel("Choose your first outcome",{exact:true})).toBeVisible();
   const before=(await api("GET","/api/bots")).bots;await fixture.restart();headers={"x-murage-surface":"desktop","x-murage-surface-secret":(await api("GET","/api/desktop-secret")).secret};
-  await page.reload();await expect(page.getByRole("textbox",{name:"Message Fixture Chief",exact:true})).toBeVisible();
+  await page.reload();await expect(page.getByLabel("Choose your first outcome",{exact:true})).toBeVisible({timeout:60_000});
   const after=(await api("GET","/api/bots")).bots;expect(after.map((bot:any)=>({id:bot.id,threadId:bot.threadId}))).toEqual(before.map((bot:any)=>({id:bot.id,threadId:bot.threadId})));expect(after[0]).toMatchObject({id:seeded.id,threadId:seeded.threadId});
-  expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("seeded-chat-after-restart.png"),fullPage:true});
+  expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("seeded-welcome-after-restart.png"),fullPage:true});
 });
 
 test("companion surface renders profile guidance without desktop installation actions",async({page},info)=>{

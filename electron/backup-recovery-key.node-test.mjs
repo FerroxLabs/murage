@@ -121,7 +121,7 @@ test("the key folder is remembered across launches, and only the folder",async()
     chosen=null;await second.create();assert.equal(suggested.at(-1),path.join(p.safe,"murage-recovery-key-2.txt"));
     const saved=readFileSync(path.join(p.root,"backup-key-folder.json"),"utf8");
     assert.deepEqual(JSON.parse(saved),{version:1,folder:p.safe});assert.equal(saved.includes("AGE-SECRET"),false);
-    assert.equal(lstatSync(path.join(p.root,"backup-key-folder.json")).mode&0o077,0);
+    if(process.platform!=="win32")assert.equal(lstatSync(path.join(p.root,"backup-key-folder.json")).mode&0o077,0);
     // Picking an existing key file in "Choose backup folder and recovery key" remembers its folder too.
     const usb2=path.join(p.root,"usb2");mkdirSync(usb2);second.rememberKeyFile(path.join(usb2,"old-key.txt"));assert.equal(flow().lastFolder(),usb2);
     // A stored value that is not an existing absolute folder is ignored.

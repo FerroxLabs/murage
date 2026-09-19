@@ -19,6 +19,9 @@ test("Telegram envelope becomes a source label while examples and editing stay l
     }
     await route.fulfill({ response, json: data });
   });
+  // The first-run model offer hangs over the top of the transcript, where the
+  // first of these bubbles sits; this spec is about the bubbles.
+  await app.evaluate(() => localStorage.setItem("murage-flux-invite-dismissed", "1"));
   await app.reload();
   const sidebar = await openSidebar(app);
   await sidebar.getByText(FIXTURES.blank.name, { exact: true }).click();

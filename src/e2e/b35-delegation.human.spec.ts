@@ -176,7 +176,9 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   const task = (child.tasks ?? []).find((candidate: any) => candidate.threadId === item.link.threadId);
   expect(item).toMatchObject({ kind: "request", title: "Approval requested", status: "pending", botId: childId, duplicates: 1 });
   expect(threadsOf(child)).toContain(item.link.threadId);
-  expect(item.sourceLabel).toBe([CHILD, task?.title].filter(Boolean).join(" · "));
+  // The Inbox caps a source label at 100 characters (server/inbox.ts), and a
+  // delegated task is titled after what was asked, which can run past that.
+  expect(item.sourceLabel).toBe([CHILD, task?.title].filter(Boolean).join(" · ").slice(0, 100));
   expect(item.link.threadId).not.toBe(chiefThread);
   expect(item.link.threadId).not.toBe((await channel()).threadId);
   const asked = await waitFor("child engine asked once", () => engine("child-asked"), list => list.length === before.asked + 1, 30_000);

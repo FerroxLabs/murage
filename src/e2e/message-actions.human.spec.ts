@@ -102,14 +102,14 @@ async function openSeeded(page: Page, target: "chat" | "channel"): Promise<void>
     await expect(menu).toHaveAttribute("aria-expanded", "true");
   }
   await expect(sidebar).toBeVisible();
-  // Dismiss the first-run offer through its normal control before selecting
-  // a row it can cover on a narrow viewport.
+  await sidebar.getByText(target === "chat" ? FIXTURES.blank.name : ROOM_NAME, { exact: true }).click();
+  // Dismiss the first-run offer through its normal control. It sits beneath
+  // the phone's bot drawer, so it can be reached once the drawer has closed.
   const invite = page.getByRole("complementary", { name: "Let your bots pick the right model" });
   if (await invite.isVisible()) {
     await invite.getByRole("button", { name: "Not now", exact: true }).last().click();
     await expect(invite).toBeHidden();
   }
-  await sidebar.getByText(target === "chat" ? FIXTURES.blank.name : ROOM_NAME, { exact: true }).click();
   await expect(
     page.getByTestId("chat-scroll").getByText("Three calendars", { exact: false }),
   ).toBeVisible();
