@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hook = path.join(root, "build", "linux-after-install.sh");
@@ -44,6 +45,36 @@ it("targets the packaged product directory rather than the upstream brand", () =
   const installRoot = /^  APP_ROOT=(.+)$/m.exec(fs.readFileSync(hook, "utf8"))?.[1];
   expect(productName).toBe("Murage");
   expect(installRoot).toBe(`/opt/${productName}`);
+});
+
+describe("Linux package dependencies", () => {
+  const config = parse(fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8"));
+  // What electron-builder 26 declares for a deb when `depends` is unset.
+  // Setting `deb.depends` replaces this list, so every entry must stay.
+  const electronBuilderDefaults = ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libuuid1", "libsecret-1-0"];
+
+  it("keeps electron-builder's default deb dependencies", () => {
+    const depends = config.deb?.depends ?? electronBuilderDefaults;
+    for (const name of electronBuilderDefaults) expect(depends, name).toContain(name);
+  });
+
+  it("declares the sound and GPU buffer libraries the Electron binary links against", () => {
+    // The binary's NEEDED entries include libasound.so.2 and libgbm.so.1, and
+    // nothing in the default list pulls either in on a minimal Ubuntu 24.04
+    // (asound) or 22.04 (both). Ubuntu 24.04 renamed the ALSA package for the
+    // 64-bit time_t transition, so the alternative keeps 22.04 and Debian 12
+    // resolving too.
+    const depends = config.deb?.depends ?? electronBuilderDefaults;
+    expect(depends).toContain("libasound2t64 | libasound2");
+    expect(depends).toContain("libgbm1");
+  });
+
+  it("builds no Linux package format whose dependencies are left undeclared", () => {
+    const targets = config.linux.target.map((entry) => (typeof entry === "string" ? entry : entry.target));
+    // AppImage bundles nothing from the system package manager; a new rpm or
+    // pacman target needs its own depends list before it ships.
+    for (const target of targets) expect(["AppImage", "deb"], target).toContain(target);
+  });
 });
 
 describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
