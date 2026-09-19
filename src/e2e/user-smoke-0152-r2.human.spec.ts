@@ -435,7 +435,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   const sidebar = await openSidebar(page);
   const before = ((await api("/api/bots?messages=0")).bots as Bot[]).length;
   await sidebar.getByRole("button", { name: "New or share", exact: true }).click();
-  await page.getByRole("button", { name: "Blank Bot", exact: true }).click();
+  await page.getByRole("button", { name: "New Bot", exact: true }).click();
   await expect.poll(async () => ((await api("/api/bots?messages=0")).bots as Bot[]).length).toBe(before + 1);
   const created = ((await api("/api/bots?messages=0")).bots as Array<Bot & { createdAt: number }>).sort((a, b) => b.createdAt - a.createdAt)[0]!;
   const bot: Bot = { id: created.id, threadId: created.threadId, name: created.name };

@@ -78,7 +78,7 @@ describe("moveSidebarBot", () => {
     expect(result).toEqual({ ok: false, error: refusal });
   });
 
-  it("moves a member back to Bots with the same PATCH the Move to section menu sends", async () => {
+  it("moves a member back to Bots with the same PATCH the Move to team… menu sends", async () => {
     const moved = { ...member, section: undefined };
     const request = vi.fn().mockResolvedValue({ bot: moved });
 

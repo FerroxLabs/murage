@@ -50,7 +50,7 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
   await expect(page.getByRole("button",{name:"Open Fixture Chief's profile",exact:true}).first()).toBeVisible();
   const beforeRoster=(await api("GET","/api/bots")).bots;
-  await page.getByRole("button",{name:"New or share",exact:true}).click();await page.getByRole("button",{name:"Blank Bot",exact:true}).click();
+  await page.getByRole("button",{name:"New or share",exact:true}).click();await page.getByRole("button",{name:"New Bot",exact:true}).click();
   await expect.poll(async()=>(await api("GET","/api/bots")).bots.length).toBe(beforeRoster.length+1);
   const target=(await api("GET","/api/bots")).bots.find((bot:any)=>!beforeRoster.some((old:any)=>old.id===bot.id));
   await api("PATCH",`/api/bots/${target.id}`,{name:"Tango",computer:"off",browser:false,composio:false});

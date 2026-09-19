@@ -436,7 +436,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Bots and tasks",
     "where": "Murage docs → Features → Bots and tasks",
     "url": "https://murage.app/docs/features/bots-and-tasks#rooms-and-teams",
-    "text": "Rooms let multiple bots and people share context. Use a room when several specialists need the same brief or should hand work to one another. A chief-of-staff pattern works well: one bot receives the request, delegates focused tasks, and summarizes the result."
+    "text": "Rooms let multiple bots and people share context. Use a room when several specialists need the same brief or should hand work to one another. A chief-of-staff pattern works well: one bot receives the request, delegates focused tasks, and summarizes the result.\n\nA team is a group of bots that work together under one heading in the sidebar. To make one, press + in the sidebar and choose New Team: name it, tick its bots, and optionally pick a lead and write instructions that every bot on the team receives. To move a bot later, open its ⋯ menu and choose Move to team…."
   },
   {
     "id": "features/bots-and-tasks#delegation",
