@@ -27,6 +27,15 @@ export function ProtectedBrowserNotice({ botName, reason, held, pending, onReope
     : `${botName} can't use this page because you typed or clicked in it. Take control, then reopen a blank page to give ${botName} its browser back.`;
   return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{why}<button disabled={!held || pending} onClick={onReopen} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>;
 }
+/** The panel's alerts. A refused browser choice ("only one bot at a time")
+ * is the person's answer and comes first, on its own: a connection problem
+ * (a timed-out engine) used to replace it in the one alert box. */
+export function BrowserPanelAlerts({ refusal, problem }: { refusal: string; problem: string }) {
+  return <>
+    {refusal && <div role="alert" className="rounded-lg border border-danger/30 p-2 text-xs text-danger">{refusal}</div>}
+    {problem && <div role="alert" className="rounded-lg border border-danger/30 p-2 text-xs text-danger">{problem}</div>}
+  </>;
+}
 export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void }) {
   const { state, dispatch } = useStore();
   const [status, setStatus] = useState<Status | null>(null);
@@ -35,6 +44,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   const [pageText, setPageText] = useState("");
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
+  const [refusal, setRefusal] = useState("");
   const [pending, setPending] = useState(false);
   const [confirmMyChrome, setConfirmMyChrome] = useState(false);
   const current = useRef<Status | null>(null);
@@ -49,7 +59,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   };
   useEffect(() => {
     let alive = true; const identity = ++epoch.current;
-    current.current = null; setStatus(null); setFrame(null); setAddress(""); setError(""); setConnectionError("");
+    current.current = null; setStatus(null); setFrame(null); setAddress(""); setError(""); setConnectionError(""); setRefusal("");
     let timer: ReturnType<typeof setTimeout>;
     let lastStatus = 0;
     const poll = async () => {
@@ -74,8 +84,11 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
     return () => { alive = false; epoch.current++; clearTimeout(timer); };
   }, [base, bot.browserProfile, bot.useMyChrome]);
   const chooseBrowser = async (body: Record<string, unknown>) => {
+    setRefusal("");
     try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", bot: result.bot }); setConfirmMyChrome(false); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Profile change failed"); }
+    // Refused: close the confirmation (the picker falls back to the saved
+    // choice) and say why where nothing else can cover it.
+    catch (cause) { setConfirmMyChrome(false); setRefusal(cause instanceof Error ? cause.message : "Profile change failed"); }
   };
   const action = async (name: string, extra: Record<string, unknown> = {}) => {
     const identity = epoch.current; setPending(true); setError("");
@@ -118,6 +131,6 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
     {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true })} onCancel={() => setConfirmMyChrome(false)} />}
     {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} can see your open tabs.</p>}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
-    {(connectionError || error) && <div role="alert" className="rounded-lg border border-danger/30 p-2 text-xs text-danger">{connectionError || error}</div>}
+    <BrowserPanelAlerts refusal={refusal} problem={connectionError || error} />
   </div>;
 }

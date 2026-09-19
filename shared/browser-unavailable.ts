@@ -6,6 +6,10 @@
 // Tool calls off, and never an error card (no Retry, no Provider settings).
 export const BROWSER_UNAVAILABLE_PREFIX = "browser unavailable:";
 
+/** The reason a "Use my Chrome" bot's turn records when the owner's Chrome
+ * is closed or its remote debugging is off (server/user-chrome.ts). */
+export const USER_CHROME_UNREACHABLE_REASON = "your Chrome is not reachable";
+
 /** The activity tool name for a turn that ran without its browser. */
 export function browserUnavailableActivityName(reason: string): string {
   return `${BROWSER_UNAVAILABLE_PREFIX} ${reason.trim() || "the browser engine did not start"}`;
@@ -19,9 +23,25 @@ export function browserUnavailableReason(name: string | undefined | null): strin
   return reason || undefined;
 }
 
-/** "Browser unavailable this turn — <reason>" for surfaces without a renderer
- * locale (the Markdown export, the task timeline). */
+/** Which plain-words sentence a reason gets: the owner's Chrome was not
+ * reachable, the engine did not start in time, or it did not start at all. */
+export type BrowserUnavailableKind = "user-chrome" | "timed-out" | "failed";
+export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
+  if (reason === USER_CHROME_UNREACHABLE_REASON) return "user-chrome";
+  return /timed out|timeout/i.test(reason) ? "timed-out" : "failed";
+}
+
+/** The English sentences, mirrored by the renderer's locale catalog
+ * (browserUnavailable.userChrome / .timedOut / .failed). */
+export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string> = {
+  "user-chrome": "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.",
+  "timed-out": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
+  failed: "The browser couldn't start, so this turn ran without it. It'll try again next turn.",
+};
+
+/** The plain-words note for surfaces without a renderer locale (the Markdown
+ * export, the task timeline). */
 export function browserUnavailableDisplayName(name: string | undefined | null): string | undefined {
   const reason = browserUnavailableReason(name);
-  return reason ? `Browser unavailable this turn — ${reason}` : undefined;
+  return reason ? BROWSER_UNAVAILABLE_SUMMARY[browserUnavailableKind(reason)] : undefined;
 }

@@ -25,3 +25,23 @@ export function StoppedRow({ reason }: { reason: string }) {
     </div>
   );
 }
+
+/** A stop the person made while a desktop action was already running on
+ * their screen (server/host-computer-broker.ts withdrew it). The action may
+ * still have finished, so the line says to look before retrying. */
+export function StoppedMidActionRow() {
+  return (
+    <div className="flex justify-start">
+      <div
+        role="status"
+        data-testid="stopped-mid-action-row"
+        className="flex min-w-0 max-w-full items-start gap-2 rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary"
+      >
+        <span className="mt-[4px] shrink-0" aria-hidden="true">
+          <Square size={11} className="fill-current opacity-70" />
+        </span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{t("hostStop.midDesktopAction")}</span>
+      </div>
+    </div>
+  );
+}

@@ -64,6 +64,9 @@ export function ApprovalCard({
   const skillAction = card.skillRequest?.action;
   const routineSettledLabel = routineAction ? ROUTINE_SETTLED_LABEL[routineAction] : undefined;
   const skillSettledLabel = skillAction ? SKILL_SETTLED_LABEL[skillAction] : undefined;
+  // The one-time "use this computer" question (server/host-computer-consent.ts)
+  // is not a tool call: it reads as a sentence with a plain explanation.
+  const isHostConsent = card.tool === "local_computer_consent";
   const displayTool = isRoutineRequest
     ? routineAction === "create" ? "schedule_routine" : "manage_routine"
     : isSkillRequest
@@ -79,20 +82,25 @@ export function ApprovalCard({
     >
       <div className="flex items-baseline justify-between gap-3">
         <div className="text-[15px] font-semibold text-ink">
-          {bot ? `${bot.name} wants to ` : "Wants to "}
-          {toolLabel(displayTool)}
+          {isHostConsent
+            ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
+            : <>{bot ? `${bot.name} wants to ` : "Wants to "}{toolLabel(displayTool)}</>}
         </div>
-        {displayTool && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
+        {displayTool && !isHostConsent && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>
 
       {/* what, exactly */}
-      <pre
-        tabIndex={0}
-        aria-label={isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
-        className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
-      >
-        {card.subtitle}
-      </pre>
+      {isHostConsent ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{card.subtitle}</p>
+      ) : (
+        <pre
+          tabIndex={0}
+          aria-label={isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
+          className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
+        >
+          {card.subtitle}
+        </pre>
+      )}
 
       {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
 
@@ -118,7 +126,7 @@ export function ApprovalCard({
           </>
         ) : settled ? (
           <>
-            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : "Denied"}
+            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : "Denied"}
           </>
         ) : (
           <>

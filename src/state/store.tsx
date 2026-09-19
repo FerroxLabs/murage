@@ -45,6 +45,7 @@ import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
+import { fullAccessRefusalMessage } from "@/lib/permission-mode";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
@@ -1933,8 +1934,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onAuthoritative: (bot, optimisticOverlay) => {
           rawDispatch({ type: "botPatched", bot: { ...bot, ...optimisticOverlay } });
         },
-        onError: (error) => {
-          rawDispatch({ type: "error", message: error.message });
+        onError: (error, rejected) => {
+          rawDispatch({ type: "error", message: fullAccessRefusalMessage(rejected, error) ?? error.message });
           setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
         },
       }),
@@ -2396,7 +2397,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             : { method: "POST" }).catch(showError);
           break;
         case "updateTask":
-          void saveThread(action.botId,action.threadId,action.patch).catch(showError);
+          void saveThread(action.botId,action.threadId,action.patch).catch((error: unknown) => showError(fullAccessRefusalMessage(action.patch, error) ?? error));
           break;
         case "updateBot": {
           if (botBeforeUpdate) {

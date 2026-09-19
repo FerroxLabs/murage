@@ -77,7 +77,9 @@ export interface BotPatchQueueOptions {
   ) => Promise<BotAnnouncement>;
   reconcile: (botId: string, signal: AbortSignal) => Promise<BotAnnouncement | null>;
   onAuthoritative: (bot: BotAnnouncement, optimisticOverlay: BotStateOverlay) => void;
-  onError: (error: Error) => void;
+  /** `rejected` is the patch the server refused, so the caller can say
+   * what was refused in plain words. */
+  onError: (error: Error, rejected: BotUpdatePatch) => void;
 }
 
 export interface BotPatchQueue {
@@ -101,6 +103,17 @@ const stateOverlay = (patch: BotUpdatePatch): BotStateOverlay => {
   const { acknowledgeLocalAuto: _ack, acknowledgeFullAccess: _fullAck, chiefTier: _tier, settingsScope:_scope, ...fields } = patch;
   const { computer, ...rest } = fields;
   return { ...rest, ...(Object.hasOwn(fields, "computer") ? { computer: computer ?? undefined } : {}) };
+};
+
+/** The re-read bot after a refusal, with every refused field it does not
+ * carry spelled out as `undefined`. The server omits an unset field (a bot
+ * that never had Full access has no `fullAccess`), and the store folds a bot
+ * over its current record with a spread — so without this the refused
+ * optimistic value survived the rollback and stayed on screen. */
+const withRefusedFieldsCleared = (bot: BotAnnouncement, rejected: BotUpdatePatch): BotAnnouncement => {
+  const cleared: Record<string, undefined> = {};
+  for (const key of Object.keys(stateOverlay(rejected))) if (!Object.hasOwn(bot, key)) cleared[key] = undefined;
+  return { ...bot, ...cleared };
 };
 
 /**
@@ -149,8 +162,8 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
         // Deletion may cancel this lane while the re-read is in flight. Folding
         // that result back into state would resurrect the deleted bot.
         if (disposed || entry.cancelled) return;
-        if (bot) options.onAuthoritative(bot, stateOverlay(entry.pending));
-        options.onError(caught instanceof Error ? caught : new Error(String(caught)));
+        if (bot) options.onAuthoritative(withRefusedFieldsCleared(bot, patch), stateOverlay(entry.pending));
+        options.onError(caught instanceof Error ? caught : new Error(String(caught)), patch);
       }
     } finally {
       entry.controller = null;

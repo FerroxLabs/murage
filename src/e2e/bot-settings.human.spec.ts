@@ -9,9 +9,12 @@ interface Fixture { info: { url: string; dataDir: string }; close(): Promise<voi
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
 let fixture: Fixture, vite: ViteDevServer, origin: string, owner: Record<string, string>;
 const botId = "settings-proof-bot";
+// Never chose an approval level: like every new bot, its record has no
+// autoApprove or fullAccess field at all (the harness omits unset fields).
+const levelBotId = "level-proof-bot";
 test.beforeAll(async () => {
   const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as { launchVerificationServer: Launcher };
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}}]));` });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}},{id:'${levelBotId}',threadId:'level-proof-task',name:'Level proof bot',title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'level-proof-task',title:'Level task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false}]));` });
   try {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     owner = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
@@ -19,8 +22,8 @@ test.beforeAll(async () => {
     vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "settings-vite-cache"), resolve: { alias: { "@": join(root, "src") } },
       server: { host: "127.0.0.1", watch: null, hmr: false, proxy: { "/api": { target: fixture.info.url } } }, plugins: [react(), tailwindcss(), {
         name: "bot-settings-fixture", resolveId(id) { if (id === "/__bot-settings.js") return "\0bot-settings-fixture"; },
-        load(id) { if (id !== "\0bot-settings-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {DesktopCapabilitiesProvider} from '/src/components/DesktopCapabilities.tsx';import {BotSettingsDialog} from '/src/components/BotSettingsDialog.tsx';import {ComputerPanel} from '/src/components/ComputerPanel.tsx';import '/src/styles.css';function Surface(){const {state,dispatch}=useStore();const [open,setOpen]=React.useState(false);const bot=state.bots.find(bot=>bot.id==='${botId}');return React.createElement(React.Fragment,null,React.createElement('button',{disabled:!bot,onClick:()=>setOpen(true)},'Open bot settings'),React.createElement('button',{disabled:!bot,onClick:()=>dispatch({type:'toggleComputer',open:true})},'Open computer'),bot&&(open||state.settingsOpen)&&React.createElement(BotSettingsDialog,{bot,onClose:()=>{setOpen(false);dispatch({type:'toggleSettings',open:false});}}),bot&&state.computerOpen&&React.createElement(ComputerPanel,{bot}));}createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(DesktopCapabilitiesProvider,null,React.createElement(Surface))));`; },
-        configureServer(server) { server.middlewares.use((req, res, next) => { if (req.url !== "/__bot-settings") return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__bot-settings.js"></script>'); }); },
+        load(id) { if (id !== "\0bot-settings-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {DesktopCapabilitiesProvider} from '/src/components/DesktopCapabilities.tsx';import {BotSettingsDialog} from '/src/components/BotSettingsDialog.tsx';import {ComputerPanel} from '/src/components/ComputerPanel.tsx';import '/src/styles.css';function Surface(){const {state,dispatch}=useStore();const [open,setOpen]=React.useState(false);const shown=new URLSearchParams(location.search).get('bot')||'${botId}';const bot=state.bots.find(bot=>bot.id===shown);return React.createElement(React.Fragment,null,React.createElement('button',{disabled:!bot,onClick:()=>setOpen(true)},'Open bot settings'),React.createElement('button',{disabled:!bot,onClick:()=>dispatch({type:'toggleComputer',open:true})},'Open computer'),bot&&(open||state.settingsOpen)&&React.createElement(BotSettingsDialog,{bot,onClose:()=>{setOpen(false);dispatch({type:'toggleSettings',open:false});}}),bot&&state.computerOpen&&React.createElement(ComputerPanel,{bot}));}createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(DesktopCapabilitiesProvider,null,React.createElement(Surface))));`; },
+        configureServer(server) { server.middlewares.use((req, res, next) => { if (req.url?.split("?")[0] !== "/__bot-settings") return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__bot-settings.js"></script>'); }); },
       }] });
     await vite.listen(0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Settings fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
   } catch (error) { await vite?.close(); await fixture.close(); throw error; }
@@ -147,4 +150,42 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   const stored = await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: { id: string; chiefOfStaff?: boolean; autoApprove?: boolean; composio?: boolean }[] };
   expect(stored.bots.find(bot => bot.id === botId)).toMatchObject({ chiefOfStaff: false, autoApprove: false, composio: false });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("a refused Full access snaps back to the saved level and says why; away from the desktop it is not offered", async ({ page, browser }) => {
+  const FULL_ACCESS_DESKTOP_ONLY = "Full access can only be turned on in the Murage desktop app.";
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // The desktop renderer, but a harness that does not accept this request as
+  // the desktop's: it answers Full access with its bare desktop-only 404.
+  await page.route(`**/api/bots/${levelBotId}`, route => route.request().method() === "PATCH" && route.request().postData()?.includes('"fullAccess":true')
+    ? route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not found" }) })
+    : route.continue());
+  await page.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
+  await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+  await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
+  const full = dialog.getByRole("radio", { name: "Full access", exact: true });
+  await full.click();
+  await page.getByRole("button", { name: "Turn on full access", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText(FULL_ACCESS_DESKTOP_ONLY);
+  await expect(dialog.getByRole("radio", { name: "Ask", exact: true })).toBeChecked();
+  await expect(full).not.toBeChecked();
+  await expect(dialog.getByRole("switch", { name: /^Also approve setup requests/ })).toBeDisabled();
+  await expect(dialog.getByRole("switch", { name: /^Also skip approvals/ })).toBeDisabled();
+  const stored = await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: { id: string; fullAccess?: boolean }[] };
+  expect(stored.bots.find(bot => bot.id === levelBotId)?.fullAccess).not.toBe(true);
+
+  // A renderer the harness answers as remote (a phone, the browser door).
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const phone = await context.newPage();
+    await phone.route("**/api/desktop-secret", route => route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
+    await phone.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
+    await phone.getByRole("button", { name: "Open bot settings", exact: true }).click();
+    const remote = phone.getByRole("dialog", { name: "Bot settings", exact: true });
+    await remote.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
+    await expect(remote.getByRole("radio", { name: "Full access", exact: true })).toBeDisabled();
+    await expect(remote.getByRole("radio", { name: "Auto", exact: true })).toBeEnabled();
+    await expect(remote.getByText(FULL_ACCESS_DESKTOP_ONLY, { exact: true })).toBeVisible();
+  } finally { await context.close(); }
 });

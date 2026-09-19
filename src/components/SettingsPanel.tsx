@@ -20,7 +20,7 @@ import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { BotPermissionDefault } from "./BotPermissionDefault";
-import { defaultModeStep, type PermissionMode } from "@/lib/permission-mode";
+import { defaultModeStep, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
@@ -560,17 +560,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
-                Ask me before contacting other bots
+                {PEER_CONTACT_LABEL}
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.approvePeerComms
-                  ? "This bot will stop and ask before it reaches out to another bot."
-                  : "Let this bot talk to teammates on its own, without a confirmation step."}
+                {peerContactHint(bot)}
               </div>
             </div>
             <Switch
               checked={Boolean(bot.approvePeerComms)}
-              aria-label="Ask me before contacting other bots"
+              aria-label={PEER_CONTACT_LABEL}
               disabled={!bot.approvePeerComms && !canCoordinate}
               onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
               title={!bot.approvePeerComms && !canCoordinate ? "This engine cannot contact other bots" : undefined}
@@ -792,6 +790,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <BotPermissionDefault
             bot={bot}
             onThisComputer={bot.computer === "local"}
+            desktop={desktop}
             onChoose={chooseDefaultMode}
             onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
           />
