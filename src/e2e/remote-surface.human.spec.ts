@@ -123,7 +123,7 @@ async function answerSeededWorkspace(page: import("@playwright/test").Page, talk
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();
     const body = await response.json().catch(() => ({}));
-    const seed = { ...(body.bots?.[0] ?? {}), threadId: "seed-thread", title: "", description: "", tasks: [{ threadId: "seed-thread" }] };
+    const seed = { ...body.bots?.[0], threadId: "seed-thread", title: "", description: "", tasks: [{ threadId: "seed-thread" }] };
     await route.fulfill({ response, json: { ...body, bots: [seed], groups: [] } });
   });
   await page.route("**/api/threads/seed-thread/messages?limit=10", async (route) => {
