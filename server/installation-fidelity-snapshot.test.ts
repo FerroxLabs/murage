@@ -28,13 +28,14 @@ it.each(["unknown","symlink"])("refuses incomplete selected coverage: %s",async 
 it("accepts unsaved headless config and consistently snapshots memory projection without restoring authority files",async()=>{
   const f=backupFixture(),indexFile=join(f.data,"memory-index.db");rmSync(join(f.data,"config.json"));
   const index=new DatabaseSync(indexFile);index.exec("PRAGMA journal_mode=WAL;PRAGMA wal_autocheckpoint=0;CREATE TABLE entries(text TEXT);INSERT INTO entries VALUES('committed WAL memory')");
-  for(const name of ["door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm"])writeFileSync(join(f.data,name),"private fixture");
+  // Closing Murage mid skill-index build leaves its temp file and journal behind.
+  for(const name of ["door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm","skill-index.db.1268.ffjn5f.tmp","skill-index.db.1268.ffjn5f.tmp-journal"])writeFileSync(join(f.data,name),"private fixture");
   const before=new Map(["messages.db","messages.db-wal","memory-index.db","memory-index.db-wal"].map(name=>[name,readFileSync(join(f.data,name))]));
   try{await withOfflineInstallation(f.data,async installation=>{
     const stage=await stageInstallationStateWhileOwned(installation,f.parent);
     const inventory=await inventoryFidelity(installation,stage,selection);inventory.assertUnchanged();stage.assertSourceUnchanged();
     expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"config.json",status:"missing"}));expect(existsSync(join(f.data,"config.json"))).toBe(false);
-    for(const name of ["door-identity","folder-trust.json","skill-index.db"])expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
+    for(const name of ["door-identity","folder-trust.json","skill-index.db","skill-index.db.1268.ffjn5f.tmp","skill-index.db.1268.ffjn5f.tmp-journal"])expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
     expect(stage.manifest.files.some(file=>file.path==="memory-index.db")).toBe(false);
     const memory=inventory.sources.find(file=>file.path==="memory-index.db")!;expect(memory).toBeDefined();
     expect(inventory.sources.some(file=>file.path.endsWith("-wal")||file.path.endsWith("-shm"))).toBe(false);
