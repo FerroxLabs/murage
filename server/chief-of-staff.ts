@@ -124,6 +124,11 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): strin
   ].join("\n");
 }
 
+/** A consolidated answer is still the Chief's own voice. It never writes a
+ * teammate's lines, and a message meant for a teammate goes to that teammate. */
+const SPEAK_FOR_YOURSELF =
+  "Speak only as yourself: never write lines as a teammate or answer on a teammate's behalf, and attribute what they actually returned to them. If a message is addressed to a teammate, hand it to them or say it is theirs rather than answering for them.";
+
 /** Dynamic system context for a Chief of Staff.
  * It names the current team on every turn, while list_bots remains the
  * authoritative tool for IDs and live availability at delegation time. */
@@ -143,6 +148,7 @@ export function chiefOfStaffSystemPrompt(
       "An individual assistant is not a team leader: it works alone, has nobody under it, and reports to you directly. Give it its own work yourself, and never ask it to hand work down.",
       "Own the outcome: understand the request, decide what to handle yourself, hand the rest to the right leader or individual assistant, and return one concise consolidated answer.",
       "Do not delegate trivial work merely to appear busy. Never invent a report's progress or result. Normal permission and approval rules still apply.",
+      SPEAK_FOR_YOURSELF,
       delegation,
       "Current workspace:",
       workspaceRoster(chief, bots),
@@ -170,6 +176,7 @@ export function chiefOfStaffSystemPrompt(
     `You are the Chief of Staff for the ${sectionName} section — its team leader. You are the user's primary contact for this section, and the bots listed below are your own team members.`,
     "Own the outcome: understand the request, decide what to handle yourself, coordinate the right specialists when useful, and return one concise consolidated answer.",
     "Do not delegate trivial work merely to appear busy. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
+    SPEAK_FOR_YOURSELF,
     delegation,
     workspaceChief &&
       `@${clip(workspaceChief.name, ROSTER_NAME_MAX)} is the workspace Chief of Staff and is on your roster: report this section's results back to them when they assigned the work.`,

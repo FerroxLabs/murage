@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { database } from "../database.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
-import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
 
@@ -69,8 +69,7 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
   const details=db.prepare("SELECT partition,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id,version);
   if(details?.partition==="identity"){
     const own=db.prepare("SELECT 1 FROM memory_scopes WHERE id=? AND ((kind='bot' AND owner_key=?) OR kind='conversation')").get(row.scope_id,access.botId);
-    const room=db.prepare("SELECT 1 FROM memory_scopes WHERE kind='room' AND id IN (SELECT value FROM json_each(?))").get(JSON.stringify(access.scopeIds));
-    if(!own||room)throw new Error("MEMORY_SCOPE_DENIED");
+    if(!own||accessIncludesRoom(access))throw new Error("MEMORY_SCOPE_DENIED");
   }
   const evidence = db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version) as unknown as MemoryEvidenceHandle[];
   if (!evidence.length && row.assertion !== "owner-statement") throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
@@ -129,7 +128,7 @@ export function memoryHandleRecord(bundle: MemoryBundle, handle: unknown): {id: 
 function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(text),"utf8"); }
 
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. */
-export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy} = {}): Promise<BoundedMemoryBundle> {
+export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; excludeSourceIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy} = {}): Promise<BoundedMemoryBundle> {
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
@@ -138,7 +137,11 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const budget = Math.min(2048,Math.floor(available/10));
   const db = database();
   // Do not prefilter stale pins: losing their evidence is a mandatory dispatch failure.
-  const pinRows = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=1 AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY id,version").all(JSON.stringify(access.scopeIds));
+  // A room member reaches its own bot scope, but never its owner-private
+  // identity partition, pinned or not: that is withheld, not a failed pin.
+  const room = accessIncludesRoom(access);
+  const pinRows = db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND scope_id IN (SELECT value FROM json_each(?))
+    ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
   // More pins than handles cannot fit any budget either; name the real limit.
   if (pinRows.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
   const pinned = pinRows.map(row => {
@@ -161,7 +164,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     AND s.kind='bot' AND s.owner_key=? AND s.id IN (SELECT value FROM json_each(?))
     AND r.kind IN ('continuity-brief','reveal-state')
     ORDER BY CASE r.kind WHEN 'continuity-brief' THEN 0 ELSE 1 END,r.created_at DESC,r.id`).all(access.botId,JSON.stringify(access.scopeIds));
-  for(const row of identityRows){
+  for(const row of room ? [] : identityRows){
     try { add(hydrateMemoryRecord(String(row.id),Number(row.version),access),identity); }
     catch { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
   }
@@ -190,7 +193,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     // solely on this turn's own messages is left out of recall; pins and the
     // thread checkpoint are untouched (a pin is an owner constraint, and the
     // checkpoint is one record summarising the whole thread).
-    const ownSources = ownMessageSources(db,access.threadId,options.excludeMessageIds);
+    // Likewise a notebook the prompt already carries whole (the bot's
+    // MEMORY.md, its team brief) is not recalled again as imported chunks.
+    const ownSources = new Set([...ownMessageSources(db,access.threadId,options.excludeMessageIds),...(options.excludeSourceIds ?? [])]);
     try {
       const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy});
       degradedReason = result.degradedReason ?? degradedReason;

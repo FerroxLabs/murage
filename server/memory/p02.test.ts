@@ -23,8 +23,12 @@ function fixture(thread = "private-a", humanPrincipal?: ReturnType<typeof resolv
 it("separates private, room and team scopes even at deep delegation", () => {
   const f = fixture("room-thread");
   expect(() => assertMemoryAccess(f.access,ensureScope("room","room"))).not.toThrow();
-  expect(() => assertMemoryAccess(f.access,ensureScope("bot","a"))).toThrow("MEMORY_SCOPE_DENIED");
-  expect(() => assertMemoryAccess(f.access,ensureScope("team","alpha"))).toThrow("MEMORY_SCOPE_DENIED");
+  // An owner room member keeps its own bot and team scopes, never a teammate's.
+  expect(() => assertMemoryAccess(f.access,ensureScope("bot","a"))).not.toThrow();
+  expect(() => assertMemoryAccess(f.access,ensureScope("team","alpha"))).not.toThrow();
+  expect(() => assertMemoryAccess(f.access,ensureScope("bot","b"))).toThrow("MEMORY_SCOPE_DENIED");
+  expect(() => assertMemoryAccess(f.access,ensureScope("team","beta"))).toThrow("MEMORY_SCOPE_DENIED");
+  expect(() => assertMemoryAccess(f.access,ensureScope("conversation","private-a"))).toThrow("MEMORY_SCOPE_DENIED");
   expect(() => assertMemoryAccess({...f.access})).toThrow("MEMORY_UNAUTHORIZED");
 });
 it("checks current membership on every read and invalidates generations", () => {

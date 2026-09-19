@@ -174,8 +174,15 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): 
   ]);
   if (!group && foreignThreads.has(threadId)) return [];
   add("conversation",threadId);
-  if (group) add("room",group.id);
-  else {
+  if (group) {
+    add("room",group.id);
+    // A member is the same bot in a room as in a direct chat: when the room's
+    // only human is the owner, it also recalls its OWN bot memory and its
+    // team's memory (adapted from OpenMausBot). A room whose audience is a
+    // channel person keeps the room-only boundary; owner shares still apply
+    // through the person bindings below. Never another member's scopes.
+    if(isWorkspaceOwner(principal)){add("bot",botId); add("team",bot.section?.trim() || "");}
+  } else {
     if(isWorkspaceOwner(principal)){add("bot",botId); add("team",bot.section?.trim() || "");}
     add("preferences","person:"+principal.personId);
     const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row=>String(row.value)));
@@ -186,6 +193,12 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): 
   const subjectType = isWorkspaceOwner(principal) ? (group ? "room" : "bot") : "person", subjectId = isWorkspaceOwner(principal) ? (group?.id ?? botId) : principal.personId;
   for (const row of db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE subject_type=? AND subject_id=? AND state='granted'").all(subjectType,subjectId)) scopes.push(String(row.scope_id));
   return [...new Set(scopes)];
+}
+
+/** True when this access is a room member's. Owner-private identity records
+ * (continuity, canon, reveal state) are never read in a room. */
+export function accessIncludesRoom(access: Pick<MemoryAccess, "scopeIds">): boolean {
+  return Boolean(database().prepare("SELECT 1 FROM memory_scopes WHERE kind='room' AND id IN (SELECT value FROM json_each(?))").get(JSON.stringify(access.scopeIds)));
 }
 
 export function memoryAccess(registry: InternalCapabilities, claim: InternalCapability, roster: () => MemoryRoster): MemoryAccess {

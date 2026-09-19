@@ -23,6 +23,7 @@ import { captureBotReveals, pendingBotRevealJobs } from "./memory/reveal-capture
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
+import { standingContextPrompt, standingContextSourceIds } from "./standing-context.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { hasPendingBotDelegations } from "./delegations.ts";
 import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
@@ -5012,7 +5013,7 @@ async function startTurn(
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
         // The just-appended user message is already captured; keep its own
         // chunk out of this turn's recall (MEMJSON2).
-        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript]};
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript],excludeSourceIds:standingContextSourceIds(bot,humanIsOwner)};
         let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
@@ -5163,6 +5164,9 @@ async function startTurn(
           routinePrompt +
           learnPrompt +
           (privateWorkspace ? pinnedProcedures.importedPrompt : "") +
+          // The team brief and this bot's own MEMORY.md, owner audience only
+          // (standing-context.ts). Stable per bot, so it sits in the prefix.
+          standingContextPrompt(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud" }) +
           // LAST of the stable prefix, deliberately. Everything above depends
           // only on the bot and the workspace; everything below is chosen from
           // THIS turn's text (skillInstructions, packagePlaybooks) or thread
@@ -6344,6 +6348,8 @@ async function runGroupMemberTurn(
           openMurageStatusSystemPrompt(),
         )
       : `Reply as yourself, briefly and conversationally. Use @Name only when intentionally asking that teammate to respond or act; they will see the conversation and respond. To acknowledge or refer to a teammate, use their plain name without @. Do not prefix your reply with another member's @name.`,
+    // Talk to Moss, get Moss: whoever answers speaks only for itself.
+    `You speak only as ${bot.name}. Never write lines as another member or answer on their behalf. If the latest message is addressed to another member, do not answer it for them: say briefly that it is for them, or hand it to them with @Name.`,
     integrations.agents &&
       "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
     integrations.agents &&
@@ -6375,6 +6381,7 @@ async function runGroupMemberTurn(
   // but must not decide the pin: the room's desk is a property of the
   // room, not of whichever member happened to speak first.
   let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
+  const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId));
   let roomSystem =
     system +
     // The same connector paragraph the 1:1 turn gets, from the same builder.
@@ -6398,6 +6405,9 @@ async function runGroupMemberTurn(
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
     (integrations.browser ? unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)) : "") +
+    // The member's own team brief and MEMORY.md, as in its direct chat —
+    // only when the room's human audience is the owner (standing-context.ts).
+    standingContextPrompt(bot, { ownerAudience: roomOwnerAudience, fileTools: Boolean(workspace) }) +
     (workspace ? pinnedProcedures.importedPrompt : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, pinnedProcedures.playbooks);
@@ -6466,7 +6476,7 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens,excludeMessageIds});
+    },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,roomOwnerAudience)});
     const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
     text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -7204,8 +7214,10 @@ function startGroupTurn(
     });
   }
   // Replying to a member's message addresses that member (mentions still win).
-  let responders = roomResponders(text, members, group.defaultResponder, replyTo?.from?.botId);
-  const explicitlyMentionedLead = roomResponders(text, availableMembers, { kind: "mentions" })[0];
+  // A person addressing a member by name ("Moss, can you…") reaches that
+  // member, not the room lead (store.ts addressedMembers).
+  let responders = roomResponders(text, members, group.defaultResponder, replyTo?.from?.botId, { byName: true });
+  const explicitlyMentionedLead = roomResponders(text, availableMembers, { kind: "mentions" }, undefined, { byName: true })[0];
   const goalCoordinator = channelMode === "goal"
     ? requestedGoalCoordinator ?? explicitlyMentionedLead ?? selectGroupGoalCoordinator(availableMembers, group.defaultResponder)
     : null;

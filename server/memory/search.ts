@@ -1,7 +1,7 @@
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { humanMayReadRecord } from "../human-principals.ts";
 import { database } from "../database.ts";
-import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { IndexHit } from "./index.ts";
 import { createHash } from "node:crypto";
 import { MemoryQueryCache } from "./cache.ts";
@@ -42,9 +42,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // Hydration is synchronous: validate each distinct audience once, while
   // retaining the authoritative current record/source check for every hit.
   const checkedScopes=new Set<string>();
+  // Owner-private identity stays in direct turns; a room member's own bot
+  // scope does not carry it into the room (same rule as bundle hydration).
+  const room=accessIncludesRoom(access);
   const hits=combined.map(hit=>{
     const record=database().prepare(`SELECT * FROM memory_records r WHERE id=? AND version=? AND ${options.historical?historical:CURRENT_MEMORY}`).get(hit.id,hit.version);
     if(!record || !humanMayReadRecord(database(),hit.id,hit.version,access.humanPrincipal))return null;
+    if(room && database().prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(hit.id,hit.version))return null;
     const scopeId=String(record.scope_id);
     if(!checkedScopes.has(scopeId)){assertMemoryAccess(access,scopeId);checkedScopes.add(scopeId);}
     // A captured chunk keeps its source's settlement: an unsettled intention is not
