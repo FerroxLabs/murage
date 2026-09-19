@@ -55,6 +55,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
 import { backupSummary, closedJobNotice, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
+import { schedulePhase } from "./backup-schedule-ui";
 import type { RemoteController } from "./BackupRemoteSettings";
 
 const refs = { installationRef: "fixture_install", destinationRef: "fixture_dest", recoveryRef: "fixture_key", destinationLabel: "Fixture backups", recoveryLabel: "Recovery.age" };
@@ -220,5 +221,63 @@ describe("Your backups card", () => {
     expect(confirm).toContain("Murage will close and reopen this window to take the backup."); expect(confirm).toContain(">Continue<");
     const locked = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: false }), r: remote, onRestore: () => {} }));
     expect(locked).toMatch(/disabled=""[^>]*>Back up now</);
+  });
+});
+
+describe("customer findings: plain words and reasons where the control is", () => {
+  const closedBridge = {} as ScheduleController["closedBridge"];
+  // As React writes it into markup: the apostrophe is escaped.
+  const REASON = "Your system didn&#x27;t let Murage register a background job, so backups run only while Murage is open.";
+  const setup = (patch: Partial<Omit<ScheduleController, "status">>) => renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ ...patch, status: off, closedBridge: patch.closedBridge ?? closedBridge }), onSetLimits: () => {} }));
+  const checkboxTag = (html: string) => /<input type="checkbox"[^>]*aria-describedby="[^"]*backup-closed-help[^"]*"[^>]*>/.exec(html)?.[0] ?? "";
+
+  it("says under the closed-app checkbox why it is greyed out when the system refused the job", () => {
+    const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false } });
+    expect(html).toContain(REASON);
+    // Tied to the checkbox, so a screen reader hears it with the control.
+    expect(checkboxTag(html)).toContain("backup-closed-reason");
+    expect(checkboxTag(html)).toContain('disabled=""');
+    expect(html.indexOf(REASON)).toBeLessThan(html.indexOf("Backup limits"));
+  });
+
+  it("says it after a failed setup attempt even while the job can be retried", () => {
+    const html = setup({ closed: { supported: true, state: "staged", closedApp: false }, closedAllowed: true, closedSetupFailed: true });
+    expect(html).toContain(REASON);
+    expect(checkboxTag(html)).not.toContain('disabled=""');
+  });
+
+  it("stays quiet when nothing went wrong, or when another line already explains it", () => {
+    for (const patch of [
+      { closed: { supported: true, state: "unconfigured", closedApp: false } },
+      { closed: { supported: true, state: "installed", closedApp: false }, closedRegistered: true },
+      { closed: { supported: false, state: "unavailable", closedApp: false } },
+      { closed: { supported: true, state: "unavailable", closedApp: false }, closedStale: true },
+    ] as Partial<Omit<ScheduleController, "status">>[]) {
+      const html = setup(patch);
+      expect(html, JSON.stringify(patch)).not.toContain(REASON);
+      expect(checkboxTag(html)).not.toContain("backup-closed-reason");
+    }
+  });
+
+  it("drops the leftover jargon from the Backups copy", () => {
+    const summary = { last: "L", schedule: "S", offsite: "O", attention: [] };
+    const remote = { stale: false, busy: null, refreshNow: () => {} } as unknown as RemoteController;
+    const lastVerified = healthy.schedule!.lastVerified;
+    const card = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: { ...on, lastVerified } }), r: remote, onRestore: () => {} }));
+    expect(card).not.toContain("restore-drill");
+    expect(card).toContain("The last backup was checked on this computer.");
+    expect(schedulePhase("returned")).not.toContain("Backup mode returned");
+    expect(schedulePhase("returned")).toBe("The last backup finished and Murage reopened");
+  });
+
+  it("an expected refusal from the desktop app reads as its own message", () => {
+    for (const [code, text] of [["BACKUP_RECOVERY_KEY_EXISTS", "Choose a new name"], ["BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "outside your backup folder"]] as const) {
+      let caught: unknown;
+      try { recoveryKeyResult({ refused: code }); } catch (error) { caught = error; }
+      expect(caught, code).toBeInstanceOf(Error);
+      expect(recoveryKeyError(caught), code).toContain(text);
+    }
+    // Only a code-shaped refusal is honoured; anything else is a malformed answer.
+    expect(() => recoveryKeyResult({ refused: "PRIVATE path /home/someone" })).toThrow("Invalid recovery key result");
   });
 });

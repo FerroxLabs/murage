@@ -37,7 +37,7 @@ export function schedulePhase(phase: string): string {
   const labels: Record<string, string> = { idle: "No backup in progress", due: "Backup due", "waiting-idle": "Waiting for the workspace to be idle",
     "waiting-backup-mode": "Waiting for Backup mode", "handoff-prepared": "Preparing the backup restart", "handoff-armed": "Preparing the backup restart",
     claiming: "Backup in progress", "offline-claimed": "Backup in progress", capturing: "Backup in progress", "return-pending": "Preparing to reopen Murage",
-    returned: "Backup mode returned", "local-verified": "Local backup verified", skipped: "Backup skipped",
+    returned: "The last backup finished and Murage reopened", "local-verified": "Local backup verified", skipped: "Backup skipped",
     "needs-review": "Backup needs review; automatic retry is paused","install-requested":"Update installation requested","upgrade-complete":"Update completed after backup","upgrade-cancelled":"Update cancelled" };
   return labels[phase] ?? "Status needs review. Refresh to check the backup.";
 }

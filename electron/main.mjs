@@ -5,7 +5,7 @@ import { createNotificationAuthorization } from "./notification-authorization.mj
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
-import { createRecoveryKeyFlow } from "./backup-recovery-key.mjs";
+import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
@@ -307,14 +307,18 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   isUsable:()=>Boolean(app.isPackaged&&desktopDataOwner&&!desktopShutdownStarted&&!desktopRecoveryMode&&backupScheduleHost&&!backupMode.isPreparing()&&!backupScheduleHost.isPreparing()),
   installation:()=>ownedDesktopDataDir(),
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
-  chooseFile:async()=>{
+  // Only the folder of the last key saved or picked is remembered, never the key.
+  folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
+  defaultFolder:()=>app.getPath("documents"),
+  // `suggested` is a name not yet taken in that folder.
+  chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
-      defaultPath:path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
 });
-ipcMain.handle("backup-mode:create-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupRecoveryKeys.create();});
+ipcMain.handle("backup-mode:create-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.create());});
 ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});
 ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.selectReferences();});
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
@@ -3194,7 +3198,7 @@ async function initializeBackupScheduleHost(){
     profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
     triggerSource:path.join(process.resourcesPath,"server","backup-schedule-trigger.js"),
     backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),provider,backup:()=>backupScheduleHost,
-    confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Install backup job"],defaultId:0,cancelId:0,noLink:true,message:"Install an owning-user backup job?",detail:"This registers the staged job for this profile. Backups remain off until you explicitly enable closed-app backups. The job runs in your user session and does not save account passwords."});return answer.response===1;},
+    confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Set up background job"],defaultId:0,cancelId:0,noLink:true,message:"Let Murage back up while it's closed?",detail:"This adds a small background job to your user account that checks whether a backup is due. Nothing is backed up until you turn on daily backups. It runs only while you're signed in and doesn't store any passwords."});return answer.response===1;},
   });
   const choose=async(properties,title,defaultPath)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties,...(defaultPath?{defaultPath}:{})});return answer.canceled?null:answer.filePaths[0]??null;};
   backupScheduleHost=createBackupScheduleHost({
@@ -3226,8 +3230,8 @@ async function initializeBackupScheduleHost(){
     },
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
     // Start where a key was just created here; the user still picks it.
-    chooseKey:()=>choose(["openFile"],"Choose independent age recovery key",backupRecoveryKeys.lastFolder()),
-    confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Save references"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent recovery-key copy",detail:"The key must remain outside this installation and available for scheduled backups. Keep a separate safe recovery copy. Saving these references does not enable backups or authorize a restart."});return answer.response===1;},
+    chooseKey:()=>choose(["openFile"],"Choose your recovery key file",backupRecoveryKeys.lastFolder()).then(file=>{if(file)backupRecoveryKeys.rememberKeyFile(file);return file;}),
+    confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use this folder and key"],defaultId:0,cancelId:0,noLink:true,message:"Keep a copy of your recovery key somewhere safe",detail:"Leave the key file where it is so scheduled backups can use it, and keep a second copy away from this computer, such as in a password manager or on a USB drive. This doesn't turn on backups, and Murage won't close or reopen by itself until you turn them on."});return answer.response===1;},
     prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
     cleanupIdle:cleanupDesktopForExit,
     // Closed main has no harness logger and exits immediately after cleanup.
