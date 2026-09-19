@@ -14,12 +14,16 @@ import { notebookSourceIds } from "./memory/import.ts";
 import { sectionContextSystemPrompt } from "./section-context.ts";
 import { loadMemory, memorySystemPrompt } from "./workspace.ts";
 
+//
+// A turn nobody is watching (a routine, a webhook, a goal run) reads the
+// notebook but is not invited to edit it: each edit waits for the owner's
+// approval, so the run would stall on a note nobody asked for.
 export function standingContextPrompt(
   bot: { id: string; section?: string },
-  opts: { ownerAudience: boolean; fileTools: boolean },
+  opts: { ownerAudience: boolean; fileTools: boolean; unattended?: boolean },
 ): string {
   if (!opts.ownerAudience) return "";
-  return sectionContextSystemPrompt(bot.section) + memorySystemPrompt(bot.id, { fileTools: opts.fileTools });
+  return sectionContextSystemPrompt(bot.section) + memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended });
 }
 
 /** Structured-memory sources the standing context already carries whole.

@@ -5190,7 +5190,7 @@ async function startTurn(
           (privateWorkspace ? pinnedProcedures.importedPrompt : "") +
           // The team brief and this bot's own MEMORY.md, owner audience only
           // (standing-context.ts). Stable per bot, so it sits in the prefix.
-          standingContextPrompt(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud" }) +
+          standingContextPrompt(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" }) +
           // LAST of the stable prefix, deliberately. Everything above depends
           // only on the bot and the workspace; everything below is chosen from
           // THIS turn's text (skillInstructions, packagePlaybooks) or thread
@@ -6431,7 +6431,7 @@ async function runGroupMemberTurn(
     (integrations.browser ? unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)) : "") +
     // The member's own team brief and MEMORY.md, as in its direct chat —
     // only when the room's human audience is the owner (standing-context.ts).
-    standingContextPrompt(bot, { ownerAudience: roomOwnerAudience, fileTools: Boolean(workspace) }) +
+    standingContextPrompt(bot, { ownerAudience: roomOwnerAudience, fileTools: Boolean(workspace), unattended: Boolean(orchestration) || isUnattended(threadId) }) +
     (workspace ? pinnedProcedures.importedPrompt : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, pinnedProcedures.playbooks);

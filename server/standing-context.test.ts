@@ -20,15 +20,25 @@ it("gives an owner-audience turn the team brief and the bot's own notebook with 
   expect(prompt).toContain("BRIEF_CANARY");
   expect(prompt).toContain("Your memory (MEMORY.md):\n# Memory");
   expect(prompt).toContain("NOTEBOOK_CANARY");
-  expect(prompt).toContain("update it with your file tools");
+  expect(prompt).toContain("only when the person asks you to remember");
+  expect(prompt).toContain("never on your own initiative");
   expect(prompt.indexOf("BRIEF_CANARY")).toBeLessThan(prompt.indexOf("NOTEBOOK_CANARY"));
 });
 
 it("gives an engine without file tools its notebook read-only", () => {
   const prompt = standingContextPrompt(bot, { ownerAudience: true, fileTools: false });
   expect(prompt).toContain("NOTEBOOK_CANARY");
-  expect(prompt).toContain("this turn has no memory editing tools");
-  expect(prompt).not.toContain("update it with your file tools");
+  expect(prompt).toContain("leave it unchanged on this turn");
+  expect(prompt).not.toContain("Edit it with your file tools");
+});
+
+it("gives an unattended turn its notebook read-only, even with file tools", () => {
+  const prompt = standingContextPrompt(bot, { ownerAudience: true, fileTools: true, unattended: true });
+  expect(prompt).toContain("BRIEF_CANARY");
+  expect(prompt).toContain("NOTEBOOK_CANARY");
+  expect(prompt).toContain("leave it unchanged on this turn");
+  expect(prompt).not.toContain("Edit it with your file tools");
+  expect(prompt).not.toContain("Your private long-term memory file is");
 });
 
 it("gives a channel person's conversation neither the brief nor the notebook", () => {

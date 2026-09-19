@@ -92,6 +92,21 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
     expect(member.system + member.prompt).not.toContain(SABLE_NOTEBOOK);
   }, 90000);
 
+  it("invites edits to the notebook only when asked, and gives a routine run it read-only", async () => {
+    await api("PUT", `/api/bots/${moss.id}/memory`, { text: `# Memory\n\n- ${MOSS_NOTEBOOK}\n` });
+    const direct = await directTurn(moss);
+    expect(direct.system).toContain("only when the person asks you to remember");
+    expect(direct.system).not.toContain("leave it unchanged on this turn");
+    // Nobody is watching a routine run, so an edit would wait for an approval nobody gives.
+    const tag = marker();
+    const routine = (await api("POST", "/api/routines", { botId: moss.id, name: "Notebook check", prompt: `Please answer briefly. ${tag}`, schedule: { type: "once", at: Date.now() + 3_600_000 } })).routine;
+    await api("POST", `/api/routines/${routine.id}/run`, {});
+    const run = await captured(tag);
+    expect(run.system).toContain(MOSS_NOTEBOOK);
+    expect(run.system).toContain("leave it unchanged on this turn");
+    expect(run.system).not.toContain("Edit it with your file tools");
+  }, 90000);
+
   it("gives a room member its own bot and team memory, but not a teammate's or its private continuity", async () => {
     const pinImport = async (selections: unknown[]) => {
       const preview = await api("POST", "/api/memory/action", { action: "import-preview", selections });
