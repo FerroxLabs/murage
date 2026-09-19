@@ -56,7 +56,7 @@ it("captures raw fidelity and safe recovery in one encrypted file, then restores
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 },20000);
-it("retains private staging when an owned tool close cannot be confirmed",async()=>{
+it("keeps only the encrypted output, never plaintext, when an owned tool close cannot be confirmed",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
   const mocked=vi.spyOn(encryption,"encryptBackupStream").mockImplementationOnce(async(_tool,_recipient,input)=>{input.on("error",()=>{});throw new InstallationSnapshotError("AGE_PROCESS_CLOSE_UNCONFIRMED");});
   try{
@@ -64,8 +64,21 @@ it("retains private staging when an owned tool close cannot be confirmed",async(
     try{await writeEncryptedInstallationBackup(f.data,join(f.parent,"backup.age"),{...keys,selection});}catch(error){failure=error;}
     expect(failure).toMatchObject({code:"AGE_PROCESS_CLOSE_UNCONFIRMED",retainedDirectory:expect.any(String)});
     const retained=(failure as {retainedDirectory:string}).retainedDirectory;
-    expect(existsSync(retained)).toBe(true);expect(readdirSync(retained).some(name=>name.startsWith(".murage-state-snapshot-"))).toBe(true);
+    // The staging folder sits in the backup folder, which may be synced: no plaintext copy stays there.
+    expect(existsSync(retained)).toBe(true);expect(readdirSync(retained).filter(name=>name!=="backup.age")).toEqual([]);
     expect(existsSync(join(f.parent,"backup.age"))).toBe(false);
+  }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
+it("a failed capture leaves nothing in the backup folder",async()=>{
+  const f=backupFixture(),keys=testAgeKeys();
+  const before=new Set(readdirSync(f.parent));
+  const mocked=vi.spyOn(encryption,"encryptBackupStream").mockImplementationOnce(async(_tool,_recipient,input)=>{input.on("error",()=>{});throw new InstallationSnapshotError("AGE_PROCESS_FAILED");});
+  try{
+    let failure:unknown;
+    try{await writeEncryptedInstallationBackup(f.data,join(f.parent,"backup.age"),{...keys,selection});}catch(error){failure=error;}
+    expect(failure).toMatchObject({code:"AGE_PROCESS_FAILED"});
+    expect((failure as {retainedDirectory?:string}).retainedDirectory).toBeUndefined();
+    expect(readdirSync(f.parent).filter(name=>!before.has(name))).toEqual([]);
   }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
 it.each(["existing","live","quota","cancel","vm"])("refuses %s without publishing or changing originals",async kind=>{

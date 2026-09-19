@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, copyFileSync, createReadStream, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { constants, closeSync, copyFileSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
@@ -18,6 +18,17 @@ function fail(code:string):never{throw new InstallationSnapshotError(code);}
 export interface EncryptedBackupOptions extends ArchiveLimits { ageExecutable:string; identity:string; timeoutMs?:number; closeTimeoutMs?:number }
 function unconfirmedClose(error:unknown){return error instanceof InstallationSnapshotError&&error.code==="AGE_PROCESS_CLOSE_UNCONFIRMED";}
 function retainFailure(error:unknown){return process.platform==="win32"||unconfirmedClose(error);}
+/** A failed capture's staging folder sits in the backup folder, which may be
+ * synced or shared, and holds a plaintext copy of the workspace. None of it is
+ * kept. Only when an owned tool's exit is unconfirmed does its encrypted output
+ * stay, since that process may still hold it. True when the folder is gone. */
+function discardFailedStage(scratch:string,keepCiphertext:boolean):boolean{
+  try{
+    if(!keepCiphertext)rmSync(scratch,{recursive:true,force:true});
+    else for(const name of readdirSync(scratch))if(name!=="backup.age")rmSync(join(scratch,name),{recursive:true,force:true});
+  }catch{/* Whatever could not be removed is reported as retained. */}
+  return !existsSync(scratch);
+}
 const nativeBudget=(maxBytes:number)=>Math.min(maxBytes,20*1024**3);
 const combineSignal=(native:AbortSignal,caller?:AbortSignal)=>caller?AbortSignal.any([native,caller]):native;
 async function settleWindowsWork(pending:Promise<unknown>|undefined,options:EncryptedBackupOptions){
@@ -155,7 +166,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     if(process.platform!=="win32")linkSync(ciphertext,target);
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy};
   }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:new InstallationSnapshotError((error as NodeJS.ErrnoException).code==="EEXIST"?"DESTINATION_EXISTS":"ENCRYPTED_BACKUP_FAILED");if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
-  finally{if(!retain&&process.platform!=="win32")rmSync(scratch,{recursive:true,force:true});}
+  finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);}}
   };
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
   let scratch:string|undefined,success=false;
@@ -163,7 +174,15 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     const result=await withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal});});
     // Publish only after the native private-stage lease and all age writers close.
     linkSync(join(result.directory,"backup.age"),target);success=true;return result.value;
-  }catch(error){if(scratch&&error&&typeof error==="object")Object.assign(error,{retainedDirectory:scratch});throw error;}
+  }catch(error){
+    // The private stage and its age writers have closed unless their exit is unconfirmed.
+    if(scratch&&error&&typeof error==="object"){
+      const unconfirmed=unconfirmedClose(error)||(error as {helperClosed?:boolean}).helperClosed===false;
+      if(discardFailedStage(scratch,unconfirmed))delete (error as {retainedDirectory?:string}).retainedDirectory;
+      else Object.assign(error,{retainedDirectory:scratch});
+    }
+    throw error;
+  }
   finally{if(success&&scratch)rmSync(scratch,{recursive:true,force:true});}
 }
 

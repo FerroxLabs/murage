@@ -109,11 +109,21 @@ staged("retains all Windows failed-decrypt output and never inspects unauthentic
   expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true); expect(inspect).not.toHaveBeenCalled();
 });
 
-staged("keeps raw snapshot staging and refuses publication after Windows readback failure", async () => {
+staged("refuses publication after Windows readback failure and leaves no plaintext staging in the backup folder", async () => {
   const f = fixture(); failDecrypt = true; target = f.archive;
   const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
-  expect(caught).toMatchObject({ code: "AGE_PROCESS_FAILED", retainedDirectory: privateRoots[0] });
-  expect(existsSync(join(caught.retainedDirectory, "backup.age"))).toBe(true); expect(existsSync(f.archive)).toBe(false);
+  expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(caught.retainedDirectory).toBeUndefined();
+  expect(privateRoots.every(path => !existsSync(path))).toBe(true); expect(existsSync(f.archive)).toBe(false);
+});
+
+staged("keeps only the encrypted output in Windows staging when the age writer's exit is unconfirmed", async () => {
+  const f = fixture();
+  vi.mocked(encryption.encryptBackupStream).mockImplementationOnce(async (_exe, _recipient, input: Readable, output) => {
+    input.on("error", () => {}); writeFileSync(output, "partial ciphertext"); throw new InstallationSnapshotError("AGE_PROCESS_CLOSE_UNCONFIRMED");
+  });
+  const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
+  expect(caught).toMatchObject({ code: "AGE_PROCESS_CLOSE_UNCONFIRMED", retainedDirectory: privateRoots[0] });
+  expect(readdirSync(caught.retainedDirectory)).toEqual(["backup.age"]); expect(existsSync(f.archive)).toBe(false);
 });
 
 staged("waits for pending extraction to close after helper rejection before returning retained failure", async () => {
@@ -146,7 +156,8 @@ staged("waits for an aborted encryption writer to finish teardown before reporti
     await began; controller.abort(); throw Object.assign(new InstallationSnapshotError("AGE_PROCESS_FAILED"), { retainedDirectory: directory });
   });
   const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
-  expect(writerClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true); expect(existsSync(f.archive)).toBe(false);
+  expect(writerClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(caught.retainedDirectory).toBeUndefined();
+  expect(privateRoots.every(path => !existsSync(path))).toBe(true); expect(existsSync(f.archive)).toBe(false);
 });
 
 staged("restores the paused candidate through the private preparation parent and same-volume journal", async () => {
