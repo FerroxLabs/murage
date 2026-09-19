@@ -1762,7 +1762,16 @@ if (browserCleanupReferencesReconciled) browserCleanup.startPending();
  * paired phone has even less business holding provider session identifiers
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
-const wireTask = ({ resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, ...task }: TaskRecord) => task;
+const wireTask = ({ resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, ...task }: TaskRecord) =>
+  withLastActivity(task);
+
+/** The task switcher dates and sorts by a thread's last message. A client
+ * only holds the open thread's transcript, so the time rides the task.
+ * Absent when the thread has no messages yet. */
+function withLastActivity<T extends { threadId: string }>(task: T): T & { lastActivityAt?: number } {
+  const lastActivityAt = store.lastActivityAt(task.threadId);
+  return lastActivityAt === undefined ? task : { ...task, lastActivityAt };
+}
 
 /** One sentence, both places it can be refused: the pre-check that sees the
  * whole request body, and the store call that owns the invariant. */
@@ -1894,7 +1903,7 @@ function groupIsWorking(group: GroupRecord): boolean {
 }
 
 function publicGroupState(group: GroupRecord) {
-  return { ...group, working: groupIsWorking(group) };
+  return { ...group, ...(group.tasks ? { tasks: group.tasks.map(withLastActivity) } : {}), working: groupIsWorking(group) };
 }
 
 function beginGroupTurnOperation(
@@ -11652,7 +11661,7 @@ const server = createServer(async (req, res) => {
       const fresh = groupWithThread(switched);
       broadcast({ kind: "group", group: fresh });
       const responseGroup = url.searchParams.get("messages") === "0"
-        ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id) }
+        ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id).map(withLastActivity) }
         : fresh;
       return json(res, 200, { group: responseGroup });
     }

@@ -513,10 +513,25 @@ export type StoreChange =
 /** What a task is called before its first message names it. */
 export const UNTITLED_TASK = "New task";
 
+const PEER_PREAMBLE = /^\[(Message from|Delegated by) @([^,\]\n]+),[^\]\n]*\]/;
+
 /** A task's name, taken from the first thing you asked it to do. */
 export function titleFromMessage(text: string): string {
+  // A turn another bot started opens with a fixed preamble naming the
+  // sender. Every such task used to be called the first 48 characters of
+  // that preamble; keep the sender, then name it after what was asked.
+  const peer = PEER_PREAMBLE.exec(text.trim());
+  if (peer) {
+    const tag = `[${peer[1]} @${peer[2]!.trim()}]`;
+    const rest = text.trim().slice(peer[0].length).trim();
+    return rest ? `${tag} ${firstLineTitle(rest)}` : tag;
+  }
+  return firstLineTitle(text) || UNTITLED_TASK;
+}
+
+function firstLineTitle(text: string): string {
   const line = text.trim().split("\n")[0]!.trim();
-  return line.length > 48 ? `${line.slice(0, 47)}…` : line || UNTITLED_TASK;
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
 export interface BotRecord {
@@ -1587,6 +1602,16 @@ export class Store {
 
   messagesFor(threadId: string): Message[] {
     return this.thread(threadId).messages;
+  }
+
+  /** When this thread last had a message: the task switcher's "last
+   * activity". Undefined for a thread with no messages. A loaded thread
+   * answers from memory; any other reads one indexed row, never the whole
+   * transcript, because this runs for every task on every broadcast. */
+  lastActivityAt(threadId: string): number | undefined {
+    const loaded = this.threads.get(threadId);
+    if (loaded) return loaded.messages.at(-1)?.at;
+    return mdb.newestMessageAt(threadId) ?? undefined;
   }
 
   activeLeaf(threadId: string): string | null {

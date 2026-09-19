@@ -175,4 +175,40 @@ describe("tasks", () => {
     // and it is named from the conversation rather than left blank
     expect(migrated[0]!.title).not.toBe(UNTITLED_TASK);
   });
+
+  it("names a peer handoff after what was asked, not after the shared preamble", async () => {
+    const { titleFromMessage } = await freshStore();
+    expect(titleFromMessage("[Message from @Kessler, another bot in this Murage workspace. Reply to them.]\n\nCheck the March invoices\nthen report"))
+      .toBe("[Message from @Kessler] Check the March invoices");
+    expect(titleFromMessage("[Delegated by @Kessler (Ops Manager), another bot in this Murage workspace. Do the work and reply directly.]\n\n" + "y".repeat(90)))
+      .toBe(`[Delegated by @Kessler (Ops Manager)] ${"y".repeat(47)}…`);
+    // a peer message with no body keeps the sender rather than the preamble
+    expect(titleFromMessage("[Message from @Kessler, another bot in this Murage workspace. Reply to them.]")).toBe("[Message from @Kessler]");
+    // an ordinary bracketed first line is left as it was
+    expect(titleFromMessage("[draft] Message from @nobody")).toBe("[draft] Message from @nobody");
+  });
+
+  it("reports when a task last had a message, and nothing for a task that never did", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot(undefined, { seedMessages: false });
+    const empty = store.createTask(bot.id)!;
+    const used = store.createTask(bot.id)!;
+    expect(store.lastActivityAt(empty.threadId)).toBeUndefined();
+    store.appendMessage(used.threadId, { role: "user", kind: "text", text: "first", at: 1_000 });
+    const reply = store.appendMessage(used.threadId, { role: "bot", kind: "text", text: "second" });
+    expect(store.lastActivityAt(used.threadId)).toBe(reply.at);
+    expect(store.lastActivityAt(empty.threadId)).toBeUndefined();
+  });
+
+  it("reads the last message time from disk for a thread this process has not loaded", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot(undefined, { seedMessages: false });
+    const task = store.createTask(bot.id)!;
+    store.appendMessage(task.threadId, { role: "user", kind: "text", text: "hello", at: 5_000 });
+    const { Store } = await import("./store.ts");
+    const reopened = new Store(() => ({ instanceId: "claude", model: "m" }));
+    expect(reopened.lastActivityAt(task.threadId)).toBe(5_000);
+    store.deleteTask(bot.id, task.threadId);
+    expect(store.lastActivityAt(task.threadId)).toBeUndefined();
+  });
 });

@@ -76,6 +76,15 @@ export function threadHasRows(threadId: string): boolean {
   return db().prepare("SELECT 1 AS present FROM messages WHERE thread_id = ? LIMIT 1").get(threadId) !== undefined;
 }
 
+/** When the newest row was written, or null for a thread with no rows. Read
+ * through the thread index by rowid, so it never scans the transcript. */
+export function newestMessageAt(threadId: string): number | null {
+  const newest = db().prepare("SELECT at FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId) as
+    | { at: number }
+    | undefined;
+  return typeof newest?.at === "number" ? newest.at : null;
+}
+
 /** The stored branch head, or the newest row's id when none is stored —
  * the same default Store applies after a full load. */
 export function readActiveLeafOrNewest(threadId: string): string | null {
