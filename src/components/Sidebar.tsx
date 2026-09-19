@@ -2016,7 +2016,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <div className="fixed inset-0 z-30" onMouseDown={() => setDensityOpen(false)} />
                 <div className={cn(
                   "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
-                  density === "icons" ? "left-0" : "right-0",
+                  // On a phone these buttons sit at the drawer's left edge, so the
+                  // menu opens rightwards or it would hang off the screen.
+                  density === "icons" ? "left-0" : "right-0 max-md:left-0 max-md:right-auto",
                 )}>
                   {(["comfortable", "compact", "icons"] as const).map((option) => (
                     <button
@@ -2058,7 +2060,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 }
               }} className={cn(
                 "absolute top-full z-40 mt-1 w-56 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
-                density === "icons" ? "left-0" : "right-0",
+                density === "icons" ? "left-0" : "right-0 max-md:left-0 max-md:right-auto",
               )}>
                 <SidebarCreateMenu
                   archivedCount={archivedBots.length}

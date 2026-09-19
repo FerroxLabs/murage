@@ -87,6 +87,10 @@ test("New Team files the chosen bots under a new heading with its instructions",
     const trigger = app.getByRole("button", { name: "New or share", exact: true });
     await trigger.click();
     await expect(app.getByRole("button", { name: "New Team", exact: true })).toBeVisible();
+    // The whole menu is on screen, on a phone as on a desktop.
+    const menuBox = (await app.locator("#sidebar-create-options").boundingBox())!;
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(app.viewportSize()!.width);
     expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 5)).toEqual(
       ["New Bot", "New Bot from Template", "New Team", "New Channel", "Export bots…"],
     );
