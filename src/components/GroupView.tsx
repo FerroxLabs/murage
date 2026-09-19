@@ -16,6 +16,7 @@ import {
   type Message,
 } from "@/state/store";
 import { BotAvatar } from "./Avatar";
+import { roomAuthor } from "@/lib/room-author";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
@@ -167,7 +168,9 @@ const Transcript = memo(function Transcript({
   // open sheet at a time — the sheet is modal, so a second would be a bug.
   const narrow = useNarrowViewport();
   const [sheetFor, setSheetFor] = useState<string | null>(null);
-  const memberOf = (id?: string) => members.find((b) => b.id === id);
+  // Members first, then any bot: a delegated teammate's reply or a removed
+  // member's message keeps its own avatar instead of the default mascot.
+  const memberOf = (id?: string) => roomAuthor(id, members, state.bots);
   // Several bots working at once turn a room into a wall of chips; fold the
   // finished ones the same way a 1:1 chat does.
   const items = useMemo(() => groupActivityRuns(messages), [messages]);
