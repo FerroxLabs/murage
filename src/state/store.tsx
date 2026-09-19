@@ -1178,15 +1178,19 @@ export function reducer(state: AppState, action: Action): AppState {
     case "answerQuestion":
     case "sendQuestionAsMessage":
       return state; // the server's message patch settles the card
-    case "botAdded":
+    case "botAdded": {
+      // Package and starter imports answer with the bot record alone, and
+      // every sidebar row reads its last message on the next render.
+      const added = Array.isArray(action.bot.messages) ? action.bot : { ...action.bot, messages: [] };
       return withMascotMotion({
         ...state,
         // An HTTP create/import response and its SSE broadcast can race. Fold
         // both paths without ever showing the same bot twice.
-        bots: [action.bot, ...state.bots.filter((bot) => bot.id !== action.bot.id)],
+        bots: [added, ...state.bots.filter((bot) => bot.id !== added.id)],
         activeView: "chat",
-        selectedId: action.bot.id,
-      }, action.bot.id, "arrive");
+        selectedId: added.id,
+      }, added.id, "arrive");
+    }
     case "deleteBot":
     case "botRemoved": {
       const bots = state.bots.filter((b) => b.id !== action.botId);

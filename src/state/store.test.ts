@@ -1483,3 +1483,25 @@ describe("refreshInstances", () => {
     await expect(refreshWith(() => new Response(JSON.stringify({ error: "Engine probe failed" }), { status: 503, headers: { "content-type": "application/json" } }))).rejects.toThrow("Engine probe failed");
   });
 });
+
+describe("a bot added from an import response", () => {
+  it("starts with an empty transcript when the response carries no messages", () => {
+    // Package and starter imports answer with the bot record alone; the
+    // sidebar reads the last visible message of every row as soon as it lands.
+    const imported = {
+      id: "imported-1",
+      threadId: "t-imported",
+      name: "Planner",
+      title: "",
+      description: "",
+      notifications: false,
+      color: "green",
+      unread: false,
+      modelSelection: { instanceId: "acp", model: "fake" },
+    } as unknown as Bot;
+    const next = reducer(initialState, { type: "botAdded", bot: imported });
+    const added = next.bots.find((bot) => bot.id === "imported-1")!;
+    expect(added.messages).toEqual([]);
+    expect(visibleMessages(added).at(-1)).toBeUndefined();
+  });
+});
