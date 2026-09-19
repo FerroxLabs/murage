@@ -13,6 +13,7 @@ import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
 import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
+import { tightenOwnedDirectory } from "../electron/private-directory.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 
@@ -504,7 +505,10 @@ export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
   // config and keys all carry over
   migrateLegacyDataDirectory({ dataDir: DATA_DIR, legacyDataDir: LEGACY_DATA_DIR, enabled: process.env.MURAGE_DATA_DIR === undefined });
-  for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
+  for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // A folder made before this (or under a umask of 002) can be writable by the
+  // user's group, which the closed-app backup correctly refuses.
+  tightenOwnedDirectory(DATA_DIR);
 }
 
 export function loadConfig(): AppConfig {
@@ -803,7 +807,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
     const repaired = withoutFrozenWorkspaceUrl(instances.success ? instances.data.openaiCompat : undefined);
     if (instances.success && repaired) disk.instances = { ...instances.data, openaiCompat: repaired };
   }
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   writeFileAtomic(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
 }
 

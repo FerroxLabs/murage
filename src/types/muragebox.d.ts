@@ -139,6 +139,8 @@ type SkillRecordingPayload = {
     state:"unconfigured"|"staged"|"installed"|"disabled"|"disabled-removal-pending"|"unavailable";
     closedApp:boolean;
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
+    /** Why the job can't be set up, when Murage can tell. */
+    blocked?:"data-folder-shared";
   }
   interface Window {
     muragebox?: {

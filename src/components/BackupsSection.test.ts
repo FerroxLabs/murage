@@ -109,6 +109,13 @@ describe("backup summary", () => {
       expect(attention.join(" ")).not.toContain("PRIVATE");
     }
   });
+  it("says a closed-app backup could not start without a desktop session, until a newer backup lands", () => {
+    const s = healthy.schedule!, verifiedAt = s.lastVerified!.verifiedAt;
+    const noDesktop = (at: number) => backupSummary({ ...healthy, schedule: { ...s, lastClosedResult: { status: "unavailable", reason: "capability-unavailable", at, revision: 1 } } }).attention.join(" ");
+    expect(noDesktop(verifiedAt + 1)).toMatch(/couldn't start because you weren't signed in to your desktop/);
+    expect(noDesktop(verifiedAt)).not.toMatch(/signed in to your desktop/);
+    expect(backupSummary({ ...healthy, schedule: { ...s, lastClosedResult: { status: "needs-review", reason: "capture-unconfirmed", at: verifiedAt + 1, revision: 1 } } }).attention.join(" ")).toMatch(/closed needs review/);
+  });
   it("never claims availability without a bridge", () => {
     const summary = backupSummary({ ...healthy, scheduleBridge: false, schedule: null, remoteBridge: false, remote: null });
     expect(summary.schedule).toBe("Not available in this window");
@@ -161,6 +168,10 @@ describe("optional recovery-key and back-up-now bridges", () => {
     expect(runNowError(Error("BACKUP_WORK_ACTIVE"))).toBe("Finish or stop current work first.");
     expect(runNowError(Error("BACKUP_BUSY"))).toBe("A backup is already running.");
     expect(runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"))).toBe("Turn on daily backups once to allow Murage to close and reopen the window for a backup.");
+    // A daily run refused for the same reason shows it too, not a generic line.
+    const blocked = "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.";
+    expect(runNowError(Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_RELAUNCH_BLOCKED"))).toBe(blocked);
+    expect(backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
     expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("destination or recovery key changed");
     expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("Automatic retry is paused");
     expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("unavailable in this app");
@@ -238,6 +249,13 @@ describe("customer findings: plain words and reasons where the control is", () =
     expect(checkboxTag(html)).toContain("backup-closed-reason");
     expect(checkboxTag(html)).toContain('disabled=""');
     expect(html.indexOf(REASON)).toBeLessThan(html.indexOf("Backup limits"));
+  });
+
+  it("names the data folder when that, not the system, is why the job can't be set up", () => {
+    const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false, blocked: "data-folder-shared" } });
+    expect(html).toContain("Other accounts on this computer can change Murage&#x27;s data folder, so backups run only while Murage is open.");
+    expect(html).not.toContain(REASON);
+    expect(checkboxTag(html)).toContain("backup-closed-reason");
   });
 
   it("says it after a failed setup attempt even while the job can be retried", () => {

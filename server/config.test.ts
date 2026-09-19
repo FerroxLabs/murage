@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -319,6 +319,24 @@ describe("legacy directory migration scope", () => {
     expect(readFileSync(join(legacy, "config.json"), "utf8")).toBe('{"profile":{"name":"Legacy fixture"}}');
     expect(existsSync(join(config.DATA_DIR, "config.json"))).toBe(false);
     expect(existsSync(join(config.DATA_DIR, "events"))).toBe(true);
+  });
+
+  // The closed-app backup refuses a data folder other accounts can write to,
+  // so Murage's own folder is private however the user's umask is set.
+  it.skipIf(process.platform === "win32")("creates the data folder for this user only", async () => {
+    vi.stubEnv("MURAGE_DATA_DIR", join(fixtureHome, "fresh", ".murage"));
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(lstatSync(config.DATA_DIR).mode & 0o077).toBe(0);
+  });
+
+  it.skipIf(process.platform === "win32")("takes group and other write access off an existing data folder", async () => {
+    const target = join(fixtureHome, ".murage");
+    mkdirSync(target); chmodSync(target, 0o775);
+    vi.stubEnv("MURAGE_DATA_DIR", target);
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(lstatSync(config.DATA_DIR).mode & 0o777).toBe(0o755);
   });
 
   it("does not migrate a legacy directory owned by another lease holder", async () => {

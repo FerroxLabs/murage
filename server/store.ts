@@ -950,7 +950,7 @@ export class Store {
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
-    mkdirSync(DATA_DIR, { recursive: true });
+    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     // Validate both inputs before any migration can save either collection.
     // Only an absent file is a fresh install; damaged state needs recovery.
     this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);

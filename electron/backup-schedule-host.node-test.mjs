@@ -343,6 +343,18 @@ test("back up now runs with the daily schedule off while saved references keep i
     assert.equal(f.coordinator().status().lastVerified.jobId,f.coordinator().status().job.id);
   }finally{f.cleanup();}
 });
+test("back up now and a due daily run refuse before closing anything when this system cannot restart Murage",async()=>{
+  const f=fixture();try{
+    await f.enable(true);const before=await f.controller.status();
+    const blocked=f.create({relaunchBlocked:()=>true});
+    await assert.rejects(blocked.runNow(before.revision),/BACKUP_RELAUNCH_BLOCKED/);assert.deepEqual(f.calls,[]);
+    assert.equal(f.coordinator().status().job,undefined);
+    f.setNow(Date.parse("2026-09-13T09:01:00Z"));await blocked.tick();assert.deepEqual(f.calls,[]);
+    assert.equal((await blocked.status()).error,"BACKUP_RELAUNCH_BLOCKED");
+    await assert.rejects(blocked.requestUpgrade(updateCandidate()),/BACKUP_RELAUNCH_BLOCKED/);assert.deepEqual(f.calls,[]);
+    blocked.stopPolling();
+  }finally{f.cleanup();}
+});
 test("back up now refuses without saved references, consent or the current revision, before any restart",async()=>{
   const fresh=fixture();try{await assert.rejects(fresh.controller.runNow(0),/BACKUP_SCHEDULE_CONSENT_REQUIRED/);assert.deepEqual(fresh.calls,[]);
     const selected=await fresh.controller.selectReferences();await assert.rejects(fresh.controller.runNow(selected.revision),/BACKUP_SCHEDULE_CONSENT_REQUIRED/);assert.deepEqual(fresh.calls,[]);assert.equal(fresh.coordinator().status().job,undefined);

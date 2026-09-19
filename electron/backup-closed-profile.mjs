@@ -68,6 +68,17 @@ export function closedProfileEnvironment(invocation,descriptor,environment={}){
   for(const[key,value]of [["MURAGE_DATA_DIR",d.requestedRoot],["MURAGE_USER_DATA",d.userData]])if(environment[key]!==undefined&&environment[key]!==value)refuse();
   return{MURAGE_DATA_DIR:d.requestedRoot,MURAGE_USER_DATA:d.userData};
 }
+/** Whether a folder the closed-app profile binds to can be changed by another
+ * account (group/other writable or not owned by this user). The binding check
+ * refuses such a folder; this lets the status say so instead of a generic
+ * refusal. Missing folders are not counted here. */
+export function closedProfileFolderShared(profile,{owner={uid:process.getuid?.()}}={}){
+  for(const key of ["requestedRoot","userData","installation"]){
+    let stat;try{stat=lstatSync(profile[key]);}catch{continue;}
+    if(stat.isDirectory()&&!stat.isSymbolicLink()&&(stat.uid!==owner.uid||(stat.mode&0o022)))return true;
+  }
+  return false;
+}
 export function assertClosedProfileBinding(descriptor,{platform=process.platform,owner={uid:process.getuid?.()},resolveSelection=resolveInstallationSelection}={}){
   const d=parseClosedBackupDescriptor(descriptor);if(d.platform!==platform||JSON.stringify(d.owner)!==JSON.stringify(owner)||platform==="win32")refuse();
   for(const key of ["requestedRoot","userData","installation"]){const stat=lstatSync(d[key]);if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==owner.uid||(stat.mode&0o022)||realpathSync.native(d[key])!==d[key])refuse();}

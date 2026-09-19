@@ -76,6 +76,9 @@ export function createBackupScheduleHost(host) {
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
   const assertUpgradeAllowed=async candidate=>{if(!host.supported()||typeof host.assertUpgradeAllowed!=="function")throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");await host.assertUpgradeAllowed(candidate);};
+  // Every in-app backup restarts Murage; refuse before closing anything where
+  // that restart would crash instead of coming back.
+  const assertRelaunchPossible=()=>{if(host.relaunchBlocked?.())throw Error("BACKUP_RELAUNCH_BLOCKED");};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
   function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
   async function verifyUpgrade(candidate){
@@ -100,7 +103,7 @@ export function createBackupScheduleHost(host) {
       if(running)throw Error("BACKUP_BUSY");
       running=true;let release,intent;
       try{
-        await assertUpgradeAllowed(candidate);const b=await checked();
+        await assertUpgradeAllowed(candidate);assertRelaunchPossible();const b=await checked();
         if(s.job&&!["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"].includes(s.phase))throw Error("BACKUP_REVIEW_REQUIRED");
         release=await host.prepare();
         intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000,upgrade:candidate};
@@ -122,6 +125,7 @@ export function createBackupScheduleHost(host) {
     try{
       const s=await coordinator.tick(upgradeId);
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase)||!host.supported())return;
+      if(host.relaunchBlocked?.()){lastError="BACKUP_RELAUNCH_BLOCKED";return;}
       const b=await checked();
       release=await host.prepare();
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
@@ -140,6 +144,7 @@ export function createBackupScheduleHost(host) {
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
     if(running)throw Error("BACKUP_BUSY");
     if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+    assertRelaunchPossible();
     running=true;let release,intent,manual;
     try{
       const current=coordinator.status();

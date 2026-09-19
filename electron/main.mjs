@@ -8,6 +8,8 @@ import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
+import { tightenOwnedDirectory } from "./private-directory.mjs";
+import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
@@ -285,7 +287,8 @@ async function requireDesktopBackupTool() {
   return tool;
 }
 const backupMode = createBackupModeController({
-  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool()),
+  // Backup mode is a restart; where a restart would crash, it is not offered.
+  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !linuxRelaunchBlocked()),
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
@@ -3186,6 +3189,9 @@ async function initializeBackupScheduleHost(){
   try { await requireDesktopBackupTool(); } catch { /* Keep backup unavailable without blocking ordinary startup. */ }
   assertDesktopStartupActive();
   const installation=ownedDesktopDataDir();
+  // The closed-app profile refuses a data folder other accounts can write to;
+  // an older install or a umask of 002 left Murage's own folder like that.
+  for(const directory of new Set([desktopRequestedDataDir,installation]))try{tightenOwnedDirectory(directory);}catch{/* The closed-app status names a folder that stays shared. */}
   // Read-only selected-profile routing must precede the first protected backup
   // reference read, including closed startup and existing offline returns.
   const selectedProfile=restoredConnectionProfile(installation);
@@ -3218,6 +3224,7 @@ async function initializeBackupScheduleHost(){
       await closedBackupController.assertInvocation(closedBackupDescriptor,closedBackupInvocation.descriptorPath);
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
+    relaunchBlocked:()=>linuxRelaunchBlocked(),
     verifyEncrypted:requireDesktopBackupTool,
     readProtected:async key=>{
       if(key!==BACKUP_SCHEDULE_BINDINGS_KEY)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");

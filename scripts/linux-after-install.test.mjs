@@ -24,7 +24,22 @@ function fixture() {
   const chromiumSandbox = path.join(appRoot, "chrome-sandbox");
   fs.writeFileSync(chromiumSandbox, "fixture", { mode: 0o664 });
   fs.chmodSync(chromiumSandbox, 0o664);
+  fs.writeFileSync(path.join(resources, "apparmor-profile"), APPARMOR_PROFILE, { mode: 0o644 });
   return { appRoot, resources, cuaRoot, chromiumSandbox };
+}
+
+// What electron-builder ships in resources/apparmor-profile for Murage.
+const APPARMOR_PROFILE = 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile "murage" "/opt/Murage/murage" flags=(unconfined) {\n  userns,\n}\n';
+
+/** A stand-in AppArmor: a profile directory and an apparmor_parser that logs
+ *  its arguments and refuses the dry run when asked to. */
+function fakeAppArmor(appRoot, { dryRunExit = 0 } = {}) {
+  const directory = path.join(appRoot, "apparmor.d");
+  fs.mkdirSync(directory);
+  const parser = path.join(appRoot, "apparmor_parser");
+  fs.writeFileSync(parser, `#!/bin/sh\necho "$*" >> "${path.join(appRoot, "parser.log")}"\ncase "$*" in *--skip-kernel-load*) exit ${dryRunExit};; esac\nexit 0\n`, { mode: 0o755 });
+  const log = () => { try { return fs.readFileSync(path.join(appRoot, "parser.log"), "utf8").trim().split("\n"); } catch { return []; } };
+  return { directory, log };
 }
 
 function runHook(appRoot) {
@@ -92,6 +107,51 @@ describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
       }
       expect(fs.lstatSync(chromiumSandbox).mode & 0o7777).toBe(0o4755);
     }
+  });
+
+  // A restarted Murage needs user namespaces; on Ubuntu 24.04 only a program
+  // under its own AppArmor profile gets them. The package ships that profile.
+  it("installs and loads Murage's AppArmor profile where AppArmor can use it", () => {
+    const { appRoot, resources } = fixture();
+    const apparmor = fakeAppArmor(appRoot);
+    for (let pass = 0; pass < 2; pass += 1) {
+      const result = runHook(appRoot);
+      expect(result.status, result.stderr).toBe(0);
+      const target = path.join(apparmor.directory, "murage");
+      expect(fs.readFileSync(target, "utf8")).toBe(APPARMOR_PROFILE);
+      expect(fs.lstatSync(target).mode & 0o777).toBe(0o644);
+    }
+    const dryRun = `--skip-kernel-load --debug ${path.join(resources, "apparmor-profile")}`;
+    const load = `--replace --write-cache --skip-read-cache ${path.join(apparmor.directory, "murage")}`;
+    expect(apparmor.log()).toEqual([dryRun, load, dryRun, load]);
+  });
+
+  it("still installs, without the profile, where AppArmor cannot use it", () => {
+    const { appRoot } = fixture();
+    const apparmor = fakeAppArmor(appRoot, { dryRunExit: 1 });
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(path.join(apparmor.directory, "murage"))).toBe(false);
+    expect(apparmor.log()).toHaveLength(1);
+  });
+
+  it("still installs where there is no AppArmor at all", () => {
+    const { appRoot, chromiumSandbox } = fixture();
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.lstatSync(chromiumSandbox).mode & 0o7777).toBe(0o4755);
+  });
+
+  it("replaces a symlink planted where the profile goes instead of writing through it", () => {
+    const { appRoot } = fixture();
+    const apparmor = fakeAppArmor(appRoot);
+    const outside = path.join(appRoot, "outside.txt");
+    fs.writeFileSync(outside, "keep");
+    fs.symlinkSync(outside, path.join(apparmor.directory, "murage"));
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(outside, "utf8")).toBe("keep");
+    expect(fs.lstatSync(path.join(apparmor.directory, "murage")).isSymbolicLink()).toBe(false);
   });
 
   it("refuses to follow a replaced package directory symlink", () => {

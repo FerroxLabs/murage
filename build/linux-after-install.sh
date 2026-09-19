@@ -69,6 +69,46 @@ repair_chromium_sandbox() {
   fi
 }
 
+# Ubuntu 24.04 lets a program create user namespaces only under its own
+# AppArmor profile. A restarted Murage (Back up now, returning from a backup)
+# runs with no_new_privs, where the setuid sandbox cannot help, so without the
+# profile it crashes and no window comes back. electron-builder ships the
+# profile in resources/ and its default hook installs it; this hook replaces
+# that default, so it installs the profile here the same way. An AppArmor that
+# cannot parse the profile (older than 4.0) needs none: the package still
+# installs without it.
+install_apparmor_profile() {
+  source=$APP_ROOT/resources/apparmor-profile
+  if [ "$TEST_MODE" -eq 1 ]; then
+    directory=$APP_ROOT/apparmor.d
+    parser=$APP_ROOT/apparmor_parser
+    if [ ! -d "$directory" ] || [ ! -x "$parser" ]; then return 0; fi
+  else
+    directory=/etc/apparmor.d
+    parser=apparmor_parser
+    if ! apparmor_status --enabled > /dev/null 2>&1; then return 0; fi
+    if ! command -v "$parser" > /dev/null 2>&1 || [ ! -d "$directory" ]; then return 0; fi
+  fi
+  if [ -L "$source" ] || [ ! -f "$source" ]; then
+    echo "Murage AppArmor profile is missing; restarting Murage may not work on this system" >&2
+    return 0
+  fi
+  if ! "$parser" --skip-kernel-load --debug "$source" > /dev/null 2>&1; then
+    echo "Skipping the Murage AppArmor profile: this AppArmor does not support it"
+    return 0
+  fi
+  target=$directory/murage
+  # Never write through a link someone left in the profile directory.
+  if [ -L "$target" ]; then rm -f -- "$target"; fi
+  cp -f -- "$source" "$target"
+  chmod 0644 -- "$target"
+  # Loading into the running kernel means nothing inside a chroot.
+  if [ "$TEST_MODE" -eq 0 ] && [ -x /usr/bin/ischroot ] && /usr/bin/ischroot; then return 0; fi
+  if ! "$parser" --replace --write-cache --skip-read-cache "$target" > /dev/null 2>&1; then
+    echo "Murage could not load its AppArmor profile now; it loads at the next restart" >&2
+  fi
+}
+
 CUA_ROOT=$APP_ROOT/resources/cua-linux-x64
 repair_directory "$APP_ROOT"
 repair_directory "$APP_ROOT/resources"
@@ -76,3 +116,4 @@ repair_directory "$CUA_ROOT"
 repair_executable "$CUA_ROOT/cua-driver"
 repair_executable "$CUA_ROOT/cua-cursor-theme"
 repair_chromium_sandbox "$APP_ROOT/chrome-sandbox"
+install_apparmor_profile

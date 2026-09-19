@@ -51,6 +51,7 @@ export async function setUpClosedJob(
 }
 
 export const CLOSED_JOB_REFUSED_REASON = "Your system didn't let Murage register a background job, so backups run only while Murage is open.";
+export const CLOSED_JOB_SHARED_FOLDER_REASON = "Other accounts on this computer can change Murage's data folder, so backups run only while Murage is open.";
 
 /** Why "Also back up when Murage is closed" can't be ticked, said next to the
  * box. Null when nothing went wrong or another line already explains it: no
@@ -59,6 +60,7 @@ export function closedJobBlockedReason(input: { bridge: boolean; closed: BackupC
   const { bridge, closed, stale, setupFailed } = input;
   if (!bridge || stale || !closed?.supported) return null;
   if (closed.state === "installed" || closed.state === "disabled-removal-pending") return null;
+  if (closed.blocked === "data-folder-shared") return CLOSED_JOB_SHARED_FOLDER_REASON;
   return closed.state === "unavailable" || setupFailed ? CLOSED_JOB_REFUSED_REASON : null;
 }
 
@@ -120,6 +122,9 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   else if (s?.phase === "skipped") attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   if (s?.schedule.preUpgrade && s.preUpgradeSupported !== true) attention.push("Pre-upgrade backups are unavailable in this app.");
   if (s?.lastClosedResult?.status === "needs-review") attention.push("The last backup taken while Murage was closed needs review.");
+  // Linux runs the closed-app backup in your desktop session; with nobody
+  // signed in there is no display for it, and it waits instead of crashing.
+  else if (s?.lastClosedResult?.status === "unavailable" && s.lastClosedResult.reason === "capability-unavailable" && !(s.lastVerified && s.lastVerified.verifiedAt >= s.lastClosedResult.at)) attention.push("A backup was due while Murage was closed, but it couldn't start because you weren't signed in to your desktop. It runs the next time you are, or when you open Murage.");
   if (input.closedStale) attention.push("Background job status couldn't be refreshed.");
   if (input.closed?.state === "disabled-removal-pending") attention.push("Removing the background job still needs attention.");
   else if (s?.schedule.closedApp === true && input.closed?.state !== "installed") attention.push("Backing up while Murage is closed isn't set up yet.");
