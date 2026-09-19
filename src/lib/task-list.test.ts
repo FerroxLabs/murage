@@ -5,6 +5,7 @@ import {
   dateBucket,
   formatTaskTokenLabel,
   formatTaskWhen,
+  formatListTime,
   groupTasksByDate,
   isHiddenEmptyTask,
   readableTaskTitle,
@@ -72,6 +73,18 @@ describe("formatTaskWhen", () => {
     // last week's "12:06 AM" must not look like today's
     expect(formatTaskWhen(ny("2026-09-12T00:06:00-04:00"), now, NY)).toBe("Sep 12");
     expect(formatTaskWhen(ny("2025-12-10T09:00:00-05:00"), now, NY)).toBe("Dec 10, 2025");
+  });
+});
+
+describe("formatListTime", () => {
+  const now = ny("2026-09-19T15:00:00-04:00"); // a Saturday
+  it("says when with no date header: time today, Yesterday, weekday this week, then a date", () => {
+    expect(formatListTime(ny("2026-09-19T06:51:00-04:00"), now, NY)).toBe("6:51 AM");
+    expect(formatListTime(ny("2026-09-18T20:03:00-04:00"), now, NY)).toBe("Yesterday");
+    expect(formatListTime(ny("2026-09-15T08:00:00-04:00"), now, NY)).toBe("Tue");
+    // a week ago today must not read as today's weekday
+    expect(formatListTime(ny("2026-09-12T08:00:00-04:00"), now, NY)).toBe("Sep 12");
+    expect(formatListTime(ny("2025-12-10T09:00:00-05:00"), now, NY)).toBe("Dec 10, 2025");
   });
 });
 

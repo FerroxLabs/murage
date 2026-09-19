@@ -42,7 +42,8 @@ import {
 import { SectionContextDialog } from "./SectionContextDialog";
 import { sidebarBotRowTone, sidebarGroupRowTone, sidebarNavRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
-import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
+import { api, useStore, visibleMessages, type Bot, type Group } from "@/state/store";
+import { formatListTime, formatTaskMoment } from "@/lib/task-list";
 
 import { BotAvatar, InitialsAvatar } from "./Avatar";
 import { ConfirmDelete } from "./ConfirmDelete";
@@ -443,7 +444,7 @@ function GroupListItem({
             <Users size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <span className="truncate">{group.name}</span>
           </span>
-          {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
+          {selected && last && <span className="shrink-0 text-xs text-ink-secondary" title={formatTaskMoment(last.at)}>{formatListTime(last.at, Date.now())}</span>}
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-[13px] text-ink-secondary">{sidebarGroupPreview(group, state.bots)}</span>
@@ -1068,8 +1069,8 @@ function BotListItem({
               which is wide enough to miss `max-md:`, renders the archive
               button on top of the time. */}
           {selected && last && !renaming && (
-            <span className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0">
-              {formatTime(last.at)}
+            <span title={formatTaskMoment(last.at)} className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0">
+              {formatListTime(last.at, Date.now())}
             </span>
           )}
         </div>

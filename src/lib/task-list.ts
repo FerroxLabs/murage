@@ -114,6 +114,21 @@ export function formatTaskWhen(at: number, now: number, clock: Clock = {}): stri
   }).format(at);
 }
 
+/** A list row's time with no date header above it (the sidebar): the clock
+ * time today, "Yesterday", the weekday within the last week, then a short
+ * date, with the year once it is not this one. */
+export function formatListTime(at: number, now: number, clock: Clock = {}): string {
+  const { key } = dateBucket(at, now, clock);
+  if (key === "today") return formatter(clock.locale, { timeZone: clock.timeZone, hour: "numeric", minute: "2-digit" }).format(at);
+  if (key === "yesterday") return "Yesterday";
+  if (key === "week") {
+    const day = formatter(clock.locale, { timeZone: clock.timeZone, weekday: "short" });
+    // A week ago today would read as today's weekday: give it a date instead.
+    if (day.format(at) !== day.format(now)) return day.format(at);
+  }
+  return formatTaskWhen(at, now, clock);
+}
+
 /** The full date and time, for a hover title. */
 export function formatTaskMoment(at: number, clock: Clock = {}): string {
   return formatter(clock.locale, { timeZone: clock.timeZone, dateStyle: "medium", timeStyle: "short" }).format(at);
