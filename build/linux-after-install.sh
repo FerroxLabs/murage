@@ -109,6 +109,42 @@ install_apparmor_profile() {
   fi
 }
 
+# electron-builder's default after-install, which this hook replaces, also puts
+# murage on PATH and refreshes the MIME and desktop databases so the murage://
+# links the app registers are handled. Both follow that default. Its default
+# after-remove still runs and removes the link through update-alternatives,
+# so the link is registered the same way. Tests use stand-ins under the test
+# root and never the host's tools.
+if [ "$TEST_MODE" -eq 1 ]; then
+  SYSTEM_ROOT=$APP_ROOT/system
+  system_tool() { if [ -x "$APP_ROOT/tools/$1" ]; then echo "$APP_ROOT/tools/$1"; fi; }
+else
+  SYSTEM_ROOT=
+  system_tool() { command -v "$1" 2> /dev/null || true; }
+fi
+
+link_command() {
+  link=$SYSTEM_ROOT/usr/bin/murage
+  target=$APP_ROOT/murage
+  alternatives=$(system_tool update-alternatives)
+  if [ -n "$alternatives" ]; then
+    # Remove an earlier plain link so update-alternatives can own the path.
+    if [ -L "$link" ] && [ -e "$link" ] && [ "$(readlink "$link")" != "$SYSTEM_ROOT/etc/alternatives/murage" ]; then
+      rm -f -- "$link"
+    fi
+    "$alternatives" --install "$link" murage "$target" 100 || ln -sf -- "$target" "$link" || echo "Murage could not add the murage command to PATH" >&2
+  else
+    ln -sf -- "$target" "$link" || echo "Murage could not add the murage command to PATH" >&2
+  fi
+}
+
+refresh_desktop_databases() {
+  mime=$(system_tool update-mime-database)
+  if [ -n "$mime" ]; then "$mime" "$SYSTEM_ROOT/usr/share/mime" || true; fi
+  desktop=$(system_tool update-desktop-database)
+  if [ -n "$desktop" ]; then "$desktop" "$SYSTEM_ROOT/usr/share/applications" || true; fi
+}
+
 CUA_ROOT=$APP_ROOT/resources/cua-linux-x64
 repair_directory "$APP_ROOT"
 repair_directory "$APP_ROOT/resources"
@@ -116,4 +152,6 @@ repair_directory "$CUA_ROOT"
 repair_executable "$CUA_ROOT/cua-driver"
 repair_executable "$CUA_ROOT/cua-cursor-theme"
 repair_chromium_sandbox "$APP_ROOT/chrome-sandbox"
+link_command
+refresh_desktop_databases
 install_apparmor_profile
