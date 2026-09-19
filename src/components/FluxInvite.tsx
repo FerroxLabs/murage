@@ -2,13 +2,15 @@
 //
 // It is an OFFER and the shape enforces that. No overlay, no backdrop, nothing
 // to dismiss before the app can be used: a small card hanging under the chat
-// header (never over the composer, where it hid Send), with a
+// header (never over the composer, where it hid Send), and under every menu,
+// dropdown and drawer (z-20: the model picker opens right here), with a
 // button that opens the one place a key is entered and a button that makes it
 // go away permanently. Murage works with no Flux key at all, so an invitation
 // that interrupted anything would be lying about how important it is.
 //
 // It does not carry a key field of its own. There is exactly one input, in
 // Settings under Connections, and this points at it.
+import { useLayoutEffect, useState } from "react";
 import { Route, X } from "lucide-react";
 
 import { useStore } from "@/state/store";
@@ -20,15 +22,20 @@ export interface FluxInviteBodyProps {
   onOpen: () => void;
   /** Remembered. This offer does not come back on the next launch. */
   onDismiss: () => void;
+  /** Bottom edge of the chat header, when there is one to hang under. The
+   *  header is one row on a wide window and two on a narrow one, so the
+   *  classes' fixed offset is only the fallback. */
+  headerBottom?: number | null;
 }
 
 /** Rendering only, so the markup can be asserted without a store or a DOM. */
-export function FluxInviteBody({ onOpen, onDismiss }: FluxInviteBodyProps) {
+export function FluxInviteBody({ onOpen, onDismiss, headerBottom }: FluxInviteBodyProps) {
   return (
     <div
       role="complementary"
       aria-label={FLUX_COPY.inviteTitle}
-      className="animate-panel-in fixed right-4 top-20 z-40 w-[320px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50 max-md:inset-x-3 max-md:top-28 max-md:w-auto"
+      style={typeof headerBottom === "number" ? { top: headerBottom + 8 } : undefined}
+      className="animate-panel-in fixed right-4 top-20 z-20 w-[320px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50 max-md:inset-x-3 max-md:top-28 max-md:w-auto"
     >
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
@@ -80,9 +87,11 @@ export function FluxInviteBody({ onOpen, onDismiss }: FluxInviteBodyProps) {
 export function FluxInvite({ firstRunGate }: { firstRunGate: boolean }) {
   const { dispatch } = useStore();
   const { visible, dismiss } = useFluxInvite(firstRunGate);
+  const headerBottom = useChatHeaderBottom(visible);
   if (!visible) return null;
   return (
     <FluxInviteBody
+      headerBottom={headerBottom}
       onOpen={() => {
         dismiss();
         dispatch({ type: "toggleAppSettings", open: true, section: "models" });
@@ -90,4 +99,33 @@ export function FluxInvite({ firstRunGate }: { firstRunGate: boolean }) {
       onDismiss={dismiss}
     />
   );
+}
+
+/** The open chat header's bottom edge while the card is shown, or null when
+ *  no chat is open. Re-measured on resize, when the header reflows (chips
+ *  fold, a second row appears) and when navigation swaps it. */
+function useChatHeaderBottom(active: boolean): number | null {
+  const [bottom, setBottom] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!active) return;
+    let header: Element | null = null;
+    let observer: ResizeObserver | undefined;
+    const measure = () => {
+      const next = document.querySelector("[data-chat-header]");
+      if (next !== header) {
+        observer?.disconnect();
+        header = next;
+        if (header && typeof ResizeObserver !== "undefined") {
+          observer = new ResizeObserver(measure);
+          observer.observe(header);
+        }
+      }
+      setBottom(header ? Math.round(header.getBoundingClientRect().bottom) : null);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const swap = setInterval(measure, 1000);
+    return () => { window.removeEventListener("resize", measure); clearInterval(swap); observer?.disconnect(); };
+  }, [active]);
+  return bottom;
 }
