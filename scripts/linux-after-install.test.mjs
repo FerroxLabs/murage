@@ -24,7 +24,36 @@ function fixture() {
   const chromiumSandbox = path.join(appRoot, "chrome-sandbox");
   fs.writeFileSync(chromiumSandbox, "fixture", { mode: 0o664 });
   fs.chmodSync(chromiumSandbox, 0o664);
-  return { appRoot, resources, cuaRoot, chromiumSandbox };
+  fs.writeFileSync(path.join(resources, "apparmor-profile"), APPARMOR_PROFILE, { mode: 0o644 });
+  for (const directory of ["usr/bin", "usr/share/mime", "usr/share/applications"]) fs.mkdirSync(path.join(appRoot, "system", directory), { recursive: true });
+  return { appRoot, resources, cuaRoot, chromiumSandbox, link: path.join(appRoot, "system", "usr", "bin", "murage") };
+}
+
+// What electron-builder ships in resources/apparmor-profile for Murage.
+const APPARMOR_PROFILE = 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile "murage" "/opt/Murage/murage" flags=(unconfined) {\n  userns,\n}\n';
+
+/** Stand-ins for the system tools the default hook calls. Each logs its name
+ *  and arguments; update-alternatives also notes whether the link existed. */
+function fakeTools(appRoot, { exit = 0, only = ["update-alternatives", "update-mime-database", "update-desktop-database"] } = {}) {
+  const tools = path.join(appRoot, "tools");
+  fs.mkdirSync(tools);
+  const logFile = path.join(appRoot, "tools.log");
+  for (const name of only) {
+    const probe = name === "update-alternatives" ? ` link=$( [ -e "$2" ] || [ -L "$2" ] && echo present || echo absent)` : "";
+    fs.writeFileSync(path.join(tools, name), `#!/bin/sh\necho "${name} $*${probe}" >> "${logFile}"\nexit ${exit}\n`, { mode: 0o755 });
+  }
+  return () => { try { return fs.readFileSync(logFile, "utf8").trim().split("\n"); } catch { return []; } };
+}
+
+/** A stand-in AppArmor: a profile directory and an apparmor_parser that logs
+ *  its arguments and refuses the dry run when asked to. */
+function fakeAppArmor(appRoot, { dryRunExit = 0 } = {}) {
+  const directory = path.join(appRoot, "apparmor.d");
+  fs.mkdirSync(directory);
+  const parser = path.join(appRoot, "apparmor_parser");
+  fs.writeFileSync(parser, `#!/bin/sh\necho "$*" >> "${path.join(appRoot, "parser.log")}"\ncase "$*" in *--skip-kernel-load*) exit ${dryRunExit};; esac\nexit 0\n`, { mode: 0o755 });
+  const log = () => { try { return fs.readFileSync(path.join(appRoot, "parser.log"), "utf8").trim().split("\n"); } catch { return []; } };
+  return { directory, log };
 }
 
 function runHook(appRoot) {
@@ -92,6 +121,87 @@ describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
       }
       expect(fs.lstatSync(chromiumSandbox).mode & 0o7777).toBe(0o4755);
     }
+  });
+
+  // A restarted Murage needs user namespaces; on Ubuntu 24.04 only a program
+  // under its own AppArmor profile gets them. The package ships that profile.
+  it("installs and loads Murage's AppArmor profile where AppArmor can use it", () => {
+    const { appRoot, resources } = fixture();
+    const apparmor = fakeAppArmor(appRoot);
+    for (let pass = 0; pass < 2; pass += 1) {
+      const result = runHook(appRoot);
+      expect(result.status, result.stderr).toBe(0);
+      const target = path.join(apparmor.directory, "murage");
+      expect(fs.readFileSync(target, "utf8")).toBe(APPARMOR_PROFILE);
+      expect(fs.lstatSync(target).mode & 0o777).toBe(0o644);
+    }
+    const dryRun = `--skip-kernel-load --debug ${path.join(resources, "apparmor-profile")}`;
+    const load = `--replace --write-cache --skip-read-cache ${path.join(apparmor.directory, "murage")}`;
+    expect(apparmor.log()).toEqual([dryRun, load, dryRun, load]);
+  });
+
+  it("still installs, without the profile, where AppArmor cannot use it", () => {
+    const { appRoot } = fixture();
+    const apparmor = fakeAppArmor(appRoot, { dryRunExit: 1 });
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(path.join(apparmor.directory, "murage"))).toBe(false);
+    expect(apparmor.log()).toHaveLength(1);
+  });
+
+  it("still installs where there is no AppArmor at all", () => {
+    const { appRoot, chromiumSandbox } = fixture();
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.lstatSync(chromiumSandbox).mode & 0o7777).toBe(0o4755);
+  });
+
+  it("replaces a symlink planted where the profile goes instead of writing through it", () => {
+    const { appRoot } = fixture();
+    const apparmor = fakeAppArmor(appRoot);
+    const outside = path.join(appRoot, "outside.txt");
+    fs.writeFileSync(outside, "keep");
+    fs.symlinkSync(outside, path.join(apparmor.directory, "murage"));
+    const result = runHook(appRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(outside, "utf8")).toBe("keep");
+    expect(fs.lstatSync(path.join(apparmor.directory, "murage")).isSymbolicLink()).toBe(false);
+  });
+
+  // What electron-builder's default after-install does and this hook replaces.
+  it("puts murage on PATH through update-alternatives and refreshes the MIME and desktop databases", () => {
+    const { appRoot, link } = fixture();
+    const log = fakeTools(appRoot);
+    for (let pass = 0; pass < 2; pass += 1) expect(runHook(appRoot).status).toBe(0);
+    const install = `update-alternatives --install ${link} murage ${path.join(appRoot, "murage")} 100 link=absent`;
+    const mime = `update-mime-database ${path.join(appRoot, "system", "usr", "share", "mime")}`;
+    const desktop = `update-desktop-database ${path.join(appRoot, "system", "usr", "share", "applications")}`;
+    expect(log()).toEqual([install, mime, desktop, install, mime, desktop]);
+  });
+
+  it("replaces an earlier plain murage link so update-alternatives can own it", () => {
+    const { appRoot, link, chromiumSandbox } = fixture();
+    fs.symlinkSync(chromiumSandbox, link);
+    const log = fakeTools(appRoot, { only: ["update-alternatives"] });
+    expect(runHook(appRoot).status).toBe(0);
+    expect(log()).toEqual([`update-alternatives --install ${link} murage ${path.join(appRoot, "murage")} 100 link=absent`]);
+  });
+
+  it("links murage directly where there is no update-alternatives, or it fails", () => {
+    for (const tools of [null, { exit: 1 }]) {
+      const { appRoot, link } = fixture();
+      if (tools) fakeTools(appRoot, tools);
+      const result = runHook(appRoot);
+      // A failing database refresh never fails the install either.
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readlinkSync(link)).toBe(path.join(appRoot, "murage"));
+    }
+  });
+
+  it("leaves removal to electron-builder's default after-remove, which unregisters the link", () => {
+    const config = parse(fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8"));
+    expect(config.deb?.afterRemove).toBeUndefined();
+    expect(config.linux?.afterRemove).toBeUndefined();
   });
 
   it("refuses to follow a replaced package directory symlink", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {EventEmitter} from "node:events";
-import {mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
+import {chmodSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -39,6 +39,13 @@ test("controller stages private stable trigger without registration and needs na
   await f.controller.assertInvocation(stage.descriptor,stage.descriptorPath);
   await f.controller.install();assert.equal(f.installs(),1);
 });
+test("status names a data folder other accounts can write to instead of a generic refusal",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);chmodSync(f.profile.installation,0o775);
+  assert.deepEqual(await f.controller.status(),{supported:true,closedApp:false,lastClosedResult:undefined,state:"unavailable",blocked:"data-folder-shared"});
+  await assert.rejects(f.controller.stage());
+  chmodSync(f.profile.installation,0o700);
+  const status=await f.controller.status();assert.equal(status.state,"unconfigured");assert.equal("blocked" in status,false);
+});
 test("controller rejects changed registration/stage and disables before running removal is deferred",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);await f.controller.stage();await f.controller.install();
   f.setCurrent({...f.getCurrent(),running:true});assert.equal((await f.controller.disable()).state,"disabled-removal-pending");assert.equal(f.removes(),0);
@@ -58,7 +65,39 @@ test("capture launcher waits for actual close and accepts only bounded structure
   const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>true;
   let resolved=false;const running=launchClosedCapture({executable:"never",args:[],env:{}},{spawnChild:()=>child}).then(value=>{resolved=true;return value;});
   child.stdout.emit("data",Buffer.from('{"type":"murage:closed-backup-result","status":"verified"}\n'));await Promise.resolve();assert.equal(resolved,false);
-  child.emit("close",0);assert.deepEqual(await running,{status:"verified"});
+  child.emit("close",0);assert.deepEqual(await running,{status:"verified",confirmed:true});
+});
+test("capture launcher marks a launch that ends without its result line as unconfirmed",async()=>{
+  const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>true;
+  const running=launchClosedCapture({executable:"never",args:[],env:{}},{spawnChild:()=>child});
+  child.emit("close",null,"SIGTRAP");assert.deepEqual(await running,{status:"needs-review",confirmed:false});
+});
+const dueFixture=t=>{const f=fixture(t);return f.controller.stage().then(()=>f.controller.install()).then(()=>{
+  f.coordinator.configure(0,{enabled:true,closedApp:true,installationRef:"installation",destinationRef:"destination",recoveryRef:"recovery",timezone:"UTC",time:"09:00",catchupMs:60000,maxBytes:1000,maxDurationMs:1000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}});
+  f.setNow(Date.parse("2026-09-13T09:00:30Z"));return f;});};
+test("a due closed backup whose launch dies without a result is recorded as needing review",{skip:POSIX_ONLY},async t=>{
+  const f=await dueFixture(t),descriptor=f.stage().descriptorPath;
+  const crashed=async()=>({status:"needs-review",confirmed:false});
+  assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{DISPLAY:":0"},launch:crashed})).status,"needs-review");
+  assert.deepEqual(f.coordinator.status().lastClosedResult,{status:"needs-review",reason:"capture-unconfirmed",at:f.now(),revision:1});
+  // A capture that recorded its own result before dying keeps that result.
+  f.setNow(f.now()+1000);
+  const recordedThenDied=async()=>{f.coordinator.recordClosedResult({status:"verified"});return{status:"needs-review",confirmed:false};};
+  await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{DISPLAY:":0"},launch:recordedThenDied});
+  assert.equal(f.coordinator.status().lastClosedResult.status,"verified");
+});
+test("on Linux a due closed backup with no desktop session waits and says why instead of launching",{skip:POSIX_ONLY},async t=>{
+  const f=await dueFixture(t),descriptor=f.stage().descriptorPath;let launches=0;
+  const launch=async()=>{launches++;return{status:"verified",confirmed:true};};
+  const run=environment=>runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment,launch,platform:"linux"});
+  assert.deepEqual(await run({HOME:"/home/me"}),{status:"unavailable"});assert.equal(launches,0);
+  const first=f.coordinator.status().lastClosedResult;
+  assert.deepEqual(first,{status:"unavailable",reason:"capability-unavailable",at:f.now(),revision:1});
+  // Checked again while it waits: the same result is not rewritten.
+  f.setNow(f.now()+20000);await run({HOME:"/home/me"});assert.deepEqual(f.coordinator.status().lastClosedResult,first);
+  assert.equal((await run({WAYLAND_DISPLAY:"wayland-0"})).status,"verified");assert.equal(launches,1);
+  // Other platforms do not depend on these variables.
+  assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{},launch,platform:"darwin"})).status,"verified");
 });
 
 const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),parsed=ts.createSourceFile("main.mjs",main,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);

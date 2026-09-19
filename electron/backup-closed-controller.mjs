@@ -1,6 +1,6 @@
 import {lstatSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
 import path from "node:path";
-import {assertClosedProfileBinding,closedDigest,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
+import {assertClosedProfileBinding,closedDigest,closedProfileFolderShared,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
 import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
 
 const refuse=()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");};
@@ -39,6 +39,7 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     const schedule=backup()?.internalStatus();
     const common={supported:supported(),closedApp:schedule?.enabled===true&&schedule?.schedule.closedApp===true,lastClosedResult:schedule?.lastClosedResult};
     if(!common.supported)return{...common,state:"unavailable"};
+    if(closedProfileFolderShared(profile()))return{...common,state:"unavailable",blocked:"data-folder-shared"};
     try{
       const stage=readStage();if(!stage)return{...common,state:"unconfigured"};
       const current=await provider.read(stage);

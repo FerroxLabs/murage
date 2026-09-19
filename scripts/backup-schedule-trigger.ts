@@ -10,9 +10,9 @@ import {createNativeClosedBackupProvider} from "../electron/backup-closed-native
 const statuses=new Set(["disabled","not-due","busy","verified","needs-review","unavailable"]);
 /** Only the exact finite result is retained; child stdout/stderr is never logged. */
 export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=32*60*1000}:any={}){
-  return new Promise<{status:string}>(resolve=>{
+  return new Promise<{status:string;confirmed:boolean}>(resolve=>{
     let child:any,bytes=0,text="",failed=false,force:ReturnType<typeof setTimeout>|undefined;
-    try{child=spawnChild(invocation.executable,invocation.args,{env:invocation.env,stdio:["ignore","pipe","pipe"],windowsHide:true});}catch{resolve({status:"unavailable"});return;}
+    try{child=spawnChild(invocation.executable,invocation.args,{env:invocation.env,stdio:["ignore","pipe","pipe"],windowsHide:true});}catch{resolve({status:"unavailable",confirmed:false});return;}
     const stop=()=>{failed=true;child.kill("SIGTERM");force=setTimeout(()=>child.kill("SIGKILL"),10000);force.unref?.();};
     const timer=setTimeout(stop,timeoutMs);timer.unref?.();
     const collect=(chunk:Buffer,stdout:boolean)=>{
@@ -24,13 +24,16 @@ export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=3
     child.once("close",(code:number)=>{
       clearTimeout(timer);if(force)clearTimeout(force);
       let result;try{const lines=text.trim().split(/\r?\n/).filter(line=>line.startsWith('{"type":"murage:closed-backup-result"'));if(lines.length!==1)throw Error();result=JSON.parse(lines[0]);}catch{failed=true;}
-      resolve({status:!failed&&code===0&&result?.type==="murage:closed-backup-result"&&statuses.has(result.status)?result.status:"needs-review"});
+      // Confirmed only by one exact result line and a clean exit; a crash or a
+      // signal leaves nothing the capture itself could have recorded.
+      const confirmed=!failed&&code===0&&result?.type==="murage:closed-backup-result"&&statuses.has(result.status);
+      resolve({status:confirmed?result.status:"needs-review",confirmed});
     });
   });
 }
-export async function runBackupScheduleTrigger(argv=process.argv.slice(2),{environment=process.env,provider=createNativeClosedBackupProvider(),launch=launchClosedCapture,now=Date.now}:any={}){
+export async function runBackupScheduleTrigger(argv=process.argv.slice(2),{environment=process.env,provider=createNativeClosedBackupProvider(),launch=launchClosedCapture,now=Date.now,platform=process.platform}:any={}){
   if(argv.length!==2||argv[0]!==CLOSED_DESCRIPTOR_FLAG)return{status:"unavailable"};
-  return runClosedBackupTrigger({descriptorPath:argv[1],environment,
+  return runClosedBackupTrigger({descriptorPath:argv[1],environment,platform,
     validateRegistration:async(descriptor:any,file:string)=>{await assertClosedRegistration(descriptor,file,provider);return true;},
     createCoordinator:(descriptor:any)=>new BackupCoordinator({stateDirectory:closedControlDirectory(descriptor.installation),now}),launch,
   });

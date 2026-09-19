@@ -279,7 +279,7 @@ const BUILD_CHUNK = 40;
 const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 async function buildIndexFile(target: string, root: string): Promise<number> {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   let entries: string[];
   try {
     entries = readdirSync(root);
