@@ -812,19 +812,79 @@ export function normalizeGroupDefaultResponder(
   return { kind: "member", botId: memberIds[0] };
 }
 
+/** Members a person addresses by plain name, without an @. Deliberately
+ * conservative — only vocative forms count:
+ *  - leading: "Moss, …", "Moss: …", "Moss — …", "Moss?", "Moss can you …",
+ *    "Moss please …", a greeting first ("Hey Moss …", "Thanks Moss …"), or a
+ *    leading list ("Moss and Sable, …", "Moss, Sable: …");
+ *  - trailing: "…, Moss?" / "…, Moss." at the very end.
+ * A name inside a sentence ("ask Moss later", "Moss's report", "Moss grows")
+ * is a reference, not an address. Names match whole words, case-insensitively,
+ * longest first; a multi-word name's first word also works as a short name
+ * when no other member shares it. Hidden members are never addressed. */
+export function addressedMembers<T extends { name: string; hidden?: boolean }>(text: string, members: T[]): T[] {
+  const available = members.filter((member) => !member.hidden && member.name.trim());
+  const spoken = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
+  const firstWord = (member: T) => spoken(member.name).split(" ")[0];
+  const aliases: Array<{ alias: string; member: T }> = available.map((member) => ({ alias: spoken(member.name), member }));
+  for (const member of available) {
+    const short = firstWord(member);
+    if (short.length < 2 || short === spoken(member.name)) continue;
+    const shared = available.some((other) => other !== member && (firstWord(other) === short || spoken(other.name) === short));
+    if (!shared) aliases.push({ alias: short, member });
+  }
+  aliases.sort((a, b) => b.alias.length - a.alias.length);
+  const lower = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const nameAt = (at: number) => aliases.find(({ alias }) =>
+    lower.startsWith(alias, at) && !/[\p{L}\p{N}'’_-]/u.test(lower[at + alias.length] ?? "")) ?? null;
+
+  // Leading vocative, optionally after a greeting and as a short list.
+  const greeting = /^(?:hey|hi|hello|yo|ok|okay|thanks|thank you)\b[\s,!]*/.exec(lower);
+  let at = greeting ? greeting[0].length : 0;
+  const found: T[] = [];
+  for (;;) {
+    const hit = nameAt(at);
+    if (!hit) break;
+    if (!found.includes(hit.member)) found.push(hit.member);
+    at += hit.alias.length;
+    const joiner = /^\s*(?:,|and\b|&)\s*/.exec(lower.slice(at));
+    if (joiner && nameAt(at + joiner[0].length)) { at += joiner[0].length; continue; }
+    const rest = lower.slice(at);
+    const vocative = /^\s*(?:[,:;!?]|—|–|\s-\s|\.?\s*$)/.test(rest)
+      || /^\s+(?:can you|could you|would you|will you|please|pls)\b/.test(rest)
+      || (Boolean(greeting) && /^(?:\s|$)/.test(rest));
+    return vocative ? found : [];
+  }
+  if (found.length) return [];
+  // Trailing vocative: "…, Moss?" at the very end of the message.
+  const trailing = /,\s*([^,]+?)\s*[.!?]*$/.exec(lower);
+  if (trailing) {
+    const start = lower.length - trailing[0].length + trailing[0].indexOf(trailing[1]);
+    const hit = nameAt(start);
+    if (hit && start + hit.alias.length === start + trailing[1].length) return [hit.member];
+  }
+  return [];
+}
+
 /** Resolve the bots invoked by a human room message. Explicit targets win;
- * then a reply to an active member's message addresses that member;
- * otherwise the room policy chooses one member, everyone, or nobody. */
+ * then (for a person's message) a member addressed by plain name; then a
+ * reply to an active member's message addresses that member; otherwise the
+ * room policy chooses one member, everyone, or nobody. A bot's reply never
+ * routes by plain name: bots are told to use their teammates' plain names to
+ * refer to them and @Name only to summon them. */
 export function roomResponders<T extends { id: string; name: string; hidden?: boolean }>(
   text: string,
   members: T[],
   defaultResponder: GroupDefaultResponder,
   replyToBotId?: string,
+  options: { byName?: boolean } = {},
 ): T[] {
   const available = members.filter((member) => !member.hidden);
   if (/(?:^|\s)@everyone\b/i.test(text)) return available;
   const mentioned = mentionedBots(text, available);
   if (mentioned.length) return mentioned;
+  const addressed = options.byName ? addressedMembers(text, available) : [];
+  if (addressed.length) return addressed;
   const repliedTo = replyToBotId ? available.find((member) => member.id === replyToBotId) : undefined;
   if (repliedTo) return [repliedTo];
   if (defaultResponder.kind === "everyone") return available;

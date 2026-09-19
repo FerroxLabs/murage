@@ -198,10 +198,16 @@ export function readMemoryTopic(botId: string, name: string): string | null {
  * it has written anything. Content from other bots or imported files must
  * never be recorded as fact — memory is a prompt-injection persistence
  * vector the moment a bot copies untrusted text into it. */
-export function memorySystemPrompt(botId: string): string {
+export function memorySystemPrompt(botId: string, opts: { fileTools?: boolean } = {}): string {
   const memory = loadMemory(botId);
   const memoryFile = join(workspaceDir(botId), "MEMORY.md");
   const topicDir = join(workspaceDir(botId), "memory");
+  // An engine without local file tools still reads its notebook, but must
+  // not be told to edit a file it cannot reach (adapted from OpenMausBot).
+  if (opts.fileTools === false) {
+    if (!memory) return "";
+    return ` Your saved memory is supplied as context; this turn has no memory editing tools.\n\nYour memory (MEMORY.md):\n${memory.text}${memory.truncated ? " [Only the initial memory excerpt is visible.]" : ""}`;
+  }
   const guidance =
     ` Your private long-term memory file is ${JSON.stringify(memoryFile)}.` +
     " It stays separate from a custom project working folder." +

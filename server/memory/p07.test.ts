@@ -54,13 +54,15 @@ it("refuses mandatory pin overflow and invalidated evidence instead of omitting 
   await expect(buildMemoryBundle("question",f.access,empty)).rejects.toThrow("MEMORY_PIN_UNAVAILABLE");
 });
 
-it("never injects private notebook or bot team pins into a room at deep delegation",async()=>{
+it("gives an owner room member only its own notebook and team pins, never another bot's, at deep delegation",async()=>{
   const f=fixture("room-thread");
-  record("private",ensureScope("bot","bot"),"PRIVATE_CANARY");
-  record("team",ensureScope("team","secret-team"),"TEAM_CANARY");
+  record("own",ensureScope("bot","bot"),"Own notebook pin");
+  record("team",ensureScope("team","secret-team"),"Own team pin");
+  record("private",ensureScope("bot","other-bot"),"PRIVATE_CANARY");
+  record("other-team",ensureScope("team","other-team"),"TEAM_CANARY");
   record("shared",ensureScope("room","room"),"Room decision");
   const bundle=await buildMemoryBundle("what matters",f.access,empty);
-  expect(bundle.recordVersions).toEqual([{id:"shared",version:1}]);
+  expect(bundle.recordVersions.map(row=>row.id).sort()).toEqual(["own","shared","team"]);
   expect(bundle.text).not.toContain("CANARY");
 });
 

@@ -54,6 +54,20 @@ function selectionItem(selection:ImportSelection,roster:MemoryRoster):ImportItem
   return {selection,path,hash:originalHash,bytes:Buffer.byteLength(text),text,scopeId,scopeLabel,alreadyImported:previous?.content_hash===originalHash};
 }
 
+/** Import sources for the two notebooks a turn's prompt carries whole: the
+ * bot's MEMORY.md and its section's team brief. Recall skips records that
+ * rest only on these, so one fact is not sent twice. Read-only: an absent
+ * scope means nothing was imported from it. */
+export function notebookSourceIds(botId:string,section?:string|null):{notebook?:string;brief?:string} {
+  const db=database(),team=section?.trim()||"";
+  const scope=(kind:string,owner:string)=>db.prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind,owner)?.id;
+  const bot=scope("bot",botId),brief=scope("team",team);
+  return {
+    ...bot?{notebook:`legacy:${hash(JSON.stringify([String(bot),join(DATA_DIR,"workspaces",botId,"MEMORY.md")]))}`}:{},
+    ...brief?{brief:`legacy:${hash(JSON.stringify([String(brief),`${join(DATA_DIR,"section-contexts.json")}#${team}`]))}`}:{},
+  };
+}
+
 export function previewMemoryImport(ticket:object,selections:ImportSelection[],roster:MemoryRoster){
   requireMemoryOwner(ticket);
   if(!selections.length||selections.length>20)throw new Error("MEMORY_IMPORT_SELECTION_LIMIT");

@@ -246,3 +246,16 @@ describe("individualAssistantSystemPrompt", () => {
     expect(prompt).not.toContain("list_bots");
   });
 });
+
+describe("chiefOfStaffSystemPrompt speaks only for the Chief", () => {
+  // A consolidated answer must not become the Chief voicing a teammate, and a
+  // message meant for a teammate must reach that teammate.
+  it.each([
+    ["section lead", [{ id: "chief", name: "Atlas", section: "Work", chiefOfStaff: true }, { id: "moss", name: "Moss", section: "Work" }]],
+    ["workspace Chief", [{ id: "chief", name: "Ember", chiefOfStaff: true, chiefScope: "workspace" as const }, { id: "rex", name: "Rex", section: "Sales", chiefOfStaff: true }]],
+  ])("tells a %s never to answer on a teammate's behalf", (_label, bots) => {
+    const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
+    expect(prompt).toContain("never write lines as a teammate or answer on a teammate's behalf");
+    expect(prompt).toContain("If a message is addressed to a teammate, hand it to them");
+  });
+});
