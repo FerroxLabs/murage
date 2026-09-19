@@ -58,6 +58,7 @@ export function scheduleError(cause: unknown): string {
     BACKUP_HANDOFF_DEFERRED: "Backup restart was deferred. Finish active work and refresh status.",
     BACKUP_RELEASE_UNCONFIRMED: "Workspace shutdown could not be confirmed. Preserve the current workspace and refresh status.",
     BACKUP_RELAUNCH_BLOCKED: "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.",
+    BACKUP_ELEVATED: "Murage is running as administrator, and backups can't run that way. Close Murage, open it normally, then try again.",
     BACKUP_UNAVAILABLE: "Scheduled backup is unavailable in this app. A supported packaged app and verified backup tool are required.",
     INVALID_BACKUP_SCHEDULE: "Check the time, timezone and backup budgets before enabling.",
   };

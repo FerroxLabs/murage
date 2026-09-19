@@ -10,6 +10,7 @@ import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readC
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
+import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
@@ -3226,6 +3227,7 @@ async function initializeBackupScheduleHost(){
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
     relaunchBlocked:()=>linuxRelaunchBlocked(),
+    elevated:()=>windowsElevated(),
     verifyEncrypted:requireDesktopBackupTool,
     readProtected:async key=>{
       if(key!==BACKUP_SCHEDULE_BINDINGS_KEY)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");

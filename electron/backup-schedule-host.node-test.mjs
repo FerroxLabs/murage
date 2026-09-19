@@ -48,6 +48,19 @@ test("two owners complete armed restart, verified receipt then normal return wit
   const f=fixture();try{await f.arm();assert.equal(f.coordinator().status().phase,"handoff-armed");assert.deepEqual(f.calls,["prepare","cleanup","backup"]);const next=f.create();await next.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");assert.deepEqual(f.calls,["prepare","cleanup","backup","capture","normal"]);const last=f.create();last.completeReturn();await last.tick();assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(x=>x==="capture").length,1);assert.equal(f.coordinator().status().lastVerified.destinationRef,(await last.status()).refs.destinationRef);
   }finally{f.cleanup();}
 });
+test("the worker may report the archive in another spelling of the same path, never another path",async()=>{
+  // The recovery worker canonicalizes paths, which on Windows lowercases them.
+  const spelled=output=>output.toLowerCase();
+  const f=fixture(({destination})=>({capture:async request=>{const bytes=Buffer.from("fictional encrypted artifact");writeFileSync(request.output,bytes,{flag:"wx",mode:0o600});
+    return{ok:true,operation:"backup-encrypted",path:spelled(request.output),sha256:digest(bytes),snapshotId:randomUUID(),coverage:{scope:"application-data",fullInstallation:false,credentialPolicy:"preserve-in-encrypted-fidelity"}};}}));
+  try{
+    await f.arm();const output=path.join(f.destination,f.coordinator().status().job.id+".age");
+    const sameSpelling=process.platform==="win32"||spelled(output)===output;
+    if(sameSpelling)await f.create().resumeOffline();
+    else await assert.rejects(f.create().resumeOffline(),/REVIEW_REQUIRED/);
+    assert.equal(f.coordinator().status().phase,sameSpelling?"return-pending":"needs-review");
+  }finally{f.cleanup();}
+});
 test("busy admission never closes work; failed cleanup releases only its prepared claim",async()=>{
   for(const phase of ["busy","cleanup"]){const f=fixture(phase==="busy"?{prepare:async()=>{throw Error("BACKUP_WORK_ACTIVE");}}:{cleanupIdle:async()=>{throw Error("cleanup unconfirmed");}});try{await f.arm();assert.equal(f.calls.includes("backup"),false);assert.equal(f.calls.includes("capture"),false);assert.equal(f.calls.includes("release"),phase==="cleanup");assert.equal(f.coordinator().status().phase,phase==="busy"?"waiting-backup-mode":"needs-review");}finally{f.cleanup();}}
 });
@@ -368,6 +381,17 @@ test("back up now and a due daily run refuse before closing anything when this s
     assert.equal((await blocked.status()).error,"BACKUP_RELAUNCH_BLOCKED");
     await assert.rejects(blocked.requestUpgrade(updateCandidate()),/BACKUP_RELAUNCH_BLOCKED/);assert.deepEqual(f.calls,[]);
     blocked.stopPolling();
+  }finally{f.cleanup();}
+});
+test("back up now and a due daily run refuse before closing anything while Murage runs as administrator",async()=>{
+  const f=fixture();try{
+    await f.enable();const before=await f.controller.status();
+    const elevated=f.create({elevated:()=>true});
+    await assert.rejects(elevated.runNow(before.revision),/BACKUP_ELEVATED/);assert.deepEqual(f.calls,[]);
+    assert.equal(f.coordinator().status().job,undefined);
+    f.setNow(Date.parse("2026-09-13T09:01:00Z"));await elevated.tick();assert.deepEqual(f.calls,[]);
+    assert.equal((await elevated.status()).error,"BACKUP_ELEVATED");
+    elevated.stopPolling();
   }finally{f.cleanup();}
 });
 test("back up now refuses without saved references, consent or the current revision, before any restart",async()=>{

@@ -78,7 +78,10 @@ export function createBackupScheduleHost(host) {
   const assertUpgradeAllowed=async candidate=>{if(!host.supported()||typeof host.assertUpgradeAllowed!=="function")throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");await host.assertUpgradeAllowed(candidate);};
   // Every in-app backup restarts Murage; refuse before closing anything where
   // that restart would crash instead of coming back.
-  const assertRelaunchPossible=()=>{if(host.relaunchBlocked?.())throw Error("BACKUP_RELAUNCH_BLOCKED");};
+  // The Windows backup helper refuses an elevated Murage by design; say so
+  // before anything closes instead of failing inside Backup mode.
+  const captureBlocked=()=>host.relaunchBlocked?.()?"BACKUP_RELAUNCH_BLOCKED":host.elevated?.()?"BACKUP_ELEVATED":null;
+  const assertRelaunchPossible=()=>{const blocked=captureBlocked();if(blocked)throw Error(blocked);};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
   function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
   async function verifyUpgrade(candidate){
@@ -125,7 +128,7 @@ export function createBackupScheduleHost(host) {
     try{
       const s=await coordinator.tick(upgradeId);
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase)||!host.supported())return;
-      if(host.relaunchBlocked?.()){lastError="BACKUP_RELAUNCH_BLOCKED";return;}
+      const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
       const b=await checked();
       release=await host.prepare();
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
@@ -188,7 +191,9 @@ export function createBackupScheduleHost(host) {
       coordinator.beginHandoffCapture(intent.id);
       captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
       captureStage="artifact-readback";
-      if(result?.ok!==true||result.operation!=="backup-encrypted"||result.path!==output||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
+      // The worker reports the archive in its canonical spelling, which on
+      // Windows is lower case; the file checked below is always our own path.
+      if(result?.ok!==true||result.operation!=="backup-encrypted"||!samePath(result.path,output)||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
       captureStage="receipt-commit";coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
