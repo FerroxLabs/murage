@@ -150,9 +150,15 @@ export function useBackupSchedule() {
     const next=await bridge.runNow(status.revision);apply(next,expected);
     if(mounted.current&&expected===version.current)setNotice("Backup requested. Murage will close and reopen this window to take it.");
   },runNowError);
+  const canClearReview=Boolean(bridge?.clearReview&&status?.phase==="needs-review"&&!status.pending);
+  const clearReview=()=>void run("summary",async expected=>{
+    if(!status||!bridge?.clearReview)return;
+    const next=await bridge.clearReview(status.revision);apply(next,expected);
+    if(mounted.current&&expected===version.current)setNotice("Cleared. Back up now or the next daily backup will try again.");
+  });
   const refreshNow=(where:ScheduleArea="advanced")=>void run(where,async expected=>{await refresh(expected);});
   return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,confirmRun,setConfirmRun,
-    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,createRecoveryKey,enable,disable,canRunNow,runNow,refreshNow};
+    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,createRecoveryKey,enable,disable,canRunNow,runNow,canClearReview,clearReview,refreshNow};
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
 
@@ -229,7 +235,7 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
             {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Ticking this sets up a background job for your user account.</p>}
           </fieldset>
           {closedAction==="setup"&&<p role="status" className="text-[12px] text-ink-secondary">Setting up the background job…</p>}
-          {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">{window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
+          {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">{typeof window!=="undefined"&&window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
           {draft.closedApp&&(!closedRegistered||status.closedAppSupported!==true)&&<p className="text-[12px] text-warning">Your choice to back up while Murage is closed is saved, but the background job isn't registered. Untick and tick the box to set it up, or leave it unticked to back up only while Murage is open.</p>}
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[12px] text-ink-secondary">{limitsSet?"Backup limits are set. You can change them under Advanced.":"Backup limits aren't set yet. They are required the first time."}</p>
@@ -318,11 +324,13 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
       <p className="font-medium">Needs attention</p>
       <ul className="list-disc pl-5">{summary.attention.map(item=><li key={item}>{item}</li>)}</ul>
     </div>}
+    {s.canClearReview&&<p className="text-[13px] text-ink">The last backup stopped before Murage could confirm it, so backups are paused. Your workspace was not changed. Clear this to back up again. If it happens again, check that the backup folder and recovery key are still available.</p>}
     {s.confirmRun&&<p className="text-[13px] text-ink">Murage will close and reopen this window to take the backup.</p>}
     <div className="flex flex-wrap gap-2">
       {s.bridge?.runNow&&(s.confirmRun
         ?<><button type="button" className={primaryButton} disabled={!s.canRunNow} onClick={s.runNow}>Continue</button><button type="button" className={scheduleButton} onClick={()=>s.setConfirmRun(false)}>Cancel</button></>
         :<button type="button" className={primaryButton} disabled={!s.canRunNow} onClick={()=>s.setConfirmRun(true)}>Back up now</button>)}
+      {s.canClearReview&&<button type="button" className={primaryButton} disabled={s.busy} onClick={s.clearReview}>Clear and try again</button>}
       <button type="button" className={scheduleButton} onClick={onRestore}>Restore…</button>
       {stale&&<button type="button" className={scheduleButton} disabled={s.busy||Boolean(r.busy)} onClick={()=>{s.refreshNow("summary");r.refreshNow();}}>Check again</button>}
     </div>

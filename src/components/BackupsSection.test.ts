@@ -87,7 +87,7 @@ describe("backup summary", () => {
       [{ scheduleFailure: "Settings changed." }, /Settings changed/],
       [{ schedule: { ...s, error: "BACKUP_REVIEW_REQUIRED PRIVATE" } }, /Automatic retry is paused/],
       [{ schedule: { ...s, pending: true } }, /backup is running/],
-      [{ schedule: { ...s, phase: "needs-review" } }, /needs review; automatic retry is paused/],
+      [{ schedule: { ...s, phase: "needs-review" } }, /didn't finish; backups are paused until you clear it/],
       [{ schedule: { ...s, schedule: { ...enabledSchedule, preUpgrade: true } } }, /Pre-upgrade backups are unavailable/],
       [{ schedule: { ...s, lastClosedResult: { status: "needs-review", at: 1, revision: 1 } } }, /closed needs review/],
       [{ closedStale: true }, /Background job status couldn't be refreshed/],

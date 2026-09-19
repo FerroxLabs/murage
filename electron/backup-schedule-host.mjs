@@ -71,7 +71,7 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
-    return {supported:host.supported(),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,refs,error:lastError};
+    return {supported:host.supported(),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -137,6 +137,14 @@ export function createBackupScheduleHost(host) {
       if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve unreadable state. */}
       if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
     }finally{running=false;}
+  }
+  /** Clears a backup that stopped without a confirmed result, so backups can
+   * run again. Never while this window is preparing one. */
+  async function clearReview(expectedRevision){
+    if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
+    if(running)throw Error("BACKUP_BUSY");
+    coordinator.clearReview(expectedRevision);lastError=null;
+    return publicStatus();
   }
   /** User-requested backup through the same handoff a due daily run takes.
    * Every precondition is proven before the workspace is asked to close. */
@@ -236,7 +244,7 @@ export function createBackupScheduleHost(host) {
     }finally{running=false;}
   }
   return {
-    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
     async latestVerifiedArtifact(){

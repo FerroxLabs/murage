@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     selectReferences: () => ipcRenderer.invoke("backup-schedule:select"),
     configure: (revision, choices) => ipcRenderer.invoke("backup-schedule:configure", revision, choices),
     runNow: (revision) => ipcRenderer.invoke("backup-schedule:run-now", revision),
+    clearReview: (revision) => ipcRenderer.invoke("backup-schedule:clear-review", revision),
   },
   backupClosed: {
     status: () => ipcRenderer.invoke("backup-closed:status"),

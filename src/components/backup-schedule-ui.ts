@@ -38,7 +38,7 @@ export function schedulePhase(phase: string): string {
     "waiting-backup-mode": "Waiting for Backup mode", "handoff-prepared": "Preparing the backup restart", "handoff-armed": "Preparing the backup restart",
     claiming: "Backup in progress", "offline-claimed": "Backup in progress", capturing: "Backup in progress", "return-pending": "Preparing to reopen Murage",
     returned: "The last backup finished and Murage reopened", "local-verified": "Local backup verified", skipped: "Backup skipped",
-    "needs-review": "Backup needs review; automatic retry is paused","install-requested":"Update installation requested","upgrade-complete":"Update completed after backup","upgrade-cancelled":"Update cancelled" };
+    "needs-review": "The last backup didn't finish; backups are paused until you clear it","install-requested":"Update installation requested","upgrade-complete":"Update completed after backup","upgrade-cancelled":"Update cancelled" };
   return labels[phase] ?? "Status needs review. Refresh to check the backup.";
 }
 export function scheduleError(cause: unknown): string {

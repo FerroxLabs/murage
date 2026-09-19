@@ -133,6 +133,8 @@ type SkillRecordingPayload = {
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
     refs?:{installationRef:string;destinationRef:string;recoveryRef:string;destinationLabel:string;recoveryLabel:string};
     error?:string|null;
+    /** Why the last backup stopped, while it waits to be cleared. */
+    reviewReason?:string;
   }
   interface BackupClosedStatus {
     supported:boolean;
@@ -156,6 +158,8 @@ type SkillRecordingPayload = {
         configure(revision:number,choices:import("../../shared/backup-schedule").BackupSchedule&{allowIdleRestart?:boolean;allowClosedApp?:boolean}):Promise<BackupScheduleStatus>;
         /** One backup now through the Backup-mode restart; resolves as Murage restarts. */
         runNow(revision:number):Promise<BackupScheduleStatus>;
+        /** Clears a backup that stopped without a confirmed result. */
+        clearReview?(revision:number):Promise<BackupScheduleStatus>;
       };
       backupClosed?: {
         status():Promise<BackupClosedStatus>;

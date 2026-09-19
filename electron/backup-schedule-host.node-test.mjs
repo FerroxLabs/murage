@@ -334,6 +334,21 @@ test("back up now hands off through the armed restart and records the receipt a 
     await resumed.tick();assert.equal(f.calls.filter(call=>call==="capture").length,1);assert.equal(f.calls.filter(call=>call==="backup").length,1);
   }finally{f.cleanup();}
 });
+test("a backup that stopped unconfirmed says so, and clearing it lets back up now run again",async()=>{
+  const f=fixture();try{
+    await f.enable();const before=await f.controller.status();
+    await f.controller.runNow(before.revision);const job=f.coordinator().status().job;
+    // Backup mode could not confirm its capture and handed the workspace back.
+    f.coordinator().failHandoff(job.handoff.id);
+    const stuck=await f.controller.status();assert.equal(stuck.phase,"needs-review");assert.equal(stuck.reviewReason,"capture-unconfirmed");
+    await assert.rejects(f.controller.runNow(stuck.revision),/BACKUP_REVIEW_REQUIRED/);
+    await assert.rejects(f.controller.clearReview(stuck.revision+1),/BACKUP_SCHEDULE_CHANGED/);
+    await assert.rejects(f.controller.clearReview("1"),/INVALID_BACKUP_REQUEST/);
+    const cleared=await f.controller.clearReview(stuck.revision);assert.equal(cleared.phase,"idle");assert.equal(cleared.reviewReason,undefined);
+    const again=await f.create().runNow(cleared.revision);assert.equal(again.phase,"handoff-armed");
+    assert.notEqual(f.coordinator().status().job.id,job.id);
+  }finally{f.cleanup();}
+});
 test("back up now runs with the daily schedule off while saved references keep idle-restart consent",async()=>{
   const f=fixture();try{
     await f.enable();const enabled=await f.controller.status();

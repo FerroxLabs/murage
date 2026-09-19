@@ -195,7 +195,7 @@ test("pending, conflicts, stale state, review and verified receipt remain truthf
  await expect(page.getByRole("region",{name:"Your backups"})).toContainText("Schedule status couldn't be refreshed.");
  await page.evaluate(()=>{const w=window as any;w.statusFail=false;w.state.pending=false;w.state.enabled=true;w.state.schedule={enabled:true,preUpgrade:false,time:"22:15",timezone:"Asia/Bangkok",catchupMs:7200000,maxBytes:1073741824,maxDurationMs:600000,installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}};w.state.phase="needs-review";w.mode="ok";});await refresh.click();
  // The review state shows on the Schedule card and in the summary's attention list.
- await expect(page.getByRole("region",{name:"Schedule",exact:true}).getByText("automatic retry is paused",{exact:false})).toBeVisible();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("automatic retry is paused");await expect(choose).toHaveCount(0);await expect(page.getByRole("button",{name:"Turn off",exact:true})).toBeEnabled();
+ await expect(page.getByRole("region",{name:"Schedule",exact:true}).getByText("backups are paused until you clear it",{exact:false})).toBeVisible();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("backups are paused until you clear it");await expect(choose).toHaveCount(0);await expect(page.getByRole("button",{name:"Turn off",exact:true})).toBeEnabled();
  for(const width of [390,820,1440])await inspect(page,info,"review",width);
  await page.getByRole("button",{name:"Turn off",exact:true}).click();await expect(choose).toBeDisabled();await expect(page.getByRole("button",{name:"Turn on daily backups",exact:true})).toBeDisabled();
  // Was: "Last locally verified backup: … 2,048 bytes. This is not a restore-drill result."
@@ -203,6 +203,21 @@ test("pending, conflicts, stale state, review and verified receipt remain truthf
  // Pending status changes arrive through polling; unmount ends the timer.
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>{(window as any).state.pending=false;});await expect(page.getByText("Backup work is pending.",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>(window as any).unmountFixture());const count=await page.evaluate(()=>(window as any).calls.length);await page.waitForTimeout(2200);expect(await page.evaluate(()=>(window as any).calls.length)).toBe(count);
+});
+test("a backup that stopped unconfirmed can be cleared from Your backups, and backing up works again",async({page},info)=>{
+ await setup(page,false,true);
+ await page.evaluate(()=>{const w=window as any;w.state={...w.state,refs:w.refs,enabled:true,phase:"needs-review",reviewReason:"capture-unconfirmed",schedule:{enabled:true,preUpgrade:false,time:"22:15",timezone:"Asia/Bangkok",catchupMs:7200000,maxBytes:1073741824,maxDurationMs:600000,installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}}};
+  w.muragebox.backupSchedule.clearReview=async(revision:number)=>{w.calls.push({action:"clear-review",revision});if(revision!==w.state.revision)throw Error("BACKUP_SCHEDULE_CHANGED");const{reviewReason,...rest}=w.state;w.state={...rest,phase:"idle"};return structuredClone(w.state);};});
+ await refreshSchedule(page);
+ const summary=page.getByRole("region",{name:"Your backups"});
+ await expect(summary).toContainText("The last backup stopped before Murage could confirm it, so backups are paused.");
+ await expect(summary.getByRole("button",{name:"Back up now",exact:true})).toBeDisabled();
+ for(const width of [390,1440])await inspect(page,info,"clear-review",width);
+ await summary.getByRole("button",{name:"Clear and try again",exact:true}).click();
+ await expect(summary.getByRole("button",{name:"Clear and try again",exact:true})).toHaveCount(0);
+ await expect(page.getByText("Cleared. Back up now or the next daily backup will try again.",{exact:true})).toBeVisible();
+ await expect(summary.getByRole("button",{name:"Back up now",exact:true})).toBeEnabled();
+ expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="clear-review").length)).toBe(1);
 });
 test("unsupported and missing native bridge never expose schedule mutation",async({page})=>{
  await setup(page);await page.evaluate(()=>{(window as any).state.supported=false;});await refreshSchedule(page);await expect(page.getByRole("button",{name:"Choose backup folder and recovery key",exact:true})).toHaveCount(0);

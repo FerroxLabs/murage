@@ -156,3 +156,18 @@ it("a disabled schedule admits only the manual job it created to the handoff",as
  const armed=JSON.parse(readFileSync(file,"utf8"));armed.schedule={enabled:false,installationRef:"installation-one"};writeFileSync(file,JSON.stringify(armed));
  expect(()=>c.claimHandoff(intent.id,intent.bindingRevision,intent.installationIdentity)).toThrow("BACKUP_HANDOFF_REJECTED");
 });
+it("a backup that stopped unconfirmed can be cleared by the person, and only then runs again",async()=>{
+ const f=fixture(),c=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});c.configure(0,choices);
+ const manual=c.requestManual(1,"manual-one");const intent={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ c.prepareHandoff(manual.job!.id,intent);c.armHandoff(intent.id);
+ expect(c.failHandoff(intent.id)).toMatchObject({phase:"needs-review",reviewReason:"capture-unconfirmed"});
+ // Stuck: nothing else may start or change the schedule while it waits for review.
+ expect(()=>c.requestManual(1,"manual-two")).toThrow("BACKUP_REVIEW_REQUIRED");
+ expect(()=>c.configure(1,choices)).toThrow("BACKUP_REVIEW_REQUIRED");
+ expect(()=>c.clearReview(0)).toThrow("BACKUP_SCHEDULE_CHANGED");
+ const cleared=c.clearReview(1);expect(cleared).toMatchObject({phase:"idle"});expect(cleared.reviewReason).toBeUndefined();
+ expect(()=>c.clearReview(1)).toThrow("BACKUP_HANDOFF_CHANGED");
+ // The stopped run is not repeated; a new request is a fresh job.
+ expect(()=>c.requestManual(1,"manual-one")).toThrow("BACKUP_HANDOFF_CHANGED");
+ expect(c.requestManual(1,"manual-two")).toMatchObject({phase:"due",job:{occurrence:"1:manual:manual-two"}});
+});

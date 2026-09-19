@@ -146,7 +146,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
  * as a crash. */
 export type RecoveryKeyResult = { cancelled: true } | { saved: true; label: string; publicKey: string } | { refused: string };
 export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult> };
-export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus> };
+export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus>; clearReview?(revision: number): Promise<BackupScheduleStatus> };
 
 /** Keeps only the display label and a well-formed age public key. Anything
  * else the host returns is dropped; a malformed answer is not a success. */

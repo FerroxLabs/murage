@@ -55,7 +55,7 @@ export class BackupCoordinator {
       throw new Error("BACKUP_IDLE_RELEASE_UNCONFIRMED");
     }
   }
-  status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,
+  status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
   configure(expectedRevision:number,input:unknown){
     const lease=this.lease();try{const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
@@ -104,6 +104,17 @@ export class BackupCoordinator {
       if(s.seen.includes(occurrence))throw new Error("BACKUP_HANDOFF_CHANGED");
       s.job={id:hash([s.schedule.installationRef,occurrence]),occurrence,revision:s.revision,scheduledAt:this.now(),phase:"due"};
       s.seen=[...s.seen,occurrence].slice(-256);this.save(s);return this.status();
+    }finally{lease.release();}
+  }
+  /** The person's way out of a backup that stopped without a confirmed
+   * result. Only a settled review is cleared: the workspace is running again,
+   * so no capture is in flight. The occurrence stays seen, so that run is not
+   * repeated; the next daily time or Back up now starts a fresh one. */
+  clearReview(expectedRevision:number){
+    const lease=this.lease();try{
+      const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
+      if(s.job?.phase!=="needs-review")throw new Error("BACKUP_HANDOFF_CHANGED");
+      this.save({...s,job:undefined});return this.status();
     }finally{lease.release();}
   }
   /** Withdraws a manual request that never reached the handoff. */
