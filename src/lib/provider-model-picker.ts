@@ -266,6 +266,16 @@ export function isFluxTierRow(row: Pick<PickerModel, "selection">): boolean { re
  *  model bought through a Flux connection under its own name. */
 export function isFluxPinnedRow(row: Pick<PickerModel, "selection"|"provider">): boolean { return isFluxRouterRow(row) && !isFluxTierRow(row); }
 const ENGINE_MODELS_GROUP = "Engine models";
+/** Where a row's model comes from, as its second line says it. An engine
+ *  reaches Flux Router's routes through its own catalog, so those rows carry
+ *  the engine's "Engine models" group; printed under the "Flux Router"
+ *  heading that read as if every tier were the engine's own model. A tier
+ *  needs no source line (its heading is the source); a pinned route says Flux
+ *  Router; everything else keeps its group. */
+export function pickerRowSource(row: Pick<PickerModel, "selection"|"provider"|"group">): string {
+  if (row.selection.connectionId || !isFluxRouterRow(row)) return row.group;
+  return isFluxTierRow(row) ? "" : "Flux Router";
+}
 function isNativeEngineRow(row: PickerModel): boolean { return !row.selection.connectionId && row.group === ENGINE_MODELS_GROUP && !isFluxRouterRow(row); }
 /** The picker's order. Flux Router leads every model list:
  *

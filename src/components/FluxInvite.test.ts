@@ -31,12 +31,32 @@ describe("the invitation is an offer, not a gate", () => {
     expect(html).toContain('role="complementary"');
   });
 
-  it("sits in a corner rather than across the app", () => {
+  it("sits in a corner rather than across the app, clear of the composer", () => {
     const html = render();
-    expect(html).toContain("fixed bottom-4 right-4");
+    // Was: expect(html).toContain("fixed bottom-4 right-4"). Bottom-right put
+    // the card over the Send button on a desktop and over nearly the whole
+    // composer on a phone. It now hangs from the top, under the chat header.
+    expect(html).toContain("fixed right-4 top-20");
+    expect(html).not.toMatch(/\bbottom-\d/);
+    // on a phone it spans the width under the header, with a shorter body
+    expect(html).toContain("max-md:inset-x-3");
+    expect(html).toContain("max-md:top-28");
+    // It hangs where the model picker opens and where a phone's bot drawer
+    // slides in, so it sits under both (z-30 menus, z-40 drawer).
+    expect(html).toContain(" z-20 ");
+    expect(html).not.toMatch(/\bz-(?:30|40|50)\b/);
     // POSITIVE control: the same assertion notices when a class is absent, so
     // the check above is reading markup rather than agreeing with anything.
     expect(html).not.toContain("fixed inset-x-0 top-0");
+  });
+
+  it("hangs just under the chat header, whichever height the header has", () => {
+    // At 820px the header wraps to two rows and a fixed offset sat over its
+    // model and task chips.
+    const html = renderToStaticMarkup(createElement(FluxInviteBody, { onOpen: vi.fn(), onDismiss: vi.fn(), headerBottom: 114 }));
+    expect(html).toContain('style="top:122px"');
+    expect(render()).not.toContain("style=");
+    expect(source).toContain("headerBottom={headerBottom}");
   });
 
   it("can always be refused, by the corner X and by a named button", () => {

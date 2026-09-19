@@ -46,7 +46,9 @@ export function TurnPresence({
 
   if (!mounted) return null;
   const showAnswer = phase === "answer" && children;
-  const showWorking = phase === "think";
+  // An empty label means the live thinking row is saying it: the mascot
+  // stays, the words and the timer are the row's.
+  const showWorking = phase === "think" && label !== "";
   return (
     <div className="turn-presence flex flex-col items-start">
       {showAnswer ? <div className="turn-answer">{children}</div> : null}

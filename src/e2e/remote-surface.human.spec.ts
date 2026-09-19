@@ -111,3 +111,49 @@ test("the desktop still gets its first-run gate, at the same width", async ({ pa
   await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Maybe later" })).toBeVisible();
 });
+
+/** A brand-new install is not an empty workspace: the harness seeds one bot on
+ * its first start, whose thread opens with its greeting and intake question.
+ * Serve exactly that shape (one bot, no rooms, a thread of only its own
+ * opening lines), or the same bot after the person has written to it. */
+async function answerSeededWorkspace(page: import("@playwright/test").Page, talkedTo: boolean): Promise<{ threadAsked: Promise<void> }> {
+  let asked!: () => void;
+  const threadAsked = new Promise<void>((resolve) => { asked = resolve; });
+  await page.route("**/api/bots?messages=0", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json().catch(() => ({}));
+    const seed = { ...body.bots?.[0], threadId: "seed-thread", title: "", description: "", tasks: [{ threadId: "seed-thread" }] };
+    await route.fulfill({ response, json: { ...body, bots: [seed], groups: [] } });
+  });
+  await page.route("**/api/threads/seed-thread/messages?limit=10", async (route) => {
+    const opening = [
+      { id: "m1", at: 1, role: "bot", kind: "text", text: "Hello." },
+      { id: "m2", at: 2, role: "bot", kind: "options", card: { question: "What do you actually want me for?" } },
+    ];
+    const messages = talkedTo ? [...opening, { id: "m3", at: 3, role: "user", kind: "text", text: "Help me plan my week" }] : opening;
+    asked();
+    await route.fulfill({ json: { messages, hasMore: false } });
+  });
+  return { threadAsked };
+}
+
+test("a fresh install's own seeded bot still gets the welcome", async ({ page }) => {
+  // Was: any bot at all read as an established workspace, so the seeded bot
+  // hid this screen on every fresh install and a new user landed in its
+  // intake questions instead.
+  const { threadAsked } = await answerSeededWorkspace(page, false);
+  await page.goto("/");
+  await threadAsked;
+  await expect(page.getByText(WELCOME)).toBeVisible();
+  await expect(page.getByText(EMAIL_CAPTURE)).toBeVisible();
+});
+
+test("a workspace whose one bot has been talked to goes straight in", async ({ page }) => {
+  const { threadAsked } = await answerSeededWorkspace(page, true);
+  await page.goto("/");
+  await threadAsked;
+  await expect(page.getByText("Checking your workspace…")).toHaveCount(0);
+  await expect(page.getByText(WELCOME)).toHaveCount(0);
+  await expect(page.getByText(EMAIL_CAPTURE)).toHaveCount(0);
+});

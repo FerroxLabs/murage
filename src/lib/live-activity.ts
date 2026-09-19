@@ -46,3 +46,24 @@ export function liveActivityLabel(message?: Message): string {
   }
   return "Working";
 }
+
+/** What `liveActivityLabel` says when no tool is running and nothing is
+ * waiting: the model is working on its own. */
+export const THINKING_LABEL = "Thinking";
+
+/** Whether the model is thinking right now: no answer text streaming and no
+ * tool or wait to name instead. */
+export function modelStillThinking(activityLabel: string, answering: boolean): boolean {
+  return !answering && activityLabel === THINKING_LABEL;
+}
+
+/** The working line beside the mascot. One place says "Thinking" at a time:
+ * while the live thinking row is shown and the model is still thinking, the
+ * row carries it (with the elapsed time) and this line is empty; once answer
+ * text streams, this says so instead of "Thinking". A running tool's verb or
+ * a wait always wins. */
+export function turnStatusLabel(activityLabel: string, state: { answering: boolean; thinkingRow: boolean }): string {
+  if (activityLabel !== THINKING_LABEL) return activityLabel;
+  if (state.answering) return "Answering";
+  return state.thinkingRow ? "" : THINKING_LABEL;
+}

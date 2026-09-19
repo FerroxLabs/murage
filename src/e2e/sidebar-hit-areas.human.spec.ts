@@ -164,7 +164,7 @@ for (const density of ["comfortable", "compact"]) for (const width of [1280, 390
   }
   // The row's other controls are unchanged: More actions still opens the menu.
   await page.getByRole("button", { name: "More actions for Research Director", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Archive", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: info.outputPath(`sidebar-hit-${density}-${width}.png`) });
 });

@@ -6,7 +6,7 @@ import { api, useStore } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { StarterProfiles } from "./StarterProfiles";
-import { ONBOARDING_CHOICES, ONBOARDING_PROGRESS_KEY, readOnboardingProgress, type OnboardingChoice } from "@/lib/onboarding-progress";
+import { ONBOARDING_CHOICES, ONBOARDING_PROGRESS_KEY, isUntouchedSeedThread, readOnboardingProgress, seedBotCandidate, type OnboardingChoice } from "@/lib/onboarding-progress";
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const desktop = useDesktopSurface();
@@ -38,8 +38,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     try {
       const value = await api("/api/bots?messages=0");
       if (!Array.isArray(value.bots) || !Array.isArray(value.groups)) throw new Error("Workspace not confirmed");
-      if (value.bots.length || value.groups.length) { setWorkspace("established"); setEmailGateDone("submitted"); done.current(); }
-      else setWorkspace("empty");
+      if (!value.bots.length && !value.groups.length) return setWorkspace("empty");
+      // The harness seeds one bot on first start; still untouched, that is a
+      // first run, not an established workspace.
+      const seed = seedBotCandidate(value);
+      if (seed) {
+        const page = await api(`/api/threads/${encodeURIComponent(String(seed.threadId))}/messages?limit=10`).catch(() => null);
+        if (isUntouchedSeedThread(page)) return setWorkspace("empty");
+      }
+      setWorkspace("established"); setEmailGateDone("submitted"); done.current();
     } catch { setWorkspace("error"); }
   };
   useEffect(() => { if (desktop === true) void checkWorkspace(); }, [desktop]);

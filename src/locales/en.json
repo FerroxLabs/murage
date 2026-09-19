@@ -618,5 +618,7 @@
   "folderTrust.statusNotGated": "Not gated by this bot's engine — the folder's files apply as they always did",
   "folderTrust.perMember": "Per member — each member's own engine decides:",
   "folderTrust.forget": "Forget",
-  "folderTrust.forgetError": "Could not forget this folder's trust decision."
+  "folderTrust.forgetError": "Could not forget this folder's trust decision.",
+  "chatLinks.findingFolder": "Still finding this conversation's folder. Try again in a moment.",
+  "chatLinks.folderUnavailable": "{path} is in this bot's working folder, which is not available here."
 }

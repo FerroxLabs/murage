@@ -370,7 +370,7 @@ function StackedEmbers({ members, density }: { members: Bot[]; density: SidebarD
   if (members.length <= 1) {
     const b = members[0];
     return (
-      <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
+      <div aria-hidden="true" className={cn("flex shrink-0 items-center justify-center", slotSize)}>
         {b ? <BotAvatar bot={b} state="happy" size={singleSize} animated={false} /> : <Users size={24} className="text-ink-secondary" />}
       </div>
     );
@@ -378,7 +378,9 @@ function StackedEmbers({ members, density }: { members: Bot[]; density: SidebarD
   const shown = members.slice(0, 3);
   const extra = members.length - shown.length;
   return (
-    <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
+    // Decoration: the row's own text names the channel and counts its bots,
+    // so the members' avatar names must not run into it.
+    <div aria-hidden="true" className={cn("flex shrink-0 items-center justify-center", slotSize)}>
       <div className="flex items-center -space-x-3">
         {shown.map((b) => (
           <BotAvatar key={b.id} bot={b} state="happy" size={30} animated={false} />
@@ -620,10 +622,11 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
+      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
+        <div id="new-channel-title" className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
         <input
           autoFocus
+          aria-label="Channel name"
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -858,6 +861,7 @@ export function BotContextMenu({
   ) => (
     <button
       key={label}
+      role="menuitem"
       disabled={opts?.disabled}
       onClick={() => {
         onClick?.();
@@ -874,11 +878,26 @@ export function BotContextMenu({
       {label}
     </button>
   );
-  const divider = (key: string) => <div key={key} className="mx-2 my-1 border-t border-hairline/40" />;
+  const divider = (key: string) => <div key={key} role="separator" className="mx-2 my-1 border-t border-hairline/40" />;
+  // The trigger announces a menu, so the keys a menu promises work here:
+  // arrows move between the items that can be used, Escape closes.
+  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
+    if (!items.length) return;
+    event.preventDefault();
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at <= 0 ? items.length : at) - 1;
+    items[next]?.focus();
+  };
 
   return (
     <div
       data-bot-menu
+      role="menu"
+      aria-label={`Actions for ${bot.name}`}
+      onKeyDown={onMenuKeyDown}
       style={{ top, left }}
       className="fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
     >

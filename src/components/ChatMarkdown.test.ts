@@ -115,14 +115,48 @@ it("still reads escaped backslashes and destination delimiters in a drive path",
   }));
   expect(saveTitles(html)).toEqual(["C:\\Users\\Maus\\.murage\\r.md", "C:\\Apps\\x(1).md", "C:\\.cache\\notes.md"]);
 });
-it("leaves other destinations and prose to ordinary Markdown escaping, and unsafe links dead", () => {
+it("leaves other destinations to ordinary Markdown escaping, and unsafe links dead", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, {
     text: "[a](/Users/maus/\\_notes.md) [x](javascript:alert(1))\n\nC:\\Users\\Maus\\.murage",
   }));
   expect(saveTitles(html)).toEqual(["/Users/maus/_notes.md"]);
-  expect(html).toContain("C:\\Users\\Maus.murage");
+  // Was: expect(html).toContain("C:\\Users\\Maus.murage") — prose dropped the
+  // separator before ".murage". A drive path in prose now keeps it too.
+  expect(html).toContain("C:\\Users\\Maus\\.murage");
   expect(html).not.toContain("javascript:");
   // A file URL that does not name a path is still emptied, never an href.
   const bad = renderToStaticMarkup(createElement(ChatMarkdown, { text: "[z](file:///bad%E0%A4.md)" }));
   expect(bad).not.toContain("file:");
+});
+// A bot names the file it wrote relative to its working folder:
+// "[the weekly report](reports/weekly.md)". As an anchor that resolved against
+// the app's own origin and opened a dead browser tab. It is a file link, never
+// a navigation.
+it("never turns a relative file link into a navigation of the app's own origin", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "[the weekly report](reports/weekly.md), [notes](./notes/today.md), [up](../secret.md) and [web](https://example.com/a)",
+    scope: { botId: "b1", threadId: "t1" },
+  }));
+  expect(html).not.toMatch(/href="(?:\.\/|\.\.\/)?(?:reports|notes|secret)/);
+  expect(html).toContain('<a href="https://example.com/a"');
+  // the relative file names stay readable and actionable, the escape is inert text
+  expect(html).toMatch(/<button type="button"[^>]*>the weekly report<\/button>/);
+  expect(html).toMatch(/<button type="button"[^>]*>notes<\/button>/);
+  expect(html).not.toMatch(/<button[^>]*>up<\/button>/);
+  expect(html).toContain(">up<");
+});
+it("keeps in-page footnote jumps in this window", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: "Claim[^1]\n\n[^1]: Source." }));
+  expect(html).toMatch(/<a href="#user-content-fn-1"/);
+  expect(html).not.toMatch(/<a href="#[^"]*"[^>]*target="_blank"/);
+});
+it("keeps every separator of a Windows path written in prose, and ordinary escapes elsewhere", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "In prose: C:\\Users\\Maus\\.murage\\_drafts\\-old\\report.md, then \\*not emphasis\\* and 3 \\* 4.\n\nD:\\a\\\\b and C:\\x\\(1\\).txt stay escaped.",
+  }));
+  expect(html).toContain("C:\\Users\\Maus\\.murage\\_drafts\\-old\\report.md, then *not emphasis* and 3 * 4.");
+  // an escaped backslash and the delimiters still escape inside a drive path
+  expect(html).toContain("D:\\a\\b and C:\\x(1).txt stay escaped.");
+  // a path in inline code was never touched by escaping
+  expect(renderToStaticMarkup(createElement(ChatMarkdown, { text: "`C:\\a\\.b`" }))).toContain("C:\\a\\.b");
 });

@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
+import { EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
 import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
@@ -335,5 +335,36 @@ describe("the price-band note", () => {
     expect(manage).toBeGreaterThan(note);
     expect(pickerSource.slice(list, note)).toContain("More models ·");
     expect(pickerSource).toContain("<PickerPriceNote shown={!!ordered.length}/>");
+  });
+});
+
+// Customer journey: every Flux tier row read "Engine models" under the "Flux
+// Router" heading, the empty "No local server detected" row sat above the
+// tiers, and on a phone the menu stopped at 70% of the screen with ~3 rows.
+describe("the list reads in the owner's order, with true labels", () => {
+  it("never labels a Flux tier or pinned route as the engine's own model", () => {
+    const tier = meta(modelRow({ label: "Flux Auto", group: "Engine models", provider: "Claude Code", selection: { instanceId: "e", model: "flux-auto" } }));
+    expect(tier).not.toContain("Engine models");
+    const pinned = meta(modelRow({ label: "Flux Opus", group: "Engine models", provider: "Claude Code", selection: { instanceId: "e", model: "flux-opus-5" } }));
+    expect(pinned).not.toContain("Engine models");
+    expect(pinned).toContain("Flux Router");
+    // the engine's own model still says where it comes from
+    expect(meta(modelRow({ label: "Sonnet", group: "Engine models", provider: "Claude Code", selection: { instanceId: "e", model: "claude-sonnet-5" } }))).toContain("Engine models");
+  });
+
+  it("draws the no-local-server hint after every model row, never above the Flux tiers", () => {
+    const rows = pickerSource.indexOf("ordered.slice(0,limit).map(");
+    const hint = pickerSource.indexOf("data-local-rail-empty");
+    expect(rows).toBeGreaterThan(0);
+    expect(hint).toBeGreaterThan(rows);
+  });
+
+  it("uses the height a phone has below the header instead of 70% of it", () => {
+    // 390x844 phone, menu opening 110px down: everything but a 12px margin
+    expect(modelPickerMaxHeight(110, 844, 390)).toBe(722);
+    // desktop keeps its compact cap
+    expect(modelPickerMaxHeight(60, 900, 1440)).toBe(560);
+    // a short window still gets a usable list
+    expect(modelPickerMaxHeight(400, 520, 390)).toBe(240);
   });
 });

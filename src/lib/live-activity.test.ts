@@ -40,3 +40,34 @@ describe("liveActivityLabel", () => {
     ).toBe("Thinking");
   });
 });
+
+// Live thinking (0.1.56): the row folded to "Thought" when the answer began
+// while the status line kept saying "Thinking Ns"; before that both said
+// "Thinking". One place says it at a time.
+describe("turnStatusLabel", () => {
+  it("leaves thinking to the thinking row while it is shown and the model is still thinking", async () => {
+    const { turnStatusLabel } = await import("./live-activity");
+    expect(turnStatusLabel("Thinking", { answering: false, thinkingRow: true })).toBe("");
+    // no row (Tool calls off, or no reasoning yet): the status says it
+    expect(turnStatusLabel("Thinking", { answering: false, thinkingRow: false })).toBe("Thinking");
+  });
+
+  it("says the bot is answering once answer text streams, row or not", async () => {
+    const { turnStatusLabel } = await import("./live-activity");
+    expect(turnStatusLabel("Thinking", { answering: true, thinkingRow: true })).toBe("Answering");
+    expect(turnStatusLabel("Thinking", { answering: true, thinkingRow: false })).toBe("Answering");
+  });
+
+  it("keeps a tool's own verb or a wait above both", async () => {
+    const { turnStatusLabel } = await import("./live-activity");
+    expect(turnStatusLabel("Reading a file", { answering: false, thinkingRow: true })).toBe("Reading a file");
+    expect(turnStatusLabel("Reading a file", { answering: true, thinkingRow: true })).toBe("Reading a file");
+  });
+
+  it("counts the model as thinking only while it has neither text nor a tool running", async () => {
+    const { modelStillThinking } = await import("./live-activity");
+    expect(modelStillThinking("Thinking", false)).toBe(true);
+    expect(modelStillThinking("Thinking", true)).toBe(false);
+    expect(modelStillThinking("Reading a file", false)).toBe(false);
+  });
+});

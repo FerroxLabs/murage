@@ -16,6 +16,9 @@ import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
+import { relativeFileLink, workspaceFilePath } from "@/lib/workspace-links";
+import { conversationWorkspaceRoot } from "@/lib/media-resolve";
+import { api } from "@/state/store";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
@@ -217,6 +220,44 @@ function LocalFileLink({ filePath, children, scope }: { filePath: string; childr
   return <LocalMedia scope={scope} path={filePath} fallback={<SaveFileLink filePath={filePath}>{children}</SaveFileLink>} />;
 }
 
+/** A relative link in a reply, resolved against this conversation's own
+ * workspace folder and then offered exactly as an absolute file link. Until
+ * the folder is known, or when this conversation has none here, it is a
+ * button that says so; it never becomes an href. A link that climbs out of
+ * the folder or names a hidden file ("" from relativeFileLink) is plain text. */
+function WorkspaceRelativeLink({ relativePath, scope, children }: { relativePath: string; scope?: WorkspaceScopeRef; children?: ReactNode }) {
+  const [root, setRoot] = useState<string | null | undefined>(scope && relativePath ? undefined : null);
+  const [told, setTold] = useState(false);
+  const botId = scope?.botId, threadId = scope?.threadId;
+  useEffect(() => {
+    if (botId === undefined || threadId === undefined || !relativePath) { setRoot(null); return; }
+    let alive = true;
+    setRoot(undefined);
+    void conversationWorkspaceRoot({ botId, threadId }, api).then(value => { if (alive) setRoot(value); });
+    return () => { alive = false; };
+  }, [botId, threadId, relativePath]);
+  if (!relativePath) return <span className="[overflow-wrap:anywhere]">{children}</span>;
+  const filePath = root ? workspaceFilePath(root, relativePath) : null;
+  if (filePath) return <LocalFileLink filePath={filePath} scope={scope}>{children}</LocalFileLink>;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setTold(true)}
+        title={relativePath}
+        className="[overflow-wrap:anywhere] text-left text-accent underline decoration-accent/40 hover:decoration-accent"
+      >
+        {children}
+      </button>
+      {told && (
+        <span role="status" className="ml-1.5 text-[12px] text-ink-secondary">
+          {root === undefined ? t("chatLinks.findingFolder") : t("chatLinks.folderUnavailable", { path: relativePath })}
+        </span>
+      )}
+    </>
+  );
+}
+
 function SaveFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
   const [reason, setReason] = useState("");
@@ -355,6 +396,12 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
           a({ href, children }: { href?: string; children?: ReactNode }) {
             const localPath = localFilePath(href);
             if (localPath) return <LocalFileLink filePath={localPath} scope={scope}>{children}</LocalFileLink>;
+            // A path relative to the conversation's folder is a file link
+            // too. As an anchor it resolved against the app's own origin.
+            const relative = relativeFileLink(href);
+            if (relative !== null) return <WorkspaceRelativeLink relativePath={relative} scope={scope}>{children}</WorkspaceRelativeLink>;
+            // A footnote or other in-reply jump stays in this window.
+            if (href?.startsWith("#")) return <a href={href} className="[overflow-wrap:anywhere] text-accent underline decoration-accent/40 hover:decoration-accent">{children}</a>;
             return (
               <a
                 href={href}

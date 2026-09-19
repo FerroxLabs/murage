@@ -49,7 +49,7 @@ import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
-import { liveActivityLabel } from "@/lib/live-activity";
+import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
@@ -1548,7 +1548,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
               hang. It is not tool detail, so Settings → Tool calls does not
               hide it. */}
           {bot.busy && reasoning ? (
-            <LiveThinking key={bot.threadId} text={reasoning} answering={Boolean(streaming)} />
+            <LiveThinking key={bot.threadId} text={reasoning} answering={!modelStillThinking(activityLabel, Boolean(streaming))} since={busySince} />
           ) : null}
           <TurnPresence
             avatar={
@@ -1562,7 +1562,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
               />
             }
             visible={presenceVisible}
-            label={activityLabel}
+            label={turnStatusLabel(activityLabel, { answering: Boolean(streaming), thinkingRow: Boolean(bot.busy && reasoning) })}
             answering={popping !== null}
             since={busySince}
           >

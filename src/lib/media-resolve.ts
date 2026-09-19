@@ -205,3 +205,24 @@ export function forgetLocalMedia(request?: LocalMediaRequest): void {
 export function playableHint(path: string): MediaHint | null {
   return mediaHintForPath(path);
 }
+
+// ── The conversation's folder, for relative file links ───────────────────
+//
+// A relative link in a reply ("reports/weekly.md") names a file in the
+// conversation's own workspace. The same first question the resolver asks
+// above says where that is; it is shared and cached briefly per conversation,
+// so a transcript full of relative links asks once.
+
+const rootCache = new Map<string, { at: number; promise: Promise<string | null> }>();
+
+/** The resolved folder of this conversation's workspace, or null when it has
+ * none this surface may use. Never throws. */
+export function conversationWorkspaceRoot(scope: WorkspaceScopeRef, api: MediaApi, now = Date.now()): Promise<string | null> {
+  const key = JSON.stringify([scope.botId, scope.threadId]);
+  const cached = rootCache.get(key);
+  if (cached && now - cached.at < MEDIA_RESOLVE_CACHE_MS) return cached.promise;
+  const promise = workspaceRoot(api, scope).then(info => info?.displayPath ?? null, () => null);
+  rootCache.set(key, { at: now, promise });
+  while (rootCache.size > 64) rootCache.delete(rootCache.keys().next().value!);
+  return promise;
+}

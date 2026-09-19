@@ -87,3 +87,25 @@ describe("LiveThinkingText", () => {
     expect(thinkingTail("short")).toEqual({ text: "short", clipped: false });
   });
 });
+
+describe("one Thinking at a time", () => {
+  it("carries the elapsed time on the row while the model thinks, and drops it once it has moved on", () => {
+    const thinking = renderToStaticMarkup(createElement(LiveThinking, { text: "x", answering: false, since: Date.now() - 4_000 }));
+    expect(thinking).toContain(">Thinking<");
+    expect(thinking).toContain("tabular-nums");
+    const thought = renderToStaticMarkup(createElement(LiveThinking, { text: "x", answering: true, since: Date.now() - 4_000 }));
+    expect(thought).toContain(">Thought<");
+    expect(thought).not.toContain("tabular-nums");
+  });
+
+  it("lets the working line stand silent beside its mascot when the row is saying it", async () => {
+    const { TurnPresence } = await import("./TurnPresence");
+    const silent = renderToStaticMarkup(createElement(TurnPresence, { avatar: createElement("i", null, "m"), visible: true, label: "", since: Date.now() }));
+    expect(silent).toContain("<i>m</i>");
+    expect(silent).not.toContain("thinking-shimmer");
+    expect(silent).not.toContain("tabular-nums");
+    const spoken = renderToStaticMarkup(createElement(TurnPresence, { avatar: createElement("i", null, "m"), visible: true, label: "Answering", since: Date.now() }));
+    expect(spoken).toContain(">Answering<");
+    expect(spoken).toContain("tabular-nums");
+  });
+});

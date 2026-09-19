@@ -97,9 +97,11 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate, canCreat
               <BotAvatar bot={bot} size={27} animated={false} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[11.5px] font-medium text-ink">{bot.name}</div>
-                <div className="truncate text-[9.5px] text-ink-secondary/75">
-                  {bot.title || "BotAgent"}
-                </div>
+                {/* The bot's own role, else its description; nothing rather
+                    than a placeholder that is not a fact about it. */}
+                {(bot.title?.trim() || bot.description?.trim()) && <div className="truncate text-[9.5px] text-ink-secondary/75">
+                  {bot.title?.trim() || bot.description?.trim()}
+                </div>}
               </div>
               {canCreate && <span className="shrink-0 rounded-full border border-hairline/50 px-1.5 py-0.5 text-[8.5px] text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">Drag</span>}
             </div>
