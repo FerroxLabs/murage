@@ -1,7 +1,8 @@
 // The first-run offer of a Flux Router key.
 //
 // It is an OFFER and the shape enforces that. No overlay, no backdrop, nothing
-// to dismiss before the app can be used: a small card in a corner, with a
+// to dismiss before the app can be used: a small card hanging under the chat
+// header (never over the composer, where it hid Send), with a
 // button that opens the one place a key is entered and a button that makes it
 // go away permanently. Murage works with no Flux key at all, so an invitation
 // that interrupted anything would be lying about how important it is.
@@ -27,7 +28,7 @@ export function FluxInviteBody({ onOpen, onDismiss }: FluxInviteBodyProps) {
     <div
       role="complementary"
       aria-label={FLUX_COPY.inviteTitle}
-      className="animate-panel-in fixed bottom-4 right-4 z-40 w-[320px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50"
+      className="animate-panel-in fixed right-4 top-20 z-40 w-[320px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50 max-md:inset-x-3 max-md:top-28 max-md:w-auto"
     >
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
