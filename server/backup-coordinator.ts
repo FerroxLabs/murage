@@ -1,13 +1,22 @@
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { canonicalUpdateDescriptor, parseUpdateCandidate, type UpdateCandidate } from "../shared/update-candidate.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES } from "../shared/backup-capture-failure.mjs";
 import { backupScheduleSchema, backupReceiptSchema, backupReferenceSchema, backupHandoffSchema, backupClosedResultSchema, latestBackupOccurrence, type BackupClosedResult, type BackupHandoff, type BackupSchedule, type BackupReceipt } from "../shared/backup-schedule.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+/** Closed sets, shared with the desktop host and both pages that show them. */
+const captureStages = new Set<string>([...BACKUP_CAPTURE_STAGES, "unknown"]);
+const captureCodes = new Set<string>([...BACKUP_CAPTURE_CODES, "UNKNOWN_CAPTURE_FAILURE"]);
+const captureFailureSchema = z.object({
+  stage: z.string().refine(value => captureStages.has(value)),
+  code: z.string().refine(value => captureCodes.has(value)),
+  at: z.number().int().nonnegative().optional(),
+}).strict();
 const jobSchema = z.object({ id:z.string().regex(/^[a-f0-9]{64}$/), occurrence:z.string().max(200), revision:z.number().int().nonnegative(), scheduledAt:z.number().int().nonnegative(),
   phase:z.enum(["due","waiting-idle","waiting-backup-mode","claiming","capturing","local-verified","skipped","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","returned","install-requested","upgrade-complete","upgrade-cancelled"]),
   handoff:backupHandoffSchema.optional(),
@@ -55,7 +64,27 @@ export class BackupCoordinator {
       throw new Error("BACKUP_IDLE_RELEASE_UNCONFIRMED");
     }
   }
+  /** Why the last backup stopped, kept in its OWN small file beside the
+   * coordinator state rather than inside it. The state schema is strict, so
+   * a new field there would make this file unreadable to an older build;
+   * a separate file is simply not opened by one. Stage and code only —
+   * never a path, a filename or anything the failure said. */
+  private failureFile(){return join(this.options.stateDirectory,"backup-capture-failure.json");}
+  recordCaptureFailure(input:unknown){
+    const parsed=captureFailureSchema.safeParse(input);if(!parsed.success)return;
+    mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
+    writeFileAtomic(this.failureFile(),JSON.stringify({...parsed.data,at:this.now()}),{mode:0o600});
+  }
+  clearCaptureFailure(){try{rmSync(this.failureFile(),{force:true});}catch{/* A retained note never blocks a backup. */}}
+  private captureFailure(){
+    try{
+      const stat=lstatSync(this.failureFile());if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024)return undefined;
+      const parsed=captureFailureSchema.safeParse(JSON.parse(readFileSync(this.failureFile(),"utf8")));
+      return parsed.success?{stage:parsed.data.stage,code:parsed.data.code}:undefined;
+    }catch{return undefined;}
+  }
   status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
+    captureFailure:s.job?.phase==="needs-review"?this.captureFailure():undefined,
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
   configure(expectedRevision:number,input:unknown){
     const lease=this.lease();try{const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");

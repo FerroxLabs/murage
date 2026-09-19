@@ -5,6 +5,7 @@ import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES } from "../shared/backup-capture-failure.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
 const hash=value=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -24,13 +25,11 @@ function verifiedArtifact(output,maxBytes){
   }finally{closeSync(fd);}
 }
 
-const captureFailureStages=new Set(["precondition","references","claim","capture","artifact-readback","receipt-commit","return"]);
-const captureFailureCodes=new Set([
-  "BACKUP_HANDOFF_REJECTED","BACKUP_UNAVAILABLE","BACKUP_REFERENCE_CHANGED","BACKUP_BINDINGS_INVALID","BACKUP_BINDINGS_UNAVAILABLE","BACKUP_RECEIPT_MISMATCH",
-  "RECOVERY_WORKER_TIMEOUT","INVALID_RECOVERY_INPUT","INVALID_RECOVERY_RESULT","RECOVERY_INPUT_TIMEOUT","RECOVERY_OPERATION_FAILED","RECOVERY_OWNERSHIP_REQUIRED","INVALID_BACKUP_BUDGET",
-  "BACKUP_LIMIT_EXCEEDED","ARCHIVE_LIMIT_EXCEEDED","INVALID_BACKUP_LIMITS","INVALID_ARCHIVE_LIMITS","SNAPSHOT_CANCELLED","AGE_TOOL_TIMEOUT","AGE_PROCESS_FAILED","AGE_PROCESS_CLOSE_UNCONFIRMED","AGE_TOOL_UNVERIFIED",
-  "ENCRYPTED_BACKUP_FAILED","FIDELITY_READBACK_MISMATCH","FIDELITY_RECOVERY_MISMATCH","INVALID_FIDELITY_MANIFEST","ARCHIVE_CHANGED","UNSAFE_ARCHIVE_FILE","INVALID_DESTINATION","DESTINATION_EXISTS","DESTINATION_INSIDE_INSTALLATION",
-]);
+// The two closed sets live in shared/backup-capture-failure.mjs, next to the
+// plain-English sentence built from them, so the Backups page, the Backup
+// mode page and this host all name a failure the same way.
+const captureFailureStages=new Set(BACKUP_CAPTURE_STAGES);
+const captureFailureCodes=new Set(BACKUP_CAPTURE_CODES);
 const ownedCaptureWaits=new Map([
   ["Desktop startup has not settled","OWNED_STARTUP_UNSETTLED"],["Owned writers have not exited","OWNED_WRITERS_UNSETTLED"],
   ["Credential writes have not settled","OWNED_CREDENTIALS_UNSETTLED"],["Companion startup has not settled","OWNED_COMPANION_START_UNSETTLED"],
@@ -71,7 +70,7 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
-    return {supported:host.supported(),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),refs,error:lastError};
+    return {supported:host.supported(),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -146,7 +145,7 @@ export function createBackupScheduleHost(host) {
   async function clearReview(expectedRevision){
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
     if(running)throw Error("BACKUP_BUSY");
-    coordinator.clearReview(expectedRevision);lastError=null;
+    coordinator.clearReview(expectedRevision);coordinator.clearCaptureFailure?.();lastError=null;
     return publicStatus();
   }
   /** User-requested backup through the same handoff a due daily run takes.
@@ -196,15 +195,26 @@ export function createBackupScheduleHost(host) {
       if(result?.ok!==true||result.operation!=="backup-encrypted"||!samePath(result.path,output)||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
-      captureStage="receipt-commit";coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
       captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
       return {verified:true};
     }catch(error){
-      try{host.reportCaptureFailure?.(captureFailureDiagnostic(captureStage,error));}catch{/* Diagnostic failure never changes the handoff result. */}
+      const diagnostic=captureFailureDiagnostic(captureStage,error);
+      try{host.reportCaptureFailure?.(diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
+      // Durable, so the reason survives the return to the workspace and the
+      // Backups page can say what happened instead of only that it failed.
+      try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}
       if(intent&&coordinator.status().phase!=="return-pending"&&(claimed||(s.phase==="handoff-armed"&&coordinator.status().phase==="handoff-armed")))try{coordinator.failHandoff(intent.id);}catch{/* Preserve evidence. */}
-      lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";throw Error(lastError);
+      lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
+      // Only the SUCCESS path used to reopen the workspace, so a failed
+      // backup left the person stranded on the Backup mode page with no way
+      // back but a button they had no reason to trust. The durable state is
+      // already written above, so reopening now changes nothing except where
+      // they are standing. A closed-app run has no window to return to.
+      if(!closed)try{await host.relaunch("normal");}catch{/* Falling back to the Backup mode page is better than no window at all. */}
+      throw Error(lastError);
     }
   }
   async function resumeOffline(){

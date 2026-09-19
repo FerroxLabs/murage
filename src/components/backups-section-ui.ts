@@ -2,6 +2,7 @@
 // existing bridges already return; nothing adds a call or relaxes a check.
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
+import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
 
 /** Display-only size: decimal units, one decimal below ten ("1.2 GB"). */
 export function formatBackupSize(bytes: number): string {
@@ -118,7 +119,12 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (input.scheduleFailure) attention.push(input.scheduleFailure);
   else if (s?.error) attention.push(scheduleError(s.error));
   if (s?.pending) attention.push("A backup is running. Settings are locked until it finishes.");
-  else if (s && scheduleNeedsReview(s.phase)) attention.push(schedulePhase(s.phase));
+  else if (s && scheduleNeedsReview(s.phase)) {
+    attention.push(schedulePhase(s.phase));
+    // Say WHY. Without this the page only ever said a backup had not
+    // finished, which left the person with nothing to act on.
+    if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure));
+  }
   else if (s?.phase === "skipped") attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   if (s?.schedule.preUpgrade && s.preUpgradeSupported !== true) attention.push("Pre-upgrade backups are unavailable in this app.");
   if (s?.lastClosedResult?.status === "needs-review") attention.push("The last backup taken while Murage was closed needs review.");

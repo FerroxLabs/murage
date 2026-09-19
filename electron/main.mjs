@@ -5,6 +5,7 @@ import { createNotificationAuthorization } from "./notification-authorization.mj
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
+import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
@@ -2073,8 +2074,14 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   serverReady = false;
   if (recoveryWindow && !recoveryWindow.isDestroyed()) { recoveryWindow.focus(); return recoveryWindow; }
   const ownership = reasonCode === "LEASE_FOREIGN_HOST" && desktopDataDir ? inspectDataDirLease(desktopDataDir) : null;
+  // A backup that stopped now says what stopped it, on the page the person is
+  // looking at. Stage and code only, both from closed sets, so nothing from
+  // the failure itself — no path, no filename, no secret — can be printed.
+  let captureFailure = null;
+  try { captureFailure = backupScheduleHost?.internalStatus().captureFailure ?? null; } catch { /* A missing note never blocks recovery. */ }
   const reason = reasonCode === "BACKUP_REQUESTED"
-    ? "Backup mode was opened deliberately. This workspace is stopped; engines, schedules and connected channels have not started. Choose a private backup operation, or return to the workspace."
+    ? (captureFailure ? captureFailureSentence(captureFailure) + " " : "")
+      + "Backup mode was opened deliberately. This workspace is stopped; engines, schedules and connected channels have not started. Choose a private backup operation, or return to the workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "This installation has an ownership record for a different computer name. This does not establish that your data is damaged. Reinstalling Murage will not clear this record."
     : reasonCode === "RESTORE_REVIEW_REQUIRED"

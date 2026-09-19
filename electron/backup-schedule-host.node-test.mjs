@@ -17,6 +17,7 @@ import { canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
+import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 const digest=value=>createHash("sha256").update(value).digest("hex");
 const fakeKey="# public key: age1"+"q".repeat(58)+"\nAGE-SECRET-KEY-1"+"A".repeat(60)+"\n";
 const choices={enabled:true,timezone:"UTC",time:"09:00",catchupMs:86400000,maxBytes:100000000,maxDurationMs:60000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},preUpgrade:false};
@@ -438,5 +439,50 @@ test("back up now while a daily backup waits hands off that same job instead of 
     assert.equal(armed.phase,"handoff-armed");assert.equal(armed.job.id,waiting.job.id);
     const resumed=f.create();await resumed.resumeOffline();resumed.completeReturn();await resumed.tick();
     assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(call=>call==="capture").length,1);assert.equal(f.calls.filter(call=>call==="backup").length,1);
+  }finally{f.cleanup();}
+});
+
+test("a failed capture names its stage and reason, keeps it, and reopens the workspace",async()=>{
+  const reported=[];
+  const f=fixture(()=>({
+    capture:async()=>{throw Error("BACKUP_UNCLASSIFIED_COMPONENT");},
+    reportCaptureFailure:failure=>reported.push(failure),
+  }));
+  try{
+    await f.arm();
+    const next=f.create({reportCaptureFailure:failure=>reported.push(failure)});
+    await assert.rejects(next.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    // The real refusal is named, not flattened to UNKNOWN_CAPTURE_FAILURE.
+    assert.deepEqual(reported,[{stage:"capture",code:"BACKUP_UNCLASSIFIED_COMPONENT"}]);
+    // It survives for the workspace to show, and says something actionable.
+    const status=f.coordinator().status();
+    assert.equal(status.phase,"needs-review");
+    assert.deepEqual(status.captureFailure,{stage:"capture",code:"BACKUP_UNCLASSIFIED_COMPONENT"});
+    const sentence=captureFailureSentence(status.captureFailure);
+    assert.equal(sentence.includes("while copying your workspace"),true);
+    assert.equal(sentence.includes("doesn't recognise"),true);
+    assert.equal(sentence.includes(f.root),false);
+    assert.equal((await f.create().status()).captureFailure.code,"BACKUP_UNCLASSIFIED_COMPONENT");
+    // The person is put back in the workspace rather than left on Backup mode.
+    assert.equal(f.calls.filter(call=>call==="normal").length,1);
+    // Clearing the review clears the note with it.
+    const cleared=f.create();
+    await cleared.clearReview(f.coordinator().status().revision);
+    assert.equal(f.coordinator().status().captureFailure,undefined);
+  }finally{f.cleanup();}
+});
+
+test("a closed-app capture failure records the reason without reopening a window",async()=>{
+  const f=fixture(()=>({
+    capture:async()=>{throw Error("SOURCE_CHANGED");},
+    assertClosedStartup:async()=>{},
+  }));
+  try{
+    await f.enable(false,true);
+    f.setNow(Date.parse("2026-09-13T09:01:00Z"));
+    const result=await f.create({assertClosedStartup:async()=>{}}).runClosedDue();
+    assert.equal(result.status,"needs-review");
+    assert.deepEqual(f.coordinator().status().captureFailure,{stage:"capture",code:"SOURCE_CHANGED"});
+    assert.equal(f.calls.includes("normal"),false);
   }finally{f.cleanup();}
 });

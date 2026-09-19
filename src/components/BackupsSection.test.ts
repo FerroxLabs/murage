@@ -116,6 +116,26 @@ describe("backup summary", () => {
     expect(noDesktop(verifiedAt)).not.toMatch(/signed in to your desktop/);
     expect(backupSummary({ ...healthy, schedule: { ...s, lastClosedResult: { status: "needs-review", reason: "capture-unconfirmed", at: verifiedAt + 1, revision: 1 } } }).attention.join(" ")).toMatch(/closed needs review/);
   });
+  it("says why a backup stopped, in plain words, and never prints a path", () => {
+    const s = healthy.schedule!;
+    const failed = (captureFailure: { stage: string; code: string }) =>
+      backupSummary({ ...healthy, schedule: { ...s, phase: "needs-review", reviewReason: "capture-unconfirmed", captureFailure } }).attention.join(" ");
+    const unknownFile = failed({ stage: "capture", code: "BACKUP_UNCLASSIFIED_COMPONENT" });
+    expect(unknownFile).toMatch(/didn't finish/);
+    expect(unknownFile).toMatch(/stopped while copying your workspace/);
+    expect(unknownFile).toMatch(/doesn't recognise/);
+    expect(failed({ stage: "references", code: "BACKUP_REFERENCE_CHANGED" })).toMatch(/stopped while checking your backup folder and recovery key/);
+    expect(failed({ stage: "artifact-readback", code: "BACKUP_RECEIPT_MISMATCH" })).toMatch(/couldn't confirm the backup file/);
+    // An unrecognised code still gets a sentence, never a raw code or a path.
+    const strange = failed({ stage: "nowhere", code: "SOMETHING_ELSE" } as { stage: string; code: string });
+    expect(strange).toMatch(/Murage couldn't say why/);
+    for (const text of [unknownFile, strange]) {
+      expect(text).not.toMatch(/[A-Z]{4,}_[A-Z_]+/);
+      expect(text).not.toMatch(/[/\\]/);
+    }
+    // No failure recorded: the page says no more than it knows.
+    expect(backupSummary({ ...healthy, schedule: { ...s, phase: "needs-review" } }).attention.join(" ")).not.toMatch(/stopped while/);
+  });
   it("never claims availability without a bridge", () => {
     const summary = backupSummary({ ...healthy, scheduleBridge: false, schedule: null, remoteBridge: false, remote: null });
     expect(summary.schedule).toBe("Not available in this window");
