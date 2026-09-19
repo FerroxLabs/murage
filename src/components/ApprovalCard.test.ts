@@ -291,3 +291,28 @@ describe("ApprovalCard learned skills", () => {
       .toContain("propose the update again");
   });
 });
+
+describe("the one-time 'use this computer' card", () => {
+  const consent = (answered?: string): Message => ({ id: "consent-card", role: "bot", kind: "options", at: 1,
+    card: { title: "Let @Screen use this computer?",
+      subtitle: "@Screen is set to Auto, which on this Mac means your own screen, mouse and keyboard. Allow and Murage remembers it for this bot.",
+      options: ["Allow", "Deny"], requestId: "consent-1", tool: "local_computer_consent", approvalScope: "local-computer",
+      held: "Asked once for each bot on Auto.", answered } });
+  const bot = { name: "Screen" } as Parameters<typeof ApprovalCard>[0]["bot"];
+
+  it("reads as a sentence with a plain explanation, not a tool name and a code box", () => {
+    const markup = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent() }));
+    expect(markup).toContain("@Screen wants to use this computer");
+    expect(markup).not.toContain("local computer consent");
+    expect(markup).not.toContain("local_computer_consent");
+    expect(markup).not.toContain("<pre");
+    expect(markup).toContain("your own screen, mouse and keyboard");
+  });
+
+  it("settles as Allowed or Not allowed", () => {
+    expect(renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent("allow") }))).toContain("Allowed");
+    const denied = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent("deny") }));
+    expect(denied).toContain("Not allowed");
+    expect(denied).not.toContain("Denied");
+  });
+});

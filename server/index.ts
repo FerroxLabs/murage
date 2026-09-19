@@ -427,9 +427,9 @@ import { autoMountsLocalComputer, botUsesHostComputer, shouldMountLocalComputer 
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
-import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedDisplayName, hostStoppedReason } from "../shared/host-stop.ts";
-import { browserUnavailableActivityName, browserUnavailableDisplayName } from "../shared/browser-unavailable.ts";
+import { browserUnavailableActivityName, browserUnavailableDisplayName, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
@@ -569,6 +569,18 @@ function hostStopNotedSinceLastUserMessage(threadId: string): boolean {
     if (message.kind === "activity" && hostStoppedReason(message.tool?.name)) return true;
   }
   return false;
+}
+/** Desktop actions (host computer tools/call) the harness is awaiting, and
+ * threads whose stop withdrew one the driver had already been sent. Read once
+ * when the thread's turn settles, so a stop mid-action says to check the
+ * screen (TURN_STOPPED_DESKTOP_ACTION_NOTE). A call still pending then is
+ * marked `noted`, so its late cancellation cannot flag the NEXT turn. */
+const desktopActionCalls = new Set<{ threadId: string; noted: boolean }>();
+const desktopActionWithdrawn = new Set<string>();
+function desktopActionCaughtByStop(threadId: string): boolean {
+  let caught = desktopActionWithdrawn.delete(threadId);
+  for (const call of desktopActionCalls) if (call.threadId === threadId) { call.noted = true; caught = true; }
+  return caught;
 }
 /** The reason a room member turn reports when its internal generation was
  * revoked after the room claim and before dispatch (runGroupMemberTurn). */
@@ -1236,8 +1248,8 @@ async function browserIntegration(botId: string, profile: string | undefined, th
     binding = await unifiedBrowserBinding(botId, profile);
   } catch (error) {
     // Chrome closed or its remote debugging off: the turn runs without a
-    // browser rather than failing; the Browser panel says how to turn it on.
-    if (error && typeof error === "object" && "userChromeNotReady" in error) return null;
+    // browser rather than failing, and the chat says how to turn it on.
+    if (error && typeof error === "object" && "userChromeNotReady" in error) return { unavailable: USER_CHROME_UNREACHABLE_REASON };
     const reason = redactSecretsInText(error instanceof Error ? error.message : String(error)).trim().slice(0, 120);
     console.warn(`[browser] continuing this turn without the browser: ${reason}`);
     return { unavailable: reason };
@@ -3735,12 +3747,14 @@ bus.subscribe((event: RuntimeEvent) => {
       // error card: stopping is a normal thing to do, not a failure.
       // A host stop already said why the turn ended (noteHostStoppedTurn);
       // the person did not press Stop, so "Stopped by you" would be untrue.
+      // A stop that caught a desktop action mid-flight says so instead.
+      const desktopActionStopped = desktopActionCaughtByStop(event.threadId);
       if (turnStopped(event) && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
         pushMessage({
           role: "bot",
           kind: "activity",
           ...(completedTurnId ? { turnId: completedTurnId } : {}),
-          tool: { name: TURN_STOPPED_NOTE, ok: true },
+          tool: { name: desktopActionStopped ? TURN_STOPPED_DESKTOP_ACTION_NOTE : TURN_STOPPED_NOTE, ok: true },
         });
       }
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
@@ -9327,13 +9341,18 @@ const server = createServer(async (req, res) => {
         const disconnected = () => controller.abort();
         res.once("close", disconnected);
         const revoked = setInterval(() => { if (!authorized()) controller.abort(); }, 100);
+        const call = body.method === "tools/call" ? { threadId: internalClaim.threadId, noted: false } : undefined;
+        if (call) desktopActionCalls.add(call);
         try {
           const result = await hostComputer.dispatch(entry!.connection, body.method, body.params, authorized, controller.signal);
           res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
         } catch (error) {
-          if ((error as { code?: unknown }).code === "cancelled") return json(res, 409, { error: (error as Error).message, code: "cancelled" });
+          if ((error as { code?: unknown }).code === "cancelled") {
+            if (call && !call.noted && (error as { sent?: unknown }).sent === true) desktopActionWithdrawn.add(call.threadId);
+            return json(res, 409, { error: (error as Error).message, code: "cancelled" });
+          }
           throw error;
-        } finally { clearInterval(revoked); res.off("close", disconnected); }
+        } finally { clearInterval(revoked); res.off("close", disconnected); if (call) desktopActionCalls.delete(call); }
       }
       if (path === "/api/internal/unified-browser") {
         requireActiveInternal();

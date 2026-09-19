@@ -1,7 +1,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { browserChoicePatch, MY_CHROME, MyChromeConsent } from "./UnifiedBrowserPanel";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { BrowserPanelAlerts, browserChoicePatch, MY_CHROME, MyChromeConsent } from "./UnifiedBrowserPanel";
 
 describe("Use my Chrome choice", () => {
   it("asks before attaching, and changes nothing until confirmed", () => {
@@ -21,5 +23,25 @@ describe("Use my Chrome choice", () => {
     expect(html).toContain("Only one bot can use your Chrome at a time");
     expect(html).toContain(">Use my Chrome</button>");
     expect(html).toContain(">Cancel</button>");
+  });
+});
+
+describe("a refused browser choice", () => {
+  it("is shown on its own, and a connection problem cannot hide it", () => {
+    const refusal = "Moss is already using your Chrome. Only one bot can use it at a time; switch Moss back to its own browser first.";
+    const html = renderToStaticMarkup(createElement(BrowserPanelAlerts, { refusal, problem: "agent-browser command timed out" }));
+    const alerts = [...html.matchAll(/<div role="alert"[^>]*>([^<]*)<\/div>/g)].map((match) => match[1]);
+    expect(alerts).toEqual([refusal, "agent-browser command timed out"]);
+    expect(renderToStaticMarkup(createElement(BrowserPanelAlerts, { refusal: "", problem: "" }))).toBe("");
+  });
+
+  it("closes the Use my Chrome confirmation when the choice is refused", () => {
+    // The consent box stayed open over the refusal, still offering the button
+    // that had just been refused.
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    const choose = source.slice(source.indexOf("const chooseBrowser = "), source.indexOf("const action = "));
+    const refused = choose.slice(choose.indexOf("catch"));
+    expect(refused).toContain("setConfirmMyChrome(false)");
+    expect(refused).toContain("setRefusal(");
   });
 });

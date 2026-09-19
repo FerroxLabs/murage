@@ -144,6 +144,7 @@ describe("bot patch queue", () => {
     expect(authoritative).toHaveBeenCalledWith(serverBot, {});
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "name must be at most 100 characters" }),
+      { name: "x".repeat(101) },
     );
   });
 
@@ -278,6 +279,31 @@ describe("bot patch queue", () => {
 
     expect(sent).toEqual([{ chiefOfStaff: true, chiefTier: "section", individual: false, title: "Ops" }]);
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("chiefTier");
+  });
+
+  it("clears a refused optimistic value the server bot omits, and names the refused patch", async () => {
+    // A bot that never had Full access has no `fullAccess` field at all, so
+    // a plain spread of the re-read bot over the optimistic one kept the
+    // refused `fullAccess: true` on screen, and its two options live.
+    const authoritative = vi.fn();
+    const onError = vi.fn();
+    const queue = createBotPatchQueue({
+      send: async () => { throw Object.assign(new Error("not found"), { status: 404 }); },
+      reconcile: async () => bot({ autoApprove: false }),
+      onAuthoritative: authoritative,
+      onError,
+    });
+
+    queue.enqueue("bot-1", { fullAccess: true, acknowledgeFullAccess: true, settingsScope: "defaults" }, bot());
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+
+    const [folded, overlay] = authoritative.mock.lastCall!;
+    const onScreen = { ...bot({ autoApprove: true, fullAccess: true }), ...folded, ...overlay };
+    expect(onScreen.fullAccess).toBeUndefined();
+    expect(onScreen.autoApprove).toBe(false);
+    expect(folded).not.toHaveProperty("acknowledgeFullAccess");
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "not found" }), expect.objectContaining({ fullAccess: true }));
   });
 
   it("revive undoes a dispose, so StrictMode's dev probe cannot kill saving", async () => {

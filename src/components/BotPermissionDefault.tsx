@@ -1,6 +1,6 @@
 import type { Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
+import { FULL_ACCESS_DESKTOP_ONLY, permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import { Switch } from "./SettingsPrimitives";
 
 export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord";
@@ -17,8 +17,8 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "full") {
     return onThisComputer
-      ? "Never stops to ask, including on this computer. Webhook and routine turns still ask, and image generation still asks before it spends."
-      : "Never stops to ask. Webhook and routine turns still ask, and image generation still asks before it spends.";
+      ? "Never stops to ask, including on this computer and before contacting other bots. Webhook and routine turns still ask, and image generation still asks before it spends."
+      : "Never stops to ask, including before contacting other bots. Webhook and routine turns still ask, and image generation still asks before it spends.";
   }
   if (mode === "auto") {
     return onThisComputer
@@ -36,17 +36,22 @@ function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
 export function BotPermissionDefault({
   bot,
   onThisComputer,
+  desktop,
   onChoose,
   onOption,
 }: {
   bot: Pick<Bot, "autoApprove" | "fullAccess" | "fullAccessChannelMessages" | "fullAccessSetupRequests">;
   /** the bot drives this computer (changes the wording only) */
   onThisComputer: boolean;
+  /** this renderer is the desktop app (useDesktopSurface): false on a phone
+   * or the browser door, where Full access and its options are refused */
+  desktop?: boolean;
   onChoose: (mode: PermissionMode) => void;
   onOption: (key: FullAccessOption, value: boolean) => void;
 }) {
   const current = permissionModeOf(bot);
   const full = current === "full";
+  const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
     { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else, webhooks and routines still ask." },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
@@ -58,23 +63,30 @@ export function BotPermissionDefault({
         New conversations start at this level. You can change it for one conversation from the message box.
       </div>
       <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5" role="radiogroup" aria-label="Default approval level">
-        {MODES.map(({ mode, label }) => (
-          <button
-            key={mode}
-            type="button"
-            role="radio"
-            aria-checked={current === mode}
-            onClick={() => current !== mode && onChoose(mode)}
-            className={cn(
-              "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium",
-              current === mode ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink",
-            )}
-          >
-            {label}
-          </button>
-        ))}
+        {MODES.map(({ mode, label }) => {
+          // Not offered where the server would refuse it (server/full-access.ts).
+          const unavailable = remote && mode === "full";
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={current === mode}
+              disabled={unavailable}
+              title={unavailable ? FULL_ACCESS_DESKTOP_ONLY : undefined}
+              onClick={() => current !== mode && onChoose(mode)}
+              className={cn(
+                "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed",
+                current === mode ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink disabled:hover:text-ink-secondary",
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       <div className="mt-2 text-[12.5px] text-ink-secondary">{modeDetail(current, onThisComputer)}</div>
+      {remote && <div className="mt-1 text-[12.5px] text-ink-secondary">{FULL_ACCESS_DESKTOP_ONLY}</div>}
       <div className="mt-3 flex flex-col gap-2">
         {!full && <div className="text-[12px] text-ink-secondary">Only used when the default is Full access.</div>}
         {options.map(({ key, label, hint }) => (
@@ -85,7 +97,7 @@ export function BotPermissionDefault({
             </div>
             <Switch
               checked={bot[key] === true}
-              disabled={!full}
+              disabled={!full || remote}
               aria-label={label}
               onClick={() => onOption(key, bot[key] !== true)}
             />

@@ -9,7 +9,7 @@ const refused = () => Object.assign(new Error("Computer control changed or this 
 // input the driver already sent to the OS, so the wording never claims it can.
 const cancelled = (sent: boolean) => Object.assign(new Error(sent
   ? "Stopped: this computer action was cancelled. An action already sent to the computer may still have taken effect; inspect the screen before continuing."
-  : "Stopped before this computer action was sent; nothing was performed."), { status: 409, code: "cancelled" });
+  : "Stopped before this computer action was sent; nothing was performed."), { status: 409, code: "cancelled", sent });
 
 export class HostComputerBroker {
   private active: object | undefined;

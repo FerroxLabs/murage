@@ -182,6 +182,47 @@ it.runIf(HOST_COMPUTER).each(STOPS)("%s cancels a desktop action already in flig
   }
 }, 60_000);
 
+it.runIf(HOST_COMPUTER)("tells the person, in the chat, that a stopped desktop action may have finished anyway", async () => {
+  const { bot, client } = await startComputerTurn("cancel note");
+  let mark = frames().length;
+  try {
+    const slow = await startSlowAction(client);
+    mark = slow.mark;
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+    expect(await settledWithin(slow.call, 5_000)).not.toBe("still waiting");
+    await expect.poll(() => isBusy(bot.id), { timeout: 10_000 }).toBe(false);
+    const notes = async () => ((await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as any[])
+      .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("Stopped"));
+    // One stop line, and it is the one that says to look at the screen —
+    // never "Stopped by you" as well (or instead).
+    await expect.poll(async () => (await notes()).map((m) => m.tool.name), { timeout: 5_000 })
+      .toEqual(["Stopped while an action was running on your screen — it may have finished anyway. Check the screen before retrying."]);
+  } finally {
+    await releaseDriver(mark);
+    await client.close();
+    if (await isBusy(bot.id)) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+    await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
+  }
+}, 60_000);
+
+it.runIf(HOST_COMPUTER)("still says only \"Stopped by you\" when no desktop action was running", async () => {
+  const { bot, client } = await startComputerTurn("cancel note idle");
+  try {
+    // A finished action is not a running one.
+    const done = await client.request("tools/call", { name: "fixture_ping", arguments: {} }) as any;
+    expect(text(done)).toBe("quick action finished");
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+    await expect.poll(() => isBusy(bot.id), { timeout: 10_000 }).toBe(false);
+    await expect.poll(async () => ((await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as any[])
+      .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("Stopped")).map((m) => m.tool.name), { timeout: 5_000 })
+      .toEqual(["Stopped by you"]);
+  } finally {
+    await client.close();
+    if (await isBusy(bot.id)) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
+    await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
+  }
+}, 60_000);
+
 it.runIf(HOST_COMPUTER)("keeps the driver exclusive until the cancelled action has really answered", async () => {
   const first = await startComputerTurn("cancel exclusion");
   const { bot } = first;

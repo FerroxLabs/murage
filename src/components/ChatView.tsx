@@ -61,11 +61,11 @@ import { readIntakeCard } from "@/lib/onboarding-intake";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
-import { StoppedRow } from "./StoppedRow";
+import { StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
-import { hostStoppedReason } from "../../shared/host-stop";
+import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -1032,6 +1032,9 @@ const MessagesList = memo(function MessagesList({
               // plain tool runs stay out unless Settings → Tool calls is on.
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
+              // the person's Stop caught a desktop action mid-flight: say to
+              // check the screen, with Tool calls on or off
+              if (isStoppedMidDesktopAction(m.tool?.name)) return <StoppedMidActionRow />;
               // a folder-trust notice is the same kind of thing: what the turn
               // ran without (or gains next time), visible with Tool calls off
               const trustNotice = folderTrustNotice(m.tool?.name);

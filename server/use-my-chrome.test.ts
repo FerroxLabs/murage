@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { browserSessionId } from "./browser-engine.ts";
+import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 
 const instrumentation = `
 const fs = await import('node:fs');
@@ -263,6 +264,26 @@ it("says plainly how to turn Chrome's remote debugging on when it is off", async
     const panel = await api("GET", `/api/bots/${bot.id}/browser`);
     expect(panel.status).toBe(409);
     expect(panel.body.error).toContain("chrome://inspect/#remote-debugging");
+  } finally { await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); }
+}, 60_000);
+
+it("runs a turn without the browser when the owner's Chrome is unreachable, and says so once in the chat", async () => {
+  disableRemoteDebugging();
+  const bot = await makeBot("Chrome unreachable turn", "verification", { useMyChrome: true });
+  const notes = async () => ((await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as any[])
+    .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith(BROWSER_UNAVAILABLE_PREFIX));
+  try {
+    const captured = await startTurn(bot, "chrome unreachable turn", false);
+    // The turn itself went ahead, without browser tools.
+    expect(mountedBrowser(captured)).toBeUndefined();
+    await stop(bot);
+    const [note, ...more] = await notes();
+    expect(more).toEqual([]);
+    expect(note.tool).toEqual({ name: `${BROWSER_UNAVAILABLE_PREFIX} ${USER_CHROME_UNREACHABLE_REASON}`, ok: true });
+    // One per turn: the next turn adds its own, not a pile.
+    await startTurn(bot, "chrome unreachable second turn", false);
+    await stop(bot);
+    expect(await notes()).toHaveLength(2);
   } finally { await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); }
 }, 60_000);
 

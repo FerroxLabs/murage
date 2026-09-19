@@ -10,8 +10,13 @@ import { BotPermissionDefault, FULL_ACCESS_CHANNEL_OPTION, FULL_ACCESS_SETUP_OPT
 import { defaultModeStep } from "@/lib/permission-mode";
 
 type Shown = Parameters<typeof BotPermissionDefault>[0]["bot"];
-const render = (bot: Shown, onThisComputer = false) =>
-  renderToStaticMarkup(createElement(BotPermissionDefault, { bot, onThisComputer, onChoose: () => {}, onOption: () => {} }));
+const render = (bot: Shown, onThisComputer = false, desktop?: boolean) =>
+  renderToStaticMarkup(createElement(BotPermissionDefault, { bot, onThisComputer, desktop, onChoose: () => {}, onOption: () => {} }));
+const radio = (markup: string, label: string) => {
+  const end = markup.indexOf(`>${label}<`);
+  expect(end, `no "${label}" radio`).toBeGreaterThan(-1);
+  return markup.slice(markup.lastIndexOf("<button", end), end + 1);
+};
 const pressed = (markup: string) =>
   [...markup.matchAll(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*>([^<]*)</g)].map((match) => match[1]);
 const option = (markup: string, label: string) => {
@@ -52,6 +57,24 @@ describe("Bot Settings approval default", () => {
       expect(option(markup, FULL_ACCESS_CHANNEL_OPTION)).toContain(' disabled=""');
       expect(option(markup, FULL_ACCESS_SETUP_OPTION)).toContain(' disabled=""');
       expect(markup).toContain("Only used when the default is Full access");
+    }
+  });
+
+  it("offers Full access only on the desktop app, and says so elsewhere", () => {
+    // a phone or the browser door: the server would refuse it, so it is not offered
+    const remote = render({ autoApprove: true, fullAccess: false }, false, false);
+    expect(radio(remote, "Full access")).toContain(' disabled=""');
+    expect(radio(remote, "Auto")).not.toContain(' disabled=""');
+    expect(remote).toContain("Full access can only be turned on in the Murage desktop app.");
+    // already on Full access: still shown as the default, options not editable here
+    const remoteFull = render({ autoApprove: true, fullAccess: true }, false, false);
+    expect(pressed(remoteFull)).toEqual(["Full access"]);
+    expect(option(remoteFull, FULL_ACCESS_SETUP_OPTION)).toContain(' disabled=""');
+    // the desktop, and not-yet-known, keep it available (the server still decides)
+    for (const desktop of [true, undefined]) {
+      const markup = render({ autoApprove: true, fullAccess: false }, false, desktop);
+      expect(radio(markup, "Full access")).not.toContain(' disabled=""');
+      expect(markup).not.toContain("can only be turned on in the Murage desktop app");
     }
   });
 

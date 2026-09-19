@@ -1,6 +1,7 @@
 import { track } from "@/lib/analytics";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, ShieldOff, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { newSendId } from "@/lib/send-id";
@@ -32,6 +33,7 @@ import {
 } from "@/lib/composer-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
+import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu } from "./PermissionModeMenu";
 import { permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
@@ -88,20 +90,6 @@ interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
 }
 
-const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: string; chip: string; detail: string }> = [
-  { mode: "ask", label: "Ask for approval", chip: "Ask", detail: "Ask before actions that need your permission" },
-  { mode: "auto", label: "Auto mode", chip: "Auto", detail: "Keep going automatically; destructive and sensitive actions still ask" },
-  {
-    mode: "full",
-    label: "Full access",
-    chip: "Full access",
-    detail: "Never stops to ask. Webhook and routine turns still ask; image generation still asks before it spends",
-  },
-];
-
-const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
-  mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
-
 /** Composer chip for the approval level: Ask, Auto or Full access. The same
  * `autoApprove` bit as the profile switch, plus `fullAccess` above it. The
  * chip only changes its name, not its color. */
@@ -109,6 +97,7 @@ function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const current = permissionModeOf(bot);
+  const desktop = useDesktopSurface();
   const currentEntry = PERMISSION_MODES.find((entry) => entry.mode === current)!;
 
   useEffect(() => {
@@ -144,39 +133,15 @@ function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode
       </button>
 
       {open && (
-        <div
-          role="menu"
-          aria-label={`Permission mode for ${bot.name}`}
-          className="absolute bottom-full left-0 z-30 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
-        >
-          <div className="border-b border-hairline/20 px-4 py-3 text-[13px] font-medium text-ink-secondary">
-            How should {bot.name} actions be approved?
-          </div>
-          <div className="flex flex-col py-1">
-            {PERMISSION_MODES.map((entry) => (
-              <button
-                key={entry.mode}
-                type="button"
-                role="menuitemradio"
-                aria-checked={current === entry.mode}
-                onClick={() => {
-                  onSetMode(entry.mode);
-                  setOpen(false);
-                }}
-                className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
-              >
-                <PermissionModeIcon mode={entry.mode} size={16} className="mt-0.5 shrink-0 opacity-70" />
-                <div className="flex w-full flex-col gap-0.5">
-                  <div className="flex items-center justify-between text-[14px] text-ink">
-                    {entry.label}
-                    {current === entry.mode && <Check size={14} />}
-                  </div>
-                  <div className="text-[13px] text-ink-secondary">{entry.detail}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+        <PermissionModeMenu
+          botName={bot.name}
+          current={current}
+          desktop={desktop}
+          onPick={(mode) => {
+            onSetMode(mode);
+            setOpen(false);
+          }}
+        />
       )}
     </div>
   );

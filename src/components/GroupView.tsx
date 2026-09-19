@@ -42,8 +42,8 @@ import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { StoppedRow } from "./StoppedRow";
-import { hostStoppedReason } from "../../shared/host-stop";
+import { StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
@@ -266,6 +266,8 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "activity" && m.tool ? (
             hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
+            ) : isStoppedMidDesktopAction(m.tool.name) ? (
+              <StoppedMidActionRow />
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
             ) : browserUnavailableReason(m.tool.name) ? (

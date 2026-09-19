@@ -1,0 +1,30 @@
+// The composer's approval-level menu: what each level says it does, and that
+// Full access is only offered where the server would accept it.
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { PermissionModeMenu } from "./PermissionModeMenu";
+
+const render = (desktop: boolean | undefined) =>
+  renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {} }));
+const item = (markup: string, label: string) => {
+  const at = markup.indexOf(label);
+  expect(at, `no "${label}" item`).toBeGreaterThan(-1);
+  const start = markup.lastIndexOf("<button", at);
+  return markup.slice(start, markup.indexOf("</button>", at));
+};
+
+describe("composer approval-level menu", () => {
+  it("says Full access skips asking before contacting other bots", () => {
+    expect(item(render(true), "Full access")).toContain("contacting other bots");
+  });
+
+  it("does not offer Full access away from the desktop app, and says why", () => {
+    const remote = item(render(false), "Full access");
+    expect(remote).toContain(' disabled=""');
+    expect(remote).toContain("Full access can only be turned on in the Murage desktop app.");
+    expect(item(render(false), "Auto mode")).not.toContain(' disabled=""');
+    for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' disabled=""');
+  });
+});
