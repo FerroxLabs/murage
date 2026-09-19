@@ -302,8 +302,13 @@ describe("the running turn's live detail", () => {
     expect(liveTail).toMatch(/\{bot\.busy && plan\?\.length \? <LivePlanCard entries=\{plan\} \/> : null\}/);
   });
 
-  it("shows live thinking to everyone while working, folded once the answer streams", () => {
-    expect(liveTail).toMatch(/\{bot\.busy && reasoning \? \(\s*<LiveThinking key=\{bot\.threadId\} text=\{reasoning\} answering=\{Boolean\(streaming\)\} \/>/);
+  it("shows live thinking to everyone while working, folded once the model moves past thinking", () => {
+    // Was: answering={Boolean(streaming)} with no timer. The row now folds
+    // when answer text streams or a tool starts, and carries the elapsed time
+    // while the model is still thinking.
+    expect(liveTail).toMatch(/\{bot\.busy && reasoning \? \(\s*<LiveThinking key=\{bot\.threadId\} text=\{reasoning\} answering=\{!modelStillThinking\(activityLabel, Boolean\(streaming\)\)\} since=\{busySince\} \/>/);
+    // and the working line leaves "Thinking" to the row, then says Answering
+    expect(chat).toMatch(/label=\{turnStatusLabel\(activityLabel, \{ answering: Boolean\(streaming\), thinkingRow: Boolean\(bot\.busy && reasoning\) \}\)\}/);
     // not behind Settings → Tool calls, and not opened by default
     expect(liveTail).not.toMatch(/showToolCalls|showThinking|defaultOpen/);
   });

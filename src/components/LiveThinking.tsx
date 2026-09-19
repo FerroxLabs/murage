@@ -7,6 +7,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CHIP } from "@/lib/transcript-chrome";
+import { WorkingTimer } from "@/components/WorkingIndicator";
 
 /** How much of a long think stays mounted. The newest text is what says the
  * model is still moving; the start of a 100 KB think is not worth the DOM. */
@@ -64,11 +65,17 @@ export function LiveThinking({
   text,
   answering,
   defaultOpen = false,
+  since = null,
 }: {
   text: string;
+  /** The model has moved past thinking: answer text is streaming or a tool is
+   * running. The row folds and says "Thought". */
   answering: boolean;
   /** Collapsed unless the person opens it. */
   defaultOpen?: boolean;
+  /** Turn start (epoch ms). While the model is still thinking the row is the
+   * one place that says so, with the elapsed time beside it. */
+  since?: number | null;
 }) {
   const [stored, setStored] = useState<ThinkingFold>({ open: defaultOpen, answering });
   // Derived during render (React's "adjust state when a prop changes"), so
@@ -92,6 +99,7 @@ export function LiveThinking({
         >
           <ChevronRight size={13} className={cn("shrink-0", open && "rotate-90")} />
           <span>{answering ? "Thought" : "Thinking"}</span>
+          {!answering && since !== null ? <WorkingTimer since={since} className="text-[11.5px] text-ink-secondary/70" /> : null}
         </button>
         {open ? <LiveThinkingText text={text} /> : null}
       </div>
