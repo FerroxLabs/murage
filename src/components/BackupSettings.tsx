@@ -229,7 +229,7 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
             {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Ticking this sets up a background job for your user account.</p>}
           </fieldset>
           {closedAction==="setup"&&<p role="status" className="text-[12px] text-ink-secondary">Setting up the background job…</p>}
-          {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it.</p>}
+          {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">{window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
           {draft.closedApp&&(!closedRegistered||status.closedAppSupported!==true)&&<p className="text-[12px] text-warning">Your choice to back up while Murage is closed is saved, but the background job isn't registered. Untick and tick the box to set it up, or leave it unticked to back up only while Murage is open.</p>}
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[12px] text-ink-secondary">{limitsSet?"Backup limits are set. You can change them under Advanced.":"Backup limits aren't set yet. They are required the first time."}</p>

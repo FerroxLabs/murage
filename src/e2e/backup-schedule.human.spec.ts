@@ -208,6 +208,11 @@ test("unsupported and missing native bridge never expose schedule mutation",asyn
  await setup(page);await page.evaluate(()=>{(window as any).state.supported=false;});await refreshSchedule(page);await expect(page.getByRole("button",{name:"Choose backup folder and recovery key",exact:true})).toHaveCount(0);
  await page.addInitScript(()=>{delete(window as any).muragebox.backupSchedule;});await page.reload();await expect(page.getByText("Scheduling unavailable in this window")).toBeVisible();await expect(page.locator("input")).toHaveCount(0);
 });
+test("Windows says plainly that backing up while Murage is closed is not available there yet",async({page})=>{
+ await setup(page);await page.addInitScript(()=>{(window as any).muragebox.platform="win32";});await page.reload();
+ await expect(page.getByText("Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.",{exact:true})).toBeVisible();
+ await expect(page.getByText(/needs a supported desktop app/)).toHaveCount(0);
+});
 test("closed-app checkbox sets up the job, keeps consent, stale status and disable-all journey",async({page},info)=>{
  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page);
  await page.evaluate(()=>{
