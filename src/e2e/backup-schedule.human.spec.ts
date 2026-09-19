@@ -70,7 +70,7 @@ async function setup(page:Page,withRemote=false,optional=false){
  if(optional){
    // Optional desktop methods; older apps do not offer them.
    w.keyMode="ok";w.runMode="ok";
-   w.muragebox.backup.createRecoveryKey=async(...args:unknown[])=>{w.calls.push({action:"create-key",args});if(w.keyMode==="cancel")return{cancelled:true};if(w.keyMode==="error")throw Error("PRIVATE_KEY_CANARY");if(w.keyMode==="inside")throw Error("BACKUP_RECOVERY_KEY_INSIDE_DESTINATION");return{saved:true,label:"Murage recovery key.age",publicKey:"age1"+"q".repeat(58),secretKey:"AGE-SECRET-KEY-CANARY"};};
+   w.muragebox.backup.createRecoveryKey=async(...args:unknown[])=>{w.calls.push({action:"create-key",args});if(w.keyMode==="cancel")return{cancelled:true};if(w.keyMode==="error")throw Error("PRIVATE_KEY_CANARY");if(w.keyMode==="inside")throw Error("BACKUP_RECOVERY_KEY_INSIDE_DESTINATION");if(w.keyMode==="exists")return{refused:"BACKUP_RECOVERY_KEY_EXISTS"};return{saved:true,label:"Murage recovery key.age",publicKey:"age1"+"q".repeat(58),secretKey:"AGE-SECRET-KEY-CANARY"};};
    w.muragebox.backupSchedule.runNow=async(revision:number,...rest:unknown[])=>{w.calls.push({action:"run-now",revision,rest:rest.length});const codes:Record<string,string>={consent:"BACKUP_SCHEDULE_CONSENT_REQUIRED",active:"BACKUP_WORK_ACTIVE",busy:"BACKUP_BUSY",unknown:"PRIVATE_RUN_CANARY"};if(w.runMode==="active")w.state={...w.state,phase:"skipped"};if(codes[w.runMode])throw Error(codes[w.runMode]);w.state={...w.state,phase:"due"};return structuredClone(w.state);};
   }
  },{withRemote,optional});
@@ -199,7 +199,7 @@ test("pending, conflicts, stale state, review and verified receipt remain truthf
  for(const width of [390,820,1440])await inspect(page,info,"review",width);
  await page.getByRole("button",{name:"Turn off",exact:true}).click();await expect(choose).toBeDisabled();await expect(page.getByRole("button",{name:"Turn on daily backups",exact:true})).toBeDisabled();
  // Was: "Last locally verified backup: … 2,048 bytes. This is not a restore-drill result."
- await page.evaluate(()=>{const w=window as any;w.state.phase="returned";w.state.lastVerified={verifiedAt:1700000000000,bytes:2048};});await refresh.click();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("2 KB");await expect(page.getByText("This is not a restore-drill result.",{exact:false})).toBeVisible();
+ await page.evaluate(()=>{const w=window as any;w.state.phase="returned";w.state.lastVerified={verifiedAt:1700000000000,bytes:2048};});await refresh.click();await expect(page.getByRole("region",{name:"Your backups"})).toContainText("2 KB");await expect(page.getByText("To be sure a restore works, try one from Restore.",{exact:false})).toBeVisible();await expect(page.getByText("restore-drill",{exact:false})).toHaveCount(0);
  // Pending status changes arrive through polling; unmount ends the timer.
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>{(window as any).state.pending=false;});await expect(page.getByText("Backup work is pending.",{exact:false})).toHaveCount(0);
  await page.evaluate(()=>{(window as any).state.pending=true;});await refresh.click();await page.evaluate(()=>(window as any).unmountFixture());const count=await page.evaluate(()=>(window as any).calls.length);await page.waitForTimeout(2200);expect(await page.evaluate(()=>(window as any).calls.length)).toBe(count);
@@ -274,6 +274,41 @@ test("optional recovery-key and back-up-now methods: success, cancel and errors 
  const calls=await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now"||c.action==="create-key"));
  expect(calls.filter((c:any)=>c.action==="create-key").every((c:any)=>c.args.length===0)).toBe(true);
  const revision=await page.evaluate(()=>(window as any).state.revision);expect(calls.filter((c:any)=>c.action==="run-now")).toEqual(Array(5).fill({action:"run-now",revision,rest:0}));
+ expect(errors).toEqual([]);
+});
+test("a refused key save clears the earlier saved line, and a refused background job says why beside its checkbox",async({page},info)=>{
+ const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page,false,true);
+ const create=page.getByRole("button",{name:"Create my recovery key",exact:true});
+ await create.click();await expect(page.getByText("Recovery key saved as Murage recovery key.age.")).toBeVisible();
+ // The desktop app answers "that name exists" as a value, not a thrown error.
+ await page.evaluate(()=>{(window as any).keyMode="exists";});await create.click();
+ await expect(page.getByRole("alert")).toContainText("A file with that name already exists.");
+ await expect(page.getByText("Recovery key saved as",{exact:false})).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).keyMode="inside";});await create.click();await expect(page.getByRole("alert")).toContainText("outside your backup folder");await expect(page.getByText("Recovery key saved as",{exact:false})).toHaveCount(0);
+ // No systemd user session: registering fails, and afterwards the job cannot be read.
+ await page.evaluate(()=>{
+  const w=window as any;w.closedState={supported:true,state:"unconfigured",closedApp:false};
+  w.muragebox.backupClosed={
+   status:async()=>structuredClone(w.closedState),
+   stage:async()=>{w.closedState.state="staged";return structuredClone(w.closedState);},
+   install:async()=>{if(w.closedGone)w.closedState.state="unavailable";throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");},
+   disable:async()=>structuredClone(w.closedState),
+  };
+ });
+ await refreshSchedule(page);
+ const permission=page.getByRole("checkbox",{name:"Also back up when Murage is closed",exact:true});
+ const reason="Your system didn't let Murage register a background job, so backups run only while Murage is open.";
+ await expect(permission).toBeEnabled();await expect(page.getByText(reason)).toHaveCount(0);
+ // Registration refused but the prepared job is still readable: the box can be
+ // tried again, and the reason is already beside it.
+ await permission.click();await expect(page.getByText(reason)).toBeVisible();await expect(permission).not.toBeChecked();await expect(permission).toBeEnabled();
+ await page.evaluate(()=>{(window as any).closedGone=true;});
+ await permission.click();
+ await expect(page.getByText(reason)).toBeVisible();await expect(permission).not.toBeChecked();await expect(permission).toBeDisabled();
+ await expect(permission).toHaveAccessibleDescription(new RegExp(reason.replace(/[.,']/g,".")));
+ // Beside the checkbox, not only under Advanced.
+ const [box,line]=await Promise.all([permission.boundingBox(),page.getByText(reason).boundingBox()]);expect(line!.y-box!.y).toBeLessThan(120);
+ for(const width of [390,1440])await inspect(page,info,"closed-refused",width);
  expect(errors).toEqual([]);
 });
 test("remote backup explicit save connect upload and uncertainty",async({page},info)=>{

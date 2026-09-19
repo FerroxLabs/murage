@@ -3,7 +3,7 @@
 // byte the format age-keygen writes, and it is accepted only after the same
 // reader scheduled backups use (readBackupIdentity) parses it back.
 import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
@@ -152,26 +152,82 @@ export function createRecoveryKeyFile({ file, installation, destination = null, 
   }
 }
 
+// ---- Where the save dialog starts.
+const KEY_NAME = "murage-recovery-key", KEY_EXTENSION = ".txt";
+/** `murage-recovery-key.txt` in `folder`, or the first `-2`, `-3`, … name not
+ * taken there, so the dialog never proposes a file the save would refuse.
+ * The existence check is only a suggestion: creation still refuses to replace. */
+export function suggestRecoveryKeyPath(folder, exists = existsSync) {
+  if (typeof folder !== "string" || !folder) return null;
+  for (let n = 1; n <= 999; n++) {
+    const candidate = path.join(folder, `${KEY_NAME}${n === 1 ? "" : `-${n}`}${KEY_EXTENSION}`);
+    if (!exists(candidate)) return candidate;
+  }
+  return path.join(folder, KEY_NAME + KEY_EXTENSION);
+}
+
+const usableFolder = value => {
+  if (typeof value !== "string" || value.length > 4096 || value.includes("\0") || !path.isAbsolute(value)) return null;
+  try { return lstatSync(value).isDirectory() ? value : null; } catch { return null; }
+};
+/** Remembers the FOLDER the last recovery key was saved in or picked from,
+ * across launches. Only the folder path is written, owner-only; never the
+ * key, its name or its content. Unreadable or stale values read as unset. */
+export function recoveryKeyFolderStore(file) {
+  return {
+    read() {
+      try { const value = JSON.parse(readFileSync(file, "utf8")); return value?.version === 1 ? usableFolder(value.folder) : null; }
+      catch { return null; }
+    },
+    write(folder) {
+      if (!usableFolder(folder)) return;
+      const temporary = `${file}.${process.pid}.tmp`;
+      try {
+        mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        writeFileSync(temporary, JSON.stringify({ version: 1, folder }), { mode: 0o600 });
+        renameSync(temporary, file);
+      } catch { try { rmSync(temporary, { force: true }); } catch { /* Remembering is a convenience only. */ } }
+    },
+  };
+}
+
+/** Refusals the person can fix by choosing again. Answered as a value so
+ * Electron does not print them as a crash; anything else still throws. */
+const EXPECTED_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "BACKUP_RECOVERY_KEY_LOCATION_INVALID", "BACKUP_BUSY", "BACKUP_UNAVAILABLE", "BACKUP_BINDINGS_UNAVAILABLE"]);
+export async function settleRecoveryKeyRequest(work, log = line => console.warn(line)) {
+  try { return await work(); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    if (!EXPECTED_REFUSALS.has(code)) throw error;
+    log(`backup: recovery key not saved (${code})`);
+    return { refused: code };
+  }
+}
+
 /** Native-dialog orchestration. The secret never leaves this process: the
  * caller receives only the chosen file's name and the public recipient. */
-export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now() }) {
+export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null }) {
   let pending = false, folder = null;
+  const remember = file => { folder = path.dirname(file); folderStore?.write(folder); };
+  const lastFolder = () => folder ?? folderStore?.read() ?? null;
   return {
     isPending: () => pending,
-    /** Folder of the last key created here, to start the key picker in. */
-    lastFolder: () => folder,
+    /** Folder of the last key created or picked, to start the pickers in. */
+    lastFolder,
+    /** A key file picked elsewhere (the schedule's key picker): start there next time. */
+    rememberKeyFile(file) { if (typeof file === "string" && path.isAbsolute(file)) remember(file); },
     async create() {
       if (pending) throw new Error("BACKUP_BUSY");
       if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
       pending = true;
       try {
-        const file = await chooseFile();
+        const file = await chooseFile(suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
         if (!file) return { cancelled: true };
         if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
         let destination;
         try { destination = await selectedDestination(); } catch { throw new Error("BACKUP_BINDINGS_UNAVAILABLE"); }
         const created = createRecoveryKeyFile({ file, installation: installation(), destination, now: now() });
-        folder = path.dirname(created.file);
+        remember(created.file);
         return { saved: true, label: created.label, publicKey: created.publicKey };
       } finally { pending = false; }
     },

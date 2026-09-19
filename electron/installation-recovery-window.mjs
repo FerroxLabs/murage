@@ -31,7 +31,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       return picked.canceled?null:picked.filePath??null;
     },
     chooseRecoveryIdentity: async event => {
-      const picked=await dialog.showOpenDialog(win,{title:"Choose an independent age recovery key file",properties:["openFile"]});
+      const picked=await dialog.showOpenDialog(win,{title:"Choose your recovery key file",properties:["openFile"]});
       if(picked.canceled||picked.filePaths.length!==1)return null;
       await verifyIdentityAccess(event);
       const file=picked.filePaths[0],recipient=readBackupIdentity(file,context.dataDirectory).recipient;

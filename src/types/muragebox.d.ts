@@ -376,6 +376,8 @@ export interface UpdaterState {
     | "handed-off"
     | "error";
   version?: string;
+  /** The version of the app that is running now (app.getVersion()). */
+  currentVersion?: string;
   percent?: number;
   message?: string;
   /**

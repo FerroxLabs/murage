@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
-import { backupSummary, closedJobCanSetUp, closedJobNotice, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
+import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
 const scheduleInput = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:ring-2 focus:ring-accent-border disabled:opacity-50";
@@ -46,6 +46,7 @@ export function useBackupSchedule() {
   const [error,setError]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null),[area,setArea]=useState<ScheduleArea>("schedule");
   const [closed,setClosed]=useState<BackupClosedStatus|null>(null),[closedStale,setClosedStale]=useState(false),[closedAction,setClosedAction]=useState<string|null>(null);
   const [createdKey,setCreatedKey]=useState<{label:string;publicKey:string|null}|null>(null),[confirmRun,setConfirmRun]=useState(false);
+  const [closedSetupFailed,setClosedSetupFailed]=useState(false);
   const gate=useRef(false),dirty=useRef(false),mounted=useRef(true),version=useRef(0);
   const bridge=window.muragebox?.backupSchedule as BackupScheduleBridge|undefined;
   const closedBridge=window.muragebox?.backupClosed;
@@ -113,8 +114,12 @@ export function useBackupSchedule() {
         const fresh=await refresh(expected);
         if(!mounted.current||expected!==version.current)return;
         if(last)setNotice(closedJobNotice(last.action,last.next));
-        if((last?last.next.state:from)==="installed"&&!(last?.next.cancelled)&&fresh?.closedAppSupported===true)edit("closedApp",true);
-      }finally{if(mounted.current)setClosedAction(null);}
+        const registered=(last?last.next.state:from)==="installed";
+        // A cancel is the person's choice, not the system's refusal.
+        setClosedSetupFailed(!registered&&!last?.next.cancelled);
+        if(registered&&!(last?.next.cancelled)&&fresh?.closedAppSupported===true)edit("closedApp",true);
+      }catch(cause){if(mounted.current&&expected===version.current)setClosedSetupFailed(true);throw cause;}
+      finally{if(mounted.current)setClosedAction(null);}
     });
   };
   const selectReferences=()=>void run("schedule",async expected=>{
@@ -124,7 +129,9 @@ export function useBackupSchedule() {
   const createRecoveryKey=modeBridge?.createRecoveryKey?()=>void run("schedule",async expected=>{
     let result:ReturnType<typeof recoveryKeyResult>;
     try{result=recoveryKeyResult(await modeBridge.createRecoveryKey!());}
-    catch(cause){if(mounted.current&&expected===version.current)setError(recoveryKeyError(cause));return;}
+    // A refused save leaves no new key: drop the previous "saved as" line so
+    // it cannot read as the result of this attempt.
+    catch(cause){if(mounted.current&&expected===version.current){setCreatedKey(null);setError(recoveryKeyError(cause));}return;}
     if(!mounted.current||expected!==version.current)return;
     if("cancelled"in result){setNotice("No recovery key was created. Nothing was changed.");return;}
     setCreatedKey({label:result.label,publicKey:result.publicKey});
@@ -144,7 +151,7 @@ export function useBackupSchedule() {
     if(mounted.current&&expected===version.current)setNotice("Backup requested. Murage will close and reopen this window to take it.");
   },runNowError);
   const refreshNow=(where:ScheduleArea="advanced")=>void run(where,async expected=>{await refresh(expected);});
-  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,createdKey,confirmRun,setConfirmRun,
+  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,confirmRun,setConfirmRun,
     unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,createRecoveryKey,enable,disable,canRunNow,runNow,refreshNow};
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
@@ -177,6 +184,7 @@ function PreUpgradeWarning({s}:{s:ScheduleController}) {
 export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:()=>void}) {
   const {status,draft,editingLocked,consent,setConsent,choices,closedBridge,closed,closedRegistered,closedAllowed,closedAction,createdKey}=s;
   const zones=useMemo(()=>timeZoneChoices(),[]);
+  const closedReason=closedJobBlockedReason({bridge:Boolean(closedBridge),closed,stale:s.closedStale,setupFailed:s.closedSetupFailed});
   const limitsSet=Boolean(draft.catchup.trim()&&draft.size.trim()&&draft.duration.trim());
   return <section aria-labelledby="backup-setup-title" className={card}>
     <h3 id="backup-setup-title" className="text-[15px] font-medium text-ink">Set up backups</h3>
@@ -214,9 +222,10 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
             </div>
             <p id="backup-timezone-help" className="text-[12px] text-ink-secondary">Your computer's time zone is filled in. Start typing to pick another, such as Asia/Bangkok.</p>
             {(closedBridge||draft.closedApp)&&<label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
-              <input type="checkbox" checked={draft.closedApp} disabled={!draft.closedApp&&!closedAllowed} onChange={event=>s.setClosedApp(event.target.checked)} className={checkbox} aria-describedby="backup-closed-help"/>
+              <input type="checkbox" checked={draft.closedApp} disabled={!draft.closedApp&&!closedAllowed} onChange={event=>s.setClosedApp(event.target.checked)} className={checkbox} aria-describedby={closedReason?"backup-closed-help backup-closed-reason":"backup-closed-help"}/>
               <span>Also back up when Murage is closed</span>
             </label>}
+            {closedReason&&<p id="backup-closed-reason" className="text-[12px] text-warning">{closedReason}</p>}
             {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Ticking this sets up a background job for your user account.</p>}
           </fieldset>
           {closedAction==="setup"&&<p role="status" className="text-[12px] text-ink-secondary">Setting up the background job…</p>}
@@ -304,7 +313,7 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
     <dl className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[max-content_1fr]">
       {rows.map(([label,value])=><div key={label} className="contents"><dt className="text-ink-secondary">{label}</dt><dd className="break-words text-ink">{value}</dd></div>)}
     </dl>
-    {s.status?.lastVerified&&<p className="text-[12px] text-ink-secondary">The last backup was checked on this computer. This is not a restore-drill result.</p>}
+    {s.status?.lastVerified&&<p className="text-[12px] text-ink-secondary">The last backup was checked on this computer. To be sure a restore works, try one from Restore.</p>}
     {summary.attention.length>0&&<div role="status" className="text-[13px] text-warning">
       <p className="font-medium">Needs attention</p>
       <ul className="list-disc pl-5">{summary.attention.map(item=><li key={item}>{item}</li>)}</ul>

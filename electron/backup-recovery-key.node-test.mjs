@@ -8,7 +8,7 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { readBackupIdentity } from "./backup-mode.mjs";
-import { ageIdentityRecipient, bech32Decode, bech32Encode, createRecoveryKeyFile, createRecoveryKeyFlow, generateAgeIdentity } from "./backup-recovery-key.mjs";
+import { ageIdentityRecipient, bech32Decode, bech32Encode, createRecoveryKeyFile, createRecoveryKeyFlow, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
 
 // BIP-173 test vectors.
 const valid=["A12UEL5L","a12uel5l","an83characterlonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1tt5tgs",
@@ -95,4 +95,61 @@ test("the dialog flow returns only a label and public key, remembers the folder 
     let asked=false;const off=createRecoveryKeyFlow({isUsable:()=>false,installation:()=>p.installation,selectedDestination:async()=>null,chooseFile:async()=>{asked=true;return null;}});
     await assert.rejects(off.create(),/BACKUP_UNAVAILABLE/);assert.equal(asked,false);
   }finally{p.cleanup();}
+});
+
+test("the save dialog suggests a key name that is not taken yet",()=>{
+  const p=place();try{
+    assert.equal(suggestRecoveryKeyPath(p.safe),path.join(p.safe,"murage-recovery-key.txt"));
+    writeFileSync(path.join(p.safe,"murage-recovery-key.txt"),"first");
+    assert.equal(suggestRecoveryKeyPath(p.safe),path.join(p.safe,"murage-recovery-key-2.txt"));
+    writeFileSync(path.join(p.safe,"murage-recovery-key-2.txt"),"second");
+    assert.equal(suggestRecoveryKeyPath(p.safe),path.join(p.safe,"murage-recovery-key-3.txt"));
+    assert.equal(suggestRecoveryKeyPath(null),null);
+  }finally{p.cleanup();}
+});
+
+test("the key folder is remembered across launches, and only the folder",async()=>{
+  const p=place();try{
+    const store=recoveryKeyFolderStore(path.join(p.root,"backup-key-folder.json"));
+    const suggested=[];let chosen=null;
+    const flow=()=>createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,folderStore:store,defaultFolder:()=>p.root,chooseFile:async suggestion=>{suggested.push(suggestion);return chosen;}});
+    const first=flow();
+    await first.create();assert.equal(suggested.at(-1),path.join(p.root,"murage-recovery-key.txt"),"first run starts in the default folder");
+    chosen=path.join(p.safe,"murage-recovery-key.txt");await first.create();
+    // A new flow is a new launch: it starts where the last key went, with a name not taken there.
+    const second=flow();assert.equal(second.lastFolder(),p.safe);
+    chosen=null;await second.create();assert.equal(suggested.at(-1),path.join(p.safe,"murage-recovery-key-2.txt"));
+    const saved=readFileSync(path.join(p.root,"backup-key-folder.json"),"utf8");
+    assert.deepEqual(JSON.parse(saved),{version:1,folder:p.safe});assert.equal(saved.includes("AGE-SECRET"),false);
+    assert.equal(lstatSync(path.join(p.root,"backup-key-folder.json")).mode&0o077,0);
+    // Picking an existing key file in "Choose backup folder and recovery key" remembers its folder too.
+    const usb2=path.join(p.root,"usb2");mkdirSync(usb2);second.rememberKeyFile(path.join(usb2,"old-key.txt"));assert.equal(flow().lastFolder(),usb2);
+    // A stored value that is not an existing absolute folder is ignored.
+    for(const folder of ["relative/folder",path.join(p.root,"gone"),path.join(p.safe,"murage-recovery-key.txt"),42]){
+      writeFileSync(path.join(p.root,"backup-key-folder.json"),JSON.stringify({version:1,folder}));assert.equal(flow().lastFolder(),null,String(folder));
+    }
+    writeFileSync(path.join(p.root,"backup-key-folder.json"),"not json");assert.equal(flow().lastFolder(),null);
+  }finally{p.cleanup();}
+});
+
+test("an expected refusal is answered as a value with one log line, not a stack trace",async()=>{
+  for(const code of ["BACKUP_RECOVERY_KEY_EXISTS","BACKUP_RECOVERY_KEY_INSIDE_DESTINATION","BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT","BACKUP_RECOVERY_KEY_LOCATION_INVALID","BACKUP_BUSY"]){
+    const lines=[];
+    assert.deepEqual(await settleRecoveryKeyRequest(async()=>{throw new Error(code);},line=>lines.push(line)),{refused:code});
+    assert.equal(lines.length,1,code);assert.equal(lines[0].includes("\n"),false);assert.match(lines[0],new RegExp(code));assert.equal(lines[0].includes(" at "),false);
+  }
+  // Anything unexpected still fails loudly, and success passes through untouched.
+  const lines=[];
+  await assert.rejects(settleRecoveryKeyRequest(async()=>{throw new Error("BACKUP_RECOVERY_KEY_WRITE_FAILED");},line=>lines.push(line)),/WRITE_FAILED/);
+  assert.deepEqual(lines,[]);
+  assert.deepEqual(await settleRecoveryKeyRequest(async()=>({cancelled:true}),line=>lines.push(line)),{cancelled:true});
+});
+
+test("the desktop app wires the refusal, the name suggestion and the folder memory",()=>{
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+  assert.match(main,/ipcMain\.handle\("backup-mode:create-recovery-key",[^\n]*settleRecoveryKeyRequest\(\(\)=>backupRecoveryKeys\.create\(\)/);
+  assert.match(main,/folderStore:recoveryKeyFolderStore\(path\.join\(app\.getPath\("userData"\),"backup-key-folder\.json"\)\)/);
+  assert.match(main,/chooseKey:[^\n]*backupRecoveryKeys\.rememberKeyFile\(/);
+  assert.match(main,/chooseFile:async suggested=>/);assert.match(main,/defaultPath:suggested/);
+  for(const jargon of ["Choose independent age recovery key","authorize a restart","Save references","owning-user"])assert.equal(main.includes(jargon),false,jargon);
 });

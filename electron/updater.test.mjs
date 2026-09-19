@@ -10,7 +10,7 @@ const { updater, handlers } = vi.hoisted(() => ({
   handlers: new Map(),
 }));
 vi.mock("electron", () => ({
-  app: { isPackaged: true, getPath: () => "/unused-updater-fixture" },
+  app: { isPackaged: true, getPath: () => "/unused-updater-fixture", getVersion: () => "9.8.7-fixture" },
   clipboard: { writeText: vi.fn() },
   ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
 }));
@@ -60,6 +60,23 @@ it("retargets progress and retained state without adding updater listeners or ti
   expect(updater.on.mock.calls).toHaveLength(listeners);
   expect(vi.getTimerCount()).toBe(timers);
   expect(handlers.get("update:get-state")().status).toBe("downloaded");
+});
+
+it("every state the renderer sees names the version that is running", async () => {
+  // Linux has no About panel, so Settings → Updates is the one place a person
+  // can read the version; it must come from the app itself, not the feed.
+  const api = await import("./updater.mjs");
+  const window = { webContents: { send: vi.fn() } };
+  api.attachUpdaterWindow(window);
+  api.registerUpdaterIpc();
+  expect(handlers.get("update:get-state")()).toMatchObject({ currentVersion: "9.8.7-fixture" });
+  api.startUpdater();
+  fakeDownload();
+  await handlers.get("update:download")();
+  const sent = window.webContents.send.mock.calls.map(([, state]) => state);
+  expect(sent.length).toBeGreaterThan(0);
+  for (const state of sent) expect(state.currentVersion).toBe("9.8.7-fixture");
+  expect(handlers.get("update:get-state")()).toMatchObject({ status: "downloaded", version: "2.0.0", currentVersion: "9.8.7-fixture" });
 });
 
 it("the actual main createWindow and activate wiring retargets the process updater", async () => {

@@ -50,6 +50,18 @@ export async function setUpClosedJob(
   return last;
 }
 
+export const CLOSED_JOB_REFUSED_REASON = "Your system didn't let Murage register a background job, so backups run only while Murage is open.";
+
+/** Why "Also back up when Murage is closed" can't be ticked, said next to the
+ * box. Null when nothing went wrong or another line already explains it: no
+ * bridge, an unsupported app, or a status that could not be refreshed. */
+export function closedJobBlockedReason(input: { bridge: boolean; closed: BackupClosedStatus | null; stale: boolean; setupFailed: boolean }): string | null {
+  const { bridge, closed, stale, setupFailed } = input;
+  if (!bridge || stale || !closed?.supported) return null;
+  if (closed.state === "installed" || closed.state === "disabled-removal-pending") return null;
+  return closed.state === "unavailable" || setupFailed ? CLOSED_JOB_REFUSED_REASON : null;
+}
+
 /** The same notices the prepare/register/remove buttons have always shown. */
 export function closedJobNotice(action: "stage" | "install" | "disable", next: BackupClosedStatus & { cancelled?: boolean }): string {
   if (action === "stage") return next.state === "installed" ? "Job registration confirmed. Scheduling settings are unchanged." : "Job prepared. It is not registered; scheduling settings are unchanged.";
@@ -124,7 +136,10 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
 
 /** Optional bridge methods a newer desktop app may offer. Feature-detected:
  * an older app simply does not show the buttons. */
-export type RecoveryKeyResult = { cancelled: true } | { saved: true; label: string; publicKey: string };
+/** `refused` carries an expected refusal code (a name that already exists, a
+ * folder that is not allowed) as a value, so the desktop app does not log it
+ * as a crash. */
+export type RecoveryKeyResult = { cancelled: true } | { saved: true; label: string; publicKey: string } | { refused: string };
 export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult> };
 export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus> };
 
@@ -134,6 +149,10 @@ export function recoveryKeyResult(value: unknown): { cancelled: true } | { saved
   if (!value || typeof value !== "object") throw Error("Invalid recovery key result");
   const v = value as Record<string, unknown>;
   if (v.cancelled === true) return { cancelled: true };
+  if (v.refused !== undefined) {
+    if (typeof v.refused !== "string" || !/^BACKUP_[A-Z_]{1,64}$/.test(v.refused)) throw Error("Invalid recovery key result");
+    throw Error(v.refused);
+  }
   // eslint-disable-next-line no-control-regex -- a label with control characters is refused
   if (v.saved !== true || typeof v.label !== "string" || !v.label.trim() || v.label.length > 255 || /[\x00-\x1f\x7f]/.test(v.label)) throw Error("Invalid recovery key result");
   const publicKey = typeof v.publicKey === "string" && /^age1[02-9ac-hj-np-z]{50,100}$/.test(v.publicKey) ? v.publicKey : null;

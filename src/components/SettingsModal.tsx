@@ -13,7 +13,7 @@ import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { ImageSettings } from "./ImageSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { PasteKeys } from "./PasteKeys";
-import { useUpdaterState } from "@/lib/updater";
+import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
 import { CompanionSection } from "./CompanionSection";
@@ -46,8 +46,8 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in"] },
-  { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about"] },
+  { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
   // execution surface of the app: API keys for xAI, Box, Composio and the
@@ -71,6 +71,12 @@ const SECTIONS: Array<{
 function sectionMatches(section: (typeof SECTIONS)[number], query: string): boolean {
   if (!query) return true;
   return [section.label, ...section.keywords].some((part) => part.toLowerCase().includes(query));
+}
+
+/** The desktop sections the settings search box keeps for `query`. */
+export function settingsSearchResults(query: string): AppSettingsSection[] {
+  const q = query.trim().toLowerCase();
+  return SECTIONS.filter((entry) => sectionMatches(entry, q)).map((entry) => entry.id);
 }
 
 /** The sections this surface may see.
@@ -145,11 +151,11 @@ function ProfileFields() {
   );
 }
 
-export function UpdatesRow() {
-  const s = useUpdaterState();
-  if (!window.muragebox?.updater) return null;
-  const updater = window.muragebox.updater;
-  const label =
+/** The Updates row's line. It leads with the running version: Linux has no
+ * About panel, so this is the one place that version is shown. */
+export function updatesSubtitle(s: UpdaterState | null): string {
+  const running = s?.currentVersion ? `Murage ${s.currentVersion}. ` : "";
+  return running + (
     s?.status === "deferred" ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s?.status === "checking"
       ? "Checking…"
       : s?.status === "available"
@@ -164,7 +170,15 @@ export function UpdatesRow() {
                 ? "Install command copied. Finish in a terminal."
             : s?.status === "error"
               ? `Update could not finish: ${s.message ?? "unknown error"}`
-              : "You're on the latest version we know of.";
+              : "You're on the latest version we know of."
+  );
+}
+
+export function UpdatesRow() {
+  const s = useUpdaterState();
+  if (!window.muragebox?.updater) return null;
+  const updater = window.muragebox.updater;
+  const label = updatesSubtitle(s);
   return (
     <Card title={t("updates.title")} subtitle={label}>
       {s?.status !== "deferred" && <button

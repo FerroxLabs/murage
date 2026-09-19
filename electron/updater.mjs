@@ -63,6 +63,21 @@ export function handOffDownloadedPackage(packageType) {
   };
 }
 
+// Every state names the running version: on Linux there is no About panel,
+// so Settings → Updates is where a person reads it.
+function runningVersion() {
+  try {
+    return app.getVersion();
+  } catch {
+    return undefined;
+  }
+}
+
+function publicState() {
+  const currentVersion = runningVersion();
+  return currentVersion ? { ...state, currentVersion } : state;
+}
+
 function setState(patch) {
   const previousStatus = state.status;
   state = { ...state, ...patch };
@@ -72,7 +87,7 @@ function setState(patch) {
   }
   if (patch.status && patch.status !== "error" && patch.message === undefined) delete state.message;
   try {
-    win?.webContents?.send("update:state", state);
+    win?.webContents?.send("update:state", publicState());
   } catch {
     /* window gone */
   }
@@ -80,7 +95,7 @@ function setState(patch) {
 
 // main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
 export function registerUpdaterIpc(ipcMain = electronIpcMain) {
-  ipcMain.handle("update:get-state", () => state);
+  ipcMain.handle("update:get-state", () => publicState());
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
   ipcMain.handle("update:download", () => updaterCoordinator?.download());
   ipcMain.handle("update:install", () => updaterCoordinator?.install());
