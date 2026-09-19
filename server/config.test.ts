@@ -173,6 +173,7 @@ describe("Telegram credential configuration", () => {
 describe("saved configuration recovery", () => {
   const file = join(DATA_DIR, "config.json");
   let loadConfig: typeof import("./config.ts").loadConfig;
+  let saveConfig: typeof import("./config.ts").saveConfig;
   beforeEach(async () => {
     // setup.ts imports config before this file's fs mock. Reload the reader
     // so injected read errors hit the production read, not the assertion's
@@ -181,7 +182,7 @@ describe("saved configuration recovery", () => {
     const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
     vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
     vi.resetModules();
-    loadConfig = (await import("./config.ts")).loadConfig;
+    ({ loadConfig, saveConfig } = await import("./config.ts"));
     mkdirSync(DATA_DIR, { recursive: true });
     rmSync(file, { recursive: true, force: true });
   });
@@ -224,6 +225,50 @@ describe("saved configuration recovery", () => {
       code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason: "unreadable", readErrorCode: code,
     }));
     expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it("creates config.json on a first save when the file is genuinely missing", () => {
+    expect(existsSync(file)).toBe(false);
+    saveConfig({ profile: { name: "Fixture owner" } });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ profile: { name: "Fixture owner" } });
+  });
+
+  it("merges a save into a readable config and keeps every other saved setting", () => {
+    writeFileSync(file, JSON.stringify({ profile: { name: "Fixture owner" }, customKey: { kept: true } }));
+    saveConfig({ profile: { email: "owner@example.test" } });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      profile: { name: "Fixture owner", email: "owner@example.test" },
+      customKey: { kept: true },
+    });
+  });
+
+  it.each([
+    ["", "invalid-json"], ["{", "invalid-json"], ['{"profile":{"name":"Fixture owner"},', "invalid-json"],
+    ["null", "invalid-shape"], ["[]", "invalid-shape"], ['"private-root"', "invalid-shape"],
+  ])("refuses to save over a config it cannot parse (%j) and leaves the bytes untouched", (raw, reason) => {
+    writeFileSync(file, raw);
+    expect(() => saveConfig({ profile: { name: "Replacement" } })).toThrowError(expect.objectContaining({
+      code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason,
+    }));
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.each(["EACCES", "EPERM", "EIO", "ENOENT"])("refuses to save over an existing config after read error %s", (code) => {
+    const raw = '{"profile":{"name":"Fixture owner"},"xai":{"key":"fixture-file-key"}}';
+    writeFileSync(file, raw);
+    vi.mocked(readFileSync).mockImplementationOnce(() => { throw Object.assign(new Error("fixture read failed"), { code }); });
+    expect(() => saveConfig({ profile: { name: "Replacement" } })).toThrowError(expect.objectContaining({
+      code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason: "unreadable", readErrorCode: code,
+    }));
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses to save through a dangling config link", () => {
+    const target = join(DATA_DIR, "absent-config-target");
+    symlinkSync(target, file);
+    expect(() => saveConfig({ profile: { name: "Replacement" } })).toThrowError(expect.objectContaining({ reason: "unreadable" }));
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
   });
 
   it.skipIf(process.platform === "win32")("does not mistake a dangling config link for a first run", () => {
