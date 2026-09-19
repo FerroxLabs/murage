@@ -59,6 +59,7 @@ import {
   atLocalTime,
   CALENDAR_SLOT_MINUTES,
   calendarRangeLabel,
+  eventTimeCaption,
   formatGmtOffset,
   fromLocalDateAndTime,
   packCalendarCollisions,
@@ -1224,6 +1225,15 @@ function EventDetails({
     }
   };
 
+  const eventSchedule = (routine ?? call)?.schedule ?? null;
+  const timeCaption = eventTimeCaption({
+    ran: item.kind === "routine" && Boolean(item.run),
+    at: item.at,
+    when: `${niceDate(item.at)} · ${niceTime(item.at)}${isCall ? ` – ${niceTime(item.at + item.durationMinutes * 60_000)}` : ""}`,
+    schedule: eventSchedule,
+    scheduleText: eventSchedule ? scheduleLabel(eventSchedule) : null,
+  });
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label="Calendar event details" className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
@@ -1231,10 +1241,8 @@ function EventDetails({
           <span className={cn("mt-1 size-4 shrink-0 rounded", isCall ? "bg-[#6d7cff]" : "bg-accent")} />
           <div className="min-w-0 flex-1">
             <div className="text-[19px] font-semibold text-ink">{title}</div>
-            <div className="mt-1 text-[12.5px] text-ink-secondary">
-              {niceDate(item.at)} · {niceTime(item.at)}{isCall ? ` – ${niceTime(item.at + item.durationMinutes * 60_000)}` : ""}
-            </div>
-            {(routine || call) && <div className="mt-1 text-[11.5px] text-ink-secondary">{scheduleLabel((routine ?? call)!.schedule)}</div>}
+            <div className="mt-1 text-[12.5px] text-ink-secondary">{timeCaption.occurrence}</div>
+            {timeCaption.schedule && <div className="mt-1 text-[11.5px] text-ink-secondary">{timeCaption.schedule}</div>}
           </div>
           <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close"><X size={17} /></button>
         </div>

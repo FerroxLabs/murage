@@ -241,3 +241,22 @@ export function calendarRangeLabel(from: number, days: number): string {
   }
   return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} – ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
 }
+
+/** The two time lines under an event's title, each saying what it is: this
+ * occurrence (a run that happened says "Ran") and the schedule behind it. A
+ * one-off shown at its own scheduled time has one time, said once. */
+export function eventTimeCaption(input: {
+  ran: boolean;
+  at: number;
+  when: string;
+  schedule: { type: string; at?: number } | null;
+  scheduleText: string | null;
+}): { occurrence: string; schedule: string | null } {
+  const occurrence = input.ran ? `Ran ${input.when}` : input.when;
+  if (!input.schedule || !input.scheduleText) return { occurrence, schedule: null };
+  if (input.schedule.type === "once") {
+    if (!input.ran && input.schedule.at === input.at) return { occurrence, schedule: null };
+    return { occurrence, schedule: `Scheduled for ${input.scheduleText}` };
+  }
+  return { occurrence, schedule: `Repeats: ${input.scheduleText}` };
+}

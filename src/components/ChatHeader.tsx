@@ -74,6 +74,16 @@ export function workspaceDetail(workspace: EffectiveWorkspace): string {
 }
 
 const folderName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
+const GENERATED_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** What the folder chip reads. A folder Murage made for a task is named by
+ * an id nobody chose or recognises, so the chip says Files for it; a folder
+ * the person picked keeps its own name. The full location is always in the
+ * chip's title and accessible name. */
+export function workspaceChipLabel(workspace: EffectiveWorkspace): string {
+  const name = workspace.path ? folderName(workspace.path) : "";
+  return name && !GENERATED_ID.test(name) ? name : t("chatHeader.files");
+}
 
 /** Opens this bot/task's deliverables — the effective workspace, never the
  * agent's folder SETTING. Working-folder configuration stays in the profile
@@ -97,9 +107,7 @@ export function WorkingFolderChip({ bot }: { bot: Bot }) {
       aria-label={`${workspaceActionLabel(workspace)} — ${detail}`}
     >
       <Folder size={12} className="chip-trim:size-[14px]" />
-      <span className="truncate font-mono chip-trim:hidden">
-        {workspace.path ? folderName(workspace.path) : t("chatHeader.files")}
-      </span>
+      <span className="truncate chip-trim:hidden">{workspaceChipLabel(workspace)}</span>
     </button>
   );
 }

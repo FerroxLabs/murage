@@ -3,6 +3,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetState
 import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, ShieldOff, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { compactPlaceholder } from "@/lib/composer-placeholder";
+import { useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
@@ -229,6 +231,7 @@ export function Composer({
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? (group.working ? "The team" : "A bot"))
     : (bot?.name ?? "The bot");
+  const narrowPlaceholder = useNarrowViewport();
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
   const draftId = group
@@ -997,7 +1000,7 @@ export function Composer({
           }}
           disabled={Boolean(approval) || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
-          placeholder={
+          placeholder={compactPlaceholder(
             bot?.awaitingThreadSnapshot
               ? "Loading replacement conversation…"
               : setupLocked
@@ -1018,8 +1021,8 @@ export function Composer({
                   ? channelMode === "goal"
                     ? `Describe what ${group.name} should finish together`
                     : `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
-                  : `Message ${bot?.name ?? ""}`
-          }
+                  : `Message ${bot?.name ?? ""}`,
+            narrowPlaceholder)}
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}

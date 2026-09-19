@@ -326,3 +326,36 @@ describe("what the archived-bot delete confirmation says", () => {
     }
   });
 });
+
+// Customer journey, screen reader pass: the bot row's "More actions" button
+// announced a menu (aria-haspopup="menu") that was a plain stack of buttons,
+// New Channel was an unnamed popup, and a channel row read its members'
+// avatar names run into its own ("Pearl Ember Launch team").
+describe("sidebar menus, dialogs and rows say what they are", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+  const between = (start: string, end: string) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+
+  it("opens a real menu of menu items from More actions", () => {
+    const menu = between("export function BotContextMenu", "function BotListItem");
+    expect(menu).toMatch(/data-bot-menu\s+role="menu"/);
+    expect(menu).toContain("aria-label={`Actions for ${bot.name}`}");
+    expect(menu).toMatch(/<button\s+key=\{label\}\s+role="menuitem"/);
+    expect(menu).toContain('role="separator"');
+    // arrow keys move between items and Escape closes, as a menu promises
+    expect(menu).toMatch(/ArrowDown/);
+    expect(menu).toMatch(/Escape/);
+  });
+
+  it("names the New Channel popup as a dialog, and its name field", () => {
+    const panel = between("function NewRoomPanel", "/** Move-to-section popover");
+    expect(panel).toMatch(/role="dialog"\s+aria-modal="true"\s+aria-labelledby="new-channel-title"/);
+    expect(panel).toContain('id="new-channel-title"');
+    expect(panel).toContain('aria-label="Channel name"');
+  });
+
+  it("keeps member avatars out of a channel row's name", () => {
+    const stacked = between("function StackedEmbers", "function GroupListItem");
+    expect(stacked.match(/aria-hidden="true"/g)?.length).toBe(2);
+  });
+});

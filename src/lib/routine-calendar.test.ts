@@ -292,3 +292,25 @@ describe("routine calendar projection", () => {
     expect(items.at(-1)?.at).toBe(from + 99 * 5 * 60_000);
   });
 });
+
+// The event dialog showed two unlabelled times under the title, for example
+// "Saturday, September 19 · 7:13 AM" over "Saturday, September 19, 8:00 AM":
+// a run at 7:13 and the schedule's 8:00, with nothing saying which was which.
+describe("eventTimeCaption", () => {
+  it("names a run as a run and the schedule as the schedule", async () => {
+    const { eventTimeCaption } = await import("./routine-calendar");
+    const once = { type: "once" as const, at: 8 * 3_600_000 };
+    expect(eventTimeCaption({ ran: true, at: 7 * 3_600_000, when: "Saturday, September 19 · 7:13 AM", schedule: once, scheduleText: "Saturday, September 19, 8:00 AM" }))
+      .toEqual({ occurrence: "Ran Saturday, September 19 · 7:13 AM", schedule: "Scheduled for Saturday, September 19, 8:00 AM" });
+    expect(eventTimeCaption({ ran: false, at: 1, when: "Monday · 9:00 AM", schedule: { type: "weekly" as const }, scheduleText: "Every weekday at 9:00 AM" }))
+      .toEqual({ occurrence: "Monday · 9:00 AM", schedule: "Repeats: Every weekday at 9:00 AM" });
+  });
+
+  it("says a one-off time once, not twice", async () => {
+    const { eventTimeCaption } = await import("./routine-calendar");
+    const at = 8 * 3_600_000;
+    expect(eventTimeCaption({ ran: false, at, when: "Saturday, September 19 · 8:00 AM", schedule: { type: "once" as const, at }, scheduleText: "Saturday, September 19, 8:00 AM" }))
+      .toEqual({ occurrence: "Saturday, September 19 · 8:00 AM", schedule: null });
+    expect(eventTimeCaption({ ran: false, at, when: "x", schedule: null, scheduleText: null })).toEqual({ occurrence: "x", schedule: null });
+  });
+});

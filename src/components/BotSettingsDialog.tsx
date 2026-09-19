@@ -47,21 +47,29 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
       </header>
       <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
         <nav aria-label="Bot settings sections" className="shrink-0 border-b border-hairline/40 p-3 sm:w-[230px] sm:overflow-y-auto sm:border-b-0 sm:border-r">
+          {/* On a phone the search and the section choice share one row, so
+              a short screen (the keyboard up, or a small phone) keeps its
+              height for the settings themselves. */}
+          <div className="flex gap-2 sm:block">
           <label htmlFor="bot-settings-search" className="sr-only">Search settings</label>
-          <input id="bot-settings-search" autoFocus type="search" value={query} maxLength={100} onChange={event => setQuery(event.target.value)} placeholder="Search settings" className="w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" />
-          <label className="mt-3 block text-[12px] sm:hidden">Section<select value={section} onChange={event => setSection(event.target.value as BotSettingsSection)} className="mt-1 min-h-10 w-full rounded-lg border border-hairline/50 bg-inset px-2 text-[13px]">
+          <input id="bot-settings-search" autoFocus type="search" value={query} maxLength={100} onChange={event => setQuery(event.target.value)} placeholder="Search settings" className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus sm:min-h-0" />
+          <label className="block min-w-0 flex-1 text-[12px] sm:hidden"><span className="sr-only">Section</span><select value={section} onChange={event => setSection(event.target.value as BotSettingsSection)} className="min-h-10 w-full rounded-lg border border-hairline/50 bg-inset px-2 text-[13px]">
             {!matches.some(item => item.id === section) && <option value={section}>{selected.label}</option>}{matches.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select></label>
+          </div>
           <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{item.label}</button>)}</div>
           {!matches.length && <p className="mt-3 text-[12px] text-ink-secondary">No matching settings sections.</p>}
           {query && <button className="mt-2 min-h-9 text-[12px] text-ink-secondary underline" onClick={() => setQuery("")}>Clear search</button>}
         </nav>
         <div ref={content} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <h2 className="shrink-0 px-5 pt-4 text-[17px] font-medium">{selected.label}</h2>
+          {/* The section menu above already shows this name on a phone. */}
+          <h2 className="shrink-0 px-5 pt-4 text-[17px] font-medium max-sm:sr-only">{selected.label}</h2>
           <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
         </div>
       </div>
-      <footer className="shrink-0 border-t border-hairline/40 px-4 py-2 text-[12px] text-ink-secondary">
+      {/* The standing note gives way on a short screen; a notice or unsaved
+          changes are always shown. */}
+      <footer className={`shrink-0 border-t border-hairline/40 px-4 py-2 text-[12px] text-ink-secondary ${!notice && !dirty.length ? "[@media(max-height:640px)]:hidden" : ""}`}>
         {notice ? <p role="status">{notice}</p> : dirty.length ? <p>Unsaved changes: {dirty.map(([key]) => key).join(", ")}</p> : <p>Most changes save immediately. Fields with a Save button wait for you.</p>}
       </footer>
     </div>
