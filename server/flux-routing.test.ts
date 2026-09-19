@@ -30,7 +30,7 @@ import {
   isFluxPickerModel,
 } from "./flux-routing.ts";
 
-const KEY = "sk-flux-RrLp0sj95M2kmW5zTXbUpTgfAxKc4n6VOPbL6eQJR7Q";
+const KEY = "sk-flux-FAKE0000000000000000000000000000000TESTKEY";
 
 describe("FLUX_SURFACE", () => {
   it("maps exactly the engines with a verified surface", () => {
