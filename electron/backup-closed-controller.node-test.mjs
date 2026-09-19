@@ -54,7 +54,7 @@ test("controller rejects changed registration/stage and disables before running 
 });
 test("real lightweight entry validates staged registration and same coordinator before due launch",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);await f.controller.stage();await f.controller.install();const staged=f.stage();let launches=0;
-  const options={provider:f.provider,now:f.now,environment:{ELECTRON_RUN_AS_NODE:"1",TOKEN:"private"},launch:async invoke=>{launches++;assert.equal(invoke.env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(invoke.env.TOKEN,undefined);return{status:"verified"};}};
+  const options={provider:f.provider,now:f.now,environment:{ELECTRON_RUN_AS_NODE:"1",TOKEN:"private",DISPLAY:":0"},launch:async invoke=>{launches++;assert.equal(invoke.env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(invoke.env.TOKEN,undefined);return{status:"verified"};}};
   assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath],options)).status,"disabled");assert.equal(launches,0);
   f.coordinator.configure(0,{enabled:true,closedApp:true,installationRef:"installation",destinationRef:"destination",recoveryRef:"recovery",timezone:"UTC",time:"09:00",catchupMs:60000,maxBytes:1000,maxDurationMs:1000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}});
   f.setNow(Date.parse("2026-09-13T09:00:30Z"));
