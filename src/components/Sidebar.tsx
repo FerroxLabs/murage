@@ -2461,7 +2461,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <div className={cn("pt-1", density === "icons" ? "px-2" : "px-3")}>
           <SidebarNeedsYou
             density={density}
-            count={approvals.needsYou}
+            count={approvals.decisions}
             stale={approvals.stale}
             onOpen={() => setInboxOpen(true)}
           />

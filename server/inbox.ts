@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
+import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
+
+/** The two status lists as SQL literals. Built from the shared constants so
+ *  the query, the counts and the tabs cannot drift: a status added in one
+ *  place is a status added everywhere. The values are compile-time string
+ *  literals from a `const` tuple, never anything a caller supplies. */
+const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(",");
+const DECISION_SQL = sqlList(INBOX_DECISION_STATUSES);
+const TO_READ_SQL = sqlList(INBOX_TO_READ_STATUSES);
 
 export interface InboxThread { threadId: string; label: string; botId?: string }
 export interface InboxAccess { owner: boolean; threads: readonly InboxThread[] }
@@ -71,13 +80,19 @@ const SOURCE = `WITH raw AS (
     COUNT(*) OVER (PARTITION BY source_key) AS copies FROM raw
 ), items AS (
   SELECT r.*, s.read_version, s.snoozed_until,
-    CASE WHEN status IN ('pending','waiting','needs-input','blocked','limit-reached','failed','missed','paused') THEN 1 ELSE 0 END AS needs_you
+    -- TWO FLAGS, NOT ONE. A decision is owed on the first set and nothing is
+    -- owed on the second: see the comment at the top of shared/inbox.ts for
+    -- why putting them in one bucket made the count unreadable. The status
+    -- lists live there too, and are spliced in below so SQL and TypeScript
+    -- cannot drift apart.
+    CASE WHEN status IN (${DECISION_SQL}) THEN 1 ELSE 0 END AS decision,
+    CASE WHEN status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS to_read
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
 interface Row {
   source_key: string; thread_id: string; message_id: string; at: number; kind: string; json: string;
-  status: string; title: string; summary: string; needs_you: number; read_version: string | null; snoozed_until: number | null; copies: number;
+  status: string; title: string; summary: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; copies: number;
 }
 function scope(access: InboxAccess) {
   if (access.owner !== true) reject(404, "Inbox is unavailable.");
@@ -91,14 +106,14 @@ function item(row: Row, access: InboxAccess): InboxItem {
   const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
   return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, status: row.status,
-    needsYou: row.needs_you === 1, title: text(row.title, 120), summary: text(row.summary),
+    decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
     link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}), ...(row.kind === "text" ? { artifactId: message.artifactIds[0] as string } : {}) } };
 }
 function queryValues(query: InboxQuery) {
-  const view = query.view ?? "needs-you", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
-  if (!["needs-you", "results", "all", "approvals"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
+  const view = query.view ?? "decisions", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
+  if (!["decisions", "to-read", "results", "all"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
     || (query.query !== undefined && (typeof query.query !== "string" || query.query.length > 200))
     || (query.includeSnoozed !== undefined && typeof query.includeSnoozed !== "boolean")) reject(400, "Invalid Inbox query.");
   return { view, page, pageSize, search: (query.query ?? "").trim().toLowerCase() };
@@ -106,21 +121,47 @@ function queryValues(query: InboxQuery) {
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
   const allowed = scope(access), { view, page, pageSize, search } = queryValues(query);
-  const approvals = view === "approvals";
-  const predicate = `${approvals ? "kind='options' AND status='pending' AND COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
-    (?='all' OR (?='needs-you' AND needs_you=1) OR (?='results' AND needs_you=0 AND kind IN ('routine.run','goal.run','text')))
+  const decisions = view === "decisions";
+  // A DECISION IS A DECISION WHATEVER SHAPE IT ARRIVED IN.
+  //
+  // This used to also require `kind='options'`, which is the shape an
+  // approval card takes. A connector asking to be set up and a secret being
+  // requested are `connector` and `secret`, and both sit at status
+  // 'pending' with somebody's work stopped behind them. They were therefore
+  // absent from the approvals tab and present in the other one, which is
+  // exactly backwards: a "Connection setup / Pending" row is the single most
+  // decision-shaped thing in the whole list.
+  //
+  // An expired card is dropped, because nothing is waiting on it any more.
+  const predicate = `${decisions ? "COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
+    (?='all' OR (?='decisions' AND decision=1) OR (?='to-read' AND to_read=1)
+      OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;
-  const params = [allowed, approvals ? "all" : view, view, view, approvals || query.includeSnoozed ? 1 : 0, now, search, search,
+  // Snooze applies to decisions too. "Not now" is a legitimate answer to
+  // being asked, and the checkbox brings them back; what snooze must never do
+  // is make a decision look ANSWERED, and it does not: the item keeps its
+  // pending status and returns the moment the snooze expires.
+  const params = [allowed, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
     JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
   const total = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS total FROM items WHERE ${predicate}`).get(...params)?.total ?? 0);
   const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];
   // Counts describe the visible page's filter, not hidden audiences. Reading
-  // request cards never removes them from the Needs you count.
-  const needsYou = Number(db.prepare(SOURCE + "SELECT COUNT(*) AS n FROM items WHERE needs_you=1 AND (snoozed_until IS NULL OR snoozed_until<=?)").get(allowed, now)?.n ?? 0);
+  // a request never removes it from the decisions count, because reading is
+  // not answering; reading DOES clear it from the to-read count, because
+  // there reading is the whole action.
+  const live = "(snoozed_until IS NULL OR snoozed_until<=?)";
+  const decisionCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND ${live}`).get(allowed, now)?.n ?? 0);
+  // Never opened, rather than "not current". The read mark is a hash of the
+  // message computed in JS, and SQL cannot recompute it, so an item that was
+  // read and has since changed is counted as read here. Erring that way keeps
+  // the badge quiet rather than crying wolf, and the row itself still shows
+  // as unread once the list is open.
+  const toReadCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE to_read=1 AND read_version IS NULL AND ${live}`).get(allowed, now)?.n ?? 0);
   return { items: rows.map(row => item(row, access)), total, page, pageSize,
-    unread: rows.filter(row => row.read_version !== version(row.json)).length, needsYou };
+    unread: rows.filter(row => row.read_version !== version(row.json)).length,
+    decisions: decisionCount, toRead: toReadCount };
 }
 
 /** State updates cannot change source status, approve requests or run tools. */

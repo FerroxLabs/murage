@@ -29,7 +29,7 @@ const INLINE_CARD_LIMIT = 10;
 
 /** Opening navigates to the exact persisted source; a waiting request can
  * also be read and answered here, through the conversation's own routes. */
-export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-you" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -53,7 +53,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-yo
   }, [view, query, page, includeSnoozed, revision, refreshKey]);
 
   useEffect(() => {
-    if (view !== "approvals") return;
+    if (view !== "decisions") return;
     const timer = window.setInterval(() => setRevision(current => current + 1), 5000);
     return () => window.clearInterval(timer);
   }, [view]);
@@ -98,21 +98,27 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-yo
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2"><button className={button} disabled={busy} onClick={() => setRevision(current => current + 1)}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Inbox</button>}</div>
     </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{view === "approvals" ? "Unresolved approvals and questions stay here until answered, cancelled or expired. Answer one here, or open it to see the whole conversation." : "Background results and requests that need your attention. Reading or snoozing never answers a request."}</p>
+    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{view === "decisions"
+      ? "Everything waiting on an answer from you. Nothing here moves until you say. Reading one, or snoozing it, is not answering it."
+      : view === "to-read"
+        ? "Things that already happened and are worth knowing about. Nothing is waiting on you here, so reading one is the whole job."
+        : "Everything your bots have produced in the background."}</p>
     <nav aria-label="Inbox views" className="mt-4 flex flex-wrap gap-2">
-      {(["approvals", "needs-you", "results", "all"] as const).map(value => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
-        {value === "approvals" ? "Pending approvals" : value === "needs-you" ? `Needs you${result ? ` (${result.needsYou})` : ""}` : value === "results" ? "Results" : "All"}
+      {(["decisions", "to-read", "results", "all"] as const).map(value => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
+        {value === "decisions" ? `Needs you${result ? ` (${result.decisions})` : ""}`
+          : value === "to-read" ? `To read${result ? ` (${result.toRead})` : ""}`
+            : value === "results" ? "Results" : "All"}
       </button>)}
     </nav>
     <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setPage(0); }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button} disabled={busy}>Search</button>
     </form>
-    {view !== "approvals" && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
+    {view !== "decisions" && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
     {result && <p className="mb-3 text-[12px] text-ink-secondary">While you were away: {result.unread} unread on this page. {result.total} matching items.</p>}
     {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
     {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
-    {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : view === "needs-you" ? "Nothing needs your attention right now." : "No items in this view yet."}</p>}
+    {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : view === "decisions" ? "Nothing is waiting on you right now." : view === "to-read" ? "Nothing new to read."  : "No items in this view yet."}</p>}
     <ul className="space-y-3" aria-label="Inbox items">
       {list.map(item => {
         // The bot's own words head the card whenever the live request can be
@@ -123,19 +129,19 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-yo
         const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
         return <li key={item.id} className="rounded-xl border border-hairline/50 bg-inset p-4" data-inbox-id={item.id}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-secondary"><span>{item.sourceLabel}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time></div>
-        {view === "approvals" && <p className="mt-2 text-[12px] text-ink-secondary">Waiting {Math.max(0, Math.floor((Date.now() - item.at) / 60000))} min for your {item.title.includes("Question") ? "answer" : "approval"}.</p>}
+        {view === "decisions" && <p className="mt-2 text-[12px] text-ink-secondary">Waiting {Math.max(0, Math.floor((Date.now() - item.at) / 60000))} min for your {item.title.includes("Question") ? "answer" : "approval"}.</p>}
         {headline && <p className="mt-2 text-[12px] text-ink-secondary">{item.title}</p>}
         <h2 className="mt-1 break-words text-[15px] font-medium">{headline || item.title}</h2>
         <div className="mt-2 flex flex-wrap gap-2 text-[12px]"><span className="rounded bg-control px-2 py-1">{statusLabel(item.status)}</span><span className="rounded bg-control px-2 py-1">{item.read ? "Read" : "Unread"}</span>
           {item.duplicates > 1 && <span className="px-1 py-1 text-ink-secondary">{item.duplicates} matching receipts</span>}
-          {view !== "approvals" && item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
+          {view !== "decisions" && item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
         </div>
         {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
         {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => setRevision(current => current + 1)} />}
         <div className="mt-3 flex flex-wrap gap-2">
           <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
           <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
-          {view !== "approvals" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
+          {view !== "decisions" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
             ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
             : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
         </div>

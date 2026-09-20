@@ -8,7 +8,7 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
   // Everything waiting on the person, not only tool approvals: the sidebar's
   // "Needs you" row counts the same items its Inbox view lists, so the number
   // on the row and the number inside the dialog can never disagree.
-  const [needsYou, setNeedsYou] = useState<number>();
+  const [decisions, setDecisions] = useState<number>();
   const [stale, setStale] = useState(true);
   useEffect(() => {
     if (!enabled) return;
@@ -19,8 +19,8 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
       if (running) return;
       running = true;
       try {
-        const result = await api("/api/inbox?view=approvals&pageSize=1", { signal: controller.signal });
-        if (!disposed) { setCount(result.total); setNeedsYou(result.needsYou); setStale(false); }
+        const result = await api("/api/inbox?view=decisions&pageSize=1", { signal: controller.signal });
+        if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); }
       } catch { if (!disposed) setStale(true); }
       finally { running = false; }
     };
@@ -34,5 +34,5 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
       window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh);
     };
   }, [enabled, connected]);
-  return { count, needsYou, stale: stale || !connected };
+  return { count, decisions, stale: stale || !connected };
 }

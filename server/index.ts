@@ -9506,7 +9506,7 @@ const server = createServer(async (req, res) => {
         ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
       ];
       const result = inboxRequest(database(), { method, path,
-        query: { view: (url.searchParams.get("view") ?? "needs-you") as InboxView, query: url.searchParams.get("query") ?? "",
+        query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
       }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });

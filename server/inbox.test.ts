@@ -24,12 +24,12 @@ function put(db: DatabaseSync, message: Record<string, unknown>, thread = "threa
 it("groups repeat deliveries, survives restart and never answers a request when marked read", () => {
   const f = fixture(); put(f.db, {}); put(f.db, { id: "replay", at: 101 });
   const first = listInbox(f.db, {}, access).items[0];
-  expect(first).toMatchObject({ duplicates: 2, status: "pending", needsYou: true, read: false, link: { threadId: "thread", messageId: "replay" } });
+  expect(first).toMatchObject({ duplicates: 2, status: "pending", decision: true, toRead: false, read: false, link: { threadId: "thread", messageId: "replay" } });
   const originals = f.db.prepare("SELECT json FROM messages ORDER BY id").all();
   updateInboxState(f.db, { id: first.id, version: first.version, read: true }, access);
   expect(f.db.prepare("SELECT json FROM messages ORDER BY id").all()).toEqual(originals);
   f.db.close(); const reopened = new DatabaseSync(f.file); databases.push(reopened); initializeInbox(reopened);
-  expect(listInbox(reopened, {}, access)).toMatchObject({ total: 1, needsYou: 1, items: [{ read: true, status: "pending" }] });
+  expect(listInbox(reopened, {}, access)).toMatchObject({ total: 1, decisions: 1, items: [{ read: true, status: "pending" }] });
   put(reopened, { card: { requestId: "approval-id", answered: "Denied", options: [] } });
   expect(listInbox(reopened, {}, access).total).toBe(0);
   expect(listInbox(reopened, { view: "all" }, access).items[0]).toMatchObject({ id: first.id, status: "resolved", read: false, link: { messageId: "request" } });
@@ -61,7 +61,7 @@ it("limits projection and updates to explicit permitted threads before searching
   const { db } = fixture(); put(db, {}); put(db, { id: "private", kind: "routine.run", routineRun: { runId: "private-run", status: "failed", summary: "PRIVATE_OTHER_AUDIENCE", routineName: "Private" } }, "other");
   expect(listInbox(db, { view: "all", query: "PRIVATE_OTHER_AUDIENCE" }, access).total).toBe(0);
   expect(listInbox(db, { view: "all" }, { owner: true, threads: [] }).total).toBe(0);
-  const privateItem = listInbox(db, {}, { owner: true, threads: [{ threadId: "other", label: "Other" }] }).items[0];
+  const privateItem = listInbox(db, { view: "all" }, { owner: true, threads: [{ threadId: "other", label: "Other" }] }).items[0];
   expect(() => updateInboxState(db, { id: privateItem.id, version: privateItem.version, read: true }, access)).toThrow("unavailable");
   expect(inboxRequest(db, { method: "GET", path: "/api/inbox" }, { ...access, owner: false }).status).toBe(404);
   expect(inboxRequest(db, { method: "POST", path: "/api/inbox/state", body: { id: privateItem.id, version: privateItem.version, read: true } }, { ...access, owner: false }).status).toBe(404);
@@ -79,7 +79,7 @@ it("keeps credential/connector/card secrets out of summaries and redacts backgro
   expect(page.items.find(item => item.kind === "connection")?.summary).toBe("");
 });
 
-it("only shows explicit needs-you sources and meaningful background results, not direct replies or quiet runs", () => {
+it("only shows explicit attention sources and meaningful background results, not direct replies or quiet runs", () => {
   const { db } = fixture();
   put(db, { id: "onboarding", card: { title: "Welcome", options: ["Start"] } });
   put(db, { id: "direct", kind: "text", turnTerminal: true, text: "A direct answer" });
@@ -89,7 +89,11 @@ it("only shows explicit needs-you sources and meaningful background results, not
   expect(listInbox(db, { view: "all" }, access).total).toBe(0);
   put(db, { id: "report", kind: "routine.run", routineRun: { runId: "report-run", status: "completed", summary: "Found three relevant updates.", routineName: "Daily review", executionThreadId: "private-execution" } });
   put(db, { id: "error", kind: "activity", tool: { name: "Provider", ok: false, authRequired: true, errorDetails: "PRIVATE_ERROR" } });
-  expect(listInbox(db, {}, access)).toMatchObject({ total: 1, items: [{ kind: "error", status: "failed" }] });
+  // A failed tool call is NEWS, not a decision: it goes to "to read" and the
+  // default view, which is the decisions view, stays empty. Before the split
+  // this sat under "Needs you" next to real approvals.
+  expect(listInbox(db, {}, access)).toMatchObject({ total: 0, decisions: 0 });
+  expect(listInbox(db, { view: "to-read" }, access)).toMatchObject({ total: 1, items: [{ kind: "error", status: "failed", toRead: true, decision: false }] });
   const results = listInbox(db, { view: "results" }, access);
   expect(results).toMatchObject({ total: 1, items: [{ title: "Daily review", link: { threadId: "thread", messageId: "report", runId: "report-run" } }] });
   expect(JSON.stringify(results)).not.toContain("private-execution");
@@ -99,7 +103,11 @@ it("keeps unanswered goal/routine attention durable after source run stops worki
   const { db } = fixture();
   put(db, { id: "goal", kind: "goal.run", goalRun: { runId: "goal", status: "needs-input", detail: "Choose a delivery date." } });
   put(db, { id: "routine", kind: "routine.run", routineRun: { runId: "routine", status: "completed", goalStatus: "blocked", summary: "Needs a connection." } });
-  expect(listInbox(db, {}, access).items.map(item => item.status).sort()).toEqual(["blocked", "needs-input"]);
+  expect(listInbox(db, { view: "all" }, access).items.map(item => item.status).sort()).toEqual(["blocked", "needs-input"]);
+  // ...and they land in different piles. A goal waiting on an answer is a
+  // decision; a run that stopped because a connection is missing is news.
+  expect(listInbox(db, { view: "decisions" }, access).items.map(item => item.status)).toEqual(["needs-input"]);
+  expect(listInbox(db, { view: "to-read" }, access).items.map(item => item.status)).toEqual(["blocked"]);
 });
 
 it("uses deterministic SQL pagination/search and an indexed message scope", () => {
@@ -147,12 +155,19 @@ it("approval attention spans tasks and rooms, ignores read and snooze, and exclu
   put(db, { id: "expired", card: { requestId: "expired", expired: true, unattended: true } });
   put(db, { id: "cancelled", card: { requestId: "cancelled", dismissed: true } });
   put(db, { id: "memory", kind: "text", text: "automatic memory written" });
-  const first = listInbox(db, { view: "approvals", pageSize: 1 }, all);
+  const first = listInbox(db, { view: "decisions", pageSize: 1 }, all);
   expect(first.total).toBe(6); expect(first.items).toHaveLength(1);
   updateInboxState(db, { id: first.items[0].id, version: first.items[0].version, read: true, snoozedUntil: Date.now()+60000 }, all);
-  expect(listInbox(db, { view: "approvals" }, all).total).toBe(6);
-  expect(listInbox(db, { view: "approvals" }, access).total).toBe(2);
-  expect(inboxRequest(db, { method: "GET", path: "/api/inbox", query: { view: "approvals" } }, { ...all, owner: false }).status).toBe(404);
+  // Reading a request never answers it, so it is still there. Snoozing hides
+  // it until it comes back, and the checkbox shows it meanwhile. Neither has
+  // resolved anything: both rows still read "pending".
+  expect(listInbox(db, { view: "decisions" }, all).total).toBe(5);
+  expect(listInbox(db, { view: "decisions", includeSnoozed: true }, all).total).toBe(6);
+  expect(listInbox(db, { view: "decisions" }, access).total).toBe(2);
+  expect(inboxRequest(db, { method: "GET", path: "/api/inbox", query: { view: "decisions" } }, { ...all, owner: false }).status).toBe(404);
+  // Answering one removes it for good, snooze or no snooze: five were left
+  // unanswered, and one of those five is still snoozed.
   put(db, { id: "skill", card: { requestId: "skill", skillRequest: {}, answered: "Denied" } });
-  expect(listInbox(db, { view: "approvals" }, all).total).toBe(5);
+  expect(listInbox(db, { view: "decisions", includeSnoozed: true }, all).total).toBe(5);
+  expect(listInbox(db, { view: "decisions" }, all).total).toBe(4);
 });

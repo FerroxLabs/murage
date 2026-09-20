@@ -86,7 +86,7 @@ describe("answering in place", () => {
 
 describe("the Inbox's own view tabs", () => {
   const markup = () =>
-    renderToStaticMarkup(createElement(Inbox, { onOpen: () => {}, initialView: "approvals" as const }));
+    renderToStaticMarkup(createElement(Inbox, { onOpen: () => {}, initialView: "decisions" as const }));
 
   it("fills the selected tab so it cannot be mistaken for the others", () => {
     const html = markup();
