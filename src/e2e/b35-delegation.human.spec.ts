@@ -107,7 +107,7 @@ async function showChief(page: Page, sidebar: Locator) {
 async function chiefCount(page: Page, value: string) {
   const sidebar = await openSidebar(page);
   await showChief(page, sidebar);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText(value, { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText(value, { timeout: 15_000 });
   await expect(page.locator("[data-chat-header-name]").first()).toContainText(CHIEF);
   return sidebar;
 }
@@ -202,7 +202,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
 
   // UI: the count turns 1 with the Chief (parent) thread still selected, and survives reload.
   await expect(page.locator("[data-chat-header-name]").first()).toContainText(CHIEF);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("1", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await expect(page.locator(`[data-mid="${item.link.messageId}"]`)).toHaveCount(0); // the child card is offscreen
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0); // the parent has no approval composer
   await page.screenshot({ path: testInfo.outputPath(`${shot}-pending.png`), fullPage: true });
@@ -237,7 +237,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   // the fold writes answered=behavior, dismissed=false (index.ts:3313-3315).
   await expect.poll(async () => { const settled = await cardIn(item.link.threadId, item.link.messageId); return settled && { answered: settled.answered, dismissed: settled.dismissed }; }, { timeout: 15_000 }).toEqual({ answered: behavior, dismissed: false });
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(0);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
 
   // Later answers never reach the engine. A repeat on a settled card now
@@ -306,7 +306,7 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   await page.screenshot({ path: testInfo.outputPath("b35-delegation-settled.png"), fullPage: true });
 
   // Restart on the same data: stale while down, reconciled after, nothing replays.
-  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-pending-approval-count]");
+  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-needs-you-count]");
   await expect(count).toHaveText("0", { timeout: 15_000 });
   await harness.stop();
   await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });

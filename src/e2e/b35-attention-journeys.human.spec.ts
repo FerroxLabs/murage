@@ -114,7 +114,7 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   expect(item.title).toBe("Approval requested");
   expect(item.sourceLabel).toContain("Channel conversation");
   const sidebar = await openApp(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("1", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await openPendingApprovals(page);
   const entry = page.locator(`[data-inbox-id="${item.id}"]`);
   await expect(entry).toContainText("Approval requested");
@@ -129,7 +129,7 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   expect(decided[0].decision.updatedPermissions).toBeUndefined();
   await waitFor("Telegram buttons settled", edits, list => list.some(entry => entry.messageId === offer.messageId && Array.isArray(entry.keyboard) && entry.keyboard.length === 0), 30_000);
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(0);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 15_000 });
   const lateTap = { update_id: ++updateId, callback_query: { id: `callback-${updateId}`, data: offer.keyboard.flat()[0].callback_data,
     from: { id: OWNER, is_bot: false }, message: { message_id: offer.messageId, date: 1_700_000_000 + updateId, chat: { id: OWNER, type: "private" } } } };
   arrive(lateTap);
@@ -154,10 +154,10 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   const offscreenItem = listed.items.find((item: any) => item.botId === offscreenId);
   expect(offscreenItem, JSON.stringify(listed.items)).toBeTruthy();
   let sidebar = await openApp(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("2", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("2", { timeout: 15_000 });
   await page.reload();
   sidebar = await openSidebar(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("2", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("2", { timeout: 15_000 });
   await openPendingApprovals(page);
   const entry = page.locator(`[data-inbox-id="${offscreenItem.id}"]`);
   await expect(entry).toContainText("Offscreen Researcher");
@@ -170,13 +170,13 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   expect(decided.at(-1).decision.behavior).toBe("deny");
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(1);
   expect((await inbox()).items[0].botId).toBe(chiefId);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("1", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await page.screenshot({ path: testInfo.outputPath("b35-offscreen-denied.png"), fullPage: true });
 });
 
 test("while the server restarts the count stays visible as stale, then reconciles to the canonical total", async ({ page }, testInfo) => {
   const sidebar = await openApp(page);
-  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-pending-approval-count]");
+  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-needs-you-count]");
   await expect(count).toHaveText("1", { timeout: 15_000 });
   await harness.stop();
   await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });

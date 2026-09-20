@@ -47,7 +47,6 @@ export function SidebarNeedsYou({ density, count, stale = false, onOpen }: Sideb
       <BellDot size={20} aria-hidden="true" className={cn("shrink-0", waiting ? "text-accent" : "text-ink-secondary")} />
       <span className={cn("flex-1 text-[14px] font-medium", iconOnly && "hidden")}>Needs you</span>
       <span
-        data-pending-approval-count
         data-needs-you-count
         aria-hidden="true"
         className={cn(

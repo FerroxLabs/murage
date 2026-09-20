@@ -93,7 +93,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   await expect(needsYouRow).toContainText("1");
   await page.route("**/api/inbox?**", route => route.abort());
   await expect(needsYouRow).toHaveAttribute("aria-label", /may be out of date/, { timeout: 12000 });
-  await expect(sidebar.locator("[data-pending-approval-count]")).toContainText("1");
+  await expect(sidebar.locator("[data-needs-you-count]")).toContainText("1");
   await page.unroute("**/api/inbox?**");
   await expect(needsYouRow).not.toHaveAttribute("aria-label", /out of date/, { timeout: 12000 });
   await needsYouRow.click();
@@ -117,5 +117,5 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   expect(card.answered).toBeTruthy();
   expect(card.answers.map((answer: any) => answer.selected).flat()).toContain("Summary");
   sidebar = await openSidebar(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 12000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 12000 });
 });

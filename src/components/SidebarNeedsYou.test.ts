@@ -17,7 +17,7 @@ describe("the Needs you row", () => {
     const markup = render({ count: 3 });
     expect(markup).toContain(">Needs you</span>");
     expect(markup).toContain("data-sidebar-needs-you");
-    expect(markup).toContain("data-pending-approval-count");
+    expect(markup).toContain("data-needs-you-count");
     expect(markup).toContain(">3</span>");
     expect(markup).toContain('aria-label="Needs you, 3"');
   });
