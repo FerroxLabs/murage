@@ -325,6 +325,25 @@ function SetupCardBody({
 }) {
   switch (step.id) {
     case "flux":
+      // A key refused on PAYMENT is a key that worked. The server has
+      // already said there is nothing to re-paste, so offering to paste it
+      // again would contradict the sentence directly above the button and
+      // send the person off to re-enter a key that is perfectly fine.
+      if (step.block?.reason === "payment-required") {
+        return (
+          <div className="flex flex-col gap-3">
+            <p className="text-[13px] leading-relaxed text-ink-secondary">
+              Nothing to do here — your key stays as it is. Carry on with an AI you already pay for, or come back
+              once the account can spend again.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={busy} onClick={actions.chooseBrain} className={secondaryButton}>
+                Use the AI you already pay for
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col gap-3">
           <p className="text-[13px] leading-relaxed text-ink-secondary">
@@ -333,12 +352,14 @@ function SetupCardBody({
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={busy} onClick={actions.addFluxKey} className={primaryButton}>
-              Paste your key
+              {step.block?.reason === "flux-choice-needed" ? "Choose which key to use" : "Paste your key"}
             </button>
-            <a href={FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={secondaryButton}>
-              Get a key
-              <ExternalLink size={13} aria-hidden="true" />
-            </a>
+            {step.block?.reason !== "flux-choice-needed" && (
+              <a href={FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={secondaryButton}>
+                Get a key
+                <ExternalLink size={13} aria-hidden="true" />
+              </a>
+            )}
           </div>
         </div>
       );

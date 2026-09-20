@@ -117,6 +117,22 @@ describe("a blocked step is not a step you got wrong", () => {
     expect(card(blocked)).toContain("Blocked");
   });
 
+  it("offers nothing to re-paste, because the server just said there is nothing", () => {
+    const html = card(blocked);
+    expect(html).not.toContain("Paste your key");
+    expect(html).toContain("Nothing to do here — your key stays as it is.");
+    expect(html).toContain("Use the AI you already pay for");
+  });
+
+  it("still sends you to the connection card when two keys are saved and none chosen", () => {
+    const choice = step("flux", {
+      status: "blocked",
+      block: { reason: "flux-choice-needed", message: "More than one Flux Router key is saved." },
+    });
+    expect(card(choice)).toContain("Choose which key to use");
+    expect(card(choice)).not.toContain("Get a key");
+  });
+
   it("falls back to the server's detail only when a block arrived with no message", () => {
     expect(setupCardNote(step("apps", {
       status: "blocked",
