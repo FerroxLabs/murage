@@ -54,7 +54,10 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 test("the quick form repeats, and saving says what it saved and goes there", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  // A fresh install now offers the first-run checklist over everything else.
+  // This spec is about naming a routine, so it starts from a machine that has
+  // already been offered it.
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
   await page.goto(origin);
 
   // One name for it, in the sidebar and on the page it opens.
