@@ -193,7 +193,10 @@ describe("nothing in the app is gated on a Flux key", () => {
     "components/FluxKeyCard.tsx",
     // Displays saved-key status only; native engines remain usable without it.
     "components/ModelsSettings.tsx",
-    "components/FluxInvite.tsx",
+    // FluxInvite.tsx was the floating offer. 0.1.58 deleted it: the key is
+    // now asked for once, in the Chief's own thread, by the card below.
+    "components/FirstRunFluxCard.tsx",
+    "lib/flux-key-paste.ts",
     "lib/flux-invite.ts",
     "lib/use-flux-invite.ts",
     // Composer reads it to tell PushToTalk whether to OFFER voice typing or to
@@ -262,12 +265,26 @@ describe("nothing in the app is gated on a Flux key", () => {
   });
 
   it("offers the key without blocking anything: no overlay, no dialog", () => {
-    const invite = readFileSync(join(srcRoot, "components/FluxInvite.tsx"), "utf8");
-    // A backdrop over the whole viewport, or a dialog role, would make this
-    // something a person has to deal with before using an app that already
-    // works. Both are forbidden here.
-    expect(invite).not.toMatch(/inset-0/);
-    expect(invite).not.toMatch(/role="dialog"|aria-modal/);
-    expect(invite).toMatch(/role="complementary"/);
+    // THE SAME RULE, AGAINST THE THING THAT REPLACED THE FLOATING OFFER.
+    //
+    // FluxInvite was a card that floated over the app, and the rule was that
+    // it must never become something a person has to deal with before using
+    // an app that already works. The key card inherits that rule and keeps it
+    // more easily, because it is a MESSAGE in a conversation: a backdrop over
+    // the viewport or a dialog role would be absurd there, and is still
+    // forbidden. "Not now" is on the card, and the app underneath is fully
+    // usable whether or not a key is ever pasted.
+    const card = readFileSync(join(srcRoot, "components/FirstRunFluxCard.tsx"), "utf8");
+    expect(card).not.toMatch(/inset-0/);
+    expect(card).not.toMatch(/role="dialog"|aria-modal/);
+    expect(card).toContain("dismiss");
+    // And the rail beside it is a passenger, not a gate: an <aside>, not a
+    // dialog, with no backdrop and a close button. Comments are stripped
+    // first, because this file's own comments name the thing it forbids.
+    const rail = readFileSync(join(srcRoot, "components/FirstRunRail.tsx"), "utf8")
+      .replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(rail).not.toMatch(/role="dialog"|aria-modal/);
+    expect(rail).not.toMatch(/fixed inset-0/);
+    expect(rail).toContain("<aside");
   });
 });

@@ -909,7 +909,11 @@ export function SidebarCreateMenu({
   onTemplate: () => void;
   onNewTeam: () => void;
   onNewChannel: () => void;
-  onNewProject?: () => void;
+  /** Required, not optional. A "+ New" menu that can be built without the
+   *  project item is a menu that will quietly lose it: the two belong
+   *  together, because a project IS a channel and the choice between them is
+   *  the whole point of offering both here. */
+  onNewProject: () => void;
   onExport: () => void;
   onArchived: () => void;
   onArchivedChannels?: () => void;
@@ -939,15 +943,13 @@ export function SidebarCreateMenu({
           <span className="text-[12px] text-ink-secondary">A chat with some bots.</span>
         </span>
       </button>
-      {onNewProject && (
-        <button onClick={onNewProject} className={`${row} items-start`}>
-          <Target size={16} className="mt-0.5 text-ink-secondary" />
-          <span className="flex flex-col">
-            New Project
-            <span className="text-[12px] text-ink-secondary">A piece of work with its own goal, files and chat.</span>
-          </span>
-        </button>
-      )}
+      <button onClick={onNewProject} className={`${row} items-start`}>
+        <Target size={16} className="mt-0.5 text-ink-secondary" />
+        <span className="flex flex-col">
+          New Project
+          <span className="text-[12px] text-ink-secondary">A piece of work with its own goal, files and chat.</span>
+        </span>
+      </button>
       <div role="separator" className="mx-2 my-1 border-t border-hairline/40" />
       <button onClick={onExport} className={row}>
         <ArrowDownToLine size={16} className="text-ink-secondary" />

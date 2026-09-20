@@ -32,18 +32,22 @@ function body(overrides: Partial<Parameters<typeof NewTeamDialogBody>[0]> = {}) 
 
 describe("the + menu", () => {
   const menu = (archivedCount: number) => renderToStaticMarkup(createElement(SidebarCreateMenu, {
-    archivedCount, onNewBot: vi.fn(), onTemplate: vi.fn(), onNewTeam: vi.fn(), onNewChannel: vi.fn(), onExport: vi.fn(), onArchived: vi.fn(),
+    archivedCount, onNewBot: vi.fn(), onTemplate: vi.fn(), onNewTeam: vi.fn(), onNewChannel: vi.fn(), onNewProject: vi.fn(), onExport: vi.fn(), onArchived: vi.fn(),
   }));
 
   it("names each thing it makes, in order, with the rest below a line", () => {
     const html = menu(3);
-    expect(text(html)).toEqual(["New Bot", "New Bot from Template", "New Team", "New Channel", "Export bots…", "Archived bots", "3"]);
-    expect(html.indexOf("New Channel")).toBeLessThan(html.indexOf('role="separator"'));
+    // "New Project" sits next to "New Channel", because a project IS a
+    // channel with a purpose and the two are chosen in the same breath.
+    expect(text(html)).toEqual(["New Bot", "New Bot from Template", "New Team", "New Channel", "A chat with some bots.",
+      "New Project", "A piece of work with its own goal, files and chat.", "Export bots…", "Archived bots", "3"]);
+    expect(html.indexOf("New Project")).toBeLessThan(html.indexOf('role="separator"'));
     expect(html.indexOf('role="separator"')).toBeLessThan(html.indexOf("Export bots…"));
   });
 
   it("shows Archived bots only when there are some", () => {
-    expect(text(menu(0))).toEqual(["New Bot", "New Bot from Template", "New Team", "New Channel", "Export bots…"]);
+    expect(text(menu(0))).toEqual(["New Bot", "New Bot from Template", "New Team", "New Channel", "A chat with some bots.",
+      "New Project", "A piece of work with its own goal, files and chat.", "Export bots…"]);
   });
 });
 
