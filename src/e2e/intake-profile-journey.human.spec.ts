@@ -80,6 +80,18 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
   for(const key of source.agents[0].playbooks){const expected=source.playbooks.find((book:any)=>book.key===key);expect(after.playbooks.find((book:any)=>book.key===key)).toEqual(expected);}
   expect((await api("GET","/api/bots")).bots.find((bot:any)=>bot.id===chiefId)).toMatchObject({chiefOfStaff:true,chiefScope:"workspace"});
   expect((await api("GET","/api/bots")).bots).toHaveLength(beforeRoster.length+1);expect(await api("GET","/api/routines")).toEqual(routinesBefore);
-  expect(existsSync(join(fixture.info.dataDir,"fake-claude-dump.json"))).toBe(false);
+  // THE TURNS RAN. This asserted the OPPOSITE until M1: the setup
+  // conversation took the composer's send instead of the bot, so nothing the
+  // person typed ever reached an engine and the dump was proof of it. That is
+  // the bug. Tango is asked for something and answers, AND adopts Cowork from
+  // the same two sentences — alongside, never instead.
+  expect(existsSync(join(fixture.info.dataDir,"fake-claude-dump.json"))).toBe(true);
+  const dump=JSON.parse(readFileSync(join(fixture.info.dataDir,"fake-claude-dump.json"),"utf8"));
+  // The engine's own launch record. The second sentence is steered into this
+  // same live turn rather than launching a second process, so the dump is the
+  // first one: "I want cowork" went to Tango, and Tango answered it.
+  expect(JSON.stringify(dump.prompt)).toContain("I want cowork");
+  expect(before.messages.filter((message:any)=>message.role==="user"&&message.text==="I want cowork")).toHaveLength(1);
+  expect(before.messages.some((message:any)=>message.role==="bot"&&message.kind==="text"&&message.text?.includes("fake claude"))).toBe(true);
   await page.screenshot({path:info.outputPath("tango-adapted-cowork.png"),fullPage:true});
 });

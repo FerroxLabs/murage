@@ -936,10 +936,28 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
   }));
 }
 
-/** First-run quiz still sitting on this bot's thread. */
+/** First-run quiz still sitting on this bot's thread.
+ *
+ *  NOT AN INTAKE TURN, and this is the fourth place that has to say so —
+ *  `OptionCard.isOnboardingCard`, `ChatView`'s branch to `IntakeTurn` and the
+ *  `answerCard` guard are the other three, each for the same reason: a card
+ *  the setup conversation is asking through is a turn, not a quiz, and it is
+ *  answered on its own route.
+ *
+ *  What it costs to get wrong is a 409, silently. Talking past the quiz
+ *  dismisses it (`dismissOnboardingCard` on every send, plus a PATCH so an
+ *  older server agrees), and this used to be unreachable with an intake card
+ *  open because the composer never sent while one was — which is M1. Now that
+ *  it always sends, a send would dismiss the question a beat before the same
+ *  keystroke answered it, and the intake route refuses a dismissed card. */
 function openOnboardingCard(bot: Bot): Message | undefined {
   return bot.messages.find(
-    (message) => message.kind === "options" && message.card && !message.card.requestId && !message.card.dismissed,
+    (message) =>
+      message.kind === "options"
+      && message.card
+      && !message.card.requestId
+      && !message.card.intake
+      && !message.card.dismissed,
   );
 }
 
