@@ -7,6 +7,7 @@ import {
   SETUP_SOLO_CREW,
   SETUP_STEPS,
   type SetupLiveState,
+  fluxKeyLooksValid,
   nextSetupStep,
   setupProgress,
   setupStepBlock,
@@ -27,13 +28,16 @@ import {
 // `sk-flux-` plus filler, chosen so the shape check has something real to
 // reject the alternatives against.
 const FLUX_KEY = "sk-flux-Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/** A Flux Router connection as the credential card reports a healthy one. */
+const FLUX_SAVED = { configured: true, conflict: false, looksValid: true };
 
 const live = (patch: Partial<SetupLiveState> = {}): SetupLiveState => ({
-  fluxKey: null,
+  flux: { configured: false, conflict: false, looksValid: false },
   bundledEngine: { ready: true },
   chiefInstanceId: "",
   chiefAnsweredBy: [],
   chiefRefusal: null,
+  chiefUsesFlux: false,
   crewSize: 0,
   connectedApps: 0,
   botReplyExists: false,
@@ -77,7 +81,7 @@ describe("the setup checklist the server owns", () => {
 
   it("ticks a derived step from live state alone, with no answer at all", () => {
     const state = checklist().read(live({
-      fluxKey: FLUX_KEY,
+      flux: FLUX_SAVED,
       chiefInstanceId: "fuigo",
       chiefAnsweredBy: ["fuigo"],
       crewSize: 2,
@@ -95,17 +99,31 @@ describe("the setup checklist the server owns", () => {
 
   it("un-ticks a step the moment the live state behind it goes away", () => {
     const setup = checklist();
-    expect(setup.read(live({ fluxKey: FLUX_KEY })).steps.flux).toMatchObject({ done: true });
-    const state = setup.read(live({ fluxKey: null }));
+    expect(setup.read(live({ flux: FLUX_SAVED })).steps.flux).toMatchObject({ done: true });
+    const state = setup.read(live());
     expect(state.steps.flux.done).toBe(false);
     expect(state.steps.flux.at).toBeUndefined();
   });
 
   it("refuses a saved Flux value that is not shaped like a key", () => {
-    for (const saved of ["yes I have one", "sk-flux", "flux", "sk-short"]) {
-      expect(checklist().read(live({ fluxKey: saved })).steps.flux.done).toBe(false);
+    // An environment-supplied key never passed the connection card's gate,
+    // so the shape is judged here: a sentence, a stub, or somebody else's
+    // key is not a Flux credential.
+    for (const saved of ["yes I have one", "flux", "sk-ant-Aaaaaaaaaaaaaaaaaaaa", "xai-Aaaaaaaaaaaaaaaaaaaa"]) {
+      expect(fluxKeyLooksValid(saved), saved).toBe(false);
     }
-    expect(checklist().read(live({ fluxKey: `  ${FLUX_KEY}  ` })).steps.flux.done).toBe(true);
+    expect(fluxKeyLooksValid(`  ${FLUX_KEY}  `)).toBe(true);
+    // Short fixture keys the rest of this suite uses must still pass.
+    expect(fluxKeyLooksValid("sk-flux-FAKE_NEXT")).toBe(true);
+    expect(checklist().read(live({ flux: { configured: true, conflict: false, looksValid: false } })).steps.flux.done).toBe(false);
+  });
+
+  it("does not call Flux done while several saved keys are waiting for a choice", () => {
+    const conflicted = live({ flux: { configured: true, conflict: true, looksValid: true } });
+    const state = checklist().read(conflicted);
+    expect(state.steps.flux.done).toBe(false);
+    expect(setupStepStatus("flux", state.steps.flux, conflicted)).toBe("blocked");
+    expect(setupStepBlock("flux", state.steps.flux, conflicted)).toMatchObject({ reason: "flux-choice-needed" });
   });
 
   it("asks the Chief's OWN engine to have answered, not whichever engine a task used", () => {
@@ -149,13 +167,13 @@ describe("the setup checklist the server owns", () => {
   it("re-derives on reopen: an answered step reopens, a step live state still backs comes straight back", () => {
     const setup = checklist();
     setup.answer("purpose", "run my inbox", live());
-    setup.answer("flux", "pasted it", live({ fluxKey: FLUX_KEY }));
+    setup.answer("flux", "pasted it", live({ flux: FLUX_SAVED }));
 
-    const reopened = setup.reopen("purpose", live({ fluxKey: FLUX_KEY }));
+    const reopened = setup.reopen("purpose", live({ flux: FLUX_SAVED }));
     expect(reopened.steps.purpose).toEqual({ done: false });
     expect(nextSetupStep(reopened)).toBe("purpose");
 
-    const stillDone = setup.reopen("flux", live({ fluxKey: FLUX_KEY }));
+    const stillDone = setup.reopen("flux", live({ flux: FLUX_SAVED }));
     expect(stillDone.steps.flux.done).toBe(true);
     expect(stillDone.steps.flux.note).toBeUndefined();
   });
@@ -163,11 +181,11 @@ describe("the setup checklist the server owns", () => {
   it("re-reads the recorded answers from disk and re-derives done against today's live state", () => {
     const first = checklist();
     first.answer("purpose", "run my inbox", live());
-    first.answer("flux", "pasted it", live({ fluxKey: FLUX_KEY }));
+    first.answer("flux", "pasted it", live({ flux: FLUX_SAVED }));
     first.recordChief("bot-chief");
 
     const reopenedApp = checklist();
-    const state = reopenedApp.read(live({ fluxKey: null }));
+    const state = reopenedApp.read(live());
     expect(state.chiefBotId).toBe("bot-chief");
     expect(state.steps.purpose).toMatchObject({ done: true, note: "run my inbox" });
     expect(state.steps.flux.done).toBe(false);
@@ -176,17 +194,21 @@ describe("the setup checklist the server owns", () => {
 
   it("starts clean when the saved checklist is damaged, because every step re-derives anyway", () => {
     writeFileSync(file, "{ not json");
-    const state = checklist().read(live({ fluxKey: FLUX_KEY }));
+    const state = checklist().read(live({ flux: FLUX_SAVED }));
     expect(state.steps.flux.done).toBe(true);
     expect(state.steps.purpose.note).toBeUndefined();
   });
 });
 
 describe("a key that authenticates but cannot spend", () => {
+  // A monthly spend ceiling is a plain 402, and `classifyProviderError`
+  // deliberately withholds the `flux-router` tag from a plain 402 — so the
+  // attribution has to come from the engine the turn went to.
   const spendCeiling = {
-    fluxKey: FLUX_KEY,
+    flux: FLUX_SAVED,
     chiefInstanceId: "fuigo",
-    chiefRefusal: { httpStatus: 402, provider: "flux-router" },
+    chiefUsesFlux: true,
+    chiefRefusal: { httpStatus: 402 },
   } satisfies Partial<SetupLiveState>;
 
   it("does not call the Flux step done just because the key is real", () => {
@@ -206,19 +228,25 @@ describe("a key that authenticates but cannot spend", () => {
   });
 
   it("blocks the brain and the first task on the same refusal, whoever the provider was", () => {
-    const anyProvider = live({ chiefInstanceId: "fuigo", chiefRefusal: { httpStatus: 402 } });
-    const state = checklist().read(anyProvider);
-    expect(setupStepStatus("brain", state.steps.brain, anyProvider)).toBe("blocked");
-    expect(setupStepBlock("brain", state.steps.brain, anyProvider)?.message).toMatch(/refused on payment/);
-    expect(setupStepStatus("first-task", state.steps["first-task"], anyProvider)).toBe("blocked");
-    // An unattributed refusal says nothing about the Flux key itself, so
-    // that step is left alone rather than blamed.
+    const ownSubscription = live({ flux: FLUX_SAVED, chiefInstanceId: "claude", chiefRefusal: { httpStatus: 402 } });
+    const state = checklist().read(ownSubscription);
+    expect(setupStepStatus("brain", state.steps.brain, ownSubscription)).toBe("blocked");
+    expect(setupStepBlock("brain", state.steps.brain, ownSubscription)?.message).toMatch(/refused on payment/);
+    expect(setupStepStatus("first-task", state.steps["first-task"], ownSubscription)).toBe("blocked");
+    // The Chief is not on Flux, so this says nothing about the Flux key and
+    // that step is left alone rather than blamed for somebody else's bill.
+    expect(state.steps.flux.done).toBe(true);
+  });
+
+  it("still blames Flux when the error itself names it, even off a Flux model", () => {
+    const tagged = live({ flux: FLUX_SAVED, chiefInstanceId: "claude", chiefRefusal: { httpStatus: 402, provider: "flux-router" } });
+    const state = checklist().read(tagged);
     expect(state.steps.flux.done).toBe(false);
-    expect(setupStepStatus("flux", state.steps.flux, anyProvider)).toBe("open");
+    expect(setupStepBlock("flux", state.steps.flux, tagged)?.reason).toBe("payment-required");
   });
 
   it("does not block on a rejection that is not about payment", () => {
-    const rateLimited = live({ fluxKey: FLUX_KEY, chiefInstanceId: "fuigo", chiefRefusal: { httpStatus: 429, provider: "flux-router" } });
+    const rateLimited = live({ flux: FLUX_SAVED, chiefInstanceId: "fuigo", chiefRefusal: { httpStatus: 429, provider: "flux-router" } });
     const state = checklist().read(rateLimited);
     expect(state.steps.flux.done).toBe(true);
     expect(setupStepStatus("brain", state.steps.brain, rateLimited)).toBe("open");
@@ -263,20 +291,23 @@ describe("what the checklist reads off the workspace", () => {
     expect(threadAnswered(answered)).toBe(true);
   });
 
+  // The app's own `isFluxModel`, in miniature: a Flux id carries the prefix.
+  const workspace = { bots: [], messagesFor: () => [], routesThroughFlux: (model: string) => model.startsWith("flux-") };
+
   const bot = (patch: Partial<SetupBotReading> & { id: string }): SetupBotReading => ({
     threadId: `${patch.id}-thread`,
-    modelSelection: { instanceId: "" },
+    modelSelection: { instanceId: "", model: "" },
     ...patch,
   });
 
   it("attributes the Chief's settled reply to the engine that dispatched it", () => {
     const chief = bot({
       id: "chief",
-      modelSelection: { instanceId: "fuigo" },
+      modelSelection: { instanceId: "fuigo", model: "flux-auto" },
       tasks: [{ threadId: "chief-a", lastInstanceId: "fuigo" }, { threadId: "chief-b", lastInstanceId: "claude" }],
     });
     const reading = readWorkspace(
-      { bots: [chief], messagesFor: (threadId) => (threadId === "chief-b" ? answered : greeting) },
+      { ...workspace, bots: [chief], messagesFor: (threadId) => (threadId === "chief-b" ? answered : greeting) },
       "chief",
     );
     expect(reading.chiefInstanceId).toBe("fuigo");
@@ -287,6 +318,7 @@ describe("what the checklist reads off the workspace", () => {
   it("counts visible bots beyond the Chief, and ignores hidden ones", () => {
     const reading = readWorkspace(
       {
+        ...workspace,
         bots: [bot({ id: "chief" }), bot({ id: "mate" }), bot({ id: "ghost", hidden: true })],
         messagesFor: () => greeting,
       },
@@ -302,10 +334,21 @@ describe("what the checklist reads off the workspace", () => {
       { role: "bot", kind: "activity", at: 5, tool: { providerError: { httpStatus: 402, provider: "flux-router" } } },
     ];
     const reading = readWorkspace(
-      { bots: [bot({ id: "chief", modelSelection: { instanceId: "fuigo" } })], messagesFor: () => refused },
+      { ...workspace, bots: [bot({ id: "chief", modelSelection: { instanceId: "fuigo", model: "flux-auto" } })], messagesFor: () => refused },
       "chief",
     );
     expect(reading.chiefRefusal).toEqual({ httpStatus: 402, provider: "flux-router" });
+    // The attribution the plain-402 case depends on: the Chief's own model
+    // is a Flux one, so its bill is Flux's.
+    expect(reading.chiefUsesFlux).toBe(true);
+  });
+
+  it("does not claim a Flux route for a Chief on its own subscription", () => {
+    const reading = readWorkspace(
+      { ...workspace, bots: [bot({ id: "chief", modelSelection: { instanceId: "claude", model: "claude-opus-5" } })], messagesFor: () => greeting },
+      "chief",
+    );
+    expect(reading.chiefUsesFlux).toBe(false);
   });
 
   it("drops a refusal the engine has since recovered from, so a step cannot stay blocked for good", () => {
@@ -314,7 +357,7 @@ describe("what the checklist reads off the workspace", () => {
       { role: "bot", kind: "text", text: "Back in business.", turnTerminal: true, at: 6 },
     ];
     const reading = readWorkspace(
-      { bots: [bot({ id: "chief", modelSelection: { instanceId: "fuigo" } })], messagesFor: () => recovered },
+      { ...workspace, bots: [bot({ id: "chief", modelSelection: { instanceId: "fuigo", model: "flux-auto" } })], messagesFor: () => recovered },
       "chief",
     );
     expect(reading.chiefRefusal).toBeNull();
@@ -369,7 +412,7 @@ describe("what the brain step says when the included engine cannot run", () => {
   });
 
   it("drops every detail and block from a step that is done", () => {
-    const configured = live({ fluxKey: FLUX_KEY });
+    const configured = live({ flux: FLUX_SAVED });
     const view = setupView(checklist().read(configured), configured);
     expect(view.steps.map((entry) => entry.id)).toEqual([...SETUP_STEPS]);
     const flux = view.steps.find((entry) => entry.id === "flux");

@@ -198,7 +198,7 @@ import {
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli } from "./env-path.ts";
-import { fluxSelectionRefusal } from "./flux-surface.ts";
+import { fluxSelectionRefusal, isFluxModel } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import {
   MAX_MCP_SERVERS,
@@ -310,6 +310,7 @@ import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace } from "./setup.ts";
 import {
   type SetupLiveState,
+  fluxKeyLooksValid,
   setupAnswerRequestSchema,
   setupStepRequestSchema,
   setupView,
@@ -1781,6 +1782,11 @@ const setup = new SetupChecklist();
 /**
  * Everything the checklist measures, read fresh.
  *
+ * The Flux half is the connection card's own status rather than a second
+ * opinion, so the step and the card can never disagree; only the key's shape
+ * is judged here, and only because an environment-supplied key never passed
+ * the card's gate. The key itself is read and discarded, never returned.
+ *
  * The connected-app count is the only reading that can leave the machine, and
  * an unreadable connector store answers `null` — "we do not know what is
  * connected" is not "nothing is connected", the same distinction
@@ -1798,12 +1804,16 @@ async function setupLiveState(): Promise<SetupLiveState> {
       return null;
     }
   })();
+  const flux = fluxCredentialStatus(readFluxConnectionState());
   return {
-    fluxKey: fluxKey(),
+    flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps,
     chiefMemoryWritten: chiefBotId ? readMemoryFile(chiefBotId).text.trim().length > 0 : false,
-    ...readWorkspace(store, chiefBotId),
+    ...readWorkspace(
+      { bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },
+      chiefBotId,
+    ),
   };
 }
 

@@ -90,13 +90,16 @@ export interface SetupBotReading {
   hidden?: boolean;
   threadId: string;
   /** The bot's OWN engine selection, not a task's. */
-  modelSelection: { instanceId: string };
+  modelSelection: { instanceId: string; model: string };
   tasks?: readonly SetupTaskReading[];
 }
 
 export interface SetupWorkspaceReading {
   bots: readonly SetupBotReading[];
   messagesFor(threadId: string): readonly SetupMessageReading[];
+  /** Whether a picked model routes through Flux Router — the app's own
+   *  `isFluxModel`, injected so this module stays free of the engine tables. */
+  routesThroughFlux(model: string): boolean;
 }
 
 /**
@@ -149,7 +152,7 @@ function latestRefusal(messages: readonly SetupMessageReading[]): { at: number; 
 export function readWorkspace(
   workspace: SetupWorkspaceReading,
   chiefBotId?: string,
-): Pick<SetupLiveState, "chiefInstanceId" | "chiefAnsweredBy" | "chiefRefusal" | "crewSize" | "botReplyExists"> {
+): Pick<SetupLiveState, "chiefInstanceId" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> {
   const chief = chiefBotId ? workspace.bots.find((bot) => bot.id === chiefBotId) : undefined;
   const chiefAnsweredBy = new Set<string>();
   let botReplyExists = false;
@@ -176,6 +179,7 @@ export function readWorkspace(
     chiefInstanceId: chief?.modelSelection.instanceId ?? "",
     chiefAnsweredBy: [...chiefAnsweredBy],
     chiefRefusal: chiefRefusal?.refusal ?? null,
+    chiefUsesFlux: chief ? workspace.routesThroughFlux(chief.modelSelection.model) : false,
     crewSize: workspace.bots.filter((bot) => !bot.hidden && bot.id !== chief?.id).length,
     botReplyExists,
   };

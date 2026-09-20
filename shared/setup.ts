@@ -79,6 +79,20 @@ export interface SetupEngineReading {
   reason?: string;
 }
 
+/** The Flux Router connection. `configured` and `conflict` are the app's own
+ *  `FluxConnectionStatus`, so this step agrees with the connection card
+ *  rather than forming a second opinion. */
+export interface SetupFluxReading {
+  /** A Flux workspace key is saved. */
+  configured: boolean;
+  /** Several different Flux keys are saved and none has been chosen. */
+  conflict: boolean;
+  /** The saved key is shaped like a key. A key saved through the connection
+   *  card already passed that gate; one supplied by an environment variable
+   *  never did. */
+  looksValid: boolean;
+}
+
 /**
  * A provider rejection recorded against an engine — the safe structured
  * facts only, never request or response text.
@@ -99,9 +113,10 @@ export interface SetupRefusalReading {
  *  here is remembered from an earlier answer, and no field may be supplied
  *  by a model or by the request body. */
 export interface SetupLiveState {
-  /** The saved Flux Router key, exactly as the server's one reader returns
-   *  it; null when none is saved. Never leaves the server. */
-  fluxKey: string | null;
+  /** The Flux Router connection as the app's own credential policy reports
+   *  it, plus whether the saved key is shaped like a key at all. The key
+   *  itself never leaves the server. */
+  flux: SetupFluxReading;
   /** The engine Murage ships, as this machine can actually run it. */
   bundledEngine: SetupEngineReading;
   /** The Chief's OWN engine — its `modelSelection.instanceId`. "" = none. */
@@ -114,6 +129,11 @@ export interface SetupLiveState {
    *  recent than its most recent settled reply — a refusal the engine has
    *  since recovered from is history, not a blockage. */
   chiefRefusal: SetupRefusalReading | null;
+  /** The Chief's own model routes through Flux Router. This is how a payment
+   *  refusal is attributed: `classifyProviderError` deliberately drops the
+   *  `flux-router` tag for a plain 402, so the error alone cannot say whose
+   *  account ran out — but the engine the turn was dispatched to can. */
+  chiefUsesFlux: boolean;
   /** Visible bots other than the Chief. */
   crewSize: number;
   /** Connected apps, or null when the connector store could not be read —
@@ -136,7 +156,7 @@ export interface SetupLiveState {
  * third outcome: it was done properly, and something outside the person's
  * control stops it working. Not wrong, not missing, not skipped.
  */
-export const SETUP_BLOCK_REASONS = ["payment-required", "engine-unavailable", "apps-unreadable"] as const;
+export const SETUP_BLOCK_REASONS = ["payment-required", "engine-unavailable", "apps-unreadable", "flux-choice-needed"] as const;
 export type SetupBlockReason = (typeof SETUP_BLOCK_REASONS)[number];
 export interface SetupStepBlock {
   reason: SetupBlockReason;
@@ -151,13 +171,30 @@ function refusedOnPayment(live: SetupLiveState): boolean {
   return live.chiefRefusal?.httpStatus === 402;
 }
 
-/** Key shapes the paste parser files under Flux (`shared/key-extract.ts`):
- *  `sk-flux-…` is the spelling Flux Router issues, and the bare `sk-…`
- *  family is the one a Flux-compatible upstream shares. Shape only — it says
- *  the field holds a key rather than a pasted sentence, never that the key
- *  is live. */
+/** That payment refusal was Flux Router's account, not somebody else's. */
+function fluxRefusedOnPayment(live: SetupLiveState): boolean {
+  return refusedOnPayment(live) && (live.chiefUsesFlux || live.chiefRefusal?.provider === "flux-router");
+}
+
+/** Prefixes that identify a DIFFERENT provider, as the connection card's own
+ *  gate lists them. A key that carries one of these is somebody else's. */
+const FOREIGN_KEY_PREFIXES = ["sk-ant-", "sk-or-", "sk-proj-", "sk-svcacct-", "sk-admin-", "xai-", "gsk_"] as const;
+
+/**
+ * Shape only. It says the field holds a key rather than a pasted sentence,
+ * never that the key is live and never that the account can spend.
+ *
+ * Deliberately the same test the connection card applies when a key is saved
+ * — a secret of at least eight printable characters that does not carry
+ * another provider's prefix — plus "no whitespace", because a key never has
+ * any and a sentence typed into the box always does. A key that arrives in
+ * an environment variable never passed the card's gate, which is the case
+ * this exists for.
+ */
 export function fluxKeyLooksValid(key: string | null | undefined): boolean {
-  return /^sk-[A-Za-z0-9_-]{16,}$/.test((key ?? "").trim());
+  const value = (key ?? "").trim();
+  if (value.length < 8 || value.length > 4096 || /\s/.test(value)) return false;
+  return !FOREIGN_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
 /** A step counts as answered when a non-empty note was recorded for it and
@@ -181,8 +218,12 @@ export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: S
       // A saved, well-shaped key is not the same as a key that can buy a
       // token. When Flux Router itself has refused a turn on payment, this
       // step is NOT done — it is blocked, with the key kept exactly as it
-      // is, because the key is right and the spending is not.
-      return fluxKeyLooksValid(live.fluxKey) && !(refusedOnPayment(live) && live.chiefRefusal?.provider === "flux-router");
+      // is, because the key is right and the spending is not. Several saved
+      // keys with none chosen is not done either: nothing is routing yet.
+      return live.flux.configured
+        && live.flux.looksValid
+        && !live.flux.conflict
+        && !fluxRefusedOnPayment(live);
     case "purpose":
       return setupStepAnswered(recorded);
     case "brain":
@@ -252,13 +293,21 @@ export function setupStepBlock(
   };
   switch (step) {
     case "flux":
-      return refusedOnPayment(live) && live.chiefRefusal?.provider === "flux-router"
+      if (fluxRefusedOnPayment(live)) {
+        return {
+          reason: "payment-required",
+          message:
+            "Flux Router accepted this key and then refused a turn on payment. The key is saved and there is " +
+            "nothing to re-paste — this is the account's spending, not the key — but the included brain and " +
+            "the connected apps cannot answer until it clears.",
+        };
+      }
+      return live.flux.conflict
         ? {
-            reason: "payment-required",
+            reason: "flux-choice-needed",
             message:
-              "Flux Router accepted this key and then refused a turn on payment. The key is saved and there is " +
-              "nothing to re-paste — this is the account's spending, not the key — but the included brain and " +
-              "the connected apps cannot answer until it clears.",
+              "More than one Flux Router key is saved and none has been chosen, so nothing is routing through " +
+              "Flux yet. Pick the one to use on the Flux Router connection card.",
           }
         : undefined;
     case "brain":
@@ -296,9 +345,9 @@ export function setupStepDetail(step: SetupStep, recorded: SetupStepState, live:
   if (setupStepDone(step, recorded, live) || setupStepBlock(step, recorded, live)) return undefined;
   switch (step) {
     case "flux":
-      return live.fluxKey === null
-        ? "No Flux Router key is saved. The included brain and the connected apps stay locked without one."
-        : "The saved Flux Router key is not in a shape Flux Router issues — paste it again.";
+      return live.flux.configured
+        ? "The saved Flux Router key is not in a shape Flux Router issues — paste it again."
+        : "No Flux Router key is saved. The included brain and the connected apps stay locked without one.";
     case "brain":
       return live.chiefInstanceId === ""
         ? "Your Chief has no engine selected yet."

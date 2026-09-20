@@ -92,8 +92,16 @@ describe("the first-run checklist on a real server whose engine never answers", 
     expect((answered.body as SetupView).steps.find((entry) => entry.id === "flux")?.detail)
       .toMatch(/No Flux Router key is saved/);
 
-    const saved = await api("PATCH", "/api/config", { flux: { apiKey: FLUX_KEY } }, desktop);
+    // The key goes in the way the app actually saves it, through the Flux
+    // connection card's own transaction — `PATCH /api/config` refuses a Flux
+    // key outright, and the step has to agree with whatever that card says.
+    const connection = await api("GET", "/api/flux-connection", undefined, desktop);
+    expect(connection.status).toBe(200);
+    expect(connection.body.configured).toBe(false);
+    const saved = await api("POST", "/api/flux-connection/mutate", { action: "connect", revision: connection.body.revision, key: FLUX_KEY }, desktop);
     expect(saved.status).toBe(200);
+    expect(saved.body.configured).toBe(true);
+    expect(JSON.stringify(saved.body)).not.toContain(FLUX_KEY);
     const view = await checklist();
     expect(step(view, "flux").done).toBe(true);
     expect(view.progress.done).toBe(1);

@@ -322,7 +322,10 @@ posixOnly("unattended turns keep asking", () => {
       // mid-turn. The fake asks whichever peer list_bots returns first, so
       // everything else is hidden to make the target deterministic.
       const existing = await api("GET", "/api/bots");
-      for (const b of existing.body.bots) expect((await desktopApi("PATCH", `/api/bots/${b.id}`, { hidden: true })).status).toBe(200);
+      // Demote as well as hide: a fresh install's first bot is now the
+      // workspace Chief of Staff, and a Chief cannot be hidden while it
+      // still holds the role — the same demote-then-hide the team import does.
+      for (const b of existing.body.bots) expect((await desktopApi("PATCH", `/api/bots/${b.id}`, { hidden: true, chiefOfStaff: false })).status).toBe(200);
 
       const target = await makeBot("grok");
       expect((await desktopApi("PATCH", `/api/bots/${target.id}`, {
