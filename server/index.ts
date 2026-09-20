@@ -1914,14 +1914,23 @@ async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<st
   const chief = store.bot(view.chiefBotId);
   if (!chief) return;
   const described = await describedInstances();
-  const onFuigoAlready = described.find((instance) => instance.instanceId === chief.modelSelection.instanceId)?.driverKind === "fuigoAgent";
-  if (onFuigoAlready) return;
-  const selection = await defaultSelection();
+  const selection = pickDefaultEngine(described);
   if (!selection.instanceId || !selection.model) return;
   const picked = described.find((instance) => instance.instanceId === selection.instanceId);
   if (picked?.driverKind !== "fuigoAgent") return;
+  // THE MODEL MOVES TOO, NOT ONLY THE ENGINE.
+  //
+  // Being on Fuigo already is not the finish line. Fuigo's catalogue is
+  // assembled from whatever it can reach, so before a key exists its default
+  // may be a local model it found on this machine, which is a perfectly good
+  // answer and is NOT the one the key card just promised. When the key lands
+  // the catalogue re-forms around it, and a Chief left pinned to the local
+  // model would make the flow's central sentence, that this key gives you all
+  // the latest models routed to the best one for the job, quietly untrue.
+  const current = chief.modelSelection;
+  if (current.instanceId === selection.instanceId && current.model === selection.model) return;
   store.patchBot(chief.id, { modelSelection: selection });
-  console.log(`setup: moved the Chief onto the shipped engine (${selection.instanceId} ${selection.model})`);
+  console.log(`setup: put the Chief on the shipped engine (${selection.instanceId} ${selection.model})`);
 }
 
 /** The card keys already in the Chief's thread, which is what both the
