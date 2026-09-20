@@ -2415,11 +2415,27 @@ export class Store {
     if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
     if(patch.title!==undefined)next.title=patch.title.trim().slice(0,80)||UNTITLED_TASK;
     if(patch.modelSelection&&patch.modelSelection.connectionId!==task.modelSelection?.connectionId)next.resumeCursors={};
+    // The first pick adopts.
+    //
+    // A bot made before any engine could answer carries the honest-empty
+    // selection `{instanceId:"",model:""}`, and the chat header only ever
+    // writes the OPEN TASK. So picking a model there left the BOT with
+    // nothing, and everything that reads the bot rather than the task broke:
+    // the bot answered in its own chat and then failed in every channel
+    // ("<name>'s model is unavailable") and could not be made a team lead.
+    //
+    // With no engine or no model chosen at bot level, the task's choice
+    // therefore becomes the bot's own as well, in this same staged write. A
+    // bot that ALREADY has a bot-level selection keeps it: a pick on one of
+    // its tasks is then a deliberate per-task override, which is what
+    // independent threads are for.
+    const adopts=Boolean(patch.modelSelection)&&(!bot.modelSelection?.instanceId||!bot.modelSelection?.model);
+    const adopted=adopts?{modelSelection:structuredClone(patch.modelSelection!)}:{};
     const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
     const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
-    const candidate={...bot,...mirrors,tasks,unread:tasks.some(task=>task.unread)};
+    const candidate={...bot,...mirrors,...adopted,tasks,unread:tasks.some(task=>task.unread)};
     this.saveBots(this.bots.map(current=>current===bot?candidate:current));
-    Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,{unread:candidate.unread});
+    Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
     this.emit({type:"bot",botId});return task;
   }
 

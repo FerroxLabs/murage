@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
-import { enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
+import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
 import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
@@ -168,16 +168,17 @@ function ScheduleMessages({s,area}:{s:ScheduleController;area:ScheduleArea}) {
 }
 /** Status, lock and failure lines for the schedule, shown on whichever of
  * the setup or schedule card is visible so they are never folded away. */
-function ScheduleState({s}:{s:ScheduleController}) {
+function ScheduleState({s,attention}:{s:ScheduleController;attention:readonly string[]}) {
   const {status,bridge,unavailable,stale,closedStale}=s;
   const local=s.area==="schedule"?s.error:null;
+  const notice=scheduleCardNotice(local,status?.error,attention);
   return <>
     <p role="status" className="text-[13px] font-medium text-ink">{status?`Daily backups are ${status.enabled?"on":"off"}. ${schedulePhase(status.phase)}`:bridge?"Checking schedule status…":"Scheduling unavailable in this window"}</p>
     {unavailable&&(!bridge||status)&&<p className="text-[13px] text-ink-secondary">Scheduled backup requires a supported packaged app with its verified backup tool.</p>}
     {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Backup work is pending. Settings are locked; status updates automatically.</p>}
     {stale&&<p role="alert" className="text-[13px] text-warning">Status refresh failed. The last confirmed state is shown; changes are locked. Refresh schedule status to try again.</p>}
     {closedStale&&<p role="alert" className="text-[12px] text-warning">Background job status could not be refreshed. The last confirmed state is shown; backing up while Murage is closed is blocked. Refresh schedule status to try again.</p>}
-    {(local||status?.error)&&<p role="alert" className="text-[13px] text-danger">{local??scheduleError(status?.error)}</p>}
+    {notice&&<p role="alert" className="text-[13px] text-danger">{notice}</p>}
     {s.area==="schedule"&&s.notice&&<p role="status" className="text-[13px] text-ink-secondary">{s.notice}</p>}
   </>;
 }
@@ -187,7 +188,7 @@ function PreUpgradeWarning({s}:{s:ScheduleController}) {
 }
 
 /** Shown while daily backups are off: numbered steps and the turn-on button. */
-export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:()=>void}) {
+export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController;onSetLimits:()=>void;attention?:readonly string[]}) {
   const {status,draft,editingLocked,consent,setConsent,choices,closedBridge,closed,closedRegistered,closedAllowed,closedAction,createdKey}=s;
   const zones=useMemo(()=>timeZoneChoices(),[]);
   const closedReason=closedJobBlockedReason({bridge:Boolean(closedBridge),closed,stale:s.closedStale,setupFailed:s.closedSetupFailed});
@@ -195,7 +196,7 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
   return <section aria-labelledby="backup-setup-title" className={card}>
     <h3 id="backup-setup-title" className="text-[15px] font-medium text-ink">Set up backups</h3>
     <p className="text-[13px] text-ink-secondary">Murage can save an encrypted copy of your settings, conversations, files and channel history every day. Native sessions, VM homes and external folders are not included.</p>
-    <ScheduleState s={s}/>
+    <ScheduleState s={s} attention={attention}/>
     {status?.supported&&<>
       <ol className="min-w-0 list-none space-y-4 p-0">
         <li className="space-y-1">
@@ -255,7 +256,7 @@ export function ScheduleSetup({s,onSetLimits}:{s:ScheduleController;onSetLimits:
 }
 
 /** Shown once daily backups are on: the saved settings and "Turn off". */
-export function ScheduleCard({s}:{s:ScheduleController}) {
+export function ScheduleCard({s,attention=[]}:{s:ScheduleController;attention?:readonly string[]}) {
   const {status,locked}=s;
   if(!status)return null;
   const rows:[string,string][]=[
@@ -266,7 +267,7 @@ export function ScheduleCard({s}:{s:ScheduleController}) {
   ];
   return <section aria-labelledby="backup-schedule-title" className={card}>
     <h3 id="backup-schedule-title" className="text-[15px] font-medium text-ink">Schedule</h3>
-    <ScheduleState s={s}/>
+    <ScheduleState s={s} attention={attention}/>
     <dl className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[max-content_1fr]">
       {rows.map(([label,value])=><div key={label} className="contents"><dt className="text-ink-secondary">{label}</dt><dd className="break-words text-ink">{value}</dd></div>)}
     </dl>
@@ -364,7 +365,7 @@ export function BackupSettings() {
   const offsiteExpanded=offsiteOpen??r.configured;
   return <div className="min-w-0 space-y-4">
     <BackupStatusCard summary={summary} s={s} r={r} onRestore={()=>{setRestoreOpen(true);setFocus("backup-restore-toggle");}}/>
-    {s.status?.enabled?<ScheduleCard s={s}/>:<ScheduleSetup s={s} onSetLimits={()=>{setAdvancedOpen(true);setFocus("backup-catchup");}}/>}
+    {s.status?.enabled?<ScheduleCard s={s} attention={summary.attention}/>:<ScheduleSetup s={s} attention={summary.attention} onSetLimits={()=>{setAdvancedOpen(true);setFocus("backup-catchup");}}/>}
     <Disclosure id="backup-offsite" title="Off-site copy (optional)" open={offsiteExpanded} onToggle={()=>setOffsiteOpen(!offsiteExpanded)} above={<OffsiteStatus r={r}/>}>
       <OffsiteDetails r={r}/>
     </Disclosure>

@@ -1,11 +1,15 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn as spawnProcess } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const STATUS_TTL_MS = 750;
+const ADB_DEFAULT_PORT = 5037;
+const SERVER_START_TIMEOUT_MS = 8_000;
+const SERVER_PROBE_TIMEOUT_MS = 400;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const KEYCODES = new Map([
@@ -50,6 +54,57 @@ export function resolveAdbBinary({
     platform === "linux" && path.join(homeDir, "Android/Sdk/platform-tools/adb"),
   ].filter(Boolean);
   return candidates.find((candidate) => exists(candidate)) ?? null;
+}
+
+/** Close every descriptor above stderr, then become the program.
+ *
+ * The first adb command starts a DAEMON (`adb … fork-server server`) that
+ * long outlives the command, and on Unix it keeps whatever descriptors it
+ * was exec'd with. Murage's are not all close-on-exec — Chromium's are not —
+ * so the daemon ended up holding the app's caches, its leveldb log and a
+ * LISTENING debug socket, and went on holding them after Murage had quit.
+ *
+ * Every descriptor number comes from the directory the kernel keeps of this
+ * shell's own open files (`/proc/<pid>/fd` on Linux, `/dev/fd` elsewhere),
+ * and is closed only after it is proven to be nothing but digits, so nothing
+ * from the environment is ever evaluated. A platform with neither directory
+ * leaves the glob unexpanded, the digits test rejects it, and the exec still
+ * happens: no descriptor is closed, and nothing breaks. */
+export const CLOSE_INHERITED_DESCRIPTORS = [
+  'for entry in "/proc/$$/fd"/* /dev/fd/*; do',
+  '  fd=${entry##*/}',
+  "  case \"$fd\" in ''|*[!0-9]*) continue ;; esac",
+  '  if [ "$fd" -gt 2 ]; then eval "exec $fd>&-" 2>/dev/null; fi',
+  "done",
+  'exec "$@"',
+].join("\n");
+
+/** How to start the adb daemon so it inherits nothing from this app.
+ *
+ * Windows hands a child only the handles the launcher marks inheritable, and
+ * Node marks the child's own standard streams and nothing else, so there the
+ * binary is run directly. */
+export function adbServerLaunch(binary, { platform = process.platform } = {}) {
+  if (platform === "win32") return { command: binary, args: ["start-server"] };
+  return { command: "/bin/sh", args: ["-c", CLOSE_INHERITED_DESCRIPTORS, "murage-adb-start", binary, "start-server"] };
+}
+
+export function adbServerPort(env = process.env) {
+  const configured = Number.parseInt(String(env.ANDROID_ADB_SERVER_PORT ?? ""), 10);
+  return Number.isInteger(configured) && configured > 0 && configured < 65_536 ? configured : ADB_DEFAULT_PORT;
+}
+
+/** Is somebody else's adb daemon already listening? If so Murage adopts it
+ * for reads and never stops it on quit: it is not ours to stop. */
+function probeAdbServer(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: "127.0.0.1" });
+    const settle = (running) => { socket.destroy(); resolve(running); };
+    socket.setTimeout(SERVER_PROBE_TIMEOUT_MS);
+    socket.once("connect", () => settle(true));
+    socket.once("timeout", () => settle(false));
+    socket.once("error", () => settle(false));
+  });
 }
 
 function connectionKind(serial, fields) {
@@ -109,10 +164,60 @@ function safeUnit(value) {
 
 export function createAndroidDeviceController(options = {}) {
   const run = options.run ?? execFileAsync;
+  const spawn = options.spawn ?? spawnProcess;
+  const probeServer = options.probeServer ?? probeAdbServer;
+  const platform = options.platform ?? process.platform;
   const resolveBinary = options.resolveBinary ?? (() => resolveAdbBinary(options));
   let cachedStatus = null;
+  // Set only when THIS app started the daemon, so quitting never takes down
+  // a daemon the person was already using for their own work.
+  let ownsServer = false;
+  let startingServer = null;
+
+  /** Start the daemon deliberately, once, instead of letting the first
+   * ordinary adb command fork one out of the middle of the app. */
+  const ensureServer = async (binary) => {
+    if (ownsServer) return;
+    if (startingServer) { await startingServer; return; }
+    startingServer = (async () => {
+      if (await probeServer(adbServerPort(options.env ?? process.env))) return;
+      const { command, args } = adbServerLaunch(binary, { platform });
+      const child = spawn(command, args, {
+        stdio: "ignore",
+        detached: platform !== "win32",
+        windowsHide: true,
+        env: { ...process.env, ADB_TRACE: "" },
+      });
+      ownsServer = true;
+      child.unref?.();
+      await new Promise((resolve) => {
+        const done = setTimeout(resolve, SERVER_START_TIMEOUT_MS);
+        done.unref?.();
+        const settle = () => { clearTimeout(done); resolve(undefined); };
+        child.once?.("exit", settle);
+        child.once?.("error", settle);
+      });
+    })();
+    try { await startingServer; } catch { /* A daemon we could not start is reported by the command that needed it. */ }
+    finally { startingServer = null; }
+  };
+
+  /** Stop the daemon this app started. Called on quit: without it, the
+   * daemon simply stayed, still holding its ports. */
+  const stop = async () => {
+    if (!ownsServer) return { stopped: false };
+    ownsServer = false;
+    cachedStatus = null;
+    const binary = resolveBinary();
+    if (!binary) return { stopped: false };
+    try {
+      await run(binary, ["kill-server"], { timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } });
+      return { stopped: true };
+    } catch { return { stopped: false }; }
+  };
 
   const invoke = async (binary, args, extra = {}) => {
+    await ensureServer(binary);
     const result = await run(binary, args, {
       timeout: extra.timeout ?? 6_000,
       maxBuffer: extra.maxBuffer ?? 32 * 1024 * 1024,
@@ -243,5 +348,5 @@ export function createAndroidDeviceController(options = {}) {
     ipcMain.handle("android-device:input", protect(input));
   };
 
-  return { frame, input, registerIpc, status };
+  return { frame, input, registerIpc, status, stop };
 }

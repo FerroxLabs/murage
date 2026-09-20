@@ -29,7 +29,7 @@
 // stemmer included. server/message-db.ts already depends on node:sqlite, so
 // this adds zero dependencies.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DATA_DIR } from "./config.ts";
@@ -278,6 +278,44 @@ const BUILD_CHUNK = 40;
 
 const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+/** Is that process still there? EPERM means it is, under another account. */
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Clear temp files a build that never finished left behind.
+ *
+ *  A build writes `skill-index.db.<pid>.<random>.tmp` (plus SQLite's `-wal`
+ *  and `-shm`) and renames it over the index. Kill the app mid-build and the
+ *  temp simply stays, so a machine could accumulate them — and they used to
+ *  fail the whole backup, since the data folder is not allowed to hold files
+ *  Murage cannot account for.
+ *
+ *  A build running in ANOTHER process is not litter, so the pid in the name
+ *  decides: a temp whose pid is still running is left exactly where it is.
+ *  Our own current temp is named explicitly, so a pid the system has since
+ *  handed back to us cannot make this delete the build in progress. */
+export function sweepStaleIndexTemps(target: string, keep?: string): string[] {
+  const directory = dirname(target), prefix = `${basename(target)}.`;
+  let names: string[];
+  try { names = readdirSync(directory); } catch { return []; }
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!name.startsWith(prefix) || !/\.tmp(?:-wal|-shm)?$/.test(name)) continue;
+    const full = join(directory, name);
+    if (keep && (full === keep || full === `${keep}-wal` || full === `${keep}-shm`)) continue;
+    const pid = Number.parseInt(name.slice(prefix.length).split(".")[0] ?? "", 10);
+    if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && processIsRunning(pid)) continue;
+    try { rmSync(full, { force: true }); removed.push(name); } catch { /* A temp we cannot remove is reported by the backup, not here. */ }
+  }
+  return removed;
+}
+
 async function buildIndexFile(target: string, root: string): Promise<number> {
   mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   let entries: string[];
@@ -294,6 +332,8 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
   // lock file can be left behind to wedge a later start.
   const temp = `${target}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   rmSync(temp, { force: true });
+  // Every rebuild clears what earlier ones left behind.
+  sweepStaleIndexTemps(target, temp);
   const db = new DatabaseSync(temp);
   let written = 0;
   try {

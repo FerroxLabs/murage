@@ -246,9 +246,9 @@ test("actual canonical root resolver rejects empty override without acquiring or
   assert.equal(claims,0);
 });
 
-function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
+function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{}}={}) {
   const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
-  const messages=[];let quit=0,backgroundQuits=0;let trigger;
+  const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger;
   const scope={
     app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{quit++;}},
     // The actual before-quit handler first tells the background lifecycle
@@ -267,6 +267,9 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
     notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},desktopResticTool:null,remoteBackupAttestation:{abort(){}},
+    // The bundled adb daemon is not an owned child: it forks itself off the
+    // first adb command and stays, so quitting has to stop it by name.
+    androidDevice:{stop:()=>{androidStops++;return androidStop();}},
   };
   const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
@@ -274,7 +277,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),backupRemoteOperations=new Set(backupOperations),companionStarts=new Set();
     ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
   `)(...Object.values(scope),stop,writes,backupOperations,release);
-  return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,trigger:()=>trigger({preventDefault(){}})};
+  return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,androidStops:()=>androidStops,trigger:()=>trigger({preventDefault(){}})};
 }
 
 test("actual before-quit waits for child exit AND pending credentials before releasing",async()=>{
@@ -286,6 +289,22 @@ test("actual before-quit waits for child exit AND pending credentials before rel
   write.resolve();await f.state.cleanup;
   // Quit is re-entered on the next turn so the prevented native quit unwinds first.
   assert.equal(released,1);assert.equal(f.quit(),0);await nextTurn();assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
+  // The bundled adb daemon outlives the app unless quit stops it by name.
+  assert.equal(f.androidStops(),1);
+});
+
+test("actual quit waits for the adb helper to stop and never fails on it",async()=>{
+  // It is not a child of this process, so nothing else would wait for it; and
+  // a phone that will not answer must never be why Murage cannot close.
+  let refuse;const stopping=new Promise((_resolve,reject)=>{refuse=reject;});
+  stopping.catch(()=>{});
+  let released=0;
+  const f=shutdownFixture({androidStop:()=>stopping,release:()=>{released++;return true;}});
+  f.trigger();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.androidStops(),1);assert.equal(released,0);
+  refuse(new Error("no device"));
+  await f.state.cleanup;assert.equal(released,1);assert.deepEqual(f.messages,[]);
 });
 
 // R2-T5 changed intended behavior: an aborted registration that derives an

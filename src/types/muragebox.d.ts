@@ -135,6 +135,9 @@ type SkillRecordingPayload = {
     error?:string|null;
     /** Why the last backup stopped, while it waits to be cleared. */
     reviewReason?:string;
+    /** The step it stopped on and the refusal that stopped it, both from
+     * closed sets. Never a path, a filename or a secret. */
+    captureFailure?:{stage:string;code:string};
   }
   interface BackupClosedStatus {
     supported:boolean;

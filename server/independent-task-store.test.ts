@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
 import { Store } from "./store.ts";
+import type { ModelSelection } from "./contracts.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"engine-one",model:"one",effort:"medium",connectionId:"account-one"}));
@@ -125,6 +126,34 @@ it("keeps existing task settings and cursors when the owner changes new-thread d
   const detached=store.createTask(bot.id,"Detached defaults",false)!;
   expect(detached).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:true});
   expect(store.projectBotForTask(bot.id,first)?.resumeCursors).toEqual({"engine-one":"keep-session"});
+});
+
+it("adopts the first task pick as the bot's own model, and leaves a bot that already chose one alone",()=>{
+  // A workspace with no engine yet hands new bots the honest-empty selection.
+  let defaults:ModelSelection={instanceId:"",model:""};
+  const store=new Store(()=>structuredClone(defaults));
+  const starter=store.createBot(),starterFirst=starter.threadId;
+  const starterSecond=store.createTask(starter.id,"Second")!;
+  expect(store.bot(starter.id)?.modelSelection).toEqual({instanceId:"",model:""});
+  // Then a key arrives and the owner picks a model in the chat header, which
+  // only ever writes the open task.
+  const picked={instanceId:"engine-one",model:"one",connectionId:"account-one"};
+  store.patchTask(starter.id,starterFirst,{modelSelection:picked});
+  // The BOT now has it too — this is what channels and the team-lead list read.
+  expect(store.bot(starter.id)?.modelSelection).toEqual(picked);
+  const disk=()=>JSON.parse(readFileSync(join(DATA_DIR,"bots.json"),"utf8"));
+  expect(disk().find((row:any)=>row.id===starter.id).modelSelection).toEqual(picked);
+  // Its other task is not dragged along.
+  expect(store.taskByThread(starter.id,starterSecond.threadId)?.modelSelection).toEqual({instanceId:"",model:""});
+  // A bot that already has a bot-level model keeps it: a pick on one of its
+  // tasks stays a deliberate per-task override.
+  defaults={instanceId:"engine-one",model:"one",effort:"medium",connectionId:"account-one"};
+  const settled=store.createBot(),other=store.createTask(settled.id,"Other")!;
+  const override={instanceId:"engine-two",model:"two",connectionId:"account-two"};
+  store.patchTask(settled.id,other.threadId,{modelSelection:override});
+  expect(store.bot(settled.id)?.modelSelection).toMatchObject({instanceId:"engine-one",model:"one"});
+  expect(disk().find((row:any)=>row.id===settled.id).modelSelection).toMatchObject({instanceId:"engine-one",model:"one"});
+  expect(store.projectBotForTask(settled.id,other.threadId)?.modelSelection).toEqual(override);
 });
 
 it("persists write-once procedure pins per direct task and room responder",()=>{

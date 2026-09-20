@@ -1,6 +1,12 @@
+import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLOSE_INHERITED_DESCRIPTORS,
+  adbServerLaunch,
+  adbServerPort,
   createAndroidDeviceController,
   parseAdbDevices,
   resolveAdbBinary,
@@ -71,6 +77,74 @@ describe("Android USB device bridge", () => {
     expect(calls.at(-1)?.args).toEqual([
       "-s", "USB123", "shell", "input", "swipe", "540", "1920", "540", "480", "240",
     ]);
+  });
+
+  it("starts the adb daemon itself, once, and stops it again", async () => {
+    const calls = [], spawned = [];
+    const run = async (_binary, args) => { calls.push(args); return { stdout: devicesOutput, stderr: "" }; };
+    const child = { once: (event, handler) => { if (event === "exit") setImmediate(handler); }, unref: () => {} };
+    const controller = createAndroidDeviceController({
+      run, resolveBinary: () => "/trusted/adb", platform: "linux",
+      probeServer: async () => false,
+      spawn: (command, args, options) => { spawned.push({ command, args, options }); return child; },
+    });
+
+    await controller.status({ fresh: true });
+    await controller.status({ fresh: true });
+    // Started once, before the first ordinary command, and never again.
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].args.at(-2)).toBe("/trusted/adb");
+    expect(spawned[0].args.at(-1)).toBe("start-server");
+    expect(spawned[0].options).toMatchObject({ stdio: "ignore", detached: true });
+    expect(calls[0]).toEqual(["devices", "-l"]);
+    // Quitting takes the daemon with it.
+    await expect(controller.stop()).resolves.toEqual({ stopped: true });
+    expect(calls.at(-1)).toEqual(["kill-server"]);
+    // Nothing left to stop a second time.
+    await expect(controller.stop()).resolves.toEqual({ stopped: false });
+  });
+
+  it("never starts or stops a daemon somebody else is already running", async () => {
+    const calls = [], spawned = [];
+    const controller = createAndroidDeviceController({
+      run: async (_binary, args) => { calls.push(args); return { stdout: devicesOutput, stderr: "" }; },
+      resolveBinary: () => "/trusted/adb", platform: "linux",
+      probeServer: async () => true,
+      spawn: () => { spawned.push("started"); return { once: () => {}, unref: () => {} }; },
+    });
+    await controller.status({ fresh: true });
+    expect(spawned).toEqual([]);
+    await expect(controller.stop()).resolves.toEqual({ stopped: false });
+    expect(calls).toEqual([["devices", "-l"]]);
+  });
+
+  it("runs the daemon behind a launcher that closes inherited descriptors", async () => {
+    expect(adbServerLaunch("C:/adb.exe", { platform: "win32" })).toEqual({ command: "C:/adb.exe", args: ["start-server"] });
+    const posix = adbServerLaunch("/trusted/adb", { platform: "linux" });
+    expect(posix.command).toBe("/bin/sh");
+    expect(posix.args[1]).toBe(CLOSE_INHERITED_DESCRIPTORS);
+    expect(adbServerPort({})).toBe(5037);
+    expect(adbServerPort({ ANDROID_ADB_SERVER_PORT: "5038" })).toBe(5038);
+    expect(adbServerPort({ ANDROID_ADB_SERVER_PORT: "not a port" })).toBe(5037);
+  });
+
+  it.skipIf(process.platform === "win32")("really closes an inherited descriptor before the daemon starts", async () => {
+    // fd 3 is handed to the child deliberately, standing in for the caches,
+    // leveldb log and listening debug socket the daemon used to keep.
+    const fd = openSync(fileURLToPath(import.meta.url), "r");
+    const checker = 'if : <&3 2>/dev/null; then echo INHERITED; else echo CLOSED; fi';
+    const answer = (args) => new Promise((resolve) => {
+      const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "ignore", fd] });
+      let output = "";
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.once("close", () => resolve(output.trim()));
+    });
+    try {
+      // Without the launcher the descriptor survives the exec: the bug.
+      expect(await answer(["-c", 'exec "$@"', "control", "/bin/sh", "-c", checker])).toBe("INHERITED");
+      // With it, nothing above stderr reaches the program.
+      expect(await answer(["-c", CLOSE_INHERITED_DESCRIPTORS, "guarded", "/bin/sh", "-c", checker])).toBe("CLOSED");
+    } finally { closeSync(fd); }
   });
 
   it("rejects network devices and shell metacharacters", async () => {
