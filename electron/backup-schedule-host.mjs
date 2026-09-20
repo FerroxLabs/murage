@@ -276,6 +276,53 @@ export function createBackupScheduleHost(host) {
     async completeUpgrade(currentVersion){const p=pendingUpgrade();if(!p)throw Error("BACKUP_UPGRADE_REJECTED");const v=await verifyUpgrade(p.candidate);coordinator.completeUpgrade(v.handoffId,currentVersion,v.candidate,v.bindingRevision,v.installationIdentity);},
     returnUpgradeToWorkspace(){const p=pendingUpgrade();if(!p)throw Error("BACKUP_UPGRADE_REJECTED");coordinator.cancelUpgrade(p.handoffId);},
     completeReturn(){const s=coordinator.status();if(s.phase==="return-pending"&&s.job?.handoff)coordinator.completeReturn(s.job.handoff.id);},
+    /** One act of setup. Before this, turning on backups cost four native
+     * dialogs — create the key, choose the folder, choose the key file the app
+     * had just written, confirm — and the person then had to find a separate
+     * switch. The app already knew everything after the folder was chosen, so
+     * it now creates the key itself and asks once.
+     *
+     * Every check selectReferences makes is made here, in the same order:
+     * the destination is refused inside the installation on natively resolved
+     * paths, verifyIdentityAccess() runs before anything is bound, the key's
+     * recipient header is required, and the binding is still written with
+     * allowIdleRestart false so configure() alone can turn the schedule on.
+     * `existingKey` keeps the old key picker for people who already have an
+     * age key; it is not on the ordinary road. */
+    async setUpBackups(options){
+      if(running||coordinator.status().enabled||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
+      if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      const existingKey=options?.existingKey===true;
+      if(!existingKey&&typeof host.createRecoveryKey!=="function")throw Error("BACKUP_UNAVAILABLE");
+      running=true;try{
+      const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
+      const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
+      if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
+      await verifyIdentityAccess();
+      if(!samePath(installation,realpathSync.native(host.installation())))throw Error("BACKUP_REFERENCE_CHANGED");
+      const bound=realpathSync(host.installation());
+      let keyFile,created=null;
+      if(existingKey){keyFile=await host.chooseKey();if(!keyFile)return {cancelled:true};}
+      else{
+        // The key is written by the host, outside the installation and outside
+        // the backup folder; createRecoveryKeyIn enforces both.
+        created=await host.createRecoveryKey(target);
+        if(typeof created?.file!=="string")throw Error("BACKUP_RECOVERY_KEY_UNVERIFIED");
+        keyFile=created.file;
+      }
+      const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
+      // The one confirmation. It names the folder, the key and where the key
+      // was put, and it is where the person consents to Murage closing and
+      // reopening its own window for a backup.
+      const resolvedKey=realpathSync(keyFile);
+      const keyNote=created?{label:path.basename(resolvedKey),publicKey:created.publicKey,folder:path.basename(path.dirname(resolvedKey))}:null;
+      if(!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)}))return {cancelled:true,...(keyNote?{created:keyNote}:{})};
+      const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:resolvedKey,keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
+      await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));
+      const status=await publicStatus();
+      return keyNote?{...status,created:keyNote}:status;
+      }finally{running=false;}
+    },
     async selectReferences(){
       if(running||coordinator.status().enabled||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");

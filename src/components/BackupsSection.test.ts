@@ -53,9 +53,9 @@ describe("Backups settings section", () => {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
-import { backupSummary, closedJobNotice, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
+import { SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
-import { schedulePhase } from "./backup-schedule-ui";
+import { scheduleError, schedulePhase } from "./backup-schedule-ui";
 import type { RemoteController } from "./BackupRemoteSettings";
 
 const refs = { installationRef: "fixture_install", destinationRef: "fixture_dest", recoveryRef: "fixture_key", destinationLabel: "Fixture backups", recoveryLabel: "Recovery.age" };
@@ -196,7 +196,9 @@ describe("optional recovery-key and back-up-now bridges", () => {
   it("names the three back-up-now cases and stays generic otherwise", () => {
     expect(runNowError(Error("BACKUP_WORK_ACTIVE"))).toBe("Finish or stop current work first.");
     expect(runNowError(Error("BACKUP_BUSY"))).toBe("A backup is already running.");
-    expect(runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"))).toBe("Turn on daily backups once to allow Murage to close and reopen the window for a backup.");
+    // M57: the old line read as an instruction to let Murage close, and the
+    // owner quit it mid-recovery. See the dedicated describe block below.
+    expect(runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"))).toBe("Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it.");
     // A daily run refused for the same reason shows it too, not a generic line.
     const blocked = "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.";
     expect(runNowError(Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_RELAUNCH_BLOCKED"))).toBe(blocked);
@@ -223,24 +225,28 @@ function controller(patch: Partial<ScheduleController> & { status: BackupSchedul
   const noop = () => {};
   return { bridge: { status: noop, selectReferences: noop, configure: noop }, closedBridge: undefined, draft: { time: "22:15", timezone: "Asia/Bangkok", catchup: "2", size: "1", duration: "10", preUpgrade: false, closedApp: false },
     consent: false, setConsent: noop, busy: false, stale: false, error: null, notice: null, area: "schedule", closed: null, closedStale: false, closedAction: null, createdKey: null, confirmRun: false, setConfirmRun: noop,
-    unavailable: false, locked: false, editingLocked: false, closedRegistered: false, closedAllowed: false, choices: null, lastClosed: null, edit: noop, closedOperation: noop, setClosedApp: noop, selectReferences: noop, createRecoveryKey: undefined,
+    unavailable: false, locked: false, editingLocked: false, closedRegistered: false, closedAllowed: false, choices: null, lastClosed: null, edit: noop, closedOperation: noop, setClosedApp: noop, selectReferences: noop, setUp: noop, saveKeyCopy: noop, keyCopy: null,
     enable: noop, disable: noop, canRunNow: false, runNow: noop, refreshNow: noop, ...patch } as unknown as ScheduleController;
 }
 const off: BackupScheduleStatus = { supported: true, pending: false, enabled: false, revision: 1, phase: "idle", schedule: { enabled: false, preUpgrade: false }, refs };
 const on: BackupScheduleStatus = { ...off, enabled: true, schedule: enabledSchedule };
 
 describe("setup collapses into a schedule card", () => {
-  it("while off: numbered steps, mandatory idle-restart consent and a disabled turn-on without choices", () => {
+  // M57: the folder and the key are chosen in one act, so the old
+  // "1. Where to save" / "2. Recovery key" / "3. When" ladder is two steps,
+  // and the two competing buttons are gone.
+  it("with a folder and key already chosen: the remaining settings, the permission and a disabled turn-on", () => {
     const html = renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ status: off, closedBridge: {} as ScheduleController["closedBridge"] }), onSetLimits: () => {} }));
-    for (const text of ["Set up backups", "1. Where to save", "2. Recovery key", "3. When", "Choose backup folder and recovery key", "Also back up", "Murage may close and reopen this window when it&#x27;s idle to take the backup.", "nobody, including you"]) expect(html).toContain(text);
+    for (const text of ["Set up backups", "1. Where your backups go", "2. When", "Also back up", "close and reopen its own window", "nobody, including you"]) expect(html).toContain(text);
     expect(html).toMatch(/disabled=""[^>]*>Turn on daily backups</);
     expect(html).not.toContain(">Turn off<");
     expect(html).not.toContain("Create my recovery key");
+    expect(html).not.toContain(">Choose backup folder and recovery key<");
   });
-  it("offers Create a recovery key only when the desktop app provides it, and shows no secret", () => {
-    const html = renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ status: off, createRecoveryKey: () => {}, createdKey: { label: "Murage recovery.age", publicKey: "age1" + "q".repeat(58) } }), onSetLimits: () => {} }));
-    expect(html).toContain(">Create my recovery key<"); expect(html).toContain("Recovery key saved as Murage recovery.age");
-    expect(html).toContain("password manager or a USB drive"); expect(html).toContain("<details>"); expect(html).not.toContain("AGE-SECRET-KEY");
+  it("falls back to the old two-step selection on a desktop app with no one-act setup", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ status: { ...off, refs: undefined } as BackupScheduleStatus, setUp: undefined }), onSetLimits: () => {} }));
+    expect(html).toMatch(/<button[^>]*>Choose backup folder and recovery key</);
+    expect(html).not.toContain("Turn on backups");
   });
   it("while on: settings summary and Turn off, no setup controls", () => {
     const html = renderToStaticMarkup(createElement(ScheduleCard, { s: controller({ status: on }) }));
@@ -326,5 +332,168 @@ describe("customer findings: plain words and reasons where the control is", () =
     }
     // Only a code-shaped refusal is honoured; anything else is a malformed answer.
     expect(() => recoveryKeyResult({ refused: "PRIVATE path /home/someone" })).toThrow("Invalid recovery key result");
+  });
+});
+
+// M57. The owner read "Turn on daily backups once to allow Murage to close and
+// reopen the window for a backup." — shown in red under "Needs attention" — as
+// an instruction, and quit Murage during a live data recovery. Copy on this
+// page must still say plainly that Murage may close and reopen its window, and
+// must also say that Murage does that itself, so it can never be read as an
+// instruction to quit.
+describe("the backup restart is a permission, never an instruction to quit", () => {
+  const SAYS_MURAGE_DOES_IT = /Murage does (this|that) itself|you never need to quit|never quit Murage/i;
+  it("the Back up now consent refusal explains the permission without nudging a quit", () => {
+    const message = runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"));
+    expect(message).toMatch(/clos(e|ing) and reopen(ing)?/i);
+    expect(message).toMatch(SAYS_MURAGE_DOES_IT);
+    expect(message).not.toBe("Turn on daily backups once to allow Murage to close and reopen the window for a backup.");
+  });
+  it("the schedule's consent refusals say the same thing in plain words, not jargon", () => {
+    for (const code of ["BACKUP_SCHEDULE_CONSENT_REQUIRED", "BACKUP_CLOSED_CONSENT_REQUIRED"]) {
+      const message = scheduleError(Error(code));
+      expect(message, code).not.toMatch(/idle-restart|idle restart consent/i);
+      expect(message, code).toMatch(SAYS_MURAGE_DOES_IT);
+    }
+  });
+});
+
+// M57. Setting up backups was two buttons offering overlapping things
+// ("Create my recovery key" and "Choose backup folder and recovery key"), four
+// native dialogs, and an instruction to go and select the file the app had just
+// written. It took the owner three attempts and he still had no backup.
+describe("setup is one button", () => {
+  const fresh: BackupScheduleStatus = { ...off, refs: undefined };
+  const render = (patch: Partial<ScheduleController> = {}) =>
+    renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ ...patch, status: (patch.status ?? fresh) as BackupScheduleStatus }), onSetLimits: () => {} }));
+  it("offers exactly one way to start, and never two overlapping ones", () => {
+    const html = render();
+    expect(html).toMatch(/<button[^>]*>Turn on backups</);
+    expect(html).not.toContain(">Create my recovery key<");
+    expect(html).not.toContain(">Choose backup folder and recovery key<");
+    // No jargon on the ordinary road.
+    for (const word of ["age key", "recipient", "identity header"]) expect(html.toLowerCase(), word).not.toContain(word);
+  });
+  it("keeps the existing-key path, off the default road", () => {
+    const html = render();
+    expect(html).toContain("already have");
+    expect(html).toMatch(/<button[^>]*>Use a key I already have</);
+  });
+  it("after setup, keeping a copy of the key is one action with the reason next to it", () => {
+    const html = render({ status: { ...off }, createdKey: { label: "murage-recovery-key.txt", publicKey: "age1" + "q".repeat(58), folder: "Documents" } });
+    expect(html).toContain("murage-recovery-key.txt");
+    expect(html).toContain("Documents");
+    expect(html).toMatch(/<button[^>]*>Save a copy…</);
+    expect(html).toContain("nobody, including you");
+    // Never the secret, and never the old "go and select it again" homework.
+    expect(html).not.toContain("AGE-SECRET");
+    expect(html).not.toContain("the key picker opens in that folder");
+  });
+});
+
+describe("a schedule with no backup behind it says so, and says what to do", () => {
+  it("names the gap the owner's screenshot showed", () => {
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, enabled: true, lastVerified: undefined } });
+    expect(summary.attention).toContain("Daily backups are on, but no backup has been taken yet. Use Back up now to take the first one.");
+  });
+  it("and stays quiet once one has been verified", () => {
+    expect(backupSummary(healthy).attention).not.toContain("Daily backups are on, but no backup has been taken yet. Use Back up now to take the first one.");
+  });
+});
+
+// M57. Setup has to END with a backup. The owner walked the old flow to its
+// end and the page still said "No verified backup on this computer yet" — a
+// schedule with nothing behind it reads as success and protects nobody. He
+// lost two weeks of live business work the same day.
+describe("setup ends with a verified backup, not a to-do", () => {
+  const verified = { jobId: "a".repeat(64), installationRef: "i", destinationRef: "d", selectionHash: "b".repeat(64), snapshotId: "00000000-0000-4000-8000-000000000000", artifactRef: "x", sha256: "c".repeat(64), bytes: 1234567890, verifiedAt: 1700000000000 };
+  /** Behaves as the desktop host does: setUp binds the folder and the key it
+   * wrote, configure turns the schedule on, runNow hands off to the backup
+   * restart, and the status the page reads afterwards carries the receipt. */
+  function hostBridge({ firstBackup = true, capture = true }: { firstBackup?: boolean; capture?: boolean } = {}) {
+    const calls: string[] = [];
+    let status: BackupScheduleStatus = { supported: true, pending: false, enabled: false, revision: 1, phase: "idle", schedule: { enabled: false, preUpgrade: false } };
+    const bridge = {
+      status: async () => status,
+      setUp: async () => { calls.push("setUp"); status = { ...status, refs }; return { ...status, created: { label: "murage-recovery-key.txt", publicKey: "age1" + "q".repeat(58), folder: "Documents" } }; },
+      configure: async (revision: number, choices: Record<string, unknown>) => {
+        calls.push(`configure:${choices.allowIdleRestart}`);
+        const { allowIdleRestart: _consent, ...schedule } = choices;
+        status = { ...status, enabled: schedule.enabled === true, schedule: schedule as BackupScheduleStatus["schedule"], revision: revision + 1 };
+        return status;
+      },
+      ...(firstBackup ? { runNow: async (revision: number) => {
+        calls.push(`runNow:${revision}`);
+        // The desktop app closes and reopens around the capture; what the page
+        // reads next is the state it comes back to.
+        status = capture ? { ...status, phase: "returned", lastVerified: verified } : { ...status, phase: "handoff-armed" };
+        return status;
+      } } : {}),
+    } as unknown as ScheduleController["bridge"];
+    return { bridge: bridge!, calls, latest: () => status };
+  }
+  const drive = async (host: ReturnType<typeof hostBridge>) => {
+    const notices: string[] = [], keys: { label: string; folder: string }[] = [];
+    let shown: BackupScheduleStatus | null = null;
+    const outcome = await completeBackupSetup(host.bridge!, undefined, { applyStatus: (next) => { shown = next; }, createdKey: (note) => keys.push(note), notice: (text) => notices.push(text) });
+    return { outcome, notices, keys, shown: shown as BackupScheduleStatus | null };
+  };
+  const summaryFor = (schedule: BackupScheduleStatus) => backupSummary({ scheduleBridge: true, schedule, scheduleStale: false, scheduleFailure: null, closed: null, closedStale: false, remoteBridge: false, remote: null, remoteStale: false, remoteFailure: null }, () => "WHEN");
+
+  it("takes the first backup itself and finishes on a verified state", async () => {
+    const host = hostBridge();
+    const { outcome, notices, keys, shown } = await drive(host);
+    // THE GATE: the state setup ends on is protected, not merely configured.
+    const summary = summaryFor(shown!);
+    expect(summary.last).not.toBe("No verified backup on this computer yet");
+    expect(summary.last).toBe("WHEN · 1.2 GB");
+    expect(summary.attention).toEqual([]);
+    expect(outcome).toEqual({ state: "capturing" });
+    // One act: bind, turn on, back up. No extra question in between.
+    expect(host.calls).toEqual(["setUp", "configure:true", "runNow:2"]);
+    expect(keys).toEqual([{ label: "murage-recovery-key.txt", publicKey: "age1" + "q".repeat(58), folder: "Documents" }]);
+    expect(notices).toContain(SETUP_FIRST_BACKUP_RUNNING);
+  });
+
+  it("a first backup that cannot start is said plainly, and never reads as one that happened", async () => {
+    for (const [code, named] of [["BACKUP_WORK_ACTIVE", "Finish or stop current work first."], ["BACKUP_BUSY", "A backup is already running."]] as const) {
+      const host = hostBridge();
+      (host.bridge as unknown as { runNow: () => Promise<never> }).runNow = async () => { throw Error(code); };
+      const { outcome, shown } = await drive(host);
+      expect(outcome.state, code).toBe("first-backup-failed");
+      expect(outcome).toMatchObject({ message: expect.stringContaining(named) });
+      expect(outcome).toMatchObject({ message: expect.stringContaining("Nothing has been backed up yet") });
+      // The schedule is genuinely on, so the page says so — and the summary
+      // still names the gap rather than implying a backup exists.
+      expect(shown!.enabled).toBe(true);
+      expect(summaryFor(shown!).last).toBe("No verified backup on this computer yet");
+      expect(summaryFor(shown!).attention).toContain("Daily backups are on, but no backup has been taken yet. Use Back up now to take the first one.");
+    }
+  });
+
+  it("an older desktop app with no Back up now is told to take one, not left thinking it is done", async () => {
+    const host = hostBridge({ firstBackup: false });
+    const { outcome, notices } = await drive(host);
+    expect(outcome).toEqual({ state: "no-first-backup" });
+    expect(notices).toContain(SETUP_NO_FIRST_BACKUP);
+    expect(SETUP_NO_FIRST_BACKUP).toContain("Use Back up now so you actually have a backup");
+  });
+
+  it("a cancelled folder picker turns nothing on and still says where the key went", async () => {
+    const host = hostBridge();
+    (host.bridge as unknown as { setUp: () => Promise<unknown> }).setUp = async () => ({ cancelled: true, created: { label: "murage-recovery-key.txt", publicKey: null, folder: "Documents" } });
+    const { outcome, notices, keys } = await drive(host);
+    expect(outcome).toEqual({ state: "cancelled" });
+    expect(keys).toHaveLength(1);
+    expect(notices[0]).toContain("left in Documents");
+    expect(host.calls).toEqual([]);
+  });
+
+  it("an expected refusal answered as a value is still a failure", async () => {
+    const host = hostBridge();
+    (host.bridge as unknown as { setUp: () => Promise<unknown> }).setUp = async () => ({ refused: "BACKUP_RECOVERY_KEY_LOCATION_INVALID" });
+    await expect(drive(host)).rejects.toThrow("BACKUP_RECOVERY_KEY_LOCATION_INVALID");
+    (host.bridge as unknown as { setUp: () => Promise<unknown> }).setUp = async () => ({ refused: "/Users/someone/secret" });
+    await expect(drive(host)).rejects.toThrow("INVALID_BACKUP_SETUP_RESULT");
   });
 });

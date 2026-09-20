@@ -486,3 +486,82 @@ test("a closed-app capture failure records the reason without reopening a window
     assert.equal(f.calls.includes("normal"),false);
   }finally{f.cleanup();}
 });
+
+// ---- M57. One act of setup.
+//
+// Turning on backups used to cost four native dialogs: create the key (its own
+// save dialog), then "Choose backup folder and recovery key" asked for the
+// folder AND for the key file the app had just written, then a confirmation —
+// and daily backups were still off afterwards. The owner needed three attempts
+// and still ended up with no verified backup. These tests pin the new shape and
+// every safety check it must keep.
+const madeKey=(root,name="made-key.txt")=>{const file=path.join(root,name);writeFileSync(file,fakeKey,{mode:0o600});return{file,label:name,publicKey:"age1"+"q".repeat(58)};};
+
+test("setting up backups asks for the folder once, writes the key itself, and never asks for it back",async()=>{
+  const dialogs=[];let offered;
+  const f=fixture(({root,destination,keyFile})=>({
+    chooseDestination:async()=>{dialogs.push("folder");return destination;},
+    chooseKey:async()=>{dialogs.push("key-picker");return keyFile;},
+    confirmReferences:async summary=>{dialogs.push("confirm");offered=summary;return true;},
+    createRecoveryKey:async chosen=>{dialogs.push("create-key");assert.equal(chosen,realpathSync.native(destination));return madeKey(root);},
+  }));
+  try{
+    const status=await f.controller.setUpBackups();
+    assert.deepEqual(dialogs,["folder","create-key","confirm"]);
+    // The one confirmation names both choices and where the key went.
+    assert.equal(offered.destination,path.basename(realpathSync.native(f.destination)));
+    assert.equal(offered.recoveryKey,"made-key.txt");
+    assert.equal(offered.createdKey,true);
+    assert.equal(offered.recoveryKeyFolder,realpathSync(f.root));
+    // The key the app made is the key it bound, with no second selection.
+    assert.equal(status.refs.recoveryLabel,"made-key.txt");
+    assert.equal(status.created.label,"made-key.txt");
+    assert.equal(status.created.publicKey,"age1"+"q".repeat(58));
+    // Setup alone still does not enable: configure() remains the only switch.
+    assert.equal(status.enabled,false);
+    const encoded=JSON.stringify(status);
+    assert.equal(encoded.includes("AGE-SECRET"),false);assert.equal(encoded.includes(f.root),false);
+  }finally{f.cleanup();}
+});
+
+test("the old key picker survives as the existing-key branch, and both refuse a key with no recipient header",async()=>{
+  const dialogs=[];
+  const f=fixture(({root,destination,keyFile})=>({
+    chooseDestination:async()=>{dialogs.push("folder");return destination;},
+    chooseKey:async()=>{dialogs.push("key-picker");return keyFile;},
+    confirmReferences:async()=>{dialogs.push("confirm");return true;},
+    createRecoveryKey:async()=>madeKey(root),
+  }));
+  try{
+    const status=await f.controller.setUpBackups({existingKey:true});
+    assert.deepEqual(dialogs,["folder","key-picker","confirm"]);
+    assert.equal(status.refs.recoveryLabel,"independent-key.txt");
+    assert.equal(status.created,undefined);
+  }finally{f.cleanup();}
+  const headerless=fixture(({root})=>({createRecoveryKey:async()=>{const file=path.join(root,"no-header.txt");writeFileSync(file,"AGE-SECRET-KEY-1"+"A".repeat(60)+"\n",{mode:0o600});return{file,label:"no-header.txt",publicKey:null};}}));
+  try{await assert.rejects(headerless.controller.setUpBackups(),/BACKUP_IDENTITY_HEADER_REQUIRED/);}finally{headerless.cleanup();}
+});
+
+test("one-act setup keeps every refusal the two-step selection had",async()=>{
+  // A destination inside the installation makes the backup consume itself.
+  const inside=fixture(({installation})=>{const folder=path.join(installation,"archives");mkdirSync(folder);return{chooseDestination:async()=>folder,createRecoveryKey:async()=>{assert.fail("no key may be written before the destination is accepted");}};});
+  try{await assert.rejects(inside.controller.setUpBackups(),/BACKUP_DESTINATION_INVALID/);}finally{inside.cleanup();}
+  // verifyIdentityAccess() runs before anything is created or bound.
+  let created=false;
+  const unverified=fixture(({root})=>({verifyEncrypted:async()=>{throw Error("AGE_TOOL_UNVERIFIED");},createRecoveryKey:async()=>{created=true;return madeKey(root);}}));
+  try{await assert.rejects(unverified.controller.setUpBackups(),/AGE_TOOL_UNVERIFIED/);assert.equal(created,false);}finally{unverified.cleanup();}
+  // Cancelling the folder picker writes nothing at all.
+  const cancelled=fixture(({root})=>({chooseDestination:async()=>null,createRecoveryKey:async()=>{assert.fail("nothing is created before a folder is chosen");}}));
+  try{assert.deepEqual(await cancelled.controller.setUpBackups(),{cancelled:true});assert.equal((await cancelled.controller.status()).refs,undefined);}finally{cancelled.cleanup();}
+  // Declining the confirmation binds nothing, and says the key exists.
+  const declined=fixture(({root})=>({confirmReferences:async()=>false,createRecoveryKey:async()=>madeKey(root)}));
+  try{const answer=await declined.controller.setUpBackups();assert.equal(answer.cancelled,true);assert.equal(answer.created.label,"made-key.txt");assert.equal((await declined.controller.status()).refs,undefined);}finally{declined.cleanup();}
+});
+
+test("setup is refused while a backup is running or a schedule is already on",async()=>{
+  const f=fixture(({root})=>({createRecoveryKey:async()=>madeKey(root)}));
+  try{
+    await f.enable();
+    await assert.rejects(f.controller.setUpBackups(),/BACKUP_BUSY/);
+  }finally{f.cleanup();}
+});

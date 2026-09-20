@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
-import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
+import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, completeBackupSetup, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
 const scheduleInput = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:ring-2 focus:ring-accent-border disabled:opacity-50";
@@ -45,7 +45,8 @@ export function useBackupSchedule() {
   const [consent,setConsent]=useState(false),[busy,setBusy]=useState(false),[stale,setStale]=useState(false);
   const [error,setError]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null),[area,setArea]=useState<ScheduleArea>("schedule");
   const [closed,setClosed]=useState<BackupClosedStatus|null>(null),[closedStale,setClosedStale]=useState(false),[closedAction,setClosedAction]=useState<string|null>(null);
-  const [createdKey,setCreatedKey]=useState<{label:string;publicKey:string|null}|null>(null),[confirmRun,setConfirmRun]=useState(false);
+  const [createdKey,setCreatedKey]=useState<{label:string;publicKey:string|null;folder:string}|null>(null),[confirmRun,setConfirmRun]=useState(false);
+  const [keyCopy,setKeyCopy]=useState<string|null>(null);
   const [closedSetupFailed,setClosedSetupFailed]=useState(false);
   const gate=useRef(false),dirty=useRef(false),mounted=useRef(true),version=useRef(0);
   const bridge=window.muragebox?.backupSchedule as BackupScheduleBridge|undefined;
@@ -126,15 +127,30 @@ export function useBackupSchedule() {
     const next=await bridge!.selectReferences();if("cancelled"in next){if(mounted.current)setNotice("Selection cancelled. Schedule unchanged.");return;}
     apply(next,expected);setConsent(false);if(mounted.current)setNotice("Backup folder and recovery key chosen. Daily backups are not on yet.");
   });
-  const createRecoveryKey=modeBridge?.createRecoveryKey?()=>void run("schedule",async expected=>{
-    let result:ReturnType<typeof recoveryKeyResult>;
-    try{result=recoveryKeyResult(await modeBridge.createRecoveryKey!());}
-    // A refused save leaves no new key: drop the previous "saved as" line so
-    // it cannot read as the result of this attempt.
-    catch(cause){if(mounted.current&&expected===version.current){setCreatedKey(null);setError(recoveryKeyError(cause));}return;}
+  /** One act of setup: the folder picker, the key Murage writes itself, one
+   * confirmation — the schedule goes on AND the first backup is taken, because
+   * a schedule with no backup behind it reads as success and protects nothing.
+   * The sequence itself lives in completeBackupSetup so it can be tested
+   * without a browser. */
+  const setUp=bridge?.setUp?(options?:{existingKey?:boolean})=>void run("schedule",async expected=>{
+    const guard=<T,>(apply:(value:T)=>void)=>(value:T)=>{if(mounted.current&&expected===version.current)apply(value);};
+    const outcome=await completeBackupSetup(bridge!,options,{
+      applyStatus:next=>{dirty.current=false;apply(next,expected);setConsent(false);},
+      createdKey:guard(setCreatedKey),
+      notice:guard(setNotice),
+    });
     if(!mounted.current||expected!==version.current)return;
-    if("cancelled"in result){setNotice("No recovery key was created. Nothing was changed.");return;}
-    setCreatedKey({label:result.label,publicKey:result.publicKey});
+    if(outcome.state==="first-backup-failed"){setNotice(null);setError(outcome.message);}
+  },cause=>recoveryKeyError(cause,scheduleError(cause))):undefined;
+  /** A second copy of the key, somewhere other than the backup folder. The
+   * secret is read and written in the desktop process; this only learns a name. */
+  const saveKeyCopy=modeBridge?.saveRecoveryKeyCopy?()=>void run("schedule",async expected=>{
+    let result:ReturnType<typeof recoveryKeyResult>;
+    try{result=recoveryKeyResult(await modeBridge.saveRecoveryKeyCopy!());}
+    catch(cause){if(mounted.current&&expected===version.current)setError(recoveryKeyError(cause,"The copy could not be saved. Your recovery key is unchanged. Try again."));return;}
+    if(!mounted.current||expected!==version.current)return;
+    if("cancelled"in result){setNotice("No copy was saved. Your recovery key is unchanged.");return;}
+    setKeyCopy(result.label);setNotice(`A copy of your recovery key was saved as ${result.label}.`);
   }):undefined;
   const enable=()=>void run("schedule",async expected=>{
     if(!choices||!status)return;const next=await bridge!.configure(status.revision,{...choices,allowIdleRestart:true,...(choices.closedApp===true?{allowClosedApp:true}:{})});dirty.current=false;apply(next,expected);setConsent(false);await refreshClosed(expected);
@@ -157,8 +173,8 @@ export function useBackupSchedule() {
     if(mounted.current&&expected===version.current)setNotice("Cleared. Back up now or the next daily backup will try again.");
   });
   const refreshNow=(where:ScheduleArea="advanced")=>void run(where,async expected=>{await refresh(expected);});
-  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,confirmRun,setConfirmRun,
-    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,createRecoveryKey,enable,disable,canRunNow,runNow,canClearReview,clearReview,refreshNow};
+  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,keyCopy,confirmRun,setConfirmRun,
+    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,setUp,saveKeyCopy,enable,disable,canRunNow,runNow,canClearReview,clearReview,refreshNow};
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
 
@@ -187,9 +203,27 @@ function PreUpgradeWarning({s}:{s:ScheduleController}) {
   return status&&(status.schedule.preUpgrade||draft.preUpgrade)&&status.preUpgradeSupported!==true?<p className="text-[13px] text-warning">Pre-upgrade backups are unavailable in this app. Your saved choices are preserved. Use a supported updater before enabling this option.</p>:null;
 }
 
-/** Shown while daily backups are off: numbered steps and the turn-on button. */
+/** The key Murage just made, and the one thing left to do with it. Shown while
+ * setup is still on screen AND after backups are on, because the key matters
+ * far more than the schedule does. */
+export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
+  const {createdKey,keyCopy}=s;
+  if(!createdKey)return null;
+  return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
+    <p className="break-words font-medium">Your recovery key is {createdKey.label}, saved in {createdKey.folder}.</p>
+    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else — a USB drive, another computer, or your password manager.</p>
+    {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
+    {s.saveKeyCopy&&<div className="flex flex-wrap gap-2">
+      <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
+    </div>}
+    {createdKey.publicKey&&<details><summary className="min-h-11 cursor-pointer py-3 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Show public key</summary><p className="break-all font-mono text-[12px] text-ink-secondary">{createdKey.publicKey}</p></details>}
+  </div>;
+}
+
+/** Shown while daily backups are off: one button, or — once a folder and key
+ * are already chosen — the remaining settings. */
 export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController;onSetLimits:()=>void;attention?:readonly string[]}) {
-  const {status,draft,editingLocked,consent,setConsent,choices,closedBridge,closed,closedRegistered,closedAllowed,closedAction,createdKey}=s;
+  const {status,draft,editingLocked,consent,setConsent,choices,closedBridge,closed,closedRegistered,closedAllowed,closedAction}=s;
   const zones=useMemo(()=>timeZoneChoices(),[]);
   const closedReason=closedJobBlockedReason({bridge:Boolean(closedBridge),closed,stale:s.closedStale,setupFailed:s.closedSetupFailed});
   const limitsSet=Boolean(draft.catchup.trim()&&draft.size.trim()&&draft.duration.trim());
@@ -198,28 +232,36 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
     <p className="text-[13px] text-ink-secondary">Murage can save an encrypted copy of your settings, conversations, files and channel history every day. Native sessions, VM homes and external folders are not included.</p>
     <ScheduleState s={s} attention={attention}/>
     {status?.supported&&<>
-      <ol className="min-w-0 list-none space-y-4 p-0">
-        <li className="space-y-1">
-          <h4 className="text-[13px] font-medium text-ink">1. Where to save</h4>
-          <p className="break-words text-[13px] text-ink-secondary">Backup folder: {status.refs?.destinationLabel??"Not chosen yet"}</p>
-        </li>
-        <li className="space-y-2">
-          <h4 className="text-[13px] font-medium text-ink">2. Recovery key</h4>
-          <p className="break-words text-[13px] text-ink-secondary">Recovery key: {status.refs?.recoveryLabel??"Not chosen yet"}</p>
-          <p className="text-[13px] text-ink-secondary">Your recovery key unlocks your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>
-          <p className="text-[13px] text-ink-secondary">{s.createRecoveryKey?"Create a new key file here, or use an age key file you already have. Murage never shows or keeps the secret part.":"Murage doesn't create this key yet. Choose an age key file you already have; no recovery key is created or exported here."}</p>
-          <div className="flex flex-wrap gap-2">
-            {s.createRecoveryKey&&<button type="button" className={primaryButton} disabled={editingLocked} onClick={s.createRecoveryKey}>Create my recovery key</button>}
-            <button type="button" className={scheduleButton} disabled={editingLocked} onClick={s.selectReferences}>Choose backup folder and recovery key</button>
+      <RecoveryKeyKeepsafe s={s}/>
+      {!status.refs&&<div className="min-w-0 space-y-3">
+        <p className="text-[13px] text-ink-secondary">{s.setUp
+          ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, saves it somewhere safe outside that folder, and asks you once before switching daily backups on."
+          : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>
+        <div className="flex flex-wrap gap-2">
+          {s.setUp
+            ?<button type="button" className={primaryButton} disabled={editingLocked} onClick={()=>s.setUp?.()}>Turn on backups</button>
+            :<button type="button" className={primaryButton} disabled={editingLocked} onClick={s.selectReferences}>Choose backup folder and recovery key</button>}
+        </div>
+        {s.setUp&&<details className="text-[13px]">
+          <summary className="min-h-11 cursor-pointer py-3 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">I already have a recovery key</summary>
+          <div className="space-y-2 pt-1">
+            <p className="text-ink-secondary">Murage can use a key file you already keep instead of making a new one. You pick the folder, then the key file. Murage never shows or keeps the secret part.</p>
+            <button type="button" className={scheduleButton} disabled={editingLocked} onClick={()=>s.setUp?.({existingKey:true})}>Use a key I already have</button>
           </div>
-          {createdKey&&<div role="status" className="space-y-1 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
-            <p className="break-words">Recovery key saved as {createdKey.label}.</p>
-            <p className="text-ink-secondary">Keep a copy somewhere other than the backup folder, such as a password manager or a USB drive. Next, use "Choose backup folder and recovery key": the key picker opens in that folder, and you select this key file.</p>
-            {createdKey.publicKey&&<details><summary className="min-h-11 cursor-pointer py-3 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Show public key</summary><p className="break-all font-mono text-[12px] text-ink-secondary">{createdKey.publicKey}</p></details>}
-          </div>}
+        </details>}
+      </div>}
+      {status.refs&&<ol className="min-w-0 list-none space-y-4 p-0">
+        <li className="space-y-2">
+          <h4 className="text-[13px] font-medium text-ink">1. Where your backups go</h4>
+          <p className="break-words text-[13px] text-ink-secondary">Backup folder: {status.refs.destinationLabel}</p>
+          <p className="break-words text-[13px] text-ink-secondary">Recovery key: {status.refs.recoveryLabel}</p>
+          <p className="text-[13px] text-ink-secondary">Your recovery key opens your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={scheduleButton} disabled={editingLocked} onClick={()=>(s.setUp??s.selectReferences)()}>Choose a different folder</button>
+          </div>
         </li>
         <li className="space-y-2">
-          <h4 className="text-[13px] font-medium text-ink">3. When</h4>
+          <h4 className="text-[13px] font-medium text-ink">2. When</h4>
           <fieldset disabled={editingLocked} className="min-w-0 space-y-3">
             <legend className="sr-only">When to back up</legend>
             <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
@@ -243,14 +285,16 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
             <button type="button" className={scheduleButton} onClick={onSetLimits}>{limitsSet?"Review limits":"Set limits"}</button>
           </div>
         </li>
-      </ol>
+      </ol>}
       <PreUpgradeWarning s={s}/>
-      <label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
-        <input type="checkbox" checked={consent} disabled={editingLocked} onChange={event=>setConsent(event.target.checked)} className={checkbox}/>
-        <span>Murage may close and reopen this window when it's idle to take the backup.</span>
-      </label>
-      {!choices&&<p className="text-[12px] text-ink-secondary">To turn on, choose the folder and recovery key, set a time and the backup limits, then tick the box above.</p>}
-      <button type="button" className={primaryButton} disabled={editingLocked||!choices} onClick={s.enable}>Turn on daily backups</button>
+      {status.refs&&<>
+        <label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
+          <input type="checkbox" checked={consent} disabled={editingLocked} onChange={event=>setConsent(event.target.checked)} className={checkbox}/>
+          <span>Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.</span>
+        </label>
+        {!choices&&<p className="text-[12px] text-ink-secondary">To turn on, set a time and the backup limits, then tick the box above.</p>}
+        <button type="button" className={primaryButton} disabled={editingLocked||!choices} onClick={s.enable}>Turn on daily backups</button>
+      </>}
     </>}
   </section>;
 }
@@ -268,6 +312,7 @@ export function ScheduleCard({s,attention=[]}:{s:ScheduleController;attention?:r
   return <section aria-labelledby="backup-schedule-title" className={card}>
     <h3 id="backup-schedule-title" className="text-[15px] font-medium text-ink">Schedule</h3>
     <ScheduleState s={s} attention={attention}/>
+    <RecoveryKeyKeepsafe s={s}/>
     <dl className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[max-content_1fr]">
       {rows.map(([label,value])=><div key={label} className="contents"><dt className="text-ink-secondary">{label}</dt><dd className="break-words text-ink">{value}</dd></div>)}
     </dl>

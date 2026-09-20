@@ -154,10 +154,16 @@ type SkillRecordingPayload = {
         status(): Promise<{ supported:boolean; pending:boolean }>; restart(): Promise<{ restarting:boolean }>;
         /** Native save dialog; the private key never reaches the renderer. */
         createRecoveryKey(): Promise<{ cancelled:true }|{ saved:true; label:string; publicKey:string }>;
+        /** A second copy of the key Murage made, saved where the person picks.
+         * The secret is read and written in the desktop process. */
+        saveRecoveryKeyCopy?(): Promise<{ cancelled:true }|{ saved:true; label:string; publicKey:string }|{ refused:string }>;
       };
       backupSchedule?: {
         status():Promise<BackupScheduleStatus>;
         selectReferences():Promise<BackupScheduleStatus|{cancelled:true}>;
+        /** One act of setup: choose the backup folder, Murage writes the
+         * recovery key itself, one confirmation. Older apps do not have it. */
+        setUp?(options?:{existingKey?:boolean}):Promise<(BackupScheduleStatus|{cancelled:true})&{created?:{label:string;publicKey:string|null;folder:string};refused?:string}>;
         configure(revision:number,choices:import("../../shared/backup-schedule").BackupSchedule&{allowIdleRestart?:boolean;allowClosedApp?:boolean}):Promise<BackupScheduleStatus>;
         /** One backup now through the Backup-mode restart; resolves as Murage restarts. */
         runNow(revision:number):Promise<BackupScheduleStatus>;

@@ -152,6 +152,51 @@ export function createRecoveryKeyFile({ file, installation, destination = null, 
   }
 }
 
+/** A second copy of an existing recovery key, for a password manager, a USB
+ * stick or another computer. The secret is read and written inside this
+ * process; the caller is told only the new file's name.
+ *
+ * The copy is held to the same rule as the original: never inside the
+ * installation it unlocks, and never inside the backup folder — a key filed
+ * beside the archives is lost with them, which is a total loss dressed up as
+ * a backup. */
+export function copyRecoveryKeyFile({ from, to, installation, destination = null }) {
+  // Parsing `from` first refuses to copy anything that is not a usable key.
+  const source = readBackupIdentity(from, installation);
+  if (!source.recipient) throw new Error("BACKUP_IDENTITY_HEADER_REQUIRED");
+  if (typeof to !== "string" || !path.isAbsolute(to) || to.includes("\0")) throw locationInvalid();
+  const name = path.basename(to);
+  if (!name || name === "." || name === "..") throw locationInvalid();
+  let parent;
+  try { parent = realpathSync.native(path.dirname(to)); if (!lstatSync(parent).isDirectory()) throw locationInvalid(); }
+  catch { throw locationInvalid(); }
+  const target = path.join(parent, name);
+  assertIndependent(target, installation, destination);
+  const content = Buffer.from(readFileSync(realpathSync.native(from)));
+  let fd, created, verified = false;
+  try {
+    try { fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW), 0o600); }
+    catch (error) { throw new Error(error?.code === "EEXIST" ? "BACKUP_RECOVERY_KEY_EXISTS" : "BACKUP_RECOVERY_KEY_WRITE_FAILED"); }
+    try {
+      created = fstatSync(fd);
+      if (process.platform !== "win32") fchmodSync(fd, 0o600);
+      for (let offset = 0; offset < content.length;) offset += writeSync(fd, content, offset, content.length - offset);
+      fsyncSync(fd);
+    } catch { throw new Error("BACKUP_RECOVERY_KEY_WRITE_FAILED"); }
+    finally { closeSync(fd); }
+    // The copy is only a copy once it reads back as the same key.
+    try {
+      const copied = readBackupIdentity(target, installation);
+      if (copied.recipient !== source.recipient || copied.identity !== source.identity) throw Error();
+    } catch { throw new Error("BACKUP_RECOVERY_KEY_UNVERIFIED"); }
+    verified = true;
+    return { file: target, label: name, publicKey: source.recipient };
+  } finally {
+    content.fill(0);
+    if (!verified && created) try { const stat = lstatSync(target); if (stat.dev === created.dev && stat.ino === created.ino) unlinkSync(target); } catch { /* Nothing of ours remains. */ }
+  }
+}
+
 // ---- Where the save dialog starts.
 const KEY_NAME = "murage-recovery-key", KEY_EXTENSION = ".txt";
 /** `murage-recovery-key.txt` in `folder`, or the first `-2`, `-3`, … name not
@@ -164,6 +209,28 @@ export function suggestRecoveryKeyPath(folder, exists = existsSync) {
     if (!exists(candidate)) return candidate;
   }
   return path.join(folder, KEY_NAME + KEY_EXTENSION);
+}
+
+/** A folder that cannot hold the key is skipped; anything else is a real
+ * failure and must not be hidden by trying somewhere else. */
+const PLACEMENT_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "BACKUP_RECOVERY_KEY_LOCATION_INVALID", "BACKUP_RECOVERY_KEY_EXISTS"]);
+/** Creates the key for the person, with no file dialog, in the first of
+ * `folders` that is allowed to hold it. Setting up backups should not start
+ * with a file picker; the placement rules are unchanged, they are just
+ * applied here instead of being explained to the person. */
+export function createRecoveryKeyIn(folders, { installation, destination = null, now = Date.now() }) {
+  let refused = null;
+  for (const folder of folders) {
+    const file = suggestRecoveryKeyPath(folder);
+    if (!file) continue;
+    try { return createRecoveryKeyFile({ file, installation, destination, now }); }
+    catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (!PLACEMENT_REFUSALS.has(code)) throw error;
+      refused = code;
+    }
+  }
+  throw new Error(refused ?? "BACKUP_RECOVERY_KEY_LOCATION_INVALID");
 }
 
 const usableFolder = value => {
@@ -193,7 +260,7 @@ export function recoveryKeyFolderStore(file) {
 
 /** Refusals the person can fix by choosing again. Answered as a value so
  * Electron does not print them as a crash; anything else still throws. */
-const EXPECTED_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "BACKUP_RECOVERY_KEY_LOCATION_INVALID", "BACKUP_BUSY", "BACKUP_UNAVAILABLE", "BACKUP_BINDINGS_UNAVAILABLE"]);
+const EXPECTED_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "BACKUP_RECOVERY_KEY_LOCATION_INVALID", "BACKUP_RECOVERY_KEY_UNKNOWN", "BACKUP_BUSY", "BACKUP_UNAVAILABLE", "BACKUP_BINDINGS_UNAVAILABLE"]);
 export async function settleRecoveryKeyRequest(work, log = line => console.warn(line)) {
   try { return await work(); }
   catch (error) {
@@ -206,12 +273,45 @@ export async function settleRecoveryKeyRequest(work, log = line => console.warn(
 
 /** Native-dialog orchestration. The secret never leaves this process: the
  * caller receives only the chosen file's name and the public recipient. */
-export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null }) {
-  let pending = false, folder = null;
-  const remember = file => { folder = path.dirname(file); folderStore?.write(folder); };
+export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null }) {
+  let pending = false, folder = null, lastKeyFile = null;
+  const remember = file => { folder = path.dirname(file); lastKeyFile = file; folderStore?.write(folder); };
   const lastFolder = () => folder ?? folderStore?.read() ?? null;
   return {
     isPending: () => pending,
+    /** The key file this process last created or was pointed at, so a copy can
+     * be offered without asking the person where the key is. */
+    lastKeyFile: () => lastKeyFile,
+    /** Creates the key with no dialog, in the first allowed default folder.
+     * `destination` is the chosen backup folder, which the key may not sit in. */
+    createFor(destination) {
+      if (pending) throw new Error("BACKUP_BUSY");
+      // The schedule host calls this from inside its own setup, so the guard
+      // used here must not count that setup as work in progress; everything
+      // else it checks still applies.
+      if (!(isUsableDuringSetup ?? isUsable)()) throw new Error("BACKUP_UNAVAILABLE");
+      const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(value => typeof value === "string" && value);
+      const created = createRecoveryKeyIn(folders, { installation: installation(), destination, now: now() });
+      remember(created.file);
+      return created;
+    },
+    /** Saves a second copy of the key somewhere the person picks. The secret
+     * never leaves this process: they get back only the new file's name. */
+    async saveCopy(file = lastKeyFile) {
+      if (pending) throw new Error("BACKUP_BUSY");
+      if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
+      if (typeof file !== "string" || !path.isAbsolute(file)) throw new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
+      pending = true;
+      try {
+        const to = await (chooseCopyFile ?? chooseFile)(suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
+        if (!to) return { cancelled: true };
+        if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
+        let destination;
+        try { destination = await selectedDestination(); } catch { throw new Error("BACKUP_BINDINGS_UNAVAILABLE"); }
+        const copied = copyRecoveryKeyFile({ from: file, to, installation: installation(), destination });
+        return { saved: true, label: copied.label, publicKey: copied.publicKey };
+      } finally { pending = false; }
+    },
     /** Folder of the last key created or picked, to start the pickers in. */
     lastFolder,
     /** A key file picked elsewhere (the schedule's key picker): start there next time. */
