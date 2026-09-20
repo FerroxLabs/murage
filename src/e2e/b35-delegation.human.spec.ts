@@ -93,9 +93,11 @@ async function openApp(page: Page) {
   return openSidebar(page);
 }
 async function openPendingApprovals(page: Page) {
+  // 0.1.57: one sidebar row, not a menu entry folded under "Tools". The
+  // dialog opens on "Needs you"; this walk wants the approvals-only view.
   const sidebar = await openSidebar(page);
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: /Pending approvals/ }).click();
+  await sidebar.locator("[data-sidebar-needs-you]").click();
+  await page.getByRole("button", { name: "Pending approvals", exact: true }).click();
 }
 async function showChief(page: Page, sidebar: Locator) {
   await sidebar.locator(`[data-sidebar-bot-row="${chiefId}"]`).click();
@@ -304,13 +306,13 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   await page.screenshot({ path: testInfo.outputPath("b35-delegation-settled.png"), fullPage: true });
 
   // Restart on the same data: stale while down, reconciled after, nothing replays.
-  const trigger = sidebar.locator("[data-sidebar-more-trigger]"), count = sidebar.locator("[data-pending-approval-count]");
+  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-pending-approval-count]");
   await expect(count).toHaveText("0", { timeout: 15_000 });
   await harness.stop();
-  await expect(trigger).toHaveAttribute("aria-label", /approvals may be stale/, { timeout: 15_000 });
+  await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });
   await expect(count).toHaveText(/^0\s*\?$/);
   await harness.boot();
-  await expect(trigger).not.toHaveAttribute("aria-label", /stale/, { timeout: 20_000 });
+  await expect(trigger).not.toHaveAttribute("aria-label", /out of date/, { timeout: 20_000 });
   await expect(count).toHaveText("0", { timeout: 15_000 });
   await page.waitForTimeout(3_000); // room for a boot drain to misbehave
   expect(await parentReplies()).toHaveLength(1);
