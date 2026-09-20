@@ -313,7 +313,8 @@ import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading } from "./setup.ts";
-import { setupConversationPlan } from "./setup-conversation.ts";
+import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
+import { type EngineChoice, pickDefaultEngine } from "./default-engine.ts";
 import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
 import {
   type SetupLiveState,
@@ -1431,56 +1432,8 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
 }
 
 // default selection for new bots: first available instance, Fuigo preferred
-async function defaultSelection() {
-  const described = await describedInstances();
-  const available = described.filter((d) => d.snapshot.state === "available");
-  // Deliberately NO fallback to described[0]. Handing a bot an engine whose
-  // CLI isn't installed makes it look ready and then fail on send with a raw
-  // spawn ENOENT — the single worst first-run experience, and the one every
-  // user with no CLIs used to get. An empty selection is honest: the UI shows
-  // the setup path instead of a bot that cannot answer.
-  // Fuigo first, then Claude. Fuigo is the only engine Murage SHIPS a binary
-  // for, so on a machine with no CLIs installed it is the one that can be
-  // "available" at all — which is the entire zero-terminal promise. Claude
-  // stays second because on a developer's machine it usually is installed and
-  // it was the previous default; a fresh install simply never reaches it.
-  // "available" means the CLI answered --version, NOT that it can do anything.
-  // Murage SHIPS fuigo's binary, so fuigo is always available — and with no
-  // Flux key and no `fuigo login` its catalog merges down to nothing, which
-  // would hand every new bot `{instanceId:"fuigo", model:""}`: a bot that looks
-  // configured and is not. A non-empty catalog is the check that prevents it.
-  //
-  // NOT `snapshot.authenticated !== false` as well, though that reads like the
-  // stronger guard. It is reported conservatively by several drivers, so
-  // requiring it emptied this list on installs where engines work perfectly
-  // well — server/unattended.test.ts caught it: a delegated teammate created
-  // with no explicit selection got NO engine at all, its turn never ran, and
-  // the failure surfaced as "the delegated turn auto-approved". Bisected
-  // against the pre-change commit rather than guessed at.
-  const usable = available.filter((d) => d.models.default);
-  // F2 — a new bot used to be handed `codex` on a machine where codex had
-  // never been signed in, because this preference could not see the difference.
-  // `authenticated` is still NOT a filter, for the reason spelled out above:
-  // several drivers report it conservatively and filtering on it once left a
-  // delegated teammate with no engine at all (server/unattended.test.ts). It is
-  // a RANKING instead. An engine that says it is signed in wins over one that
-  // says it is not; an engine that does not answer the question keeps the
-  // benefit of the doubt and sits between them. Every engine that was pickable
-  // before is still pickable, so nothing that worked can stop working — the
-  // only change is which of several candidates a brand-new bot lands on.
-  const signInRank = (d: (typeof usable)[number]) => {
-    // A snapshot that never answers the question (an engine that is not there
-    // at all) keeps the benefit of the doubt, same as `undefined` below.
-    const signedIn = "authenticated" in d.snapshot ? d.snapshot.authenticated : undefined;
-    return signedIn === true ? 0 : signedIn === undefined ? 1 : 2;
-  };
-  const best = Math.min(...usable.map(signInRank));
-  const preferred = usable.filter((d) => signInRank(d) === best);
-  const pick =
-    preferred.find((d) => d.driverKind === "fuigoAgent") ??
-    preferred.find((d) => d.driverKind === "claudeAgent") ??
-    preferred[0];
-  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
+async function defaultSelection(): Promise<EngineChoice> {
+  return pickDefaultEngine(await describedInstances());
 }
 
 function checkedModelSelection(
@@ -1930,6 +1883,68 @@ function driveSetupConversation(view: SetupView): void {
     // failure here must never take the setup read down with it.
     console.error(`setup conversation: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * THE KEY IS WHAT TURNS OUR OWN ENGINE ON, SO THE CHIEF HAS TO BE ABLE TO
+ * MOVE TO IT.
+ *
+ * Fuigo is the engine Murage ships and the one the whole zero-terminal
+ * promise rests on, but with no key and no login its catalogue merges down to
+ * nothing, so at boot it is not pickable and `defaultSelection()` correctly
+ * hands the first bot whatever else this machine has. On a developer's
+ * machine that is Claude.
+ *
+ * Then the first run asks for the key, the key populates Fuigo's catalogue,
+ * and nothing moved the Chief. It stayed on the engine it was given in the
+ * one second before the thing that unlocks ours existed. The person went
+ * through a flow whose entire middle step is "this key turns on our engine"
+ * and ended up on somebody else's.
+ *
+ * Narrowly scoped on purpose. It acts only while the guided first run is
+ * live, which is the only window in which nobody has chosen an engine: the
+ * flow is the only thing that has acted, so there is no decision to overrule.
+ * It acts only on the Chief, only when a key is actually routing, and only
+ * when the re-derived default really is Fuigo. The moment the Chief is on
+ * Fuigo it is a no-op, so polling this route cannot thrash a bot's engine.
+ */
+async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<string>): Promise<void> {
+  if (!view.fluxReady || !view.chiefBotId) return;
+  if (!conversationLive(view, present)) return;
+  const chief = store.bot(view.chiefBotId);
+  if (!chief) return;
+  const described = await describedInstances();
+  const onFuigoAlready = described.find((instance) => instance.instanceId === chief.modelSelection.instanceId)?.driverKind === "fuigoAgent";
+  if (onFuigoAlready) return;
+  const selection = await defaultSelection();
+  if (!selection.instanceId || !selection.model) return;
+  const picked = described.find((instance) => instance.instanceId === selection.instanceId);
+  if (picked?.driverKind !== "fuigoAgent") return;
+  store.patchBot(chief.id, { modelSelection: selection });
+  console.log(`setup: moved the Chief onto the shipped engine (${selection.instanceId} ${selection.model})`);
+}
+
+/** The card keys already in the Chief's thread, which is what both the
+ *  conversation driver and the engine move need to know. */
+function setupCardKeysInChiefThread(view: SetupView): Set<string> {
+  const chief = view.chiefBotId ? store.bot(view.chiefBotId) : null;
+  if (!chief) return new Set();
+  const keys = new Set<string>();
+  for (const message of store.messagesFor(chief.threadId)) {
+    const parsed = message.card ? readSetupCard(message.card) : null;
+    if (parsed) keys.add(parsed.key);
+  }
+  return keys;
+}
+
+/** One call for everything a setup route has to do after the view is built. */
+async function driveSetup(view: SetupView): Promise<void> {
+  try {
+    await moveChiefToShippedEngine(view, setupCardKeysInChiefThread(view));
+  } catch (error) {
+    console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  driveSetupConversation(view);
 }
 
 // ── the routines the first run creates ─────────────────────────────────
@@ -14745,7 +14760,7 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/setup") {
       const live = await setupLiveState();
       const view = setupView(setup.read(live), live);
-      driveSetupConversation(view);
+      await driveSetup(view);
       return json(res, 200, view);
     }
 
@@ -14781,7 +14796,7 @@ const server = createServer(async (req, res) => {
       if (existingBrief) {
         const live = await setupLiveState();
         const view = setupView(setup.read(live), live);
-        driveSetupConversation(view);
+        await driveSetup(view);
         return json(res, 200, { ...view, routineId: existingBrief.id });
       }
 
@@ -14825,7 +14840,7 @@ const server = createServer(async (req, res) => {
 
       const live = await setupLiveState();
       const view = setupView(setup.read(live), live);
-      driveSetupConversation(view);
+      await driveSetup(view);
       return json(res, 201, { ...view, routineId: routine.id, ...(runId ? { runId } : {}) });
     }
     const setupAction = /^\/api\/setup\/(answer|skip|reopen)$/.exec(path);
@@ -14845,7 +14860,7 @@ const server = createServer(async (req, res) => {
         if (!parsed.success) return json(res, 400, { error: "Choose a setup step and give an answer." });
         const live = await setupLiveState();
         const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
-        driveSetupConversation(view);
+        await driveSetup(view);
         return json(res, 200, view);
       }
       const parsed = setupStepRequestSchema.safeParse(body);
@@ -14853,7 +14868,7 @@ const server = createServer(async (req, res) => {
       const live = await setupLiveState();
       const state = setupAction[1] === "skip" ? setup.skip(parsed.data.step, live) : setup.reopen(parsed.data.step, live);
       const view = setupView(state, live);
-      driveSetupConversation(view);
+      await driveSetup(view);
       return json(res, 200, view);
     }
 

@@ -848,11 +848,16 @@ describe("harness HTTP API", () => {
     expect((await fetch(`${BASE}/api/health`)).status).toBe(200);
   });
 
-  it("seeds one starter bot with its greeting", async () => {
+  it("seeds one starter bot, and it says nothing until the first run does", async () => {
     const { status, body } = await api("GET", "/api/bots");
     expect(status).toBe(200);
     expect(body.bots.length).toBeGreaterThanOrEqual(1);
-    expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
+    // It used to open with a greeting and a card asking what you wanted it
+    // for. Both were written for a bot you add LATER, and on the first bot on
+    // the first launch they landed ABOVE the guided first run's own opening
+    // card, because they are written at bot creation and its card arrives
+    // after. The flow introduces this bot properly; nothing speaks before it.
+    expect(body.bots[0].messages).toEqual([]);
   });
 
   it("projects privacy-safe live team-map metadata", async () => {

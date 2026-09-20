@@ -175,7 +175,7 @@ const stepView = (view: SetupView, step: SetupStep): SetupStepView | undefined =
  * demonstrably started in, and it carries on. An install that never got that
  * card never gets any of them.
  */
-function conversationLive(view: SetupView, present: ReadonlySet<string>): boolean {
+export function conversationLive(view: SetupView, present: ReadonlySet<string>): boolean {
   return view.firstRun || present.has(setupCardKey("hello", "welcome"));
 }
 
