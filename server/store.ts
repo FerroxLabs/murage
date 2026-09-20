@@ -2542,8 +2542,23 @@ export class Store {
 
   /** First-run seed: one bot so the app never opens empty — it gets a
    * random friendly name like every other bot. */
+  /**
+   * The first bot on an empty workspace, and NOTHING SAID YET.
+   *
+   * It used to open with a greeting and a card asking what you wanted it for.
+   * Both were written for a bot you create later, when you already know what
+   * Murage is and are adding somebody to your team. On the very first bot on
+   * the very first launch they are the wrong thing twice over: the guided
+   * first run introduces this bot properly and asks better questions in a
+   * better order, and its opening card is the introduction. Seeding here left
+   * a second hello and an unanswerable question sitting ABOVE it, because
+   * they were written at bot creation and the flow's card arrives after.
+   *
+   * So this one bot starts silent. Every other bot still gets its greeting:
+   * `createBot` is unchanged, and only this caller opts out.
+   */
   seedIfEmpty() {
     if (this.bots.length) return;
-    this.createBot();
+    this.createBot({}, { seedMessages: false });
   }
 }

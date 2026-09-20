@@ -377,12 +377,19 @@ describe("the opening moments, on a workspace nobody has touched", () => {
     expect(welcome?.card.setup.settled).toBe(true);
   });
 
-  // The seeded intake card asks "what do you actually want me for" in this
-  // same thread. During a first run that is the wrong question at the wrong
-  // moment: the flow is about to ask better ones in a better order, and the
-  // person cannot answer it anyway because the first-run card has the floor.
-  it("puts the seeded intake question away once the first run has the floor", async () => {
-    for (const message of (await chiefMessages()).filter((m) => m.card?.intake)) {
+  // THE FIRST THING IN THE THREAD IS THE FIRST THING THE FLOW SAYS.
+  //
+  // The first bot used to be seeded with a greeting and a card asking what
+  // you wanted it for, both written at bot creation, so both landed ABOVE the
+  // welcome card. The person met a second hello and an unanswerable question
+  // before anyone had asked their name. There is nothing above it now.
+  it("opens with the flow's own first card and nothing above it", async () => {
+    const messages = await chiefMessages();
+    expect(messages.length, "the Chief's thread is empty").toBeGreaterThan(0);
+    expect(messages[0]?.card?.setup?.key).toBe(setupCardKey("hello", "welcome"));
+    // Belt and braces for a workspace that was seeded by an older build: any
+    // intake card that does exist has been put away.
+    for (const message of messages.filter((m) => m.card?.intake)) {
       expect(message.card.dismissed, "a live intake card is sitting in the first run").toBe(true);
     }
   });
