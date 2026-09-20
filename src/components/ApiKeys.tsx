@@ -11,17 +11,72 @@ import { APPS_KEY_FIELD_LABEL } from "./ConnectedAppsLock";
 
 export type ConfigSection = "composio" | "box" | "opencodeGo";
 
+/**
+ * TWO DIFFERENT QUESTIONS, AND THIS ROW USED TO ASK ONLY ONE.
+ *
+ * "Is this working?" and "is MY key in this box?" are not the same question,
+ * and for connected apps they routinely have different answers: a Flux Router
+ * key runs the whole app catalogue through Flux's own broker, so the feature
+ * works with this field empty.
+ *
+ * The row asked the first question and rendered the answer in every place
+ * that means the second. Green dot, the word Connected, eight dots in the
+ * field reading as a stored secret, and a red Clear button offering to remove
+ * it. The owner pressed Clear repeatedly, on a key that was never there,
+ * because the screen told him one was.
+ *
+ * So `stored` is the row's OWN secret and decides everything that implies a
+ * saved value. `working` is whether the capability is available at all, and
+ * only ever adds a sentence saying where it is running from.
+ */
 const SECTIONS: Record<
   ConfigSection,
-  { body: (value: string) => unknown; flag: (config: ConfigStatus) => boolean }
+  {
+    body: (value: string) => unknown;
+    /** This row's own secret is saved. Drives the dots, Clear, and Connected. */
+    stored: (config: ConfigStatus) => boolean;
+    /** The capability works, however it is being paid for. */
+    working: (config: ConfigStatus) => boolean;
+    /** Said when it works and this box is empty. Never implies a saved key. */
+    elsewhere?: string;
+  }
 > = {
   composio: {
     body: (v) => ({ composio: { apiKey: v } }),
-    flag: (c) => c.composio.configured,
+    // "self-hosted" is the server's own word for "running on the key in this
+    // box" (server/composio.ts connectionMode). "managed" means a broker is
+    // carrying it, which is exactly the case this row was getting wrong.
+    stored: (c) => c.composio.mode === "self-hosted",
+    working: (c) => c.composio.configured,
+    elsewhere: "Running on your Flux Router key",
   },
-  box: { body: (v) => ({ box: { token: v } }), flag: (c) => c.box.configured },
-  opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
+  box: { body: (v) => ({ box: { token: v } }), stored: (c) => c.box.configured, working: (c) => c.box.configured },
+  opencodeGo: {
+    body: (v) => ({ opencodeGo: { apiKey: v } }),
+    stored: (c) => c.opencodeGo?.configured ?? false,
+    working: (c) => c.opencodeGo?.configured ?? false,
+  },
 };
+
+/** What the row should say, as data, so it can be checked without a browser. */
+export interface CredentialRowState {
+  stored: boolean;
+  working: boolean;
+  /** The green "Connected", or the quieter sentence, or nothing at all. */
+  status: string;
+  /** Green only for this row's own key. A borrowed one is not this row's. */
+  tone: "own" | "borrowed" | "none";
+}
+
+export function credentialRowState(section: ConfigSection, config: ConfigStatus | null | undefined): CredentialRowState {
+  const spec = SECTIONS[section];
+  if (!config) return { stored: false, working: false, status: "", tone: "none" };
+  const stored = spec.stored(config);
+  const working = spec.working(config);
+  if (stored) return { stored, working, status: "Connected", tone: "own" };
+  if (working && spec.elsewhere) return { stored, working, status: spec.elsewhere, tone: "borrowed" };
+  return { stored, working, status: "", tone: "none" };
+}
 
 const ELECTRON_CREDENTIAL: Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey"> = {
   composio: "composioApiKey",
@@ -152,7 +207,9 @@ export function ApiKeyRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const configured = state.config ? SECTIONS[section].flag(state.config) : false;
+  const row = credentialRowState(section, state.config);
+  // Everything that implies a saved value keys off the row's OWN key.
+  const configured = row.stored;
   const clearing = !value.trim() && configured;
   const credential = CREDENTIALS[section];
 
@@ -170,7 +227,7 @@ export function ApiKeyRow({
       .then((status: ConfigStatus) => {
         dispatch({ type: "configStatus", config: status });
         setValue("");
-        onSaved?.(SECTIONS[section].flag(status));
+        onSaved?.(SECTIONS[section].working(status));
       })
       .catch((e) => setError(e.message))
       .finally(() => setSaving(false));
@@ -179,14 +236,18 @@ export function ApiKeyRow({
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
-        <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
+        <span className={cn("size-1.5 rounded-full", row.tone === "own" ? "bg-success" : "bg-raised-hover")} />
         <span>{credential.label}</span>
         {credential.optional && (
           <span className="rounded bg-control px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-secondary">
             Optional
           </span>
         )}
-        {configured && <span className="text-[11px] text-success">Connected</span>}
+        {row.status && (
+          <span className={cn("text-[11px]", row.tone === "own" ? "text-success" : "text-ink-secondary")}>
+            {row.status}
+          </span>
+        )}
         <CredentialHelp section={section} />
       </div>
       <div className="flex gap-2">
