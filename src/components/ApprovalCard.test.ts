@@ -316,3 +316,48 @@ describe("the one-time 'use this computer' card", () => {
     expect(denied).not.toContain("Denied");
   });
 });
+
+// An ACP engine (Fuigo, the engine the included Chief of Staff runs on) does
+// not send a tool NAME in `session/request_permission` — it sends the
+// permission KIND ("other", "edit", "execute"…), and the driver forwards that
+// kind as the card's tool (server/drivers/acp/core.ts). The card used to read
+// the kind out loud as the verb: "Business Planner wants to other".
+describe("ApprovalCard ACP permission kinds", () => {
+  const card = (tool: string, subtitle = "agents__list_bots"): Message => ({
+    id: `acp-${tool}`, role: "bot", kind: "options", at: 1,
+    card: { title: "Approval", subtitle, options: ["Allow", "Deny"], tool, requestId: `acp-${tool}` },
+  });
+  const bot = { name: "Business Planner" } as Parameters<typeof ApprovalCard>[0]["bot"];
+  const render = (tool: string) => renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card(tool) }));
+
+  it.each([
+    ["other", "Business Planner wants to use a tool"],
+    ["edit", "Business Planner wants to edit a file"],
+    ["read", "Business Planner wants to read a file"],
+    ["delete", "Business Planner wants to delete a file"],
+    ["move", "Business Planner wants to move a file"],
+    ["search", "Business Planner wants to search"],
+    ["fetch", "Business Planner wants to fetch a web page"],
+    ["execute", "Business Planner wants to run a command"],
+    ["shell", "Business Planner wants to run a command"],
+    ["think", "Business Planner wants to think it through"],
+    ["switch_mode", "Business Planner wants to change its mode"],
+  ])("says what %s means in English", (kind, sentence) => {
+    expect(render(kind)).toContain(sentence);
+  });
+
+  it("never reads a bare permission kind out loud as the verb", () => {
+    for (const kind of ["other", "edit", "execute", "switch_mode"]) {
+      expect(render(kind)).not.toContain(`wants to ${kind}</div>`);
+      // …and the kind is not a tool name, so it does not go in the badge either
+      expect(render(kind)).not.toContain(`text-ink-secondary">${kind}<`);
+    }
+  });
+
+  it("still names a real tool, and still shows what was asked", () => {
+    expect(render("other")).toContain("agents__list_bots");
+    const real = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card("Bash", "git status") }));
+    expect(real).toContain("Business Planner wants to run a command");
+    expect(real).toContain(">Bash<");
+  });
+});
