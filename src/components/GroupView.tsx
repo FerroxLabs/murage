@@ -43,8 +43,9 @@ import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
+import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
@@ -271,6 +272,8 @@ const Transcript = memo(function Transcript({
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (
               <StoppedMidActionRow />
+            ) : m.tool.name === TURN_STOPPED_NOTE ? (
+              <StoppedByYouRow />
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
             ) : browserUnavailableReason(m.tool.name) ? (

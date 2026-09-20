@@ -61,11 +61,12 @@ import { readIntakeCard } from "@/lib/onboarding-intake";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
-import { StoppedMidActionRow, StoppedRow } from "./StoppedRow";
+import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
+import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -1035,6 +1036,10 @@ const MessagesList = memo(function MessagesList({
               // the person's Stop caught a desktop action mid-flight: say to
               // check the screen, with Tool calls on or off
               if (isStoppedMidDesktopAction(m.tool?.name)) return <StoppedMidActionRow />;
+              // the person's own Stop with nothing running: still not a tool
+              // run, so it stays with Tool calls off instead of leaving the
+              // thread ending on their own message
+              if (m.tool?.name === TURN_STOPPED_NOTE) return <StoppedByYouRow />;
               // a folder-trust notice is the same kind of thing: what the turn
               // ran without (or gains next time), visible with Tool calls off
               const trustNotice = folderTrustNotice(m.tool?.name);
