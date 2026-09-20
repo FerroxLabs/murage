@@ -84,7 +84,7 @@ async function fill(page:Page){
  await openPanel(page,"Advanced");
  await page.getByLabel("Late start allowed (hours)",{exact:true}).fill("2");await page.getByLabel("Maximum backup size (GiB)",{exact:true}).fill("1");await page.getByLabel("Maximum run time (minutes)",{exact:true}).fill("10");
 }
-// M57: a permission with the reassurance attached, never an instruction to quit.
+// A permission with the reassurance attached, never an instruction to quit.
 const CONSENT="Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.";
 async function inspect(page:Page,info:TestInfo,name:string,width:number){
  await page.setViewportSize({width,height:900});await page.evaluate(()=>window.scrollTo(0,0));
@@ -277,7 +277,7 @@ test("closed-app checkbox sets up the job, keeps consent, stale status and disab
 });
 test("optional recovery-key and back-up-now methods: success, cancel and errors stay truthful",async({page},info)=>{
  const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));await setup(page,false,true);
- // M57: one button starts setup; the key the desktop made is reported back so
+ // One button starts setup; the key the desktop made is reported back so
  // the page can offer the one thing left to do with it.
  const start=page.getByRole("button",{name:"Turn on backups",exact:true}),now=page.getByRole("button",{name:"Back up now",exact:true}),status=page.getByRole("region",{name:"Your backups"});
  await expect(now).toBeDisabled();
@@ -300,7 +300,7 @@ test("optional recovery-key and back-up-now methods: success, cancel and errors 
  await page.evaluate(()=>{(window as any).keyMode="ok";});await copy.click();await expect(page.getByText("A copy was saved as usb-key.txt.")).toBeVisible();
  await expect(now).toBeEnabled();
  for(const width of [360,390,820,1440])await inspect(page,info,"optional-methods",width);
- // M57: setup already took the first backup, so one run-now has happened.
+ // Setup already took the first backup, so one run-now has happened.
  await now.click();await expect(status.getByText("Murage will close and reopen this window to take the backup.")).toBeVisible();await status.getByRole("button",{name:"Cancel",exact:true}).click();await expect(now).toBeEnabled();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now").length)).toBe(1);
  for(const [mode,message] of [["consent","Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it."],["active","Finish or stop current work first."],["busy","A backup is already running."],["unknown","Backup settings could not be updated. Your data is preserved."]] as const){
   await page.evaluate(mode=>{(window as any).runMode=mode;},mode);await now.click();await status.getByRole("button",{name:"Continue",exact:true}).click();await expect(status.getByRole("alert")).toContainText(message);

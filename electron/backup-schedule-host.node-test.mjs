@@ -487,7 +487,7 @@ test("a closed-app capture failure records the reason without reopening a window
   }finally{f.cleanup();}
 });
 
-// ---- M57. One act of setup.
+// ---- One act of setup.
 //
 // Turning on backups used to cost four native dialogs: create the key (its own
 // save dialog), then "Choose backup folder and recovery key" asked for the

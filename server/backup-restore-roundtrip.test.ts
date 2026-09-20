@@ -1,4 +1,4 @@
-// M57. Until this file, nothing exercised a scheduled backup all the way back:
+// Until this file, nothing exercised a scheduled backup all the way back:
 // the library round trips (installation-encrypted-backup.test.ts) start at
 // writeEncryptedInstallationBackup, and the one test that drives the real
 // schedule host (electron/backup-schedule-host.node-test.mjs) captures and

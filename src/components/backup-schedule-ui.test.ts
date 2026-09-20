@@ -10,7 +10,7 @@ it("rejects missing/malformed/out-of-bound choices without rounding",()=>{
   for(const change of [{time:"24:00"},{timezone:"not/a-zone"},{catchup:""},{catchup:"169"},{catchup:"0.0001"},{size:"0"},{size:"1025"},{size:"NaN"},{duration:"31"},{duration:"0.00001"},{size:"1e-20"}])expect(enabledSchedule({...draft,...change},state,true)).toBeNull();
   expect(enabledSchedule({...draft,catchup:"168",size:"1024",duration:"30"},state,true)).not.toBeNull();
 });
-// M57: the time is no longer left empty. An empty field is one more thing to
+// The time is no longer left empty. An empty field is one more thing to
 // work out before backups can be turned on, and the whole point of the new
 // setup is that nothing on the ordinary road needs working out.
 it("preserves saved exact integers, fills first-setup limits and fills the time in",()=>{

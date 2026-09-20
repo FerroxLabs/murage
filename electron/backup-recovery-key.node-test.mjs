@@ -154,7 +154,7 @@ test("the desktop app wires the refusal, the name suggestion and the folder memo
   for(const jargon of ["Choose independent age recovery key","authorize a restart","Save references","owning-user"])assert.equal(main.includes(jargon),false,jargon);
 });
 
-// ---- M57. The key is created for the person, and kept somewhere else.
+// ---- The key is created for the person, and kept somewhere else.
 //
 // Setting up backups used to open a save dialog before anything else, and the
 // person then had to find the file again in a second picker. The key is now

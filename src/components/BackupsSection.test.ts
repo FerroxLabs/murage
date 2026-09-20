@@ -196,7 +196,7 @@ describe("optional recovery-key and back-up-now bridges", () => {
   it("names the three back-up-now cases and stays generic otherwise", () => {
     expect(runNowError(Error("BACKUP_WORK_ACTIVE"))).toBe("Finish or stop current work first.");
     expect(runNowError(Error("BACKUP_BUSY"))).toBe("A backup is already running.");
-    // M57: the old line read as an instruction to let Murage close, and the
+    // The old line read as an instruction to let Murage close, and the
     // owner quit it mid-recovery. See the dedicated describe block below.
     expect(runNowError(Error("BACKUP_SCHEDULE_CONSENT_REQUIRED"))).toBe("Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it.");
     // A daily run refused for the same reason shows it too, not a generic line.
@@ -232,7 +232,7 @@ const off: BackupScheduleStatus = { supported: true, pending: false, enabled: fa
 const on: BackupScheduleStatus = { ...off, enabled: true, schedule: enabledSchedule };
 
 describe("setup collapses into a schedule card", () => {
-  // M57: the folder and the key are chosen in one act, so the old
+  // The folder and the key are chosen in one act, so the old
   // "1. Where to save" / "2. Recovery key" / "3. When" ladder is two steps,
   // and the two competing buttons are gone.
   it("with a folder and key already chosen: the remaining settings, the permission and a disabled turn-on", () => {
@@ -335,7 +335,7 @@ describe("customer findings: plain words and reasons where the control is", () =
   });
 });
 
-// M57. The owner read "Turn on daily backups once to allow Murage to close and
+// The owner read "Turn on daily backups once to allow Murage to close and
 // reopen the window for a backup." — shown in red under "Needs attention" — as
 // an instruction, and quit Murage during a live data recovery. Copy on this
 // page must still say plainly that Murage may close and reopen its window, and
@@ -358,7 +358,7 @@ describe("the backup restart is a permission, never an instruction to quit", () 
   });
 });
 
-// M57. Setting up backups was two buttons offering overlapping things
+// Setting up backups was two buttons offering overlapping things
 // ("Create my recovery key" and "Choose backup folder and recovery key"), four
 // native dialogs, and an instruction to go and select the file the app had just
 // written. It took the owner three attempts and he still had no backup.
@@ -401,7 +401,7 @@ describe("a schedule with no backup behind it says so, and says what to do", () 
   });
 });
 
-// M57. Setup has to END with a backup. The owner walked the old flow to its
+// Setup has to END with a backup. The owner walked the old flow to its
 // end and the page still said "No verified backup on this computer yet" — a
 // schedule with nothing behind it reads as success and protects nobody. He
 // lost two weeks of live business work the same day.
