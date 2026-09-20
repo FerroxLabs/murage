@@ -75,6 +75,7 @@ import {
   chooseIntakeSkills,
   describeIntakeSkill,
   intakeClarifiedQuery,
+  intakeCorroborationFloor,
   intakeProfileMatches,
   intakeQuery,
   intakeTopicTokens,
@@ -8719,7 +8720,16 @@ function intakeProfileStrength(
 ): IntakeStrength {
   if (tokens.length === 0) return "none";
   const vocabulary = intakeVocabulary(entry, extra);
-  if (tokens.length >= 2 && tokens.some((token) => vocabulary.has(token))) return "strong";
+  // The SAME confidence floor `vocabularyMatches` applies, restated here
+  // because this tier reads whole-word hits itself rather than through the
+  // gate. It used to accept `tokens.some(...)` — ONE whole word at any length
+  // — which is how ten words about a prices file came back STRONG for a
+  // Three.js game generator on `file` and `containing` (M1, 0.1.56 Mac
+  // customer test). A tier that is looser than the gate under it is not a
+  // tier, it is a second gate nobody meant to write.
+  const floor = intakeCorroborationFloor(tokens.length);
+  const whole = tokens.reduce((count, token) => count + (vocabulary.has(token) ? 1 : 0), 0);
+  if (tokens.length >= 2 && whole >= floor) return "strong";
   return intakeProfileMatches(entry, tokens, extra) ? "weak" : "none";
 }
 
@@ -13282,9 +13292,15 @@ const server = createServer(async (req, res) => {
     }
     // Every turn of the new-bot setup conversation, in both directions.
     //
-    // MATCHED BEFORE /api/bots/:id/messages on purpose: the composer routes a
-    // send here whenever a question is open, and a fall-through to the engine
-    // would have the bot answer its own question.
+    // IT NEVER TAKES A TURN OFF THE ENGINE. The composer sends the person's
+    // message to the bot on the ordinary chat route and tells this route about
+    // it with `alongside`, so a request is run whatever it turns out to be
+    // about. Before that, a send while a question was open came HERE instead,
+    // and the first thing a new person typed was read as their answer to "What
+    // do you actually want me for?" — which is M1 from the 0.1.56 Mac customer
+    // test: a request to write a prices file was met with "I'd set myself up
+    // as 3D Star Adventure" and never run. The matcher's job is to have an
+    // opinion, not to decide whether the person gets served.
     //
     // NOT DESKTOP-GATED, also on purpose, and the next reader will ask. This
     // route reads the catalogue and writes transcript text; it installs
@@ -13329,7 +13345,23 @@ const server = createServer(async (req, res) => {
         // the person typed into the composer.
         const text = intakeQuery(String(body.text ?? ""));
         if (!text) return json(res, 400, { error: "text required" });
-        store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+        // ALONGSIDE: this sentence is a turn the engine is already running and
+        // the transcript already carries it. Three things follow, and each one
+        // is the difference between listening and taking over.
+        const alongside = body.alongside === true;
+        if (alongside && intake.step === "confirm") {
+          // (1) A confirm card is a DECISION, and asking the bot for something
+          // else is not taking it. Nothing is recorded and nothing is said:
+          // the offer stays on screen, still one press away, and the person
+          // gets on with what they came here to do. This is the same bug as
+          // M1 one turn later — the old branch below spent the card and
+          // printed "Fine, general it is" over a request that had nothing to
+          // do with the offer.
+          return json(res, 202, { ok: true, heard: true });
+        }
+        // (2) The person's words are NOT repeated. The composer's send put
+        // them in the transcript; appending them here would say them twice.
+        if (!alongside) store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
         store.patchMessage(bot.threadId, messageId, { card: { ...card, answered: text } });
         if (intake.step === "confirm") {
           // A confirm card is a decision, not a question, and typing instead
@@ -13354,6 +13386,17 @@ const server = createServer(async (req, res) => {
         // branch table has no path to a third question; this is the guard
         // that keeps that true if someone later adds one.
         const bounded = intake.asked >= 2 && next.intake?.step !== "confirm" ? intakeGeneralCard(2) : next;
+        // (3) IT SPEAKS ONLY WHEN IT HAS A NAME TO SAY. Beside a real reply to
+        // a real request, a card that names a profile is an offer worth
+        // reading; "Give me one real thing you'd rather hand over" is the bot
+        // interrupting to ask a second question nobody invited, and "Fine,
+        // general it is" is a verdict on a conversation that never happened.
+        // The catalogue having no confident answer is a first-class outcome
+        // here, and its expression is silence — which is also what "a weak or
+        // absurd match should not be shown at all" looks like from this side.
+        if (alongside && !bounded.intake?.candidate && !bounded.intake?.choices?.length) {
+          return json(res, 202, { ok: true, heard: true });
+        }
         store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: bounded });
         return json(res, 202, { ok: true });
       }

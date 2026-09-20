@@ -575,31 +575,37 @@ export function Composer({
       });
       track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
-      // A SETUP QUESTION ON THE TABLE TAKES THE ANSWER.
+      // A SETUP QUESTION ON THE TABLE HEARS THE ANSWER. IT DOES NOT TAKE IT.
       //
-      // This is the whole of invariant I7: every question the new-bot
-      // conversation asks accepts free text, because the composer is on
-      // screen at every turn and this is where it goes. No chip is ever the
-      // only way to answer, which is the documented way chat onboarding
-      // fails - a person types the word their situation actually needs, the
-      // bot has no chip for it, and the conversation dead ends.
+      // This is invariant I7 — every question the new-bot conversation asks
+      // accepts free text, because the composer is on screen at every turn and
+      // this is where it goes — and it is now stated without the part that
+      // broke it.
       //
-      // Routed rather than sent: the ordinary chat route would hand the
-      // sentence to the engine, which would answer it as a question about
-      // itself, and the setup conversation would be over without ever
-      // reading the answer.
+      // WHAT BROKE. This used to `return` here, so a send while a question was
+      // open went to the intake route INSTEAD of to the bot. The first thing a
+      // new person typed was therefore read as an answer to "What do you
+      // actually want me for?" whatever it was. Verbatim from the 0.1.56 Mac
+      // customer test (M1): typing `Save a file named notes/prices.md
+      // containing the line "Croissant 3.50". Then say done.` was answered
+      // with "I'd set myself up as 3D Star Adventure", the request was never
+      // run, and the person had to type it again.
+      //
+      // WHY NOT A TEST ON THE SENTENCE. Because there isn't one. "Is this a
+      // task or an answer?" cannot be decided from the words — a heuristic
+      // over the person's own sentence is exactly how the bug was born — and
+      // the cost of the two mistakes is not symmetric. Answering a question
+      // that was not asked costs a card nobody reads; losing a request costs
+      // the request.
+      //
+      // So BOTH, always, in this order: the bot gets the message, and the
+      // setup conversation is told what was said. The turn is dispatched
+      // FIRST so the person's own words are in the transcript before anything
+      // the intake route appends after them. The intake call is fire and
+      // forget and swallows its own failure: the send is the thing that
+      // matters, and a setup card that did not appear must never surface as
+      // an error on a message that did.
       const question = openIntakeCard(visibleMessages(bot));
-      if (question) {
-        void replyToIntake(bot.id, question.id, t, api).catch((error: unknown) => {
-          restoreDraft(sentDraft);
-          refusedForSize(error);
-        });
-        setText("");
-        setAttachments([]);
-        setSendNotice(null);
-        onConsumeReply?.();
-        return;
-      }
       dispatch({
         type: "send",
         botId: bot.id,
@@ -612,6 +618,7 @@ export function Composer({
           return refusedForSize(error);
         },
       });
+      if (question) void replyToIntake(bot.id, question.id, t, api, { alongside: true }).catch(() => {});
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     setText("");

@@ -70,9 +70,17 @@ describe("the composer's send", () => {
   });
 
   it("turns a 413 from the harness into the same inline notice on every send path", () => {
-    // room send, direct send, and the setup question's answer
-    expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(3);
-    expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(3);
+    // Room send and direct send: the two paths that carry the person's text.
+    //
+    // TWO, NOT THREE. The setup question's answer used to be a third send —
+    // it replaced the direct send while a question was open, which is M1 —
+    // and it is now a fire-and-forget call made BESIDE the direct send, on a
+    // sentence the direct send's own handler is already holding the draft
+    // for. Restoring the draft there would fight the send that succeeded, and
+    // a setup card that did not appear is not a message that did not send.
+    expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(2);
+    expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(2);
+    expect(send).toContain("{ alongside: true }).catch(() => {})");
   });
 
   it("shows the notice above the textarea and points the textarea at it", () => {

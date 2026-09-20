@@ -40,16 +40,33 @@ describe("free text is an answer at every turn", () => {
     expect(body).not.toMatch(/<textarea\b/);
   });
 
-  it("is what the composer routes a typed answer into", () => {
-    // Without this the sentence goes to the engine, which answers it as a
-    // question about itself, and the conversation ends without the answer
-    // ever being read. A question with no chips at all — the second one is
-    // sometimes exactly that — would have no way to be answered.
+  it("is what the composer tells about a typed answer, ALONGSIDE the send", () => {
+    // The setup conversation still hears every typed answer — a question with
+    // no chips at all (the second one is sometimes exactly that) would
+    // otherwise have no way to be answered.
     expect(composer).toContain("openIntakeCard(visibleMessages(bot))");
-    expect(composer).toContain("replyToIntake(bot.id, question.id, t, api)");
-    // Routed INSTEAD of sent: both would post the same line twice.
-    const routed = composer.slice(composer.indexOf("openIntakeCard(visibleMessages(bot))"));
-    expect(routed.slice(0, routed.indexOf("dispatch({"))).toContain("return;");
+    expect(composer).toContain("replyToIntake(bot.id, question.id, t, api, { alongside: true })");
+  });
+
+  it("NEVER takes the turn off the engine, which is M1", () => {
+    // THE REGRESSION GUARD FOR M1 (0.1.56 Mac customer test). This branch used
+    // to `return` before `dispatch({ type: "send" ... })`, so the first thing
+    // a person typed went to the intake route INSTEAD of to the bot: `Save a
+    // file named notes/prices.md containing the line "Croissant 3.50". Then
+    // say done.` came back as "I'd set myself up as 3D Star Adventure" and
+    // was never run.
+    //
+    // Both, in this order: the send is dispatched first so the person's own
+    // words are in the transcript before anything appended after them, and
+    // the intake call cannot fail the send.
+    const branch = composer.slice(composer.indexOf("openIntakeCard(visibleMessages(bot))"));
+    const sendAt = branch.indexOf('type: "send"');
+    const intakeAt = branch.indexOf("replyToIntake(");
+    expect(sendAt).toBeGreaterThan(-1);
+    expect(intakeAt).toBeGreaterThan(sendAt);
+    // Nothing between the question and the send may leave the function: that
+    // early return IS the bug.
+    expect(branch.slice(0, sendAt)).not.toContain("return");
   });
 
   it("sends a chip back exactly as it arrived, deciding nothing", () => {

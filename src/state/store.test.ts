@@ -575,6 +575,34 @@ describe("where a fresh sign-in lands", () => {
     expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBe(true);
   });
 
+  // M1'S SECOND HALF. `openOnboardingCard` used to match ANY unanswered
+  // options card, an intake turn included, and `send` dismisses what it
+  // finds. It never mattered while the composer refused to send with a
+  // question open — which is M1 itself. Now that it always sends, a send
+  // would dismiss the question a beat before the same keystroke answered it,
+  // and the intake route refuses a dismissed card with a 409 the composer
+  // swallows: the setup conversation would silently stop on the first
+  // sentence. Reproduced in a real browser before this line existed
+  // (src/e2e/intake-profile-journey.human.spec.ts, "Tango").
+  it("leaves a setup conversation's question alone when the person sends", () => {
+    const asking: Bot = {
+      ...bot,
+      messages: [
+        bot.messages[0]!,
+        {
+          id: "q",
+          role: "bot",
+          kind: "options",
+          at: 2,
+          card: { ...quizCard, intake: { step: "open", asked: 1 } },
+        } as unknown as Message,
+      ],
+    };
+    const state = { ...initialState, bots: [asking], selectedId: asking.id };
+    const next = reducer(state, { type: "send", botId: asking.id, text: "write me a prices file" });
+    expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBeUndefined();
+  });
+
   it("hides the quiz when they pick an option", () => {
     const state = { ...initialState, bots: [bot], selectedId: bot.id };
     const next = reducer(state, { type: "answerCard", botId: bot.id, messageId: "q", answer: "Work & projects" });

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   describeIntakeSkill,
+  intakeCorroborationFloor,
   intakeProfileMatches,
   intakeTopicTokens,
   intakeVocabulary,
@@ -38,6 +39,7 @@ const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 interface CatalogEntry extends IntakeCatalogEntry {
   outcome?: string;
+  playbooks?: readonly unknown[];
 }
 
 const catalog: CatalogEntry[] = JSON.parse(
@@ -78,14 +80,23 @@ function resolvedSkills(entry: CatalogEntry): IntakeSkill[] {
 }
 
 /** The profiles a person can actually be offered. `intakeProfileAt` returns
- *  null for every other entry, so nothing else can reach a card. */
+ *  null for every other entry, so nothing else can reach a card.
+ *
+ *  SKILLS **OR** PLAYBOOKS, which is what `intakeProfileAt` has required
+ *  since playbook-only profiles landed and what this filter did not. The
+ *  difference is not cosmetic: `game-3d` declares no skills at all and one
+ *  playbook, so a skills-only filter dropped it out of the LIVE set — and
+ *  `game-3d` is the profile the 0.1.56 customer test saw suggested for a
+ *  request about a prices file. A control that cannot see the profile in the
+ *  bug report comes back green for the wrong reason. */
 const live = catalog
   .map((entry) => ({ entry, skills: resolvedSkills(entry) }))
-  .filter((candidate) => candidate.skills.length > 0);
+  .filter((candidate) => candidate.skills.length > 0 || (candidate.entry.playbooks?.length ?? 0) > 0);
 
 /** `intakeProfileStrength`, restated over the same exported primitives it is
- *  written in. A whole word plus a second topic word to hit it within is
- *  STRONG; a lone inflected hit is WEAK. */
+ *  written in. Enough whole words for the length of the sentence
+ *  (`intakeCorroborationFloor`), plus a second topic word to hit them within,
+ *  is STRONG; a lone inflected hit is WEAK. */
 function strengthOf(
   entry: CatalogEntry,
   skills: IntakeSkill[],
@@ -94,7 +105,9 @@ function strengthOf(
   if (tokens.length === 0) return "none";
   const extra = skills.map(describeIntakeSkill);
   const vocabulary = intakeVocabulary(entry, extra);
-  if (tokens.length >= 2 && tokens.some((token) => vocabulary.has(token))) return "strong";
+  const floor = intakeCorroborationFloor(tokens.length);
+  const whole = tokens.reduce((count, token) => count + (vocabulary.has(token) ? 1 : 0), 0);
+  if (tokens.length >= 2 && whole >= floor) return "strong";
   return intakeProfileMatches(entry, tokens, extra) ? "weak" : "none";
 }
 
@@ -333,10 +346,65 @@ describe("curated slugs and the catalogue agree", () => {
 
 describe("the size of the lists", () => {
   const terms = Object.values(INTAKE_MATCH_TERMS).flatMap((line) => line.split(" ").filter(Boolean));
+  // 1,621 before the third pass; four shape-prose terms went from the
+  // playbook-only slugs the earlier passes could not see (`watch`, `files`,
+  // `broken`, `system` — see the header of intake-matches.ts).
   it("matches the maintained inventory including the three starter profiles", () => {
     expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(132);
-    expect(terms).toHaveLength(1621);
-    expect(new Set(terms).size).toBe(870);
+    expect(terms).toHaveLength(1617);
+    expect(new Set(terms).size).toBe(866);
     expect(INTAKE_GENERIC_WORDS.size).toBe(554);
+  });
+});
+
+// ── the confidence floor ──────────────────────────────────────────────
+//
+// M1 from the 0.1.56 Mac customer test: a request to write a prices file was
+// answered with "I'd set myself up as 3D Star Adventure". Measured here
+// against the shipped catalogue, `game-3d` is STRONG for that sentence on
+// exactly two words — `file` and `containing` — both of which are in its
+// curated list because its summary says "a complete, runnable HTML file
+// containing a 3D platformer".
+//
+// No pruning of that list fixes the class. `file` appears in ONE curated list
+// out of 132, exactly as `invoice` does, so nothing frequency-shaped can tell
+// them apart. What separates them is how much of the SENTENCE each accounts
+// for: `invoice` is one hit out of the two words "chasing invoices", and
+// `file` is one of ten. The floor below is that ratio written down — the
+// longer the sentence, the more of it a profile has to speak to — and it is
+// the same argument the module already makes for inflections ("one inflected
+// hit out of a five-word sentence is a coincidence dressed as a match"),
+// extended to whole words, where the sentence is long enough for one whole
+// word to be a coincidence too.
+describe("a long sentence is not confirmed by one or two of its words", () => {
+  /** The exact sentence from the M1 repro. */
+  const M1 = 'Save a file named notes/prices.md containing the line "Croissant 3.50". Then say done.';
+
+  it("the M1 sentence reaches no profile at all", () => {
+    expect(intakeTopicTokens(M1)).toHaveLength(10);
+    expect(strongSlugs(M1)).toEqual([]);
+    expect(weakSlugs(M1)).toEqual([]);
+    expect(card(M1)).toBe("open");
+  });
+
+  it("the M1 soft case is not answered with a profile either", () => {
+    const soft = "Reply with one short sentence: what is the capital of Australia?";
+    expect(strongSlugs(soft)).toEqual([]);
+    expect(weakSlugs(soft)).toEqual([]);
+  });
+
+  // THE FEATURE IS NOT DELETED, and this is the proof: the profile M1 named
+  // is still exactly one press away for the person who actually wants it.
+  it("3D Star Adventure still answers a request for a 3D game", () => {
+    // A narrow pick rather than a one-press confirm, because `star-office-helper`
+    // is also strong on its own name — but `game-3d` is on the card either way,
+    // which is what "the feature is not deleted" means here.
+    expect(strongSlugs("a three.js star adventure game in html")).toContain("game-3d");
+  });
+
+  // A longer, real version of the sentence the card prints as its example.
+  // Four topic words is still short enough that one whole word is a claim.
+  it("a longer invoice sentence still reaches the invoice profile", () => {
+    expect(strongSlugs("I need help chasing invoices from clients who have not paid")).toContain("coin");
   });
 });
