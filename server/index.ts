@@ -307,6 +307,13 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
+import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace } from "./setup.ts";
+import {
+  type SetupLiveState,
+  setupAnswerRequestSchema,
+  setupStepRequestSchema,
+  setupView,
+} from "../shared/setup.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
@@ -1752,6 +1759,54 @@ const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 seedFolderTrustFromStore();
+
+// ── the Chief of Staff ────────────────────────────────────────────────
+// The bot a fresh install has just created is the one the person meets, so
+// it IS the Chief: recorded here, before anything else can create a bot, and
+// started on whatever `defaultSelection()` resolved — which prefers the
+// bundled Fuigo engine, the only one this app ships a binary for. A crew
+// installed later reports to this bot and never takes the role, because the
+// recorded id stands for as long as the bot exists.
+const setup = new SetupChecklist();
+{
+  const decision = chiefDecision(setup.chiefBotId(), store.bots);
+  if (decision.kind === "elect") {
+    store.setChiefOfStaff(decision.botId, decision.section, "workspace");
+    setup.recordChief(decision.botId);
+  } else if (decision.kind !== "none") {
+    setup.recordChief(decision.botId);
+  }
+}
+
+/**
+ * Everything the checklist measures, read fresh.
+ *
+ * The connected-app count is the only reading that can leave the machine, and
+ * an unreadable connector store answers `null` — "we do not know what is
+ * connected" is not "nothing is connected", the same distinction
+ * `GET /api/connectors/connected` already draws with `credentialStore`.
+ */
+async function setupLiveState(): Promise<SetupLiveState> {
+  const chiefBotId = setup.chiefBotId();
+  const connectedApps = await (async () => {
+    const availability = composio.connectorAvailability(cfg);
+    if (availability === "unconfigured") return 0;
+    if (availability !== "configured") return null;
+    try {
+      return Object.values(await composio.connectedServices(cfg)).filter((service) => service.connected).length;
+    } catch {
+      return null;
+    }
+  })();
+  return {
+    fluxKey: fluxKey(),
+    bundledEngine: bundledEngineStatus(),
+    connectedApps,
+    chiefMemoryWritten: chiefBotId ? readMemoryFile(chiefBotId).text.trim().length > 0 : false,
+    ...readWorkspace(store, chiefBotId),
+  };
+}
+
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes
@@ -14243,6 +14298,32 @@ const server = createServer(async (req, res) => {
       }
       if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
       return json(res, 200, { command });
+    }
+
+    // ── guided first run (/setup) ──
+    // The server owns the list, the order and every step's "done". The read
+    // re-derives all eight from live state, so a step is finished only while
+    // the thing behind it is still true, and an answer records what the
+    // person said without ticking anything.
+    if (method === "GET" && path === "/api/setup") {
+      const live = await setupLiveState();
+      return json(res, 200, setupView(setup.read(live), live));
+    }
+    const setupAction = /^\/api\/setup\/(answer|skip|reopen)$/.exec(path);
+    if (method === "POST" && setupAction) {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = await readBody(req);
+      if (setupAction[1] === "answer") {
+        const parsed = setupAnswerRequestSchema.safeParse(body);
+        if (!parsed.success) return json(res, 400, { error: "Choose a setup step and give an answer." });
+        const live = await setupLiveState();
+        return json(res, 200, setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live));
+      }
+      const parsed = setupStepRequestSchema.safeParse(body);
+      if (!parsed.success) return json(res, 400, { error: "Choose a setup step." });
+      const live = await setupLiveState();
+      const state = setupAction[1] === "skip" ? setup.skip(parsed.data.step, live) : setup.reopen(parsed.data.step, live);
+      return json(res, 200, setupView(state, live));
     }
 
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the

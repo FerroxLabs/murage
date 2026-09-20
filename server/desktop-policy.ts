@@ -46,6 +46,11 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/cli-test$/, purpose: "execute a supplied engine binary" },
   { methods: ["POST"], path: /^\/api\/engine-setup-command$/, purpose: "resolve a trusted engine setup recipe" },
   { methods: ["GET", "POST"], path: /^\/api\/engine-management\/[\w.-]+$/, purpose: "inspect and install managed engines" },
+  // Guided first run. It reports which engine the Chief is on and what is
+  // connected, and its answers steer installing a crew and connecting apps,
+  // so it belongs with the rest of the administration surface rather than on
+  // a phone. Nested so a later step route cannot be added outside the gate.
+  { methods: ["GET", "POST"], path: /^\/api\/setup(?:\/|$)/, purpose: "the first-run checklist and its recorded answers" },
   { methods: ["GET", "PUT"], path: /^\/api\/bots\/[\w-]+\/access$/, purpose: "review scoped connected-app authority" },
   { methods: ["PATCH"], path: /^\/api\/instances\/[\w.-]+$/, purpose: "change engine launch configuration" },
   { methods: ["POST"], path: /^\/api\/mcp\/servers(?:\/[a-z][a-z0-9_-]{0,31}\/test)?$/, purpose: "install and probe MCP servers" },
