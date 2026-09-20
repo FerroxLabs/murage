@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { describeRun, groupActivityRuns, groupTranscript } from "./activity-runs";
 import type { Message } from "@/state/store";
+import { STOPPED_MID_DESKTOP_ACTION } from "../../shared/host-stop";
+import { browserUnavailableActivityName } from "../../shared/browser-unavailable";
+import { folderTrustWithheldName } from "../../shared/folder-trust";
+import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 
 let seq = 0;
 const tool = (name: string, ok = true): Message =>
@@ -159,5 +163,31 @@ describe("groupTranscript", () => {
       "turn",
       "message",
     ]);
+  });
+});
+
+// A run is hidden entirely with Settings → Tool calls off (ChatView and
+// GroupView both return null for it). The quiet notes have their own rows
+// precisely so they survive that setting, and a stop lands right after a
+// stretch of tool calls — exactly where a run forms — so folding one puts
+// it straight back behind the setting its row exists to escape.
+describe("the quiet notes are never folded into a run", () => {
+  const note = (name: string): Message =>
+    ({ id: `n${++seq}`, at: seq, role: "bot", kind: "activity", tool: { name, ok: true } });
+
+  it.each([
+    ["a turn you stopped", TURN_STOPPED_NOTE],
+    ["a stop that caught a desktop action", STOPPED_MID_DESKTOP_ACTION],
+    ["a folder whose sources were withheld", folderTrustWithheldName(["CLAUDE.md"])],
+    ["a turn that ran without its browser", browserUnavailableActivityName("the browser engine did not start")],
+  ])("keeps %s on its own after a stretch of tool calls", (_what, name) => {
+    const items = groupActivityRuns([tool("Edit"), tool("Bash"), note(name)]);
+    expect(items.map((i) => i.kind)).toEqual(["run", "message"]);
+    expect(items[1].kind === "message" && items[1].message.tool?.name).toBe(name);
+  });
+
+  it("still folds the tool calls on either side of one", () => {
+    const items = groupActivityRuns([tool("Edit"), tool("Bash"), note(TURN_STOPPED_NOTE), tool("Edit"), tool("Edit")]);
+    expect(items.map((i) => i.kind)).toEqual(["run", "message", "run"]);
   });
 });
