@@ -30,6 +30,7 @@ import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { DiscordSettings } from "./DiscordSettings";
 import { StarterProfiles } from "./StarterProfiles";
+import { openSetup } from "./SetupPanel";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
 import {
@@ -46,7 +47,7 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough"] },
   { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
@@ -90,6 +91,34 @@ export function sectionsForSurface(
   desktop: boolean | undefined,
 ): typeof SECTIONS {
   return desktop === true ? sections : sections.filter((entry) => !entry.desktopOnly);
+}
+
+/** Reopens the guided first run.
+ *
+ * The same eight cards, with the ticks the workspace's own live state earns:
+ * a finished step arrives finished and offers Change, so running it again on
+ * a working install reinstalls nothing and asks nothing twice. Settings
+ * closes first — the checklist sends people back into Settings for the key
+ * and the engines, and stacking two dialogs would trap the focus. */
+export function SetupAgainRow() {
+  const { dispatch } = useStore();
+  return (
+    <Card
+      title="Get set up"
+      subtitle="Walk through the eight first-run steps again. Everything already done stays done."
+    >
+      <button
+        type="button"
+        onClick={() => {
+          dispatch({ type: "toggleAppSettings", open: false });
+          openSetup();
+        }}
+        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      >
+        Run setup again
+      </button>
+    </Card>
+  );
 }
 
 /** Name + email, persisted to /api/config {profile} on blur. */
@@ -755,6 +784,7 @@ export function SettingsModal() {
                 <Card title="Profile" subtitle={desktop === true ? "Shown in the sidebar. Saved as you go." : "Shown in the sidebar."}>
                   <ProfileFields />
                 </Card>
+                {desktop === true && <SetupAgainRow />}
                 {desktop === true && <StarterProfiles />}
                 <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />

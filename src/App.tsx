@@ -16,6 +16,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
+import { SetupPanel, useSetupOpen } from "@/components/SetupPanel";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
@@ -297,6 +298,10 @@ function Shell() {
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
+      {/* The guided first run. It owns its own visibility (SetupPanel.tsx):
+          it offers itself on a workspace that has never been through setup,
+          and `/setup` or Settings bring it back on any other. */}
+      <SetupPanel />
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPalette onOpenChange={setPaletteOpen} />
@@ -320,6 +325,11 @@ export default function App() {
   // of the welcome screen on a phone is the whole bug.
   const desktop = useDesktopSurface();
   const [gated, setGated] = useState(() => !emailGateDone());
+  // The guided first run asks for the Flux key as its FIRST card, so the
+  // floating invitation must not also be on screen saying the same thing —
+  // on a phone it lands right over the checklist. It is the same "not while
+  // a first-run screen is up" rule the welcome gate already gets.
+  const setupOpen = useSetupOpen();
   useEffect(() => {
     initAnalytics();
   }, []);
@@ -340,7 +350,7 @@ export default function App() {
             on a non-desktop surface, while the welcome gate is up, once
             dismissed, and until config has actually answered. So no guard
             here would be anything but a second copy of that decision. */}
-        <FluxInvite firstRunGate={gated} />
+        <FluxInvite firstRunGate={gated || setupOpen} />
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

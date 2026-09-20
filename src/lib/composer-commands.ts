@@ -4,7 +4,7 @@
 // Kept pure and out of the component so the two ways of reaching the same
 // send — picking Goal from the menu and typing "/goal …" — can be proved
 // equivalent in a test rather than by reading JSX.
-export type ComposerSlashCommandId = "goal" | "learn";
+export type ComposerSlashCommandId = "goal" | "learn" | "setup";
 
 export interface ComposerSlashCommand {
   id: ComposerSlashCommandId;
