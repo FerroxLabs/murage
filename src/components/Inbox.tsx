@@ -69,12 +69,12 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-yo
   const waiting = list.filter(item => item.kind === "request" && item.status === "pending").slice(0, INLINE_CARD_LIMIT);
   const waitingKey = waiting.map(item => `${item.link.threadId}:${item.link.messageId}:${item.version}`).join("|");
   useEffect(() => {
-    if (!waiting.length) { setCards({}); return; }
+    if (!waiting.length) { setCards(current => (Object.keys(current).length ? {} : current)); return; }
     const controller = new AbortController();
     void Promise.all(waiting.map(async item => {
       try {
-        const window = await api(`/api/threads/${item.link.threadId}/messages?around=${item.link.messageId}&limit=1`, { signal: controller.signal }) as { messages?: { id: string; card?: OptionCardData }[] };
-        const card = window.messages?.find(message => message.id === item.link.messageId)?.card;
+        const thread = await api(`/api/threads/${item.link.threadId}/messages?around=${item.link.messageId}&limit=1`, { signal: controller.signal }) as { messages?: { id: string; card?: OptionCardData }[] };
+        const card = thread.messages?.find(message => message.id === item.link.messageId)?.card;
         return card?.requestId ? ([item.link.messageId, card] as const) : null;
       } catch { return null; }
     })).then(found => {
@@ -82,7 +82,8 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "needs-yo
       setCards(Object.fromEntries(found.filter(entry => entry !== null)));
     });
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `waitingKey` is the identity of everything `waiting` holds; depending on
+    // the array itself would re-fetch on every render.
   }, [waitingKey]);
   return <section aria-labelledby="inbox-title" className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
