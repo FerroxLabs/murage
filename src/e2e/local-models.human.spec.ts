@@ -303,7 +303,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   expect(((await toolRow.textContent()) ?? "").split(`llama.cpp on ${SERVER_NAME}`).length).toBe(2);
   const proseRow = picker.getByRole("button", { name: new RegExp(`^${PROSE_MODEL} · llama\\.cpp on ${SERVER_NAME}`) });
   await expect(proseRow).toBeVisible();
-  await expect(proseRow).toContainText("Tools test failed — chat only, not usable for agent work");
+  await expect(proseRow).toContainText("Tools test failed — chat only, not usable for bot work");
   await expect(picker.locator("[data-local-rail-empty]")).toHaveCount(0);
   await toolRow.scrollIntoViewIfNeeded();
   await shoot(page, picker, testInfo.outputPath(`picker-2-local-rail-${width}-${skin}.png`));
