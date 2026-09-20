@@ -1,7 +1,7 @@
 // Pure helpers for Settings → Backups. Everything here reads the status the
 // existing bridges already return; nothing adds a call or relaxes a check.
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
-import { scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
+import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
 import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
 
 /** Display-only size: decimal units, one decimal below ten ("1.2 GB"). */
@@ -126,6 +126,11 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure));
   }
   else if (s?.phase === "skipped") attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
+  // The owner finished setup and the page still read "No verified backup on
+  // this computer yet", with nothing saying what to do about it. A schedule
+  // with no backup behind it is the state that makes someone think they are
+  // protected when they are not, so it is named here as something to act on.
+  if (s?.enabled && !s.lastVerified && !s.pending && !scheduleNeedsReview(s.phase)) attention.push("Daily backups are on, but no backup has been taken yet. Use Back up now to take the first one.");
   if (s?.schedule.preUpgrade && s.preUpgradeSupported !== true) attention.push("Pre-upgrade backups are unavailable in this app.");
   if (s?.lastClosedResult?.status === "needs-review") attention.push("The last backup taken while Murage was closed needs review.");
   // Linux runs the closed-app backup in your desktop session; with nobody
@@ -151,8 +156,23 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
  * folder that is not allowed) as a value, so the desktop app does not log it
  * as a crash. */
 export type RecoveryKeyResult = { cancelled: true } | { saved: true; label: string; publicKey: string } | { refused: string };
-export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult> };
-export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus>; clearReview?(revision: number): Promise<BackupScheduleStatus> };
+export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult>; saveRecoveryKeyCopy?(): Promise<RecoveryKeyResult> };
+/** What one act of setup reports back: the usual status, plus the key it made
+ * for the person so the page can offer to keep a copy of it. */
+export type BackupSetupResult = (BackupScheduleStatus | { cancelled: true }) & { created?: { label: string; publicKey: string | null; folder: string }; refused?: string };
+export type BackupScheduleBridge = NonNullable<NonNullable<Window["muragebox"]>["backupSchedule"]> & { runNow?(revision: number): Promise<BackupScheduleStatus>; clearReview?(revision: number): Promise<BackupScheduleStatus>; setUp?(options?: { existingKey?: boolean }): Promise<BackupSetupResult> };
+
+/** Keeps only the label, the folder's own name and a well-formed public key
+ * from a setup answer. A path or a secret is never carried into the page. */
+export function createdKeyNote(value: unknown): { label: string; publicKey: string | null; folder: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  // eslint-disable-next-line no-control-regex -- a label with control characters is refused
+  const text = (input: unknown) => typeof input === "string" && input.trim() && input.length <= 255 && !/[\x00-\x1f\x7f]/.test(input) ? input : null;
+  const label = text(v.label), folder = text(v.folder);
+  if (!label || !folder) return null;
+  return { label, folder, publicKey: typeof v.publicKey === "string" && /^age1[02-9ac-hj-np-z]{50,100}$/.test(v.publicKey) ? v.publicKey : null };
+}
 
 /** Keeps only the display label and a well-formed age public key. Anything
  * else the host returns is dropped; a malformed answer is not a success. */
@@ -170,24 +190,98 @@ export function recoveryKeyResult(value: unknown): { cancelled: true } | { saved
   return { saved: true, label: v.label, publicKey };
 }
 
+export const SETUP_FIRST_BACKUP_RUNNING = "Taking your first backup now. Murage closes and reopens its own window to do it, and comes back by itself.";
+export const SETUP_NO_FIRST_BACKUP = "Daily backups are on, but this desktop app can't take the first one for you. Use Back up now so you actually have a backup, and keep a copy of your recovery key.";
+/** A first backup that could not start. Never phrased so it reads as though a
+ * backup exists: the whole point of taking one during setup is that "backups
+ * are on" and "I have a backup" stop being different things. */
+export function firstBackupError(cause: unknown): string {
+  return `Daily backups are on, but the first backup couldn't start. ${runNowError(cause)} Nothing has been backed up yet — use Back up now when you can.`;
+}
+
+/** What one act of setup did, for the page to react to. */
+export type BackupSetupOutcome =
+  | { state: "cancelled" }
+  | { state: "needs-schedule" }
+  | { state: "capturing" }
+  | { state: "no-first-backup" }
+  | { state: "first-backup-failed"; message: string };
+
+export interface BackupSetupSteps {
+  applyStatus(next: BackupScheduleStatus): void;
+  createdKey(note: { label: string; publicKey: string | null; folder: string }): void;
+  notice(text: string): void;
+}
+
+/** Setting up backups, end to end: choose the folder (one dialog in the
+ * desktop app), take the key Murage wrote, turn the schedule on, and then
+ * TAKE THE FIRST BACKUP.
+ *
+ * The last step is the point. Before it, finishing setup left a schedule with
+ * nothing behind it and a page that said "No verified backup on this computer
+ * yet" — which reads as success and protects nobody. The confirmation the
+ * person already answered in the desktop dialog is the consent for this: it is
+ * exactly where they agree to Murage closing and reopening its own window to
+ * take a backup, so no second question is asked here.
+ *
+ * Hard failures throw, so the page shows them where every other schedule
+ * failure appears. */
+export async function completeBackupSetup(bridge: BackupScheduleBridge, options: { existingKey?: boolean } | undefined, steps: BackupSetupSteps): Promise<BackupSetupOutcome> {
+  if (!bridge.setUp) throw Error("BACKUP_UNAVAILABLE");
+  const answer = await bridge.setUp(options);
+  // The desktop app answers an expected refusal (a name already taken, a
+  // folder that may not hold the key) as a value so it is not logged as a
+  // crash. It is still a failure here.
+  const refused = (answer as { refused?: unknown }).refused;
+  if (refused !== undefined) {
+    if (typeof refused !== "string" || !/^BACKUP_[A-Z_]{1,64}$/.test(refused)) throw Error("INVALID_BACKUP_SETUP_RESULT");
+    throw Error(refused);
+  }
+  const note = createdKeyNote((answer as { created?: unknown }).created);
+  if (note) steps.createdKey(note);
+  if ("cancelled" in answer && answer.cancelled === true) {
+    steps.notice(note ? `Setup was cancelled, so nothing was turned on. Your recovery key ${note.label} was made and left in ${note.folder}.` : "Setup cancelled. Nothing was changed.");
+    return { state: "cancelled" };
+  }
+  const next = answer as BackupScheduleStatus;
+  steps.applyStatus(next);
+  const saved = scheduleDraft(next.schedule);
+  const choice = enabledSchedule({ ...saved, time: saved.time.trim() || DEFAULT_BACKUP_TIME }, next, true);
+  if (!choice) { steps.notice("Backup folder and recovery key saved. Choose a time below, then turn on daily backups."); return { state: "needs-schedule" }; }
+  const enabled = await bridge.configure(next.revision, { ...choice, allowIdleRestart: true });
+  steps.applyStatus(enabled);
+  if (!enabled.enabled) { steps.notice("Settings saved; daily backups are still off."); return { state: "needs-schedule" }; }
+  if (!bridge.runNow) { steps.notice(SETUP_NO_FIRST_BACKUP); return { state: "no-first-backup" }; }
+  steps.notice(SETUP_FIRST_BACKUP_RUNNING);
+  try { steps.applyStatus(await bridge.runNow(enabled.revision)); }
+  // The schedule stays on — it is correctly configured — but nothing here may
+  // claim a backup exists.
+  catch (cause) { return { state: "first-backup-failed", message: firstBackupError(cause) }; }
+  return { state: "capturing" };
+}
+
 /** "Back up now" failures: the three named cases, then the existing schedule
  * messages, which stay generic for anything unrecognised. */
 export function runNowError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   if (code.includes("BACKUP_WORK_ACTIVE")) return "Finish or stop current work first.";
   if (code.includes("BACKUP_BUSY")) return "A backup is already running.";
-  if (code.includes("BACKUP_SCHEDULE_CONSENT_REQUIRED")) return "Turn on daily backups once to allow Murage to close and reopen the window for a backup.";
+  // Never phrase this as something the person does. The old wording — "Turn on
+  // daily backups once to allow Murage to close and reopen the window" — was
+  // read as an instruction and Murage was quit during a live recovery.
+  if (code.includes("BACKUP_SCHEDULE_CONSENT_REQUIRED")) return "Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it.";
   return scheduleError(cause);
 }
 
-/** "Create my recovery key" failures, named by the host's error code. Unknown
+/** Recovery-key failures (creating one, or saving a copy), named by the host's error code. Unknown
  * codes stay generic and never echo host text. */
-export function recoveryKeyError(cause: unknown): string {
+export function recoveryKeyError(cause: unknown, fallback = "The recovery key could not be created. Nothing was changed. Try again."): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   const messages: [string, string][] = [
     ["BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "Save the recovery key outside the Murage data folder. Nothing was saved."],
     ["BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "Save the recovery key outside your backup folder. Nothing was saved."],
     ["BACKUP_RECOVERY_KEY_EXISTS", "A file with that name already exists. Choose a new name; nothing was replaced."],
+    ["BACKUP_RECOVERY_KEY_UNKNOWN", "Murage doesn't know where your recovery key is in this window. Open Backups again, then save the copy."],
     ["BACKUP_RECOVERY_KEY_LOCATION_INVALID", "That location can't be used. Choose another folder; nothing was saved."],
     ["BACKUP_RECOVERY_KEY_WRITE_FAILED", "The key could not be written or checked, so nothing was saved. Try again."],
     ["BACKUP_RECOVERY_KEY_UNVERIFIED", "The key could not be written or checked, so nothing was saved. Try again."],
@@ -196,5 +290,5 @@ export function recoveryKeyError(cause: unknown): string {
     ["BACKUP_UNAVAILABLE", "Recovery keys can't be created in this app. A supported desktop app is required."],
   ];
   for (const [key, message] of messages) if (code.includes(key)) return message;
-  return "The recovery key could not be created. Nothing was changed. Try again.";
+  return fallback;
 }

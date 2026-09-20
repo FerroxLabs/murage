@@ -7,8 +7,12 @@ const fields = { catchup: ["catchupMs", 3600000], size: ["maxBytes", 1024 ** 3],
  * stays well under the 1,024 GB ceiling, and the run time is the longest
  * allowed. Nothing is saved until daily backups are turned on. */
 export const FIRST_SETUP_LIMITS = { catchup: "12", size: "50", duration: "30" } as const;
+/** Filled in so setting up backups never stalls on an empty time field. Early
+ * enough to be a quiet hour, and the 12-hour catch-up above means a computer
+ * that was asleep still takes the day's backup when it wakes. */
+export const DEFAULT_BACKUP_TIME = "02:00";
 export function scheduleDraft(schedule: BackupSchedule): ScheduleDraft {
-  return { time: schedule.time ?? "", timezone: schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,preUpgrade:schedule.preUpgrade,closedApp:schedule.closedApp===true,
+  return { time: schedule.time ?? DEFAULT_BACKUP_TIME, timezone: schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,preUpgrade:schedule.preUpgrade,closedApp:schedule.closedApp===true,
     catchup: schedule.catchupMs === undefined ? FIRST_SETUP_LIMITS.catchup : String(schedule.catchupMs / 3600000),
     size: schedule.maxBytes === undefined ? FIRST_SETUP_LIMITS.size : String(schedule.maxBytes / 1024 ** 3),
     duration: schedule.maxDurationMs === undefined ? FIRST_SETUP_LIMITS.duration : String(schedule.maxDurationMs / 60000) };
@@ -45,14 +49,14 @@ export function scheduleError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   const messages: Record<string, string> = {
     BACKUP_CLOSED_UNAVAILABLE:"Register the closed-app job in this supported desktop session before enabling closed-app backups.",
-    BACKUP_CLOSED_CONSENT_REQUIRED:"Confirm closed-app permission and idle-restart consent before enabling.",
+    BACKUP_CLOSED_CONSENT_REQUIRED:"Murage still needs your permission: to back up while it's closed, and to close and reopen its own window when it's idle. Murage does that itself, so you never need to quit it.",
     BACKUP_CLOSED_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
     CLOSED_JOB_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
     BACKUP_BUSY: "Backup work is in progress. Wait, then refresh status.",
     BACKUP_WORK_ACTIVE: "Work is still active. Scheduling will wait for an idle workspace.",
     BACKUP_SCHEDULE_CHANGED: "Settings changed. The latest saved state is shown after refresh; review your draft before trying again.",
     BACKUP_REFERENCE_CHANGED: "A selected destination or recovery key changed. Disable the schedule, then choose references again when no transfer is active.",
-    BACKUP_SCHEDULE_CONSENT_REQUIRED: "Confirm idle-restart consent before enabling the schedule.",
+    BACKUP_SCHEDULE_CONSENT_REQUIRED: "Murage still needs your permission to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.",
     BACKUP_REVIEW_REQUIRED: "Backup needs review. Automatic retry is paused; preserve the existing backup evidence.",
     BACKUP_SCHEDULE_REVIEW_REQUIRED: "Backup needs review. Automatic retry is paused; preserve the existing backup evidence.",
     BACKUP_HANDOFF_DEFERRED: "Backup restart was deferred. Finish active work and refresh status.",

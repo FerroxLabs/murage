@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { readBackupIdentity } from "./backup-mode.mjs";
-import { ageIdentityRecipient, bech32Decode, bech32Encode, createRecoveryKeyFile, createRecoveryKeyFlow, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
+import { ageIdentityRecipient, bech32Decode, bech32Encode, copyRecoveryKeyFile, createRecoveryKeyFile, createRecoveryKeyFlow, createRecoveryKeyIn, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
 
 // BIP-173 test vectors.
 const valid=["A12UEL5L","a12uel5l","an83characterlonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1tt5tgs",
@@ -152,4 +152,108 @@ test("the desktop app wires the refusal, the name suggestion and the folder memo
   assert.match(main,/chooseKey:[^\n]*backupRecoveryKeys\.rememberKeyFile\(/);
   assert.match(main,/chooseFile:async suggested=>/);assert.match(main,/defaultPath:suggested/);
   for(const jargon of ["Choose independent age recovery key","authorize a restart","Save references","owning-user"])assert.equal(main.includes(jargon),false,jargon);
+});
+
+// ---- M57. The key is created for the person, and kept somewhere else.
+//
+// Setting up backups used to open a save dialog before anything else, and the
+// person then had to find the file again in a second picker. The key is now
+// written without a dialog — but never into the backup folder, because a key
+// stored beside the archives is lost with them.
+test("the key is created without a dialog, in the first folder allowed to hold it",()=>{
+  const p=place();try{
+    const inside=path.join(p.destination,"nested");mkdirSync(inside);
+    // Both refused folders are skipped, and the first safe one is used.
+    const created=createRecoveryKeyIn([p.installation,p.destination,inside,p.safe],{installation:p.installation,destination:p.destination});
+    assert.equal(path.dirname(created.file),p.safe);
+    assert.equal(created.label,"murage-recovery-key.txt");
+    assert.match(created.publicKey,/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/);
+    assert.equal(readBackupIdentity(created.file,p.installation).recipient,created.publicKey);
+    assert.equal(lstatSync(created.file).mode&0o777,0o600);
+    // A second call never replaces the first; it takes the next free name.
+    const again=createRecoveryKeyIn([p.safe],{installation:p.installation});
+    assert.equal(again.label,"murage-recovery-key-2.txt");
+    assert.notEqual(again.publicKey,created.publicKey);
+  }finally{p.cleanup();}
+});
+
+test("no folder may hold the key inside the installation or inside the backup folder",()=>{
+  const p=place();try{
+    // With the backup folder declared, it is refused even though it is writable.
+    assert.throws(()=>createRecoveryKeyIn([p.destination],{installation:p.installation,destination:p.destination}),/BACKUP_RECOVERY_KEY_INSIDE_DESTINATION/);
+    assert.throws(()=>createRecoveryKeyIn([p.installation],{installation:p.installation}),/BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT/);
+    assert.throws(()=>createRecoveryKeyIn([path.join(p.root,"absent")],{installation:p.installation}),/BACKUP_RECOVERY_KEY_LOCATION_INVALID/);
+    assert.deepEqual(readdirSync(p.destination),[]);
+    assert.deepEqual(readdirSync(p.installation),[]);
+  }finally{p.cleanup();}
+});
+
+test("a copy of the key is byte-identical, owner-only, and held to the same placement rules",()=>{
+  const p=place();try{
+    const created=createRecoveryKeyIn([p.safe],{installation:p.installation});
+    const elsewhere=path.join(p.root,"usb-copy");mkdirSync(elsewhere);
+    const copy=copyRecoveryKeyFile({from:created.file,to:path.join(elsewhere,"my-key.txt"),installation:p.installation,destination:p.destination});
+    assert.equal(copy.label,"my-key.txt");
+    assert.equal(copy.publicKey,created.publicKey);
+    assert.equal(readFileSync(copy.file,"utf8"),readFileSync(created.file,"utf8"));
+    assert.equal(lstatSync(copy.file).mode&0o777,0o600);
+    // The same rules: not inside the backup folder, not inside the installation,
+    // and never replacing a file that is already there.
+    assert.throws(()=>copyRecoveryKeyFile({from:created.file,to:path.join(p.destination,"k.txt"),installation:p.installation,destination:p.destination}),/BACKUP_RECOVERY_KEY_INSIDE_DESTINATION/);
+    assert.throws(()=>copyRecoveryKeyFile({from:created.file,to:path.join(p.installation,"k.txt"),installation:p.installation}),/BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT/);
+    assert.throws(()=>copyRecoveryKeyFile({from:created.file,to:copy.file,installation:p.installation}),/BACKUP_RECOVERY_KEY_EXISTS/);
+    assert.deepEqual(readdirSync(p.destination),[]);
+    assert.deepEqual(readdirSync(elsewhere),["my-key.txt"]);
+  }finally{p.cleanup();}
+});
+
+test("the flow creates and copies without a file dialog for the key it just wrote",async()=>{
+  const p=place();try{
+    const asked=[];
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      defaultFolders:()=>[p.destination,p.safe],
+      chooseFile:async()=>{asked.push("save");return null;},
+      chooseCopyFile:async()=>{asked.push("copy");return path.join(p.root,"second-copy.txt");}});
+    const created=flow.createFor(p.destination);
+    // No dialog was opened to create it, and it did not land in the backups.
+    assert.deepEqual(asked,[]);
+    assert.equal(path.dirname(created.file),p.safe);
+    assert.equal(flow.lastKeyFile(),created.file);
+    assert.equal(flow.lastFolder(),p.safe);
+    const copied=await flow.saveCopy();
+    assert.deepEqual(asked,["copy"]);
+    assert.equal(copied.saved,true);
+    assert.equal(copied.publicKey,created.publicKey);
+    assert.equal(JSON.stringify(copied).includes("AGE-SECRET"),false);
+    assert.equal(readFileSync(path.join(p.root,"second-copy.txt"),"utf8"),readFileSync(created.file,"utf8"));
+  }finally{p.cleanup();}
+});
+
+test("the key is written even though the setup that asked for it is in progress",async()=>{
+  // main.mjs's isUsable() refuses while backupScheduleHost.isPreparing(), and
+  // setUpBackups() holds that flag for the whole act — so the guard used while
+  // creating the key must exclude the host's own setup, or the one thing the
+  // setup exists to do is refused.
+  const p=place();try{
+    let settingUp=false;
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      defaultFolders:()=>[p.safe],chooseFile:async()=>null,chooseCopyFile:async()=>path.join(p.root,"copy.txt"),
+      isUsable:()=>!settingUp,isUsableDuringSetup:()=>true});
+    settingUp=true;
+    const created=flow.createFor(p.destination);
+    assert.equal(path.dirname(created.file),p.safe);
+    // The ordinary guard still governs everything outside that act.
+    await assert.rejects(flow.saveCopy(),/BACKUP_UNAVAILABLE/);
+    settingUp=false;
+    assert.equal((await flow.saveCopy()).saved,true);
+  }finally{p.cleanup();}
+});
+
+test("without a setup guard the flow falls back to the ordinary one",async()=>{
+  const p=place();try{
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      defaultFolders:()=>[p.safe],chooseFile:async()=>null,isUsable:()=>false});
+    assert.throws(()=>flow.createFor(p.destination),/BACKUP_UNAVAILABLE/);
+    assert.deepEqual(readdirSync(p.safe),[]);
+  }finally{p.cleanup();}
 });

@@ -308,13 +308,29 @@ ipcMain.handle("backup-mode:status", (_event,...args) => { if(args.length)throw 
 ipcMain.handle("backup-mode:restart", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.restart(); });
 // The age identity is generated and written here; only its file name and
 // public recipient cross IPC.
+const backupKeysUsable=()=>Boolean(app.isPackaged&&desktopDataOwner&&!desktopShutdownStarted&&!desktopRecoveryMode&&backupScheduleHost&&!backupMode.isPreparing());
 const backupRecoveryKeys=createRecoveryKeyFlow({
-  isUsable:()=>Boolean(app.isPackaged&&desktopDataOwner&&!desktopShutdownStarted&&!desktopRecoveryMode&&backupScheduleHost&&!backupMode.isPreparing()&&!backupScheduleHost.isPreparing()),
+  isUsable:()=>backupKeysUsable()&&!backupScheduleHost.isPreparing(),
+  // createFor() runs inside backupScheduleHost.setUpBackups(), which holds the
+  // host's own "preparing" flag for the whole act. Counting that as work in
+  // progress would refuse the key the setup exists to write.
+  isUsableDuringSetup:backupKeysUsable,
   installation:()=>ownedDesktopDataDir(),
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
   defaultFolder:()=>app.getPath("documents"),
+  // Where a key is written when nobody is asked: the person's own Documents
+  // folder first, then their home folder. createRecoveryKeyIn refuses any of
+  // them that sits inside the installation or inside the chosen backup folder.
+  defaultFolders:()=>{const folders=[];for(const name of ["documents","home"]){try{folders.push(app.getPath(name));}catch{/* Not every platform has every folder. */}}return folders;},
+  // The second copy: somewhere other than the backup folder.
+  chooseCopyFile:async suggested=>{
+    const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
+      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      message:"Save this copy somewhere other than your backup folder \u2014 a USB drive, another computer, or import it into your password manager. Without this key nobody, including you, can open your backups."});
+    return answer.canceled||!answer.filePath?null:answer.filePath;
+  },
   // `suggested` is a name not yet taken in that folder.
   chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
@@ -324,8 +340,17 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   },
 });
 ipcMain.handle("backup-mode:create-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.create());});
+// The copy is read and written here; the renderer is told only the new name.
+ipcMain.handle("backup-mode:save-recovery-key-copy",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.saveCopy());});
 ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});
 ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.selectReferences();});
+// One act: choose the folder, the key is written here, one confirmation.
+ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
+  if(args.length>1||!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");
+  if(args.length===1&&(typeof args[0]!=="object"||args[0]===null||Array.isArray(args[0])||Object.keys(args[0]).some(key=>key!=="existingKey")||!["boolean","undefined"].includes(typeof args[0].existingKey)))throw new Error("INVALID_BACKUP_REQUEST");
+  const existingKey=args[0]?.existingKey===true;
+  return settleRecoveryKeyRequest(()=>backupScheduleHost.setUpBackups({existingKey}));
+});
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
 ipcMain.handle("backup-schedule:clear-review",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.clearReview(args[0]);});
 ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
@@ -3253,7 +3278,22 @@ async function initializeBackupScheduleHost(){
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
     // Start where a key was just created here; the user still picks it.
     chooseKey:()=>choose(["openFile"],"Choose your recovery key file",backupRecoveryKeys.lastFolder()).then(file=>{if(file)backupRecoveryKeys.rememberKeyFile(file);return file;}),
-    confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use this folder and key"],defaultId:0,cancelId:0,noLink:true,message:"Keep a copy of your recovery key somewhere safe",detail:"Leave the key file where it is so scheduled backups can use it, and keep a second copy away from this computer, such as in a password manager or on a USB drive. This doesn't turn on backups, and Murage won't close or reopen by itself until you turn them on."});return answer.response===1;},
+    // Writes the key without a dialog, outside the installation and outside
+    // the folder the backups go to.
+    createRecoveryKey:destination=>backupRecoveryKeys.createFor(destination),
+    // The one confirmation of the whole setup. It names both choices, says
+    // where the key was put, and is where the person consents to Murage
+    // closing and reopening its own window to take a backup.
+    confirmReferences:async summary=>{
+      const detail=[
+        summary?.createdKey?`Your recovery key ${summary.recoveryKey} was created in ${summary.recoveryKeyFolder}. It is the only thing that can open your backups: if you lose it, nobody \u2014 including Murage \u2014 can get your work back. Keep a copy somewhere else, such as a USB drive or your password manager.`
+          :`Murage will use the recovery key ${summary?.recoveryKey}. Leave it where it is, and keep a copy somewhere other than your backup folder.`,
+        "To take a backup, Murage closes and reopens its own window when you are not using it. Murage does that itself, so you never need to quit it.",
+      ].join("\n\n");
+      const answer=await dialog.showMessageBox(mainWindow??undefined,{type:"question",buttons:["Cancel","Back up every day"],defaultId:1,cancelId:0,noLink:true,
+        message:`Back up to ${summary?.destination} every day?`,detail});
+      return answer.response===1;
+    },
     prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
     cleanupIdle:cleanupDesktopForExit,
     // Closed main has no harness logger and exits immediately after cleanup.

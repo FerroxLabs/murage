@@ -983,14 +983,24 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Close Murage before taking a filesystem-level backup so SQLite and configuration files are captured consistently. Preserve the entire .murage directory rather than selecting individual database files."
   },
   {
-    "id": "self-hosting/data-and-backups#create-your-recovery-key",
+    "id": "self-hosting/data-and-backups#turn-on-backups",
     "title": "Data and backups",
     "description": "Know what Murage stores locally and what to preserve.",
-    "heading": "Create your recovery key",
+    "heading": "Turn on backups",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#create-your-recovery-key",
-    "text": "Encrypted backups from the desktop app need a recovery key. It is the only thing that can open them, so Murage never keeps a copy. In the Backups settings, choose Create my recovery key and pick where to save the file. Keep it somewhere other than your backup folder, such as a password manager or a USB drive. Murage refuses to save it inside its own data folder or inside the backup folder you chose, and never replaces an existing file.\n\nWhen you then choose your backup folder and key, the key picker opens in the folder where you saved it. You still pick the file yourself."
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#turn-on-backups",
+    "text": "In the Backups settings, choose Turn on backups. Murage asks you for one thing: the folder to keep the backups in. It then creates your recovery key itself, outside that folder, and asks you once to confirm the folder, the key and the one permission it needs — that Murage may close and reopen its own window when you are not using it, so it can take the backup. Murage does that itself; you never need to quit it. Daily backups are on as soon as you confirm.\n\nIf you already keep your own age key file, open I already have a recovery key and Murage will use that one instead of making a new one."
+  },
+  {
+    "id": "self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Keep a copy of your recovery key",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
+    "text": "Your recovery key is the only thing that can open your backups, and Murage never keeps a copy. Murage saves it outside both its own data folder and your backup folder — a key stored beside the archives is lost with them. Use Save a copy… to put a second copy somewhere else, such as a USB drive, another computer or your password manager. Murage never replaces an existing file, and refuses any location inside its data folder or inside your backup folder."
   },
   {
     "id": "self-hosting/data-and-backups#back-up-now",
