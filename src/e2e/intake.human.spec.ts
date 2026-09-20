@@ -67,7 +67,7 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
   expect((await api("GET", "/api/bots")).bots.length).toBe(before);
   await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
-  await library.getByRole("button", { name: "Close teams", exact: true }).click();
+  await library.getByRole("button", { name: "Close", exact: true }).click();
   const drawerToggle = app.getByRole("button", { name: "Open bot list" });
   if (await drawerToggle.isVisible() && await drawerToggle.getAttribute("aria-expanded") !== "true") {
     await openSidebar(app);
@@ -357,7 +357,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     // door the whole feature exists to remove.
     await openBot(app, FIXTURES.titledNoSkills.name);
     await app.getByRole("button", { name: `Open ${FIXTURES.titledNoSkills.name}'s profile` }).first().click();
-    await expect(app.getByText("Set up this bot")).toBeVisible();
+    await expect(app.getByText("What is this bot for?")).toBeVisible();
     await app.getByRole("button", { name: "Set up", exact: true }).click();
     // It has a title and a description, so it must say so before anything.
     await expect(app.getByText(`${FIXTURES.titledNoSkills.name} is already set up`)).toBeVisible();
@@ -365,7 +365,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     await expect(app.getByText(/Existing skills are not removed/)).toBeVisible();
     // Cancel changes nothing.
     await app.getByRole("button", { name: "Cancel" }).click();
-    await expect(app.getByText("Set up this bot")).toBeVisible();
+    await expect(app.getByText("What is this bot for?")).toBeVisible();
     await expect(app.getByRole("textbox", { name: QUESTION })).toHaveCount(0);
     // Continue reaches the question, with the same keep-the-name default.
     await app.getByRole("button", { name: "Set up", exact: true }).click();

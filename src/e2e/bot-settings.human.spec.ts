@@ -56,22 +56,25 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
   }
 });
 
-test("Appearance is open in Overview and remains user-collapsible", async ({ page }, testInfo) => {
+test("Appearance is folded in Overview and remains user-expandable", async ({ page }, testInfo) => {
   await page.goto(`${origin}/__bot-settings`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
   await expect(dialog).toBeVisible();
+  // 0.1.57: the panel opens on what the bot is FOR, not on the avatar studio.
+  await expect(dialog.getByText("What is this bot for?", { exact: true })).toBeVisible();
   const summary = dialog.locator("summary").filter({ hasText: /^Appearance$/ });
   const disclosure = summary.locator("..");
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await summary.click();
   await expect(disclosure).toHaveAttribute("open", "");
   await summary.click();
   await expect(disclosure).not.toHaveAttribute("open", "");
   await summary.click();
-  await expect(disclosure).toHaveAttribute("open", "");
   await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.screenshot({ path: testInfo.outputPath(`appearance-open-${width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`appearance-folded-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click();
@@ -100,9 +103,9 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
       if (route.request().method() !== "POST") return route.continue();
       const response = await route.fetch(); await new Promise<void>(resolve => { finishUpload = resolve; }); await route.fulfill({ response });
     });
-    // Appearance is open by default on Overview now (see the disclosure test
-    // above), so clicking its summary would collapse it. Was:
-    //   await dialog.getByText("Appearance", { exact: true }).click();
+    // Appearance is folded on Overview since 0.1.57, so the avatar editor
+    // has to be opened before its file input exists.
+    await dialog.locator("summary").filter({ hasText: /^Appearance$/ }).click();
     await expect(dialog.locator("summary").filter({ hasText: /^Appearance$/ }).locator("..")).toHaveAttribute("open", "");
     const png = await page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 2; canvas.height = 2; canvas.getContext("2d")!.fillRect(0, 0, 2, 2); return canvas.toDataURL("image/png").split(",")[1]; });
     await dialog.locator('input[type="file"]').setInputFiles({ name: "fixture-avatar.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });

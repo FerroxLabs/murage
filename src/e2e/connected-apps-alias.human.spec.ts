@@ -66,7 +66,7 @@ async function mount(page: Page, { surface = "desktop", unreadable = false, widt
     return route.fulfill({ json: { url: LINK(slug) } });
   });
   await page.goto(`${origin}/__apps?skin=${skin}&surface=${surface}`);
-  await expect(page.getByRole("dialog", { name: "Plugins" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Connected apps" })).toBeVisible();
   return calls;
 }
 const opened = (page: Page) => page.evaluate(() => (window as any).opened as string[]);
@@ -102,7 +102,7 @@ for (const [skin, width] of [["dark", 1100], ["light", 390]] as const) test(`the
   await expect(label).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(label).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Plugins" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Connected apps" })).toBeVisible();
   await expect(connect).toBeFocused();
   await connect.click();
   await expect(label).toBeVisible();

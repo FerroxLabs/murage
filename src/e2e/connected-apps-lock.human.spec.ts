@@ -89,17 +89,17 @@ async function open(page: Page, { which = "none" as Keys, skin = "dark", width =
   keys = which;
   await page.setViewportSize({ width, height: 860 });
   await page.goto(`${origin}/__apps-lock?skin=${skin}`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("dialog", { name: "Plugins" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Connected apps" })).toBeVisible();
 }
 const lock = (page: Page) => page.locator("[data-connected-apps-lock]");
-const primary = (page: Page) => page.getByRole("button", { name: "Add FluxRouter key", exact: true });
+const primary = (page: Page) => page.getByRole("button", { name: "Add Flux Router key", exact: true });
 const settle = (page: Page) => page.waitForTimeout(600);
 
 for (const [skin, width] of [["dark", 1100], ["light", 1100], ["dark", 390], ["light", 390]] as const) test(`locked with no key: the offer over a dimmed showcase, and not one connector request (${skin}, ${width}px)`, async ({ page }, info) => {
   await open(page, { skin, width });
   await expect(lock(page)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Connect 500+ apps", exact: true })).toBeVisible();
-  await expect(page.getByText("Gmail, Slack, Notion, GitHub, Google Calendar and 500+ more — your bots can use them all. Add your FluxRouter key to unlock, with a free daily allowance included.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect your apps", exact: true })).toBeVisible();
+  await expect(page.getByText("Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
   await expect(primary(page)).toBeVisible();
   await expect(page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true })).toBeVisible();
   // The live panel's controls are not there to be found.
@@ -134,7 +134,7 @@ test("keyboard: the offer's button is the first tab stop and the showcase is ski
   // never anything inside the showcase.
   const focusedInsideShowcase = () => page.evaluate(() => Boolean(document.activeElement?.closest("[data-connected-apps-lock] [aria-hidden='true']")));
   expect(await focusedInsideShowcase()).toBe(false);
-  await expect(page.getByRole("button", { name: "Close plugins", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Close connected apps", exact: true })).toBeFocused();
   for (let i = 0; i < 6; i++) { await page.keyboard.press("Tab"); expect(await focusedInsideShowcase()).toBe(false); }
   expect(connectorHits).toEqual([]);
 });
@@ -144,7 +144,7 @@ test("the button opens Settings → Models with the cursor in the Flux key field
   await primary(page).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Plugins" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Connected apps" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Flux Router", exact: true })).toBeVisible();
   const field = page.getByLabel("Flux Router key", { exact: true });
   await expect(field).toBeEnabled();

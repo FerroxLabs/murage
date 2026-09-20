@@ -186,7 +186,7 @@ async function openConnectedApps(page: Page) {
   const direct = sidebar.getByRole("button", { name: /^Connected apps/ });
   if (await direct.first().isVisible().catch(() => false)) await direct.first().click();
   else { await sidebar.getByRole("button", { name: /^Tools/ }).first().click(); await page.getByRole("menuitem", { name: "Connected apps", exact: true }).click(); }
-  return page.getByRole("dialog", { name: "Plugins" });
+  return page.getByRole("dialog", { name: "Connected apps" });
 }
 async function shot(page: Page, name: string) { const path = join(EVIDENCE, `${name}.png`); await page.screenshot({ path, fullPage: false }); return path; }
 
@@ -248,7 +248,7 @@ test("MEMJSON1: ten Fuigo (Flux Auto) turns answer normally and every prompt car
   if (!FUIGO_DIR || !haveKey) return;
 
   const panel = await openConnectedApps(page);
-  await panel.getByRole("button", { name: "Add FluxRouter key", exact: true }).click();
+  await panel.getByRole("button", { name: "Add Flux Router key", exact: true }).click();
   const field = page.getByLabel("Flux Router key", { exact: true });
   await expect(field).toBeFocused();
   await field.fill(readFileSync(FLUX_KEY_FILE, "utf8").trim()); // a password field: never echoed, never logged

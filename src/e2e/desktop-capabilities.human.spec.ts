@@ -169,7 +169,7 @@ async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
     return route.fulfill({ json: {} });
   });
   await page.goto(`${origin}/__capabilities?component=plugins&composio=own`);
-  await expect(page.getByRole("dialog", { name: "Plugins", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Connected apps", exact: true })).toBeVisible();
   return fixture;
 }
 
@@ -368,7 +368,7 @@ test("engine settings stay usable when the Claude account list cannot be read", 
 
 test("remote Plugins omits the unavailable MCP tab", async ({ page }) => {
   await mount(page, "plugins");
-  await expect(page.getByRole("dialog", { name: "Plugins", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Connected apps", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "MCP servers" })).toHaveCount(0);
 });
 
@@ -389,14 +389,14 @@ test("remote profile is readable and does not submit a configuration write", asy
 
 test("remote calendar preserves Run now while hiding schedule administration", async ({ page }, testInfo) => {
   await mount(page, "calendar");
-  await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create event", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Routines" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New routine", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create", exact: true })).toHaveCount(0);
   await expect(page.locator("[data-event-card]").first()).toHaveAttribute("draggable", "false");
   await page.keyboard.press("c");
   await expect(page.getByPlaceholder("Add title")).toHaveCount(0);
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Calendar event details" });
+  const details = page.getByRole("dialog", { name: "Routine details" });
   await expect(details.getByRole("button", { name: "Run now", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Pause routine" })).toHaveCount(0);
@@ -450,7 +450,7 @@ test("confirmed desktop retains persistent approvals, MCP and routine editing", 
   await mount(page, "calendar", true);
   await expect(page.getByRole("button", { name: /^Create(?: event)?$/ })).toBeVisible();
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Calendar event details" });
+  const details = page.getByRole("dialog", { name: "Routine details" });
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Pause routine" })).toBeVisible();
   await expect(details.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
@@ -471,7 +471,7 @@ test("desktop profile rejects malformed success payloads", async ({ page }) => {
 test("desktop routine pause reports API failure and retains the event", async ({ page }) => {
   await mount(page, "calendar", true);
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Calendar event details" });
+  const details = page.getByRole("dialog", { name: "Routine details" });
   await page.route("**/api/routines/routine-a", (route) => route.fulfill({ status: 503, json: { error: "Fixture pause unavailable" } }));
   await details.getByRole("button", { name: "Pause routine" }).click();
   await expect(details.getByRole("alert")).toHaveText("Fixture pause unavailable");
