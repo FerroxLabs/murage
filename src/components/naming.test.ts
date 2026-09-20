@@ -100,7 +100,7 @@ describe("skills are skills, and 'Add a skill' opens them", () => {
 
   it("titles the dialog by where you came from, and says Close", () => {
     const library = read("./TeamLibraryPanel.tsx");
-    expect(library).toContain('view === "skills" ? "Skills" : view === "bots" ? "Templates" : "Library"');
+    expect(library).toContain('const entryTitle = initialView === "skills" ? "Skills" : initialView === "bots" ? "Templates" : "Library";');
     expect(library).toContain('aria-label="Close"');
     expect(library).not.toContain('aria-label="Close teams"');
   });

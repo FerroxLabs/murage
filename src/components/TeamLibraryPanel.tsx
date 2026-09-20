@@ -470,6 +470,15 @@ export function TeamLibraryPanel({
    *  here for a skill must be able to walk over to the teams and back without
    *  the panel deciding for them. */
   const [view, setView] = useState<TeamLibraryView>(initialView ?? "teams");
+  // The dialog is named after the DOOR, not the tab: "Add a skill" opens
+  // Skills, "New Bot from Template" opens Templates, and walking over to
+  // another tab does not rename the window you opened.
+  const entryTitle = initialView === "skills" ? "Skills" : initialView === "bots" ? "Templates" : "Library";
+  const entrySubtitle = initialView === "skills"
+    ? "Ready-made skills your bots can use."
+    : initialView === "bots"
+      ? "Ready-to-load bots you can start from."
+      : "Find an individual bot, a team, or a skill for your work.";
   const [catalog, setCatalog] = useState<TeamCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState("");
@@ -942,7 +951,7 @@ export function TeamLibraryPanel({
                 </button>
               )}
               <h2 id="team-library-title" className="truncate text-[22px] font-semibold tracking-[-0.01em] text-ink">
-                {pending ? pending.name : view === "skills" ? "Skills" : view === "bots" ? "Templates" : "Library"}
+                {pending ? pending.name : entryTitle}
               </h2>
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
@@ -950,7 +959,7 @@ export function TeamLibraryPanel({
                   ? pending.kind === "package"
                     ? `${pending.members.length} bots · portable Markdown package`
                     : `${pending.members.length} ready-to-load bots`
-                  : view === "skills" ? "Ready-made skills your bots can use." : view === "bots" ? "Ready-to-load bots you can start from." : "Find an individual bot, a team, or a skill for your work."}
+                  : entrySubtitle}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">

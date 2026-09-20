@@ -33,7 +33,7 @@ test("team descriptions explain the customer outcome in cards and previews", asy
   await openSidebar(app);
   await app.getByRole("button", { name: "New or share", exact: true }).click();
   await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  const library = app.getByRole("dialog", { name: "Templates", exact: true });
   await library.getByRole("tab", { name: "Teams", exact: true }).click();
   await expect(library.getByText("66 teams", { exact: true })).toBeVisible();
   await library.getByRole("textbox", { name: "Search teams", exact: true }).fill("Cold Outbound");
@@ -62,7 +62,7 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await trigger.click();
   await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  const library = app.getByRole("dialog", { name: "Templates", exact: true });
   await expect(library).toBeVisible();
   await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
   expect((await api("GET", "/api/bots")).bots.length).toBe(before);
