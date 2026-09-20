@@ -12,6 +12,7 @@ import type { InstanceConfig, InstanceConfigMap } from "./contracts.ts";
 import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
+import { installDataDirGuard } from "./data-dir-guard.ts";
 import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
 import { tightenOwnedDirectory } from "../electron/private-directory.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
@@ -497,6 +498,11 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
 // Resolve physical aliases before deriving any child path. Otherwise a
 // symlink followed by '..' can lock one directory and write into another.
 export const DATA_DIR = dataDirLeasePaths(process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage")).canonicalDataDir;
+// Resolving DATA_DIR is the dangerous act: from here a script holds the real
+// path and one `rmSync(DATA_DIR, {recursive:true})` ends an installation. That
+// happened. Installing the guard on the same line that derives the path means
+// there is no window in which the path is known and unprotected.
+installDataDirGuard(DATA_DIR);
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
