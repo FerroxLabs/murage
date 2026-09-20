@@ -141,7 +141,7 @@ export function SetupPanel() {
   const write = useCallback(async (step: SetupStep, path: string, body: Record<string, unknown>) => {
     setBusyStep(step);
     try {
-      setView((await api(path, { method: "POST", body: JSON.stringify(body) })) as SetupView);
+      await api(path, { method: "POST", body: JSON.stringify(body) });
       setError(null);
       setOpenStep(null);
     } catch (cause) {
