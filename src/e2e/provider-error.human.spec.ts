@@ -212,6 +212,9 @@ for (const skin of ["light", "dark"]) test("provider recovery card fits mobile i
 test("other provider failures use fixed recovery categories and never gain a billing link", async ({ page }) => {
   const scenarios = [
     { kind: "credits", status: 402, title: /needs credits/, resolution: /choose another configured engine/ },
+    // A reached ceiling, not a spent balance: the one 402 that must never
+    // offer a way to buy past it.
+    { kind: "spend-cap", status: 402, title: /monthly spending limit/, resolution: /adding credit will not lift it/ },
     { kind: "authentication", status: 401, title: /could not authenticate/, resolution: /sign-in or API-key configuration/ },
     { kind: "permission", status: 403, title: /denied access/, resolution: /account has access/ },
     { kind: "rate-limit", status: 429, title: /request limit reached/, resolution: /limit and reset time before retrying/ },

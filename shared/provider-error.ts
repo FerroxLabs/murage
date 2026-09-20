@@ -1,9 +1,15 @@
 /** Safe structured facts about a provider rejection. No request/response text. */
 export interface ProviderErrorInfo {
-  kind: "credits" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
+  kind: "credits" | "spend-cap" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
   provider?: "flux-router";
   httpStatus: number;
 }
+
+/** A support address at the provider's own domain, which a capped account's
+ * rejection carries where a billing URL would otherwise be. Anchored at both
+ * ends of the host so `fluxrouter.ai.evil.invalid` and `notfluxrouter.ai`
+ * are not the provider, exactly as the URL form refuses those hosts. */
+const FLUX_ROUTER_CONTACT = /[\w.+-]+@fluxrouter\.ai(?![\w.-])/;
 
 function fluxRouterSource(message: string): boolean {
   for (const match of message.matchAll(/(?:^|[\s("'<>])(https:\/\/[^\s"'<>]+)/g)) {
@@ -12,8 +18,23 @@ function fluxRouterSource(message: string): boolean {
       if (url.hostname === "fluxrouter.ai" && !url.username && !url.password && (!url.port || url.port === "443")) return true;
     } catch { /* malformed provider URL is not identity evidence */ }
   }
-  return false;
+  return FLUX_ROUTER_CONTACT.test(message);
 }
+
+/** A ceiling the ACCOUNT has reached, as opposed to a balance it has spent.
+ *
+ * These are not the same failure and they do not have the same answer. An
+ * exhausted balance is fixed by adding credit; a monthly ceiling is not —
+ * Flux Router's own words are "the ceiling rises automatically as your
+ * account builds payment history — adding credit will not lift it". Sending
+ * someone to buy credit here costs them money and changes nothing, so the
+ * two are classified apart and answered apart.
+ *
+ * Matched on the machine code where the provider sends one and on the
+ * ceiling sentence where it sends only prose; the OpenAI-compatible route
+ * puts the bare code in `message`, the Anthropic-compatible route puts the
+ * sentence there, and the ACP route wraps the sentence in its own. */
+const SPEND_CAP = /account_monthly_budget_exhausted|monthly spend ceiling/i;
 
 /** Only actual structured HTTP status establishes the error category. */
 export function classifyProviderError(error: unknown): ProviderErrorInfo | undefined {
@@ -22,8 +43,9 @@ export function classifyProviderError(error: unknown): ProviderErrorInfo | undef
   if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
   const { http_status: status, message: detail } = data as { http_status?: unknown; message?: unknown };
   const message = typeof detail === "string" ? detail.slice(0, 4096) : "";
-  const kind: ProviderErrorInfo["kind"] | undefined = status === 402 && /credit balance is exhausted/i.test(message) ? "credits"
-    : status === 402 ? "payment" : status === 401 ? "authentication" : status === 403 ? "permission"
+  const kind: ProviderErrorInfo["kind"] | undefined = status === 402 && SPEND_CAP.test(message) ? "spend-cap"
+    : status === 402 && /credit balance is exhausted/i.test(message) ? "credits"
+      : status === 402 ? "payment" : status === 401 ? "authentication" : status === 403 ? "permission"
       : status === 429 ? "rate-limit" : status === 503 ? "unavailable" : undefined;
   if (!kind || typeof status !== "number") return undefined;
   return { kind, httpStatus: status, ...(kind !== "payment" && fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
@@ -86,6 +108,13 @@ export function providerErrorPresentation(info: ProviderErrorInfo): { title: str
       title: "Provider payment or account access required",
       summary: "The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",
       resolution: "Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying.",
+    };
+    // No billing link: the whole point of this case is that buying something
+    // does not clear it.
+    case "spend-cap": return {
+      title: `${provider} has reached its monthly spending limit`,
+      summary: "The account reached the spending limit set for it this month, so no further requests will run until that limit resets or is raised.",
+      resolution: "The limit rises on its own as the account builds up payment history, so adding credit will not lift it. Ask the provider to raise it sooner, or choose another configured engine.",
     };
     case "credits": return {
       title: `${provider} needs credits`,

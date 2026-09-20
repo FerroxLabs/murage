@@ -16,7 +16,7 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
 }) {
   const titleId = useId();
   const presentation = providerErrorPresentation(info);
-  const category = info.kind === "credits" || info.kind === "payment" || info.kind === "authentication" || info.kind === "permission" || info.kind === "rate-limit" || info.kind === "unavailable" ? info.kind : "unknown";
+  const category = info.kind === "credits" || info.kind === "spend-cap" || info.kind === "payment" || info.kind === "authentication" || info.kind === "permission" || info.kind === "rate-limit" || info.kind === "unavailable" ? info.kind : "unknown";
   const provider = info.provider === "flux-router" ? "Flux Router" : t("providerError.provider");
   const hasHttpStatus = Number.isInteger(info.httpStatus) && info.httpStatus >= 100 && info.httpStatus <= 599;
   const parsedDiagnostic = parseRuntimeErrorDiagnostic(diagnostic);
