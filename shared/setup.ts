@@ -169,9 +169,11 @@ export function setupStepAnswered(recorded: SetupStepState): boolean {
 /**
  * The one place a step's `done` is decided.
  *
- * Six of the eight read live state alone, so answering them cannot make them
- * true; `purpose` and `voice` have nothing outside the answer to measure, and
- * `wrap` needs both the confirmation and the lines actually on disk.
+ * Five of the eight read live state alone, so answering them cannot make them
+ * true. `purpose` and `voice` have nothing outside the answer to measure;
+ * `wrap` needs both the confirmation and the lines actually on disk; and
+ * `crew` takes a deliberate "just one assistant" as an answer to a question
+ * whose other answer is a bot that exists.
  */
 export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: SetupLiveState): boolean {
   switch (step) {

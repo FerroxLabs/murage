@@ -157,7 +157,7 @@ describe("the first-run checklist on a real server whose engine never answers", 
     expect(step(confirmed.body as SetupView, "wrap")).toMatchObject({ done: false });
     expect(step(confirmed.body as SetupView, "wrap").detail).toMatch(/notebook is still empty/);
 
-    const written = await api("PUT", `/api/bots/${chiefBotId}/memory`, { text: "- Sean runs a small team.\n" }, desktop);
+    const written = await api("PUT", `/api/bots/${chiefBotId}/memory`, { text: "- The owner runs a small team.\n" }, desktop);
     expect(written.status).toBe(200);
     expect(step(await checklist(), "wrap").done).toBe(true);
   });
