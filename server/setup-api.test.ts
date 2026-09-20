@@ -49,15 +49,20 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 describe("the first-run checklist on a real server whose engine never answers", () => {
-  it("opens on the eight steps, with the bot of a fresh install already recorded as the Chief", async () => {
-    const bots = await api("GET", "/api/bots", undefined, desktop);
-    expect(bots.status).toBe(200);
-    expect(bots.body.bots).toHaveLength(1);
-    chiefBotId = bots.body.bots[0].id;
-    expect(bots.body.bots[0].chiefOfStaff).toBe(true);
-    expect(bots.body.bots[0].chiefScope).toBe("workspace");
+  it("seats the bot of a fresh install as the Chief when the checklist is opened", async () => {
+    // Before setup is opened, nothing has been rewired: the seeded bot holds
+    // no role, because an installation nobody has run setup on must not be
+    // reorganised behind their back.
+    const before = await api("GET", "/api/bots", undefined, desktop);
+    expect(before.status).toBe(200);
+    expect(before.body.bots).toHaveLength(1);
+    chiefBotId = before.body.bots[0].id;
+    expect(before.body.bots[0].chiefOfStaff).toBeFalsy();
 
     const view = await checklist();
+    const after = await api("GET", "/api/bots", undefined, desktop);
+    expect(after.body.bots[0]).toMatchObject({ id: chiefBotId, chiefOfStaff: true, chiefScope: "workspace" });
+
     expect(view.chiefBotId).toBe(chiefBotId);
     expect(view.steps.map((entry) => entry.id)).toEqual([...SETUP_STEPS]);
     expect(view.progress).toEqual({ done: 0, total: 8 });

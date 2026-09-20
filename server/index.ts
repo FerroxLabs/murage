@@ -198,7 +198,8 @@ import {
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli } from "./env-path.ts";
-import { fluxSelectionRefusal, isFluxModel } from "./flux-surface.ts";
+import { fluxSelectionRefusal } from "./flux-surface.ts";
+import { isFluxModel } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import {
   MAX_MCP_SERVERS,
@@ -1762,21 +1763,29 @@ store.seedIfEmpty();
 seedFolderTrustFromStore();
 
 // ── the Chief of Staff ────────────────────────────────────────────────
-// The bot a fresh install has just created is the one the person meets, so
-// it IS the Chief: recorded here, before anything else can create a bot, and
-// started on whatever `defaultSelection()` resolved — which prefers the
-// bundled Fuigo engine, the only one this app ships a binary for. A crew
-// installed later reports to this bot and never takes the role, because the
-// recorded id stands for as long as the bot exists.
 const setup = new SetupChecklist();
-{
+
+/**
+ * Seat the bot that hosts setup.
+ *
+ * The bot a fresh install created first is the one the person meets, so it IS
+ * the Chief of Staff, on whatever `defaultSelection()` resolved — which
+ * prefers the bundled Fuigo engine, the only one this app ships a binary for.
+ *
+ * Seated when the checklist is first opened rather than at boot. The role
+ * changes routing, delegation and what the sidebar shows, and a workspace
+ * where nobody has opened setup must not be rewired behind their back — an
+ * automated installation, a restored backup, a headless run. Opening `/setup`
+ * is the person asking for exactly this.
+ *
+ * Idempotent, and the choice stands: a crew installed later reports to the
+ * Chief already met and never takes the role.
+ */
+function seatChiefOfStaff(): void {
   const decision = chiefDecision(setup.chiefBotId(), store.bots);
-  if (decision.kind === "elect") {
-    store.setChiefOfStaff(decision.botId, decision.section, "workspace");
-    setup.recordChief(decision.botId);
-  } else if (decision.kind !== "none") {
-    setup.recordChief(decision.botId);
-  }
+  if (decision.kind === "none") return;
+  if (decision.kind === "elect") store.setChiefOfStaff(decision.botId, decision.section, "workspace");
+  setup.recordChief(decision.botId);
 }
 
 /**
@@ -1793,6 +1802,7 @@ const setup = new SetupChecklist();
  * `GET /api/connectors/connected` already draws with `credentialStore`.
  */
 async function setupLiveState(): Promise<SetupLiveState> {
+  seatChiefOfStaff();
   const chiefBotId = setup.chiefBotId();
   const connectedApps = await (async () => {
     const availability = composio.connectorAvailability(cfg);
