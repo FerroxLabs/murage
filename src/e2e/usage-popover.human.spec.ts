@@ -137,7 +137,7 @@ test.describe("the token chip's popover", () => {
     ]);
   });
 
-  test("the chip's own click still opens the agent profile", async ({ app }) => {
+  test("the chip's own click still opens Bot settings", async ({ app }) => {
     await chip(app).click();
     await expect(app.getByText("Skills", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   });
