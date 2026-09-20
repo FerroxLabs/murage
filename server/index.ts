@@ -107,6 +107,7 @@ import {
 } from "../shared/credential-request.ts";
 
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
+import { isOwnWorkspaceBookkeeping } from "./own-workspace-approval.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -3420,6 +3421,17 @@ bus.subscribe((event: RuntimeEvent) => {
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
             // ...and the owner's own channel message, if the bot allows it
             channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
+            // D57: the bot editing its own MEMORY.md or its own thread files
+            // is Murage's own bookkeeping, not a permission — including on an
+            // unattended routine run, which used to sit at "Waiting for you…"
+            // until someone woke up and allowed exactly those two edits.
+            ownWorkspace: isOwnWorkspaceBookkeeping({
+              dataDir: DATA_DIR,
+              botId: asker.id,
+              threadId: event.threadId,
+              tool: event.tool,
+              paths: event.filePaths,
+            }),
           })
         : null;
       if (verdict?.approve && asker && event.requestId) {
