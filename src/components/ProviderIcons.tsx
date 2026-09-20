@@ -197,8 +197,15 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
     case "piAgent":
       return <PiMark size={size} className={className} />;
     default:
+      // An engine with no official logo still gets a mark the size every
+      // other mark is drawn at. `size-full` made this one a flex item with
+      // no intrinsic size that resolved to 100% of the row it sat in, so
+      // the OpenAI-compatible engine's row was one blank square and no name.
       return (
-        <span className="flex size-full items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary">
+        <span
+          style={{ width: size ?? 16, height: size ?? 16 }}
+          className={cn("flex shrink-0 items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary", className)}
+        >
           {(driverKind.replace(/Agent$/i, "").slice(0, 1) || "?").toUpperCase()}
         </span>
       );
