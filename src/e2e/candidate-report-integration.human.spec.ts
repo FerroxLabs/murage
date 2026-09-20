@@ -104,7 +104,7 @@ test("selected report survives Inbox historical navigation, download and same-pr
     await choose(page, "Sibling B", second);
     const results = await api("/api/inbox?view=results");
     expect(results.items.filter((item: any) => item.link.artifactId === artifact.id)).toHaveLength(1);
-    const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: /^Tools/ }).click(); await sidebar.getByRole("menuitem", { name: "Inbox", exact: true }).click();
+    const sidebar = await openSidebar(page); await sidebar.locator("[data-sidebar-needs-you]").click();
     await page.getByRole("button", { name: "Results", exact: true }).click(); await page.getByRole("button", { name: "Open file", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Files", exact: true }); await expect(dialog).toBeVisible();
     const card = dialog.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1);
