@@ -2472,3 +2472,15 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
     }
   });
 });
+
+// Probed on macOS, Ubuntu 24.04 and Windows Server 2025 on 2026-09-20, spawned
+// with plain pipes and no TERM — the conditions Murage runs a CLI under.
+describe("the sign-in command Murage hands people", () => {
+  it("signs in, instead of asking Claude Code to answer an empty prompt", () => {
+    // Bare `claude` under pipes reads stdin as --print input and exits 1 with
+    // "Input must be provided either through stdin or as a prompt argument
+    // when using --print". Nobody is signed in and no URL is ever shown.
+    expect(ClaudeDriver.install?.signInCommand).toBe("claude auth login");
+    expect(ClaudeDriver.install?.signInCommand).not.toBe("claude");
+  });
+});

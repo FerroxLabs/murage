@@ -1273,8 +1273,14 @@ describe("CodexDriver turns (fake app-server)", () => {
   }, 20_000);
 
 
-  it("uses the explicit login command from the official Codex flow", () => {
-    expect(CodexDriver.install?.signInCommand).toBe("codex login");
+  it("uses the device-code login, which needs no free port on the machine", () => {
+    // Probed 2026-09-20 on macOS, Ubuntu 24.04 and Windows Server 2025 with
+    // plain pipes: plain `codex login` binds 127.0.0.1:1455 and prints no
+    // code, so it fails wherever that port is taken or no browser can reach
+    // this machine. `--device-auth` opens NO listener and prints a URL and a
+    // short code, which is what an in-app card can show.
+    expect(CodexDriver.install?.signInCommand).toBe("codex login --device-auth");
+    expect(CodexDriver.install?.signInCommand).not.toBe("codex login");
   });
 
   it("declares the effort levels the app-server accepts", async () => {

@@ -687,7 +687,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     },
     needsNode: true,
     docsUrl: "https://claude.com/claude-code",
-    signInCommand: "claude",
+    signInCommand: "claude auth login",
   },
   models: STATIC_CLAUDE_MODELS,
   decodeConfig,
