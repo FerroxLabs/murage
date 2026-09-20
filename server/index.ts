@@ -1886,6 +1886,28 @@ function driveSetupConversation(view: SetupView): void {
     }
     const plan = setupConversationPlan(view, new Set(present.keys()));
     if (plan.append.length === 0 && plan.settle.every((key) => present.get(key)?.setup.settled === true)) return;
+    // THE OTHER QUESTION IN THIS THREAD.
+    //
+    // A new bot is seeded with a greeting and an intake card asking what the
+    // person wants it for (store.ts, createBot). During a first run that is
+    // the wrong question at the wrong moment: the flow is about to ask better
+    // ones in a better order, and the person cannot answer it anyway, because
+    // the first-run card has the floor. Left alone it sits at the top of the
+    // conversation looking like something that should work.
+    //
+    // So it is put away, once, the moment the flow has something to say. Not
+    // deleted: it stays in the transcript, marked answered-elsewhere, and the
+    // closing card offers the same "put me to work" choices it was reaching
+    // for.
+    // Patched directly rather than through `dismissOnboardingCard`, which
+    // deliberately refuses to touch an intake card: talking past the intake
+    // question must never answer it. This is not talking past it. This is the
+    // flow taking the floor, which is the one case where putting it away is
+    // the right thing.
+    for (const message of store.messagesFor(threadId)) {
+      if (!message.card?.intake || message.card.dismissed) continue;
+      store.patchMessage(threadId, message.id, { card: { ...message.card, dismissed: true } });
+    }
     for (const key of plan.settle) {
       const existing = present.get(key);
       if (!existing || existing.setup.settled === true) continue;
@@ -14810,17 +14832,29 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && setupAction) {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
       const body = await readBody(req);
+      // ANSWERING A STEP IS EXACTLY WHEN THE CHIEF HAS SOMETHING NEW TO SAY.
+      //
+      // These three used to record and return, and only the READ drove the
+      // conversation. So a person typed their name, the card posted it, and
+      // the thread went quiet: nothing was polling, so nothing noticed the
+      // flow had moved. Every route that can move it drives it. The driver is
+      // keyed on card identity and does nothing when nothing changed, so
+      // driving it here cannot double anything up.
       if (setupAction[1] === "answer") {
         const parsed = setupAnswerRequestSchema.safeParse(body);
         if (!parsed.success) return json(res, 400, { error: "Choose a setup step and give an answer." });
         const live = await setupLiveState();
-        return json(res, 200, setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live));
+        const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
+        driveSetupConversation(view);
+        return json(res, 200, view);
       }
       const parsed = setupStepRequestSchema.safeParse(body);
       if (!parsed.success) return json(res, 400, { error: "Choose a setup step." });
       const live = await setupLiveState();
       const state = setupAction[1] === "skip" ? setup.skip(parsed.data.step, live) : setup.reopen(parsed.data.step, live);
-      return json(res, 200, setupView(state, live));
+      const view = setupView(state, live);
+      driveSetupConversation(view);
+      return json(res, 200, view);
     }
 
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the

@@ -204,8 +204,15 @@ describe("first run copy: the sentence builders", () => {
     expect(briefButtonLabel("07:00")).toBe("Set my brief for 7:00 am");
   });
 
-  it("greets by name when there is one", () => {
-    expect(greetingLine("Sean")).toBe("Thank you, Sean. I have got that.");
-    expect(greetingLine("")).toBe("Thank you. I have got that.");
+  it("greets by name when there is one, and is not a receipt", () => {
+    expect(greetingLine("Sean")).toContain("Sean");
+    expect(greetingLine("  Sean  ")).toContain("Sean");
+    expect(greetingLine("")).not.toContain("undefined");
+    // "Thank you. I have got that." was correct and read like a form
+    // confirming a submission. This is the first thing a chief of staff ever
+    // says to the person they work for.
+    for (const line of [greetingLine("Sean"), greetingLine("")]) {
+      expect.soft(line, line).not.toMatch(/thank you|got that|saved|recorded/i);
+    }
   });
 });

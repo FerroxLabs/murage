@@ -301,11 +301,17 @@ export function briefRanLine(time: string): string {
   return `It is just below. From tomorrow it arrives on its own at ${clockLabel(time)}.`;
 }
 
-/** The confirmation under the two name fields, once the profile really
- *  saved. Uses their name because that was the point of asking. */
+/**
+ * The confirmation under the two name fields, once the profile really saved.
+ *
+ * "Thank you, Sean. I have got that." was a receipt, and it read like one:
+ * correct, and written by a form. This is the first sentence a chief of staff
+ * ever says to the person they work for, and the right register is somebody
+ * pleased to be starting, not somebody filing a record.
+ */
 export function greetingLine(name: string): string {
   const clean = name.trim();
-  return clean ? `Thank you, ${clean}. I have got that.` : "Thank you. I have got that.";
+  return clean ? `Good to meet you, ${clean}. Right then.` : "Good to meet you. Right then.";
 }
 
 /** The brief card's button, once a time is chosen. A button that repeats the

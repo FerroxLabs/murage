@@ -79,10 +79,15 @@ export function FirstRunRail() {
   return <FirstRunRailBody view={view} onClose={closeFirstRun} />;
 }
 
+// A finished row should LOOK finished at a glance, without reading it. A tick
+// beside otherwise ordinary text reads as decoration; a struck-through line
+// reads as crossed off, which is what it is. Skipped is struck through too,
+// because the person did deal with it, and it is greyed rather than ticked so
+// the two are still tellable apart.
 const ROW_TONE: Record<string, string> = {
-  done: "text-ink-secondary",
+  done: "text-ink-secondary line-through decoration-ink-secondary/50",
   now: "text-ink font-medium",
-  skipped: "text-ink-secondary",
+  skipped: "text-ink-secondary line-through decoration-ink-secondary/50",
   blocked: "text-ink",
   todo: "text-ink-secondary",
 };

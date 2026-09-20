@@ -307,3 +307,83 @@ describe("the rest of the walk", () => {
     }
   });
 });
+
+// A PRISTINE FIRST RUN, ON ITS OWN SERVER.
+//
+// The suite above shares one fixture and walks it forward through the whole
+// checklist, which is the right way to test the checklist and the wrong way
+// to test the FIRST moments of it: by the time those tests finish, every card
+// has already been said, so "did answering this say anything new" can only
+// ever answer no. These two need a workspace nobody has touched.
+describe("the opening moments, on a workspace nobody has touched", () => {
+  let box: VerificationServer;
+  let keys: Record<string, string>;
+  let chief: string;
+
+  const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
+    const response = await fetch(`${box.info.url}${path}`, {
+      method,
+      headers: { "content-type": "application/json", ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() as Record<string, any> };
+  };
+
+  const chiefMessages = async (): Promise<Array<Record<string, any>>> => {
+    const bots = await call("GET", "/api/bots", undefined, keys);
+    return bots.body.bots.find((bot: { id: string }) => bot.id === chief).messages;
+  };
+  const cardKeys = async () => (await chiefMessages()).filter((m) => m.card?.setup).map((m) => m.card.setup.key as string);
+
+  beforeAll(async () => {
+    box = await launchVerificationServer(process.env, undefined, { instrumentationSource: NEVER_ANSWERS });
+    const proof = await call("GET", "/api/desktop-secret");
+    keys = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    const opened = await call("GET", "/api/setup", undefined, keys);
+    chief = (opened.body as SetupView).chiefBotId!;
+    expect(chief).toBeTruthy();
+  });
+
+  afterAll(async () => { await box?.close(); });
+
+  // THE BUG THIS TEST EXISTS FOR.
+  //
+  // Answering the first card recorded the step and then said nothing. Only
+  // the READ drove the conversation, and nothing was reading: the card posts
+  // its answer and waits. So a person typed their name, watched a tick appear
+  // beside a finished step, and sat there looking at a conversation that had
+  // stopped talking to them.
+  //
+  // Answering a step is exactly the moment the Chief has something new to
+  // say, so this asserts the next card arrives with NO read in between.
+  it("says the next thing the moment a step is answered, with no read in between", async () => {
+    const before = await cardKeys();
+    expect(before).toContain(setupCardKey("hello", "welcome"));
+
+    const answered = await call("POST", "/api/setup/answer", { step: "hello", answer: "Sean" }, keys);
+    expect(answered.status).toBe(200);
+
+    // Deliberately no GET /api/setup here: a read would drive the
+    // conversation itself and hide the whole defect.
+    const after = await cardKeys();
+    const added = after.filter((key) => !before.includes(key));
+    expect(added, "answering hello said nothing new in the thread").not.toHaveLength(0);
+    // What this machine already has, reported rather than asked.
+    expect(added.some((key) => key.startsWith("agents:"))).toBe(true);
+  });
+
+  it("marks the answered card settled, so it is not left looking live", async () => {
+    const welcome = (await chiefMessages()).find((m) => m.card?.setup?.key === setupCardKey("hello", "welcome"));
+    expect(welcome?.card.setup.settled).toBe(true);
+  });
+
+  // The seeded intake card asks "what do you actually want me for" in this
+  // same thread. During a first run that is the wrong question at the wrong
+  // moment: the flow is about to ask better ones in a better order, and the
+  // person cannot answer it anyway because the first-run card has the floor.
+  it("puts the seeded intake question away once the first run has the floor", async () => {
+    for (const message of (await chiefMessages()).filter((m) => m.card?.intake)) {
+      expect(message.card.dismissed, "a live intake card is sitting in the first run").toBe(true);
+    }
+  });
+});
