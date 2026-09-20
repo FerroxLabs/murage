@@ -1,7 +1,7 @@
 import { track } from "@/lib/analytics";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
@@ -33,6 +33,7 @@ import {
   replaceComposerSlashTrigger,
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
+import { openSetup } from "./SetupPanel";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu } from "./PermissionModeMenu";
@@ -86,6 +87,16 @@ const LEARN_COMMAND: ComposerSlashCommand = {
   id: "learn",
   label: "/learn",
   description: "Teach a reusable workflow from this conversation",
+};
+
+// The guided first run, reachable from every composer. It is always offered:
+// on a finished workspace the same list comes back with its ticks already in
+// place and every finished step offering Change, so there is no state in
+// which typing it is a dead end.
+const SETUP_COMMAND: ComposerSlashCommand = {
+  id: "setup",
+  label: "/setup",
+  description: "Walk through setting up your bots, and pick up where you left off",
 };
 
 interface ComposerDraftSnapshot extends ComposerSendSnapshot {
@@ -331,6 +342,7 @@ export function Composer({
     ) {
       available.push(LEARN_COMMAND);
     }
+    available.push(SETUP_COMMAND);
     const query = slash.query.toLowerCase();
     return available.filter(
       (command) =>
@@ -402,7 +414,10 @@ export function Composer({
     if (!slash) return;
     // /goal leaves NO text behind: the mode is the chip, and the draft is
     // just the goal. /learn stays literal because the harness reads it.
+    // /setup is not a message at all — it opens the checklist and leaves the
+    // draft empty, so nothing is ever sent to a bot.
     const replacement = command.id === "learn" ? "/learn " : "";
+    if (command.id === "setup") openSetup();
     const next = replaceComposerSlashTrigger(text, slash, replacement);
     editText(next.text);
     setCaret(next.caret);
@@ -729,6 +744,8 @@ export function Composer({
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
                   {command.id === "goal" ? (
                     <Target size={15} aria-hidden="true" />
+                  ) : command.id === "setup" ? (
+                    <ListChecks size={15} aria-hidden="true" />
                   ) : (
                     <BookOpen size={15} aria-hidden="true" />
                   )}

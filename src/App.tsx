@@ -16,6 +16,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
+import { SetupPanel } from "@/components/SetupPanel";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
@@ -297,6 +298,10 @@ function Shell() {
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
+      {/* The guided first run. It owns its own visibility (SetupPanel.tsx):
+          it offers itself on a workspace that has never been through setup,
+          and `/setup` or Settings bring it back on any other. */}
+      <SetupPanel />
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPalette onOpenChange={setPaletteOpen} />
