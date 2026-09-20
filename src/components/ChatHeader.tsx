@@ -322,7 +322,7 @@ export function ChatHeader({
           // sizes. The 28px mascot is unchanged; only its padding and the
           // gaps shrink, and the target stays a 32px square.
           className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50 chip-trim:size-8"
-          title="Open agent profile"
+          title="Bot settings"
           aria-label={`Open ${bot.name}'s profile`}
         >
           <BotAvatar

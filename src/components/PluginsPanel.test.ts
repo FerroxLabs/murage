@@ -196,9 +196,11 @@ describe("the connected-apps call to action", () => {
 
 describe("each FluxRouter key problem gets its own sentence", () => {
   it.each([
-    ["flux_key_budget_exhausted", "Add credit", "billing"],
-    ["flux_key_expired", "Reconnect FluxRouter", "enable-flux"],
-    ["flux_key_invalid", "Reconnect FluxRouter", "enable-flux"],
+    // The ceiling is a ceiling: this line no longer promises that buying
+    // credit lifts it, only where to look.
+    ["flux_key_budget_exhausted", "used its allowance for this month", "billing"],
+    ["flux_key_expired", "Reconnect Flux Router", "enable-flux"],
+    ["flux_key_invalid", "Reconnect Flux Router", "enable-flux"],
     ["flux_key_blocked", "support@fluxrouter.ai", undefined],
   ])("explains %s", (tokenError, fragment, action) => {
     const [notice] = notices({ configured: false }, fields({ fluxBrokerEnabled: true, fluxConfigured: true, migration: { state: "none", legacyUntil: null, tokenError } }));
@@ -235,7 +237,7 @@ describe("while the Murage Worker still holds the apps", () => {
     const [consent] = notices({}, legacy({ state: "offered", accountKind: "shared" }));
     expect(consent).toMatchObject({ kind: "consent" });
     expect(texts([consent])).toBe(
-      "Move your connected apps to FluxRouter. Anyone using this FluxRouter account's keys will be able to use them. This can't be undone from the app.",
+      "Move your connected apps to Flux Router. Anyone using this Flux Router account's keys will be able to use them. This can't be undone from the app.",
     );
     expect("actions" in consent ? consent.actions.map((a) => a.id) : []).toEqual(["claim", "keep-legacy"]);
     // The button is the only trigger, and it runs in the main process.
@@ -259,7 +261,7 @@ describe("while the Murage Worker still holds the apps", () => {
     ["account_has_connections", "already has its own connected apps"],
     ["install_already_claimed", "support@fluxrouter.ai"],
     ["claims_closed", "window to move connected apps has closed"],
-    [undefined, "couldn't be moved to this FluxRouter account"],
+    [undefined, "couldn't be moved to this Flux Router account"],
   ])("explains the %s conflict and what still works", (code, fragment) => {
     const list = notices({}, legacy({ state: "claim-conflict", code, installationId: "install-1" }));
     expect(texts(list)).toContain(fragment);
@@ -273,7 +275,7 @@ describe("while the Murage Worker still holds the apps", () => {
 
   it("tells the victim of a stolen install token where their apps went", () => {
     const list = notices({}, legacy({ state: "moved-elsewhere", installationId: "install-77" }));
-    expect(texts(list)).toContain("moved to a FluxRouter account that isn't this one");
+    expect(texts(list)).toContain("moved to a Flux Router account that isn't this one");
     expect(texts(list)).toContain("install-77");
     // Nothing else: the apps are not reachable here, so a deadline for them
     // would be beside the point.
@@ -292,8 +294,8 @@ describe("once FluxRouter holds the apps", () => {
 
   it("names the account, and warns when other people can use it", () => {
     const shared = texts(notices({}, flux({ migration: { state: "claimed", legacyUntil: null, accountKind: "shared" } })));
-    expect(shared).toContain("Connected through your FluxRouter account.");
-    expect(shared).toContain("Anyone using this FluxRouter account's keys can use these connected apps.");
+    expect(shared).toContain("Connected through your Flux Router account.");
+    expect(shared).toContain("Anyone using this Flux Router account's keys can use these connected apps.");
 
     const personal = texts(notices({}, flux({ migration: { state: "claimed", legacyUntil: null, accountKind: "personal" } })));
     expect(personal).not.toContain("Anyone using");
@@ -309,9 +311,9 @@ describe("once FluxRouter holds the apps", () => {
     const at = "2026-09-11T00:00:00Z";
     const migration = { state: "claimed" as const, legacyUntil: null, at };
     const fresh = texts(notices({ now: Date.parse(at) + 3_600_000 }, flux({ migration })));
-    expect(fresh).toContain("Your connected apps moved to FluxRouter.");
+    expect(fresh).toContain("Your connected apps moved to Flux Router.");
     const later = texts(notices({ now: Date.parse(at) + 25 * 3_600_000 }, flux({ migration })));
-    expect(later).not.toContain("moved to FluxRouter");
+    expect(later).not.toContain("moved to Flux Router");
   });
 });
 
@@ -381,11 +383,14 @@ describe("the connected-apps lock", () => {
   });
 
   it("says exactly what unlocking buys, in English, under connectedApps.lock.*", () => {
-    expect(en["connectedApps.lock.title"]).toBe("Connect 500+ apps");
+    // No count is claimed that the code can prove: "500+" was never verified
+    // against the live catalogue, so the copy names apps instead of a number.
+    expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
-      "Gmail, Slack, Notion, GitHub, Google Calendar and 500+ more — your bots can use them all. Add your FluxRouter key to unlock, with a free daily allowance included.",
+      "Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.",
     );
-    expect(en["connectedApps.lock.button"]).toBe("Add FluxRouter key");
+    expect(Object.values(en).some(value => /\d+\+ (?:more |)apps|and \d+\+ more/.test(value))).toBe(false);
+    expect(en["connectedApps.lock.button"]).toBe("Add Flux Router key");
     expect(en["connectedApps.lock.ownKey"]).toBe("Have your own Composio key? Add it under Advanced.");
     // The old notice-line CTA strings stay in en.json unreferenced until the locale
     // regeneration lane prunes them; the "flux-cta" notice kind itself is gone (see above).
@@ -394,8 +399,8 @@ describe("the connected-apps lock", () => {
   it("paints the offer over a dimmed, inert showcase when there is no key", () => {
     const html = render(noKeys);
     expect(html).toContain('data-connected-apps-lock=""');
-    expect(html).toContain("Connect 500+ apps");
-    expect(html).toContain("Add FluxRouter key");
+    expect(html).toContain("Connect your apps");
+    expect(html).toContain("Add Flux Router key");
     expect(html).toContain("Have your own Composio key? Add it under Advanced.");
     // One headline, one line, one primary action.
     expect(html.match(/data-connected-apps-lock-primary/g)).toHaveLength(1);
@@ -504,20 +509,20 @@ describe("when Murage's original connected-apps service has retired", () => {
     expect(html).toContain('data-connected-apps-lock=""');
     expect(html).toContain(en["connectedApps.lock.retiredTitle"]);
     expect(html).toContain(en["connectedApps.lock.retiredBody"]);
-    expect(html).not.toContain("Connect 500+ apps");
+    expect(html).not.toContain(en["connectedApps.lock.title"]);
     // Still one way forward: the FluxRouter key.
-    expect(html).toContain("Add FluxRouter key");
+    expect(html).toContain("Add Flux Router key");
     expect(html.match(/data-connected-apps-lock-primary/g)).toHaveLength(1);
   });
 
   it("keeps the ordinary offer on the lock for everyone else", () => {
-    expect(render(noKeys)).toContain("Connect 500+ apps");
+    expect(render(noKeys)).toContain(en["connectedApps.lock.title"]);
   });
 
-  it("says it in one or two plain sentences that name FluxRouter", () => {
+  it("says it in one or two plain sentences that name Flux Router", () => {
     for (const key of ["connectedApps.flux.legacyRetired", "connectedApps.lock.retiredBody"]) {
       const copy = en[key];
-      expect(copy).toContain("FluxRouter");
+      expect(copy).toContain("Flux Router");
       expect(copy).toMatch(/retired/);
       expect(copy.split(/(?<=\.)\s+/).length).toBeLessThanOrEqual(2);
     }

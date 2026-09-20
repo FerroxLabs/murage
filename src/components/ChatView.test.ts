@@ -96,7 +96,7 @@ describe("the hover rail's controls, as words", () => {
     // discovers". On a phone that matters more, not less — there is no
     // tooltip to hover for the reason.
     expect(chatSheet).toContain("Add an ElevenLabs key to read messages aloud");
-    expect(chatSheet).toContain("Pick a voice in this agent's profile to read aloud");
+    expect(chatSheet).toContain("Pick a voice in this bot's settings to read aloud");
     expect(chatSheet).toContain("Stop speaking");
   });
 

@@ -93,7 +93,7 @@ export function RenameTitle({
             onClick={onActivate}
             aria-label={`Open ${value}'s profile`}
             className={cn("min-w-0 truncate text-left", className)}
-            title="Open agent profile"
+            title="Bot settings"
           >
             {value}
           </button>
@@ -104,7 +104,7 @@ export function RenameTitle({
           type="button"
           onClick={startRename}
           aria-label={`Rename ${value}`}
-          title="Rename agent"
+          title="Rename bot"
           className={cn(
             "flex size-10 shrink-0 items-center justify-center rounded text-ink-secondary opacity-70 hover:bg-raised hover:text-ink hover:opacity-100",
             editButtonClassName,

@@ -95,7 +95,7 @@ describe("a server card states what it found, in that order", () => {
     expect(contextLine(model({ context: { contextWindow: 65_536, source: "llamacpp-props" } }))).toBe("64K context loaded");
     const small = contextLine(model({ context: { contextWindow: 4_096, source: "llamacpp-props" } }));
     expect(small).toContain("4K context loaded");
-    expect(small).toContain("too small for agents");
+    expect(small).toContain("too small for bots");
     expect(contextLine(model())).toBe("Context size not reported by this server");
   });
 
@@ -152,11 +152,13 @@ describe("every test outcome is a plain sentence with a next action (spec T1)", 
     expect(nextActionFor(server({ status: "not-answering" }), model()).kind).toBe("retest");
   });
 
+  // 0.1.57 renames the one thing one way: visible copy says "bot", never
+  // "agent". The sentence shape the spec fixes is unchanged.
   it("uses the words the spec fixes for the three outcomes people actually hit", () => {
-    expect(testOutcomeLine(test("tools-work"))).toBe("Tools work — ready for agents");
+    expect(testOutcomeLine(test("tools-work"))).toBe("Tools work — ready for bots");
     expect(testOutcomeLine(test("text-instead-of-tools"))).toContain("can't use tools");
     expect(testOutcomeLine(test("context-too-small", { context: { contextWindow: 4_096, source: "llamacpp-props" } })))
-      .toBe("Context too small for agents (loaded 4K; agents need 32K+)");
+      .toBe("Context too small for bots (loaded 4K; bots need 32K+)");
   });
 
   it("carries no protocol jargon into any outcome sentence", () => {

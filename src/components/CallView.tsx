@@ -92,9 +92,9 @@ export function CallTargetButton({
       : !supported
         ? t("calls.macOnly")
         : !configured
-          ? "Set up a voice in an agent profile to make calls"
+          ? "Set up a voice in a bot's settings to make calls"
           : !voiceReady
-            ? "Pick a voice in an agent profile to make calls"
+            ? "Pick a voice in a bot's settings to make calls"
             : t("calls.call", { name: targetName });
 
   const reason = !capabilitiesReady

@@ -47,5 +47,5 @@ export function SkillVersionHistory({botId,name,threadId,canEdit,onRestored}:{bo
 export function RoutineVersionHistory({routine,onRestored,disabledReason}:{routine:Routine;onRestored:(routine:Routine)=>void;disabledReason?:string}) {
   const callback=useRef(onRestored);callback.current=onRestored;
   const source=useMemo(()=>routineHistorySource(api,routine.id,value=>callback.current(value)),[routine.id]);
-  return <ProcedureVersionHistory source={source} label="Instruction version history" scopeLabel={routine.target==="room-goal"?"This routine’s room":"This routine’s bot"} disabledReason={disabledReason}/>;
+  return <ProcedureVersionHistory source={source} label="Instruction version history" scopeLabel={routine.target==="room-goal"?"This routine’s channel":"This routine’s bot"} disabledReason={disabledReason}/>;
 }

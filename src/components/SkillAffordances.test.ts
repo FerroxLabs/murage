@@ -73,7 +73,9 @@ describe("the bot row's menu is reachable without a right-click", () => {
 describe("every way into skill assignment", () => {
   it("1. the bot menu offers it", () => {
     expect(sidebar).toContain('"Add a skill"');
-    expect(sidebar).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id })');
+    // 0.1.57: it lands on the Skills tab, not on Teams. Arriving at the wrong
+    // tab is what made "Add a skill" open a page about teams.
+    expect(sidebar).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" })');
   });
 
   it("2. the agent's own Skills panel offers it, with that agent pre-filled", () => {
@@ -88,7 +90,7 @@ describe("every way into skill assignment", () => {
     // instruction draft is confirmed, not silently lost, when the library
     // replaces the dialog. The destination and the pre-filled agent are
     // unchanged.
-    expect(settings).toContain('onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id }))}');
+    expect(settings).toContain('onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }))}');
     expect(settings).toContain("const navigate = useBotSettingsNavigation();");
   });
 
@@ -144,7 +146,7 @@ describe("the intake card", () => {
     // could bring it back. The way back is the bot's own profile, which is
     // always there — which is also what lets a person walk out of the
     // conversation in the transcript without losing anything.
-    expect(card).toContain("Set up this bot");
+    expect(card).toContain("What is this bot for?");
     expect(settings).toContain("<BotSetupAction bot={bot} />");
   });
 

@@ -55,19 +55,28 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   expect(pending.sourceLabel).toContain("Previous report");
   await api("/api/inbox/state", "POST", { id: pending.id, version: pending.version, read: true, snoozedUntil: Date.now()+60000 });
   expect((await api("/api/inbox?view=approvals")).total).toBe(1);
+  // "Needs you" is the person's own list, so their "not now" is honoured
+  // there while the approval itself stays exactly where it was.
+  expect((await api("/api/inbox?view=needs-you")).needsYou).toBe(0);
+  const snoozed = (await api("/api/inbox?view=approvals")).items[0];
+  await api("/api/inbox/state", "POST", { id: snoozed.id, version: snoozed.version, snoozedUntil: null });
+  expect((await api("/api/inbox?view=needs-you")).needsYou).toBe(1);
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
   await page.goto(origin);
   for (const width of [390,820,1440]) {
     await page.setViewportSize({ width, height: 900 });
     const sidebar = await openSidebar(page);
-    const tools = sidebar.locator("[data-sidebar-more-trigger]");
-    await expect(tools).toContainText("1");
-    await tools.focus(); await page.keyboard.press("Enter");
-    await sidebar.getByRole("menuitem", { name: /Pending approvals/ }).click();
-    await expect(page.getByRole("heading", { name: "Question needs an answer", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pending approvals", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText(/Waiting \d+ min for your answer/)).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "Show snoozed items" })).toHaveCount(0);
+    // One row, one click — not a menu entry folded under "Tools".
+    const needsYou = sidebar.locator("[data-sidebar-needs-you]");
+    await expect(needsYou).toContainText("1");
+    await expect(sidebar.getByRole("menuitem", { name: /Pending approvals/ })).toHaveCount(0);
+    await needsYou.focus(); await page.keyboard.press("Enter");
+    // The card is headed with what the bot actually asked, not a category.
+    await expect(page.getByRole("heading", { name: "Which format should the report use?", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveClass(/bg-accent /);
+    await expect(page.getByRole("button", { name: "Pending approvals", exact: true })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("checkbox", { name: "Show snoozed items" })).toBeVisible();
     if (process.env.MURAGE_B35_AXE_SOURCE) {
       await page.addScriptTag({ path: process.env.MURAGE_B35_AXE_SOURCE });
       const audit = await page.evaluate(async () => (window as any).axe.run(document.querySelector('dialog[open]')));
@@ -80,21 +89,33 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   }
   await page.reload();
   let sidebar = await openSidebar(page);
-  await expect(sidebar.locator("[data-sidebar-more-trigger]")).toContainText("1");
+  const needsYouRow = sidebar.locator("[data-sidebar-needs-you]");
+  await expect(needsYouRow).toContainText("1");
   await page.route("**/api/inbox?**", route => route.abort());
-  await expect(sidebar.locator("[data-sidebar-more-trigger]")).toHaveAttribute("aria-label", /approvals may be stale/, { timeout: 12000 });
-  await expect(sidebar.locator("[data-pending-approval-count]")).toContainText("1");
+  await expect(needsYouRow).toHaveAttribute("aria-label", /may be out of date/, { timeout: 12000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toContainText("1");
   await page.unroute("**/api/inbox?**");
-  await expect(sidebar.locator("[data-sidebar-more-trigger]")).not.toHaveAttribute("aria-label", /stale/, { timeout: 12000 });
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: /Pending approvals/ }).click();
+  await expect(needsYouRow).not.toHaveAttribute("aria-label", /out of date/, { timeout: 12000 });
+  await needsYouRow.click();
   await page.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${pending.link.messageId}"]`)).toBeVisible();
   expect((await api("/api/inbox?view=approvals")).total).toBe(1);
+
+  // Answer it from the Inbox itself, through the conversation's own respond
+  // route — no walk to the thread, and no second answering path.
+  sidebar = await openSidebar(page);
+  await sidebar.locator("[data-sidebar-needs-you]").click();
+  const inboxCard = page.locator("[data-inbox-id]").filter({ has: page.getByRole("heading", { name: "Which format should the report use?", exact: true }) });
+  await expect(inboxCard).toHaveCount(1);
+  await expect(inboxCard.getByText("Which sections should it include?")).toBeVisible();
+  await inboxCard.getByRole("radio", { name: /Summary/ }).click();
+  await inboxCard.getByRole("checkbox", { name: /Intro/ }).click();
+  await inboxCard.getByRole("button", { name: "Send answer" }).click();
+  await expect.poll(async () => (await api("/api/inbox?view=approvals")).total, { timeout: 20000 }).toBe(0);
   const thread = await api(`/api/threads/${oldThread}/messages`);
   const card = thread.messages.find((message: any) => message.id === pending.link.messageId).card;
-  await api(`/api/threads/${oldThread}/respond`, "POST", { requestId: card.requestId, behavior: "skip" });
-  await expect.poll(async () => (await api("/api/inbox?view=approvals")).total).toBe(0);
+  expect(card.answered).toBeTruthy();
+  expect(card.answers.map((answer: any) => answer.selected).flat()).toContain("Summary");
   sidebar = await openSidebar(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 12000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 12000 });
 });

@@ -719,7 +719,7 @@ export function PluginsPanel() {
     const dialog = dialogRef.current;
     if (!dialog) return;
     const active = document.activeElement;
-    const parked = !active || active === document.body || active === dialog || active === dialog.querySelector('[aria-label="Close plugins"]');
+    const parked = !active || active === document.body || active === dialog || active === dialog.querySelector('[aria-label="Close connected apps"]');
     if (!parked) return;
     (dialog.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
       ?? dialog.querySelector<HTMLElement>('input[aria-label="Search apps"]'))?.focus();
@@ -838,8 +838,8 @@ export function PluginsPanel() {
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
-            <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Plugins</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? "Connect apps and your own MCP tools." : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
+            <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? "One Flux Router key connects hundreds of apps, including Gmail, Slack, Notion and GitHub. You can add your own MCP tools too." : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
           </div>
           <div className="flex items-center gap-1">
             {surface === "apps" && lockState === "unlocked" && (
@@ -854,7 +854,7 @@ export function PluginsPanel() {
             )}
             <button
               onClick={close}
-              aria-label="Close plugins"
+              aria-label="Close connected apps"
               className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
             >
               <X size={21} />
@@ -863,7 +863,7 @@ export function PluginsPanel() {
         </header>
 
         <div className="border-b border-hairline/40 px-6 sm:px-8">
-          <div className="flex gap-6" role="tablist" aria-label="Plugin type">
+          <div className="flex gap-6" role="tablist" aria-label="Connected apps and MCP servers">
             {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
               <button
                 key={item}

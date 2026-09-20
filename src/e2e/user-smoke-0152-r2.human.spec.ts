@@ -349,7 +349,7 @@ async function openConnectedApps(page: Page) {
     await sidebar.getByRole("button", { name: "Tools", exact: true }).click();
     await page.getByRole("menu", { name: "Tools" }).getByRole("menuitem", { name: "Connected apps", exact: true }).click();
   }
-  const panel = page.getByRole("dialog", { name: "Plugins" });
+  const panel = page.getByRole("dialog", { name: "Connected apps" });
   await expect(panel).toBeVisible();
   return panel;
 }
@@ -383,7 +383,7 @@ const external: string[] = [];
 // 5. Connected apps locked state (CTA1) — first, while no key exists
 // ═════════════════════════════════════════════════════════════════════════
 
-test("05 CTA1: no key → dimmed app grid behind 'Connect 500+ apps', 'Add FluxRouter key' lands on the key field, no catalog request", async ({ page }) => {
+test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux Router key' lands on the key field, no catalog request", async ({ page }) => {
   const catalog: string[] = [];
   page.on("request", (r) => {
     const url = new URL(r.url());
@@ -393,7 +393,7 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect 500+ apps', 'Add FluxR
   for (const skin of ["light", "dark"] as const) {
     await openApp(page, { width: 1100, height: 800, skin });
     const panel = await openConnectedApps(page);
-    await expect(panel.getByText("Connect 500+ apps", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(panel.getByText("Connect your apps", { exact: true })).toBeVisible({ timeout: 20_000 });
     const lock = panel.locator("[data-connected-apps-lock]");
     const showcase = lock.locator('[aria-hidden="true"]').first();
     await expect(showcase).toBeVisible();
@@ -403,11 +403,11 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect 500+ apps', 'Add FluxR
     expect(look.filter).toContain("blur");
     expect(look.pointer).toBe("none");
     expect(look.tiles).toBeGreaterThanOrEqual(4);
-    await expect(panel.getByRole("button", { name: "Add FluxRouter key", exact: true })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Add Flux Router key", exact: true })).toBeVisible();
     await expect(panel.getByRole("textbox", { name: "Search apps" })).toHaveCount(0);
     await shot(page, `05a-connected-apps-locked-${skin}`);
     if (skin === "light") {
-      await panel.getByRole("button", { name: "Add FluxRouter key", exact: true }).click();
+      await panel.getByRole("button", { name: "Add Flux Router key", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
       await expect(page.getByLabel("Flux Router key", { exact: true })).toBeFocused();
       await shot(page, "05b-add-fluxrouter-key-lands-on-field");
@@ -415,12 +415,12 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect 500+ apps', 'Add FluxR
     } else {
       // Close the panel the way a person does before narrowing the window.
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog", { name: "Plugins" })).toHaveCount(0);
+      await expect(page.getByRole("dialog", { name: "Connected apps" })).toHaveCount(0);
     }
   }
   await page.setViewportSize({ width: 390, height: 844 });
   const narrow = await openConnectedApps(page);
-  await expect(narrow.getByText("Connect 500+ apps", { exact: true })).toBeVisible();
+  await expect(narrow.getByText("Connect your apps", { exact: true })).toBeVisible();
   await shot(page, "05c-connected-apps-locked-390");
   note(`catalog/logo requests while locked: ${JSON.stringify(catalog)}`);
   expect(catalog).toEqual([]);
@@ -510,7 +510,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
 
   // Composio CTA with no key.
   const panel = await openConnectedApps(page);
-  await expect(panel.getByText("Connect 500+ apps", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByText("Connect your apps", { exact: true })).toBeVisible({ timeout: 20_000 });
   await shot(page, "07f-sweep-composio-cta-no-key");
   await page.keyboard.press("Escape");
 
@@ -813,7 +813,7 @@ test("02 LFU2: Settings → Engines shows the pinned Fuigo; a Fuigo bot complete
   if (!haveKey) return;
 
   const panel = await openConnectedApps(page);
-  await panel.getByRole("button", { name: "Add FluxRouter key", exact: true }).click();
+  await panel.getByRole("button", { name: "Add Flux Router key", exact: true }).click();
   const field = page.getByLabel("Flux Router key", { exact: true });
   await expect(field).toBeFocused();
   await field.fill(readFileSync(FLUX_KEY_FILE, "utf8").trim());

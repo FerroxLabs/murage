@@ -37,7 +37,7 @@ export function linkedPersonChoices(bindings: HumanBinding[], ownerPersonId: str
 }
 
 // Bot, conversation and preference audiences stay private to their owner; only group audiences can be offered to a person.
-const SHAREABLE_KINDS: Record<string, string> = { room: "Room", project: "Project", team: "Team", workspace: "Workspace" };
+const SHAREABLE_KINDS: Record<string, string> = { room: "Channel", project: "Project", team: "Team", workspace: "Workspace" };
 export function shareAudienceLabel(audience: ShareableAudience) {
   return `${SHAREABLE_KINDS[audience.kind] ?? "Audience"}: ${audience.label}`;
 }
@@ -118,7 +118,7 @@ export function MemoryPeople({ people, audiences, disabled, onLink, onShare, onR
       })}
     </div>
     {shareRows && shareRows.length > 0 && <div className="space-y-3 border-t border-hairline/40 pt-3">
-      <div><h4 className="text-[13px] font-medium">Shared audiences</h4><p className="mt-1 text-[12px] text-ink-secondary">Sharing lets a separate person&apos;s conversations recall memories saved for that room, project, team or workspace. Only those audiences are offered here; the workspace owner&apos;s private conversations are not shared by this choice. Stopping applies to future recall; text already sent to a provider cannot be withdrawn.</p></div>
+      <div><h4 className="text-[13px] font-medium">Shared audiences</h4><p className="mt-1 text-[12px] text-ink-secondary">Sharing lets a separate person&apos;s conversations recall memories saved for that channel, project, team or workspace. Only those audiences are offered here; the workspace owner&apos;s private conversations are not shared by this choice. Stopping applies to future recall; text already sent to a provider cannot be withdrawn.</p></div>
       {shareRows.map(row => {
         const selectedScopeId = shareChoices[row.personId] ?? "";
         const isBusy = Boolean(busy) || disabled;

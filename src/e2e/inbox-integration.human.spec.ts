@@ -58,11 +58,17 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
     if (await invitation.isVisible()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
     const sidebar = await openSidebar(page);
+    // 0.1.57: the Inbox is a sidebar row of its own ("Needs you"), not an
+    // entry folded under Tools — and Tools no longer offers a second door.
     const tools = sidebar.getByRole("button", { name: /^Tools(?:,.*)?$/ });
     await expect(tools).toBeVisible(); await tools.focus(); await page.keyboard.press("Enter");
-    await expect(sidebar.getByRole("menuitem", { name: "Inbox", exact: true })).toBeVisible();
+    await expect(sidebar.getByRole("menuitem", { name: "Inbox", exact: true })).toHaveCount(0);
+    await expect(sidebar.getByRole("menuitem", { name: "Team map", exact: true })).toBeVisible();
+    await tools.click(); // fold it back without closing the drawer
+    const needsYou = sidebar.locator("[data-sidebar-needs-you]");
+    await expect(needsYou).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`inbox-tools-${scenario.width}-${scenario.skin}.png`), fullPage: true });
-    await sidebar.getByRole("menuitem", { name: "Inbox", exact: true }).click();
+    await needsYou.click();
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Results", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Inbox historical report", exact: true })).toBeVisible();

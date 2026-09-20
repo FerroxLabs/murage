@@ -102,6 +102,7 @@ import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } f
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
+import { SidebarNeedsYou } from "./SidebarNeedsYou";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
@@ -1005,9 +1006,9 @@ export function BotContextMenu({
         ),
         divider("d1"),
         item(<BookOpen size={16} className="text-ink-secondary" />, "Add a skill", () => {
-          dispatch({ type: "showTeamLibrary", botId: bot.id });
+          dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" });
         }),
-        item(<Pencil size={16} className="text-ink-secondary" />, "Edit Profile", () => {
+        item(<Pencil size={16} className="text-ink-secondary" />, "Bot settings", () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true });
         }),
@@ -1537,7 +1538,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [approvalsOpen, setApprovalsOpen] = useState(false);
   const approvals = usePendingApprovals(desktop === true, state.connected);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -2096,6 +2096,20 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       </div>
 
+      {/* Anything waiting on you, at the top left and never folded into a
+          menu. One row, one destination — the Inbox opens on its own
+          "Needs you" view, whose count this row shows. */}
+      {desktop === true && (
+        <div className={cn("pt-1", density === "icons" ? "px-2" : "px-3")}>
+          <SidebarNeedsYou
+            density={density}
+            count={approvals.needsYou}
+            stale={approvals.stale}
+            onOpen={() => setInboxOpen(true)}
+          />
+        </div>
+      )}
+
       {/* Search */}
       <div className={cn("pt-2 pb-3", density === "icons" ? "hidden" : "px-3")}>
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
@@ -2299,8 +2313,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             )}
             <button
               onClick={() => dispatch({ type: "showRoutines" })}
-              aria-label={density === "icons" ? "Calendar" : undefined}
-              title={density === "icons" ? "Calendar" : undefined}
+              aria-label={density === "icons" ? "Routines" : undefined}
+              title={density === "icons" ? "Routines" : undefined}
               className={cn(
                 "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
                 density === "icons" ? "justify-center px-2" : "gap-3 px-3",
@@ -2308,7 +2322,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               )}
             >
               <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Calendar</span>
+              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Routines</span>
               {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
                 <span className="size-2 rounded-full bg-danger" />
               )}
@@ -2328,7 +2342,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             section does not exist on a phone — it is the setup screen for
             getting Murage ONTO one. A dot that opens an empty pane is worse
             than no dot. `undefined` hides it too: the neutral answer. */}
-        {density === "icons" && desktop === true && <button aria-label={`Pending approvals, ${approvals.count ?? "unknown"}${approvals.stale ? ", may be stale" : ""}`} title="Pending approvals" onClick={() => setApprovalsOpen(true)} className="flex min-h-11 items-center justify-center gap-1 rounded-xl text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"><BellDot size={20} /><span className="text-[12px]">{approvals.count ?? "?"}{approvals.stale && approvals.count !== undefined ? " ?" : ""}</span></button>}
         {density === "icons" && desktop === true && (
           <SidebarPhoneButton
             density={density}
@@ -2339,11 +2352,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <SidebarMoreMenu
             compact={density === "compact"}
             triggerRef={toolsTriggerRef}
-            approvalCount={desktop === true ? approvals.count : undefined}
-            approvalsStale={desktop === true && approvals.stale}
             items={[
-              ...(desktop === true ? [{ key: "pending-approvals", label: `Pending approvals (${approvals.count ?? "?"})${approvals.stale ? " · stale" : ""}`, icon: <BellDot size={18} />, attention: (approvals.count ?? 0) > 0, onSelect: () => setApprovalsOpen(true) }] : []),
-              ...(desktop === true ? [{ key: "inbox", label: "Inbox", icon: <BellDot size={18} />, onSelect: () => setInboxOpen(true) }] : []),
               ...(desktop === true ? [{ key: "files", label: "Files", icon: <Folder size={18} />, onSelect: () => setFilesOpen({}) }] : []),
               {
                 key: "team-map",
@@ -2365,7 +2374,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 : []),
               {
                 key: "routines",
-                label: "Calendar",
+                label: "Routines",
                 icon: <CalendarDays size={18} />,
                 active: state.activeView === "routines",
                 // folded away, this dot would otherwise vanish with the row
@@ -2427,7 +2436,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
-      {approvalsOpen && <InboxDialog initialView="approvals" onClose={() => setApprovalsOpen(false)} />}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
@@ -2471,7 +2479,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
           detail={
             pendingDelete.kind === "bot"
-              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone. Archive it instead if you might want it back."
+              ? "Its entire conversation history goes with it, along with any skills it was given. This cannot be undone. Archive it instead if you might want it back."
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}

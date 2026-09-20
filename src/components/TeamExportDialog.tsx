@@ -90,8 +90,8 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
       <label className="flex items-center gap-2"><input type="radio" name="export-format" checked={format === "markdown"} disabled={Boolean(busy)} onChange={() => changeFormat("markdown")} />Markdown (.md)</label>
     </fieldset>
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{format === "zip"
-      ? "Importable package with selected bot definitions, team relationships, playbooks, routines and skill files. Skills are never selected automatically."
-      : "Readable, importable bot definitions, playbooks and routines. Skill files are excluded; switching formats clears skill selections. External agent systems must interpret the text themselves."}</p>
+      ? "Importable package with selected bot definitions, team relationships, skill instructions, routines and skill files. Skills are never selected automatically."
+      : "Readable, importable bot definitions, skill instructions and routines. Skill files are excluded; switching formats clears skill selections. External systems must interpret the text themselves."}</p>
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Credentials, conversations, private memory and permissions are excluded. Routines import paused and skills disabled. Roles are retained as intended setup; Chief and leader authority require explicit assignment after import.</p>
     {busy === "loading" && <p role="status" className="mt-3">Loading export options…</p>}
     {options && <div className="mt-4 space-y-3">
@@ -117,11 +117,11 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
           {bot.requiredApps?.map(app => <p key={app.label} className="mt-2 text-ink-secondary">Requires separate setup: {app.label} — {app.reason}</p>)}
         </details>)}
       </section>}
-      <fieldset><legend className="text-[13px] font-semibold">Playbooks</legend>{selectedPlaybooks.length ? selectedPlaybooks.map(playbook => <div key={playbook.key}>
+      <fieldset><legend className="text-[13px] font-semibold">Skill instructions</legend>{selectedPlaybooks.length ? selectedPlaybooks.map(playbook => <div key={playbook.key}>
         {check("playbookKeys", playbook.key, playbook.name)}
         <p className="ml-6 text-[12px] text-ink-secondary">{playbook.summary}</p>
-        {selection.playbookKeys.includes(playbook.key) && playbook.instructions && <details className="ml-6 text-[12px]"><summary className="cursor-pointer">Review playbook instructions</summary><p className="mt-1 whitespace-pre-wrap break-words">{playbook.instructions}</p></details>}
-      </div>) : <p className="text-[12px] text-ink-secondary">No playbooks for the selected bots.</p>}</fieldset>
+        {selection.playbookKeys.includes(playbook.key) && playbook.instructions && <details className="ml-6 text-[12px]"><summary className="cursor-pointer">Review these instructions</summary><p className="mt-1 whitespace-pre-wrap break-words">{playbook.instructions}</p></details>}
+      </div>) : <p className="text-[12px] text-ink-secondary">No skill instructions for the selected bots.</p>}</fieldset>
       {format === "zip" && <fieldset><legend className="text-[13px] font-semibold">Skill files</legend>
         {!selection.botIds.length ? <p className="text-[12px] text-ink-secondary">Select a bot to choose its skills.</p>
           : options.skills?.some(skill => selection.botIds.includes(skill.botId))
@@ -138,8 +138,8 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
     </div>}
     {preview && <section className="mt-4 rounded-lg bg-inset p-3" aria-label="Export review">
       <p className="text-[13px] font-medium">{preview.members} bots selected for export</p>
-      <p className="mt-1 text-[12px] text-ink-secondary">Included: bot instructions, {selection.playbookKeys.length} playbooks, {selection.routineIds.length} paused routines{format === "zip" ? `, ${selection.skillIds.length} selected skills` : "; no skill files"}. Rooms include selected members only.</p>
-      {options?.groups?.filter(group => group.memberIds.some(id => selection.botIds.includes(id))).map(group => <p key={group.id} className="mt-1 text-[12px] text-ink-secondary">Room: {group.name} — {group.memberIds.filter(id => selection.botIds.includes(id)).length} selected members{group.memberIds.some(id => !selection.botIds.includes(id)) ? "; other members omitted" : ""}.</p>)}
+      <p className="mt-1 text-[12px] text-ink-secondary">Included: bot instructions, {selection.playbookKeys.length} skill instructions, {selection.routineIds.length} paused routines{format === "zip" ? `, ${selection.skillIds.length} selected skills` : "; no skill files"}. Channels include selected members only.</p>
+      {options?.groups?.filter(group => group.memberIds.some(id => selection.botIds.includes(id))).map(group => <p key={group.id} className="mt-1 text-[12px] text-ink-secondary">Channel: {group.name} — {group.memberIds.filter(id => selection.botIds.includes(id)).length} selected members{group.memberIds.some(id => !selection.botIds.includes(id)) ? "; other members omitted" : ""}.</p>)}
       <p className="mt-1 text-[12px] text-ink-secondary">Excluded: unselected assets, credentials, conversations, private memory, permission grants and engine sessions. Apps and unexported skill dependencies need separate setup.</p>
       <p className="mt-1 text-[12px] text-ink-secondary">The scan checks known patterns. Review the contents; it cannot guarantee they are safe or free of secrets.</p>
       {preview.scan.blocked && <p role="alert" className="mt-2 text-[13px] text-danger">Export blocked. Remove the flagged contents before previewing again.</p>}

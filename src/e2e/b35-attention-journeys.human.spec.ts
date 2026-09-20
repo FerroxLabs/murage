@@ -37,9 +37,11 @@ async function openApp(page: Page) {
   return openSidebar(page);
 }
 async function openPendingApprovals(page: Page) {
+  // 0.1.57: one sidebar row, not a menu entry folded under "Tools". The
+  // dialog opens on "Needs you"; this walk wants the approvals-only view.
   const sidebar = await openSidebar(page);
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: /Pending approvals/ }).click();
+  await sidebar.locator("[data-sidebar-needs-you]").click();
+  await page.getByRole("button", { name: "Pending approvals", exact: true }).click();
 }
 
 test.beforeAll(async () => {
@@ -112,7 +114,7 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   expect(item.title).toBe("Approval requested");
   expect(item.sourceLabel).toContain("Channel conversation");
   const sidebar = await openApp(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("1", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await openPendingApprovals(page);
   const entry = page.locator(`[data-inbox-id="${item.id}"]`);
   await expect(entry).toContainText("Approval requested");
@@ -127,7 +129,7 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   expect(decided[0].decision.updatedPermissions).toBeUndefined();
   await waitFor("Telegram buttons settled", edits, list => list.some(entry => entry.messageId === offer.messageId && Array.isArray(entry.keyboard) && entry.keyboard.length === 0), 30_000);
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(0);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("0", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 15_000 });
   const lateTap = { update_id: ++updateId, callback_query: { id: `callback-${updateId}`, data: offer.keyboard.flat()[0].callback_data,
     from: { id: OWNER, is_bot: false }, message: { message_id: offer.messageId, date: 1_700_000_000 + updateId, chat: { id: OWNER, type: "private" } } } };
   arrive(lateTap);
@@ -152,10 +154,10 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   const offscreenItem = listed.items.find((item: any) => item.botId === offscreenId);
   expect(offscreenItem, JSON.stringify(listed.items)).toBeTruthy();
   let sidebar = await openApp(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("2", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("2", { timeout: 15_000 });
   await page.reload();
   sidebar = await openSidebar(page);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("2", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("2", { timeout: 15_000 });
   await openPendingApprovals(page);
   const entry = page.locator(`[data-inbox-id="${offscreenItem.id}"]`);
   await expect(entry).toContainText("Offscreen Researcher");
@@ -168,21 +170,21 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   expect(decided.at(-1).decision.behavior).toBe("deny");
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(1);
   expect((await inbox()).items[0].botId).toBe(chiefId);
-  await expect(sidebar.locator("[data-pending-approval-count]")).toHaveText("1", { timeout: 15_000 });
+  await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await page.screenshot({ path: testInfo.outputPath("b35-offscreen-denied.png"), fullPage: true });
 });
 
 test("while the server restarts the count stays visible as stale, then reconciles to the canonical total", async ({ page }, testInfo) => {
   const sidebar = await openApp(page);
-  const trigger = sidebar.locator("[data-sidebar-more-trigger]"), count = sidebar.locator("[data-pending-approval-count]");
+  const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-needs-you-count]");
   await expect(count).toHaveText("1", { timeout: 15_000 });
   await harness.stop();
-  await expect(trigger).toHaveAttribute("aria-label", /approvals may be stale/, { timeout: 15_000 });
+  await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });
   await expect(count).toHaveText(/^1\s*\?$/); // the last known count stays, marked as unconfirmed
   await page.screenshot({ path: testInfo.outputPath("b35-restart-stale.png"), fullPage: true });
   await harness.boot();
   const total = (await waitFor("canonical total after restart", inbox, (value: any) => typeof value?.total === "number", 20_000) as any).total;
-  await expect(trigger).not.toHaveAttribute("aria-label", /stale/, { timeout: 20_000 });
+  await expect(trigger).not.toHaveAttribute("aria-label", /out of date/, { timeout: 20_000 });
   await expect(count).toHaveText(String(total), { timeout: 15_000 });
   await testInfo.attach("restart-reconciliation.json", { body: JSON.stringify({ countBeforeRestart: 1, canonicalTotalAfterRestart: total }), contentType: "application/json" });
 });

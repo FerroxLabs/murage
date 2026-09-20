@@ -33,7 +33,7 @@ test("team descriptions explain the customer outcome in cards and previews", asy
   await openSidebar(app);
   await app.getByRole("button", { name: "New or share", exact: true }).click();
   await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  const library = app.getByRole("dialog", { name: "Templates", exact: true });
   await library.getByRole("tab", { name: "Teams", exact: true }).click();
   await expect(library.getByText("66 teams", { exact: true })).toBeVisible();
   await library.getByRole("textbox", { name: "Search teams", exact: true }).fill("Cold Outbound");
@@ -62,12 +62,12 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await trigger.click();
   await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  const library = app.getByRole("dialog", { name: "Templates", exact: true });
   await expect(library).toBeVisible();
   await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
   expect((await api("GET", "/api/bots")).bots.length).toBe(before);
   await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
-  await library.getByRole("button", { name: "Close teams", exact: true }).click();
+  await library.getByRole("button", { name: "Close", exact: true }).click();
   const drawerToggle = app.getByRole("button", { name: "Open bot list" });
   if (await drawerToggle.isVisible() && await drawerToggle.getAttribute("aria-expanded") !== "true") {
     await openSidebar(app);
@@ -357,7 +357,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     // door the whole feature exists to remove.
     await openBot(app, FIXTURES.titledNoSkills.name);
     await app.getByRole("button", { name: `Open ${FIXTURES.titledNoSkills.name}'s profile` }).first().click();
-    await expect(app.getByText("Set up this bot")).toBeVisible();
+    await expect(app.getByText("What is this bot for?")).toBeVisible();
     await app.getByRole("button", { name: "Set up", exact: true }).click();
     // It has a title and a description, so it must say so before anything.
     await expect(app.getByText(`${FIXTURES.titledNoSkills.name} is already set up`)).toBeVisible();
@@ -365,7 +365,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     await expect(app.getByText(/Existing skills are not removed/)).toBeVisible();
     // Cancel changes nothing.
     await app.getByRole("button", { name: "Cancel" }).click();
-    await expect(app.getByText("Set up this bot")).toBeVisible();
+    await expect(app.getByText("What is this bot for?")).toBeVisible();
     await expect(app.getByRole("textbox", { name: QUESTION })).toHaveCount(0);
     // Continue reaches the question, with the same keep-the-name default.
     await app.getByRole("button", { name: "Set up", exact: true }).click();

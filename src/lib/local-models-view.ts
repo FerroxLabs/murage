@@ -76,7 +76,7 @@ export function contextLine(model: LocalModelView): string {
   const window = model.context?.contextWindow;
   if (!window) return "Context size not reported by this server";
   if (window < AGENT_MIN_CONTEXT_TOKENS) {
-    return `${tokensLabel(window)} context loaded — too small for agents, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
+    return `${tokensLabel(window)} context loaded — too small for bots, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
   }
   return `${tokensLabel(window)} context loaded`;
 }
@@ -96,15 +96,15 @@ export function enginesLine(model: LocalModelView): string {
 export function testOutcomeLine(test: LocalToolTestResult): string {
   switch (test.outcome) {
     case "tools-work":
-      return "Tools work — ready for agents";
+      return "Tools work — ready for bots";
     case "tools-partial":
       return "Tools work, with gaps — some agent behaviour may be unreliable";
     case "text-instead-of-tools":
       return "This model answers but can't use tools (it came back as text)";
     case "context-too-small":
       return test.context?.contextWindow
-        ? `Context too small for agents (loaded ${tokensLabel(test.context.contextWindow)}; agents need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`
-        : `Context too small for agents (agents need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`;
+        ? `Context too small for bots (loaded ${tokensLabel(test.context.contextWindow)}; bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`
+        : `Context too small for bots (bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`;
     case "server-rejects-tools":
       return "This server rejects tools — it has to be started with them enabled";
     case "model-not-found":

@@ -285,22 +285,24 @@ describe("5. the desktop is untouched", () => {
     // desktop" is a property of the shape, not of a screenshot.
     //
     // A menu built from an items ARRAY cannot use `&&` — a `false` entry is
-    // not an item — so the sidebar's desktop-only Inbox and Files entries
-    // (f287470f, c95571f0) are spread from an EMPTY list off the desktop:
-    // `...(desktop === true ? [item] : [])`. Nothing is rendered in their
+    // not an item — so the sidebar's desktop-only Files entry (c95571f0) is
+    // spread from an EMPTY list off the desktop:
+    // `...(desktop === true ? [item] : [])`. Nothing is rendered in its
     // place, which is the same rule in the only shape an array admits. That
     // exact form is the only ternary allowed; an `else` that renders
     // something, or a `desktop === false` / `desktop ?` branch, is still a
     // leak.
     const EMPTY_LIST_SPREAD = /\.\.\.\(desktop === true \? \[[^\]]*\] : \[\]\)/g;
-    // Inbox, Files and Pending approvals.
-    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(3);
-    // A prop has the same non-rendering shape: `={desktop === true ? value :
-    // undefined}` passes nothing off the desktop, and the More menu renders
-    // the pending-approval count only when it is defined. Pinned to the one
-    // known use so a new branch still has to be reviewed here.
+    // Files. Approvals and Inbox left the Tools menu in 0.1.57 for the
+    // sidebar's own "Needs you" row, which is an ordinary `desktop === true
+    // &&` guard and needs no exception here.
+    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(1);
+    // A prop could have the same non-rendering shape: `={desktop === true ?
+    // value : undefined}` passes nothing off the desktop. No sidebar prop
+    // uses it today; the pattern stays pinned so re-introducing one has to be
+    // reviewed here.
     const UNDEFINED_PROP = /=\{desktop === true \? [^?:{}]+ : undefined\}/g;
-    expect(sidebar.match(UNDEFINED_PROP)).toEqual(["={desktop === true ? approvals.count : undefined}"]);
+    expect(sidebar.match(UNDEFINED_PROP)).toBeNull();
     for (const [name, source] of gated) {
       const withoutEmptySpreads = source.replace(EMPTY_LIST_SPREAD, "").replace(source === sidebar ? UNDEFINED_PROP : /$^/g, "");
       expect(withoutEmptySpreads, name).not.toMatch(/desktop === true \? /);

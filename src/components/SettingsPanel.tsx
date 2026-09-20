@@ -6,6 +6,7 @@ import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -27,6 +28,7 @@ import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
+import { botRoleTitle } from "@/lib/bot-role";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 
 function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children: React.ReactNode }) {
@@ -408,6 +410,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
   const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
+  // "A second bot exists" — an archived one is not somebody to report to.
+  const hasTeammates = state.bots.filter((candidate) => !candidate.hidden).length > 1;
   const connectedAppsEnabled = bot.composio !== false;
   const canUseBrowser = engine?.capabilities?.browserMcp === true;
   const browserFeature = builtInBrowserEnabled(state.config);
@@ -433,17 +437,17 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       {!embedded && <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Collapse agent profile"
-          title="Collapse agent profile"
+          aria-label="Collapse bot settings"
+          title="Collapse bot settings"
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <ChevronLeft size={18} />
         </button>
-        <span className="text-[15px] font-semibold text-ink">Agent profile</span>
+        <span className="text-[15px] font-semibold text-ink">Bot settings</span>
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Close agent profile"
-          title="Close agent profile"
+          aria-label="Close bot settings"
+          title="Close bot settings"
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <X size={18} />
@@ -461,7 +465,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             </div>
           )}
           <SettingsSection id="overview" active={section}>
-          <details open={section === undefined || section === "overview" ? true : undefined} className="rounded-xl bg-card p-3">
+          {/* What this bot is FOR comes first. The avatar studio used to open
+              the panel, with the purpose and the role below the fold. */}
+          <BotSetupAction bot={bot} />
+          <details className="rounded-xl bg-card p-3">
             <summary className="cursor-pointer text-[13px] font-medium">Appearance</summary>
           <BotProfileAvatarCard
             bot={bot}
@@ -470,8 +477,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onPatch={patch}
           />
           </details>
-          <div className="rounded-xl bg-card p-4 text-[13px]">
-            <p className="font-medium">{settingsRoleLabel(activeSettingsRole(bot))}</p>
+          {/* An org chart needs an org. With one bot in the workspace there is
+              nobody to lead and nobody to report to, so the role summary and
+              the Role control below are both hidden until a second bot
+              exists. */}
+          {hasTeammates && <div className="rounded-xl bg-card p-4 text-[13px]">
+            <p className="font-medium">{botRoleTitle(bot)}</p>
             <p className="mt-1 text-ink-secondary">{bot.title || "No title set"}{bot.section ? ` · ${bot.section}` : ""}</p>
             {bot.installedPackage?.sourceRole && <div className="mt-3 border-t border-hairline/40 pt-3">
               <p>Imported role: {settingsRoleLabel(bot.installedPackage.sourceRole)}</p>
@@ -481,7 +492,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 : "The imported role is not active. Use the role control below to assign a role explicitly."}</p>
               <p className="mt-1 text-ink-secondary">Importing a profile does not grant permissions.</p>
             </div>}
-          </div>
+          </div>}
           </SettingsSection>
           <SettingsSection id="identity" active={section}>
           <Field label="Name">
@@ -496,7 +507,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.title}
-              placeholder="Describe what your agent does"
+              placeholder="Describe what your bot does"
               value={bot.title}
               onChange={(e) => patch({ title: e.target.value })}
             />
@@ -512,12 +523,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <textarea
               className={cn(inputCls, "min-h-[96px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
-              placeholder="What this agent does, what it should know, and how you want it to work"
+              placeholder="What this bot does, what it should know, and how you want it to work"
               value={bot.description}
               onChange={(e) => patch({ description: e.target.value })}
             />
             <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
-              Written to this agent at the start of every turn, in its own words. Its teammates
+              Written to this bot at the start of every turn, in its own words. Its teammates
               also read it when they decide who to hand work to, so keep it about the job.
             </p>
           </Field>
@@ -531,7 +542,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             />
             <div className="mt-1.5 flex items-start justify-between gap-3">
               <p className="text-[12px] leading-relaxed text-ink-secondary">
-                How this agent talks, spoken to it, and read by nothing else. A teammate
+                How this bot talks, spoken to it, and read by nothing else. A teammate
                 deciding who to delegate to never sees it.
               </p>
               <span className="shrink-0 pt-px text-[11.5px] tabular-nums text-ink-secondary">
@@ -550,9 +561,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               before it touches an agent that already has skills, a
               description, or a conversation behind it. */}
           <SettingsSection id="overview" active={section}>
-          <BotSetupAction bot={bot} />
-
-          <BotRoleControl bot={bot} canCoordinate={canCoordinate} />
+          {hasTeammates && <BotRoleControl bot={bot} canCoordinate={canCoordinate} />}
           </SettingsSection>
 
 
@@ -583,7 +592,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               <div className="text-[15px] font-medium text-ink">Connected apps</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!connectedAppsConfigured
-                  ? "Connect apps in App Settings before giving this bot access."
+                  ? "Connect apps first (Tools → Connected apps), then give this bot access."
                   : !canUseConnectedApps
                     ? "This bot's current engine cannot use connected apps."
                     : connectedAppsEnabled
@@ -600,7 +609,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onClick={() => patch({ composio: !connectedAppsEnabled })}
               title={
                 !connectedAppsEnabled && !connectedAppsConfigured
-                  ? "Connect apps in App Settings first"
+                  ? "Connect apps first, under Tools → Connected apps"
                   : !connectedAppsEnabled && !canUseConnectedApps
                     ? "This engine cannot use connected apps"
                     : undefined
@@ -659,7 +668,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                   we could not keep for a thread that had already been sent
                   one. Sending nothing is true on every engine. */}
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Default effort for new threads{bot.modelSelection.effort ? "" : " (Default: no level is sent)"}
+                Default effort for new threads{bot.modelSelection.effort ? "" : " — the engine decides"}
               </div>
               <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
                 {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
@@ -675,8 +684,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                         : "text-ink-secondary hover:bg-control/60 hover:text-ink",
                     )}
                   >
-                    {/* the others capitalize cleanly; "xhigh" would read "Xhigh" */}
-                    {level === "xhigh" ? "X-High" : (level ?? "Default")}
+                    {effortLabel(level)}
                   </button>
                 ))}
               </div>
@@ -781,7 +789,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <BotSkillsPanel
             key={`skills-${bot.id}`}
             bot={bot}
-            onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id }))}
+            onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }))}
           />
           </SettingsSection>
 
@@ -845,7 +853,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             </div>
             <Switch
               checked={bot.notifications}
-              aria-label="Agent notifications"
+              aria-label="Bot notifications"
               onClick={() => {
                 const enabled = !bot.notifications;
                 if (enabled) void requestNotificationPermission();
@@ -857,7 +865,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="routines" active={section}>
           {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? "Enabled" : "Paused"}</p></div>)}
           {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">No routines assigned to this bot.</p>}
-          <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">Open Calendar</button>
+          <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">Open Routines</button>
           </SettingsSection>
           <SettingsSection id="history" active={section}>
           {(bot.tasks ?? []).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">

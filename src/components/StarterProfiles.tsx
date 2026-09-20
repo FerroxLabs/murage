@@ -110,7 +110,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
         onClick={() => choose(profile)} className={"rounded-lg border p-3 text-left disabled:opacity-50 " + (selected?.id === profile.id ? "border-accent bg-accent/5 " : "border-hairline/50 bg-inset ") + focus}>
         <span className="block text-[13px] font-semibold text-ink">{profile.name}</span>
         <span className="mt-1 block text-[12px] leading-relaxed text-ink-secondary">{profile.summary}</span>
-        <span className="mt-2 block text-[11px] text-ink-secondary">{profile.members} bots · {profile.connectionsRequired ? "Review connection requirements" : "No connected accounts required to begin"}</span>
+        <span className="mt-2 block text-[11px] text-ink-secondary">{profile.members} {profile.members === 1 ? "bot" : "bots"} · {profile.connectionsRequired ? "Review connection requirements" : "No connected accounts required to begin"}</span>
       </button>)}
     </div>}
     {selected && !imported && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px]">
@@ -128,7 +128,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
       </fieldset>
       {preview && <div aria-label="Starter import review" className="mt-3 border-t border-hairline/50 pt-3">
         {preview.scan.blocked ? <p role="alert" className="text-danger">This profile failed content checks and cannot be imported.</p> : <>
-          {preview.summary && <p className="text-ink">{preview.summary.agents} new bots and {preview.summary.routines} paused routines selected.</p>}
+          {preview.summary && <p className="text-ink">{preview.summary.agents} new {preview.summary.agents === 1 ? "bot" : "bots"} and {preview.summary.routines} paused {preview.summary.routines === 1 ? "routine" : "routines"} selected.</p>}
           {preview.missingDependencies.length > 0 && <p role="alert" className="mt-1 text-danger">This selection has missing dependencies. Choose another profile or retry the review.</p>}
           <p className="mt-1 text-ink-secondary">This is a separate copy. Existing bots, drafts and permissions are not replaced.</p>
           {preview.scan.findings.length > 0 && <ul className="mt-2 text-ink-secondary">{preview.scan.findings.map((finding, index) => <li key={index} className="break-words">{finding.path}: {finding.rule}</li>)}</ul>}

@@ -40,8 +40,8 @@ describe("the personality field", () => {
     expect(personaField).toContain("{persona.length}/{BOT_PROFILE_LIMITS.persona}");
   });
 
-  it("says it is spoken to the agent, and that nothing else reads it", () => {
-    expect(personaField).toMatch(/How this agent talks/);
+  it("says it is spoken to the bot, and that nothing else reads it", () => {
+    expect(personaField).toMatch(/How this bot talks/);
     expect(personaField).toMatch(/read by nothing else/);
     expect(personaField).toMatch(/delegate/);
   });

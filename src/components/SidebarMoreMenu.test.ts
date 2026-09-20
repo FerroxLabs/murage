@@ -92,10 +92,11 @@ describe("sidebar more-menu panel", () => {
 });
 
 
-it("keeps the canonical approval count visible while Tools is collapsed and labels stale state", () => {
-  const html = renderToStaticMarkup(createElement(SidebarMoreMenu, { items: [], approvalCount: 37, approvalsStale: true }));
+// 0.1.57: the approval count left this trigger for the sidebar's own
+// "Needs you" row (SidebarNeedsYou.tsx). Tools carries no number.
+it("carries no count of its own", () => {
+  const html = renderToStaticMarkup(createElement(SidebarMoreMenu, { items: [] }));
   expect(html).toContain('aria-expanded="false"');
-  expect(html).toContain('data-pending-approval-count');
-  expect(html).toContain('37 ?');
-  expect(html).toContain('Tools, 37 pending approvals, approvals may be stale');
+  expect(html).not.toContain("data-pending-approval-count");
+  expect(html).toContain('aria-label="Tools"');
 });

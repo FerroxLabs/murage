@@ -23,7 +23,7 @@ export function teamImportPreview(manifest: unknown): PendingTeamImport {
   }
   const root = manifest as Record<string, unknown>;
   if (root.format === "murage.package") return packagePreview(root, manifest);
-  if (root.format !== "murage.team") throw new Error("This is not a EmberBot playbook or legacy Murage team.");
+  if (root.format !== "murage.team") throw new Error("This is not an EmberBot package or a legacy Murage team.");
   if (root.version !== 1 && root.version !== 2) throw new Error(`Team file version ${String(root.version)} is not supported.`);
   if (!root.team || typeof root.team !== "object" || Array.isArray(root.team)) {
     throw new Error("This team file is missing its team definition.");
@@ -78,14 +78,14 @@ function markdownPackage(markdown: string): unknown {
 }
 
 function packagePreview(root: Record<string, unknown>, manifest: unknown): PendingTeamImport {
-  if (root.version !== 1) throw new Error(`EmberBot playbook version ${String(root.version)} is not supported.`);
+  if (root.version !== 1) throw new Error(`EmberBot package version ${String(root.version)} is not supported.`);
   if (!root.package || typeof root.package !== "object" || Array.isArray(root.package)) {
-    throw new Error("This playbook is missing its team definition.");
+    throw new Error("This package is missing its team definition.");
   }
   const pkg = root.package as Record<string, unknown>;
-  if (typeof pkg.name !== "string" || !pkg.name.trim()) throw new Error("This playbook does not have a name.");
-  if (!Array.isArray(pkg.agents) || pkg.agents.length === 0) throw new Error("This playbook has no bots.");
-  if (pkg.agents.length > 200) throw new Error("This playbook has too many bots.");
+  if (typeof pkg.name !== "string" || !pkg.name.trim()) throw new Error("This package does not have a name.");
+  if (!Array.isArray(pkg.agents) || pkg.agents.length === 0) throw new Error("This package has no bots.");
+  if (pkg.agents.length > 200) throw new Error("This package has too many bots.");
   const members = pkg.agents.map((agent, index) => {
     if (!agent || typeof agent !== "object" || Array.isArray(agent)) throw new Error(`Bot ${index + 1} is invalid.`);
     const value = agent as Record<string, unknown>;

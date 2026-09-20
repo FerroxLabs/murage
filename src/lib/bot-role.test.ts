@@ -25,7 +25,7 @@ describe("botRole", () => {
   it("badges every tier but the default one", () => {
     expect(BOT_ROLE_BADGE.chief).toBe("Chief of Staff");
     expect(BOT_ROLE_BADGE.leader).toBe("Team lead");
-    expect(BOT_ROLE_BADGE.individual).toBe("Individual");
+    expect(BOT_ROLE_BADGE.individual).toBe("On its own");
     expect(BOT_ROLE_BADGE.member).toBe("");
   });
 });
