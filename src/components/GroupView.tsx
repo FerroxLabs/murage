@@ -3,7 +3,7 @@
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, ChevronDown, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Target, Trash2, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -38,6 +38,10 @@ import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
+import { ChannelDetailsPanel, channelNoun, type ChannelDetailsSection } from "./ChannelDetailsPanel";
+import { ProjectHome } from "./ProjectHome";
+import { ConfirmDelete } from "./ConfirmDelete";
+import { CHANNEL_PROJECT_GOAL_MAX, CHANNEL_PROJECT_STATUS_LABELS } from "../../shared/project";
 import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -565,7 +569,7 @@ function RoomWorkingFolder({ group }: { group: Group }) {
         >
           <input
             className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline"
-            placeholder="Each bot's own folder — or an absolute path"
+            placeholder="Each bot's own folder, or an absolute path"
             value={draft ?? group.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -958,6 +962,204 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
     </section>
   );
 }
+/** The five things you can do to a channel from its own header. Everything
+ * else in the header is a setting; these change what the channel IS, so they
+ * sit together behind one control rather than spreading more icons across a
+ * row that is already full. */
+function ChannelHeaderMenu({
+  group,
+  onDetails,
+  onMakeProject,
+  onRename,
+  onArchive,
+  onDelete,
+  onClose,
+}: {
+  group: Group;
+  onDetails: () => void;
+  onMakeProject: () => void;
+  onRename: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLElement>("button")?.focus();
+    const onDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest("[data-channel-menu]")) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const row = "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70";
+  const act = (run: () => void) => () => {
+    onClose();
+    run();
+  };
+  const noun = channelNoun(group);
+  return (
+    <div
+      data-channel-menu
+      role="menu"
+      aria-label={`More actions for ${group.name}`}
+      className="absolute right-0 top-full z-40 mt-1 w-[232px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
+      ref={menuRef}
+    >
+      <button type="button" role="menuitem" onClick={act(onDetails)} className={row}>
+        <Info size={16} className="text-ink-secondary" />
+        Channel details
+      </button>
+      {!group.channelProject && (
+        <button type="button" role="menuitem" onClick={act(onMakeProject)} className={row}>
+          <Target size={16} className="text-ink-secondary" />
+          Make this a project
+        </button>
+      )}
+      <button type="button" role="menuitem" onClick={act(onRename)} className={row}>
+        <Pencil size={16} className="text-ink-secondary" />
+        Rename
+      </button>
+      <button type="button" role="menuitem" onClick={act(onArchive)} className={row}>
+        <Archive size={16} className="text-ink-secondary" />
+        Archive
+      </button>
+      <button type="button" role="menuitem" onClick={act(onDelete)} className={`${row} text-danger`}>
+        <Trash2 size={16} />
+        Delete {noun}
+      </button>
+    </div>
+  );
+}
+
+/** Renaming in a dialog rather than in place: the header name is a truncated
+ * strip that a long name cannot be read in, let alone edited. */
+function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [draft, setDraft] = useState(group.name);
+  const save = () => {
+    const name = draft.trim();
+    if (name && name !== group.name) dispatch({ type: "patchGroup", groupId: group.id, patch: { name } });
+    onClose();
+  };
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-channel-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save();
+        }}
+        className="w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
+      >
+        <div id="rename-channel-title" className="mb-3 text-[15px] font-semibold text-ink">
+          Rename {channelNoun(group)}
+        </div>
+        <input
+          autoFocus
+          value={draft}
+          maxLength={100}
+          aria-label="Name"
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => event.key === "Escape" && onClose()}
+          className="w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        <div className="mt-3 flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!draft.trim()}
+            className="flex-1 rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** Making a channel a project asks for ONE thing, because everything else
+ * already exists: the chat, the bots, the instructions and the folder all
+ * stay exactly as they are. The only thing a channel never had is a goal. */
+function MakeProjectDialog({ group, onClose }: { group: Group; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [goal, setGoal] = useState("");
+  const save = () => {
+    const trimmed = goal.trim();
+    if (!trimmed) return;
+    dispatch({ type: "patchGroup", groupId: group.id, patch: { channelProject: { goal: trimmed } } });
+    onClose();
+  };
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="make-project-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save();
+        }}
+        className="w-[420px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
+      >
+        <div id="make-project-title" className="text-[15px] font-semibold text-ink">
+          Make {group.name} a project
+        </div>
+        <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+          The chat, the bots, the instructions and the folder all stay. Say what the work is for and it gets a home page.
+        </p>
+        <label htmlFor="make-project-goal" className="mt-3 block text-[13px] font-semibold text-ink">
+          What are you trying to get done?
+        </label>
+        <textarea
+          id="make-project-goal"
+          autoFocus
+          value={goal}
+          maxLength={CHANNEL_PROJECT_GOAL_MAX}
+          onChange={(event) => setGoal(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") onClose();
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
+          }}
+          rows={4}
+          placeholder="For example: Get the new website open in time for the spring."
+          className="mt-2 w-full resize-y rounded-xl border border-hairline/40 bg-inset px-3 py-2.5 text-[14px] leading-relaxed text-ink placeholder:text-ink-secondary focus:border-accent focus:outline-none"
+        />
+        <div className="mt-3 flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!goal.trim()}
+            className="flex-1 rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          >
+            Make it a project
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
   const stream = useStreaming();
@@ -970,11 +1172,22 @@ export function GroupView({ group }: { group: Group }) {
   const followRef = useRef(true);
   const previousScrollTop = useRef(0);
   const touchY = useRef(0);
-  const [bulletinOpen, setBulletinOpen] = useState(false);
-  const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [instructionsDraft, setInstructionsDraft] = useState(group.bulletin);
   const [folderOpen, setFolderOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [detailsSection, setDetailsSection] = useState<ChannelDetailsSection | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [makeProjectOpen, setMakeProjectOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  // A project keeps its chat. The tab only decides which of the two the
+  // person is looking at; nothing about the channel changes with it.
+  const [projectTab, setProjectTab] = useState<"overview" | "chat">("overview");
+  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeDetails = useCallback(() => setDetailsSection(null), []);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     group.threadId,
     `group:${group.id}:${group.threadId}`,
@@ -983,6 +1196,17 @@ export function GroupView({ group }: { group: Group }) {
   const membersTriggerRef = useRef<HTMLButtonElement>(null);
   const closeMembers = useCallback(() => setMembersOpen(false), []);
   useEffect(() => setFindOpen(false), [group.threadId]);
+  // Every panel and dialog belongs to the channel that was on screen when it
+  // opened. Moving to another one closes them all rather than leaving a
+  // dialog pointed at a channel the person has walked away from.
+  useEffect(() => {
+    setDetailsSection(null);
+    setMenuOpen(false);
+    setRenameOpen(false);
+    setMakeProjectOpen(false);
+    setConfirmDelete(false);
+    setProjectTab("overview");
+  }, [group.id]);
   useEffect(() => {
     const onFind = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
@@ -1000,6 +1224,11 @@ export function GroupView({ group }: { group: Group }) {
   );
   const speaker = members.find((b) => b.id === group.busyBotId);
   const setupPending = roomNeedsSetup(group);
+  // An ordinary channel is always its chat. A project has an overview in
+  // front of the same chat, and everything that belongs to the transcript —
+  // the instructions strip, the folder card, the pinned message, the
+  // composer — belongs to the chat, not to the overview.
+  const showChat = !group.channelProject || projectTab === "chat";
 
   // Mascot stays while a member works; the finished reply pops in above it.
   const lastGroupMessage = group.messages.at(-1);
@@ -1086,7 +1315,7 @@ export function GroupView({ group }: { group: Group }) {
   }, [group.messages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey]);
   useFocusMessage(group.threadId, group.messages.length > 0);
 
-  useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
+  useEffect(() => setInstructionsDraft(group.bulletin), [group.id, group.bulletin]);
   // an open folder editor belongs to the room it was opened in
   useEffect(() => setFolderOpen(false), [group.id]);
   useEffect(() => setMembersOpen(false), [group.id]);
@@ -1133,10 +1362,10 @@ export function GroupView({ group }: { group: Group }) {
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
 
-  const saveBulletin = () => {
-    setBulletinOpen(false);
-    if (bulletinDraft !== group.bulletin) {
-      dispatch({ type: "patchGroup", groupId: group.id, patch: { bulletin: bulletinDraft } });
+  const saveInstructions = () => {
+    setInstructionsOpen(false);
+    if (instructionsDraft !== group.bulletin) {
+      dispatch({ type: "patchGroup", groupId: group.id, patch: { bulletin: instructionsDraft } });
     }
   };
 
@@ -1144,7 +1373,7 @@ export function GroupView({ group }: { group: Group }) {
   const memberEmbers = members.map((b) => (
     <span
       key={b.id}
-      title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}
+      title={`${b.name}${group.busyBotId === b.id ? " , working now" : ""}`}
       className={cn(
         "relative inline-flex rounded-full",
         group.busyBotId === b.id && "ring-2 ring-accent/50 ring-offset-1 ring-offset-app",
@@ -1162,6 +1391,28 @@ export function GroupView({ group }: { group: Group }) {
       <GroupCallOverlay group={group} members={members} />
       {membersOpen && !group.dm && (
         <ManageMembersPanel group={group} onClose={closeMembers} triggerRef={membersTriggerRef} />
+      )}
+      {detailsSection && !group.dm && (
+        <ChannelDetailsPanel
+          group={group}
+          initialSection={detailsSection}
+          onClose={closeDetails}
+          triggerRef={detailsTriggerRef}
+        />
+      )}
+      {renameOpen && <RenameChannelDialog group={group} onClose={() => setRenameOpen(false)} />}
+      {makeProjectOpen && !group.dm && <MakeProjectDialog group={group} onClose={() => setMakeProjectOpen(false)} />}
+      {confirmDelete && (
+        <ConfirmDelete
+          name={group.name}
+          kind={channelNoun(group)}
+          detail={`Every message in ${group.name} goes with it. The bots stay.`}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            dispatch({ type: "deleteGroup", groupId: group.id });
+          }}
+        />
       )}
       {/* Header: static member embers; a ring + dot marks the working bot. */}
       <div
@@ -1205,7 +1456,7 @@ export function GroupView({ group }: { group: Group }) {
               type="button"
               onClick={() => setMembersOpen(true)}
               title="Manage members"
-              aria-label={`Manage members — ${members.length} ${members.length === 1 ? "bot" : "bots"} in this channel`}
+              aria-label={`Manage members: ${members.length} ${members.length === 1 ? "bot" : "bots"} in this channel`}
               className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
             >
               {memberEmbers}
@@ -1214,37 +1465,117 @@ export function GroupView({ group }: { group: Group }) {
               </span>
             </button>
           )}
+          {/* Details and the overflow menu. Everything a channel is — its
+              instructions, its members, its files, what it remembers — used
+              to be spread across the strip below and the faces above, and
+              there was no way at all to rename, archive or delete a channel
+              from inside it. These two controls are that way. */}
+          {!group.dm && (
+            <>
+              <button
+                ref={detailsTriggerRef}
+                type="button"
+                onClick={() => setDetailsSection("about")}
+                aria-label={`Details for ${group.name}`}
+                title="Details"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                <Info size={16} />
+                <span className="max-md:hidden">Details</span>
+              </button>
+              <div className="relative">
+                <button
+                  ref={menuTriggerRef}
+                  type="button"
+                  onClick={() => setMenuOpen((open) => !open)}
+                  aria-label={`More actions for ${group.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="More actions"
+                  className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+                >
+                  <MoreHorizontal size={18} />
+                </button>
+                {menuOpen && (
+                  <ChannelHeaderMenu
+                    group={group}
+                    onClose={() => {
+                      setMenuOpen(false);
+                      menuTriggerRef.current?.focus();
+                    }}
+                    onDetails={() => setDetailsSection("about")}
+                    onMakeProject={() => setMakeProjectOpen(true)}
+                    onRename={() => setRenameOpen(true)}
+                    onArchive={() => {
+                      // Filed away, and the screen moves on with it: leaving
+                      // the person looking at a channel that is no longer in
+                      // the list would read as the archive having failed.
+                      dispatch({ type: "patchGroup", groupId: group.id, patch: { hidden: true } });
+                      const next = state.bots.find((bot) => !bot.hidden);
+                      if (next) dispatch({ type: "select", id: next.id });
+                    }}
+                    onDelete={() => setConfirmDelete(true)}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
+      {/* A project's two faces. The chat is the channel's own transcript,
+          unchanged; the overview is the only thing a plain channel lacks. */}
+      {group.channelProject && !setupPending && (
+        <div role="tablist" aria-label={`${group.name} views`} className="flex gap-1 px-5 pb-1">
+          {(["overview", "chat"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={projectTab === tab}
+              onClick={() => setProjectTab(tab)}
+              className={cn(
+                "rounded-lg px-3 py-1.5 text-[13px]",
+                projectTab === tab ? "bg-accent/15 font-medium text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink",
+              )}
+            >
+              {tab === "overview" ? "Overview" : "Chat"}
+            </button>
+          ))}
+          <span className="ml-auto self-center text-[12.5px] text-ink-secondary">
+            {CHANNEL_PROJECT_STATUS_LABELS[group.channelProject.status]}
+          </span>
+        </div>
+      )}
+
       {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
 
-      {/* Bulletin: one pinned line; click to edit */}
-      {!setupPending && <div className="w-full px-5">
-        {bulletinOpen ? (
+      {/* Instructions: one pinned line; click to edit */}
+      {!setupPending && showChat && <div className="w-full px-5">
+        {instructionsOpen ? (
           <div className="mb-1 rounded-lg border border-hairline/40 bg-panel p-2">
             <textarea
               autoFocus
-              value={bulletinDraft}
-              onChange={(e) => setBulletinDraft(e.target.value)}
-              onBlur={saveBulletin}
+              value={instructionsDraft}
+              onChange={(e) => setInstructionsDraft(e.target.value)}
+              onBlur={saveInstructions}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveBulletin();
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveInstructions();
                 if (e.key === "Escape") {
-                  setBulletinDraft(group.bulletin);
-                  setBulletinOpen(false);
+                  setInstructionsDraft(group.bulletin);
+                  setInstructionsOpen(false);
                 }
               }}
-              placeholder="Channel instructions — every bot in this channel follows them (who does what, tone, goals, a task checklist…)"
+              placeholder="Channel instructions. Every bot in this channel follows them: who does what, the tone, what good looks like."
               rows={4}
               className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink placeholder:text-ink-secondary focus:outline-none"
             />
           </div>
         ) : (
           <button
-            onClick={() => setBulletinOpen(true)}
+            onClick={() => setInstructionsOpen(true)}
             className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-raised/40"
-            title="Channel instructions — shared with every bot here"
+            title="Channel instructions, shared with every bot here"
           >
             <Pin size={12} className="shrink-0 text-ink-secondary" />
             <span className={cn("truncate text-[12.5px]", group.bulletin ? "text-ink-secondary" : "text-ink-secondary/60")}>
@@ -1255,7 +1586,7 @@ export function GroupView({ group }: { group: Group }) {
       </div>}
 
       {/* Working folder card — the chip in the header toggles it */}
-      {!setupPending && folderOpen && !group.dm && (
+      {!setupPending && showChat && folderOpen && !group.dm && (
         <div className="w-full px-5">
           <div className="mb-1">
             <RoomWorkingFolder group={group} />
@@ -1265,6 +1596,7 @@ export function GroupView({ group }: { group: Group }) {
 
       {/* Pinned message banner — resolves against the room's full transcript */}
       {(() => {
+        if (!showChat) return null;
         const pinned = group.messages.find((m) => m.id === group.pinnedMessageId && m.kind === "text");
         const text = pinned ? (pinned.text ?? "").replace(/\s+/g, " ").trim() : "";
         if (!pinned || !text) return null;
@@ -1294,7 +1626,18 @@ export function GroupView({ group }: { group: Group }) {
         );
       })()}
 
-      <div className="relative min-h-0 flex-1">
+      {!showChat && group.channelProject && (
+        <div className="relative min-h-0 flex-1">
+          <ProjectHome
+            group={group}
+            members={members}
+            onOpenChat={() => setProjectTab("chat")}
+            onOpenDetails={() => setDetailsSection("about")}
+          />
+        </div>
+      )}
+
+      {showChat && <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
         data-testid="chat-scroll"
@@ -1452,7 +1795,7 @@ export function GroupView({ group }: { group: Group }) {
         onRestoreReply={restoreReply}
       />
       </div>
-      </div>
+      </div>}
     </main>
   );
 }

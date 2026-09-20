@@ -1,0 +1,319 @@
+// EVERY WORD OF THE GUIDED FIRST RUN, IN ONE PLACE.
+//
+// The first run is a conversation with the Chief of Staff, in the Chief's own
+// thread. Each step arrives as a message carrying a setup card, and the card
+// on the wire says only WHICH card it is (shared/setup-card.ts). The words
+// live here: data, no JSX, no components, no React. One file the product
+// owner can read end to end, and one file a test can walk string by string.
+//
+// THE RULES THIS FILE IS HELD TO, all of them enforced by
+// first-run-copy.test.ts rather than by good intentions:
+//
+//   No em dash. Not one. A full stop, a comma, or "and".
+//   Never sell on price. No money words, no figures about money at all.
+//   Never name the connected-app broker. It is "500+ apps", named by
+//     example: Gmail, Slack, Notion, GitHub.
+//   Never a model count. "All the latest models" is the claim.
+//   Flux Router leads with routing, then the apps, then pictures and voice.
+//   Never describe a capability as a limit. Sending email is graduated
+//     trust: you approve, I send, and then I can send that kind myself.
+//   No school framing. Nobody is being taught a lesson.
+//
+// Three sentences is the ceiling for a card body, which is why most bodies
+// here are two short fields rather than one long paragraph: the renderer sets
+// them as separate lines and a person reads them as separate thoughts.
+
+/** Where a person gets a Flux Router key. Mirrors FLUX_SIGNUP_URL in
+ *  src/components/FluxRouterConnection.tsx, imported by the card itself so
+ *  there is one URL and not two. */
+export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
+
+/** One connectable account, with the reason it is worth connecting said in a
+ *  few words. The reason is the whole row: "Gmail" on its own is a logo, and
+ *  "so I can read your mail and draft the replies" is an offer. */
+export interface FirstRunAppRow {
+  slug: string;
+  label: string;
+  why: string;
+}
+
+/** One thing the closing card can offer to do. `say` is the sentence that
+ *  goes into the conversation when it is pressed, in the person's voice,
+ *  because the answer to "what would you like to do" is them asking. */
+export interface FirstRunOffer {
+  label: string;
+  say: string;
+}
+
+/** One step of the Tailscale walkthrough, which happens in the chat and not
+ *  in a settings pane. `action` is the button under it. */
+export interface FirstRunWalkStep {
+  label: string;
+  detail: string;
+  action: string;
+}
+
+export const FIRST_RUN_COPY = {
+  hello: {
+    welcome: {
+      body: "Hello. I am your chief of staff, and I work for you.",
+      second: "Tell me your name and where to reach you, and I will set the rest up around you.",
+      nameLabel: "Your name",
+      namePlaceholder: "What should I call you?",
+      emailLabel: "Your email",
+      emailPlaceholder: "you@example.com",
+      submit: "That is me",
+      working: "Saving",
+      skip: "Skip this",
+      detecting: "While you type, I am having a look around this computer to see what is already here.",
+      failure: "That did not save. Try once more, or skip it and carry on.",
+    },
+  },
+  agents: {
+    found: {
+      second: "They answer to you in here now, and they still work exactly as they did on their own.",
+    },
+    bare: {
+      body: "There was nothing else on this computer to connect, and there does not need to be.",
+      second: "The one that came in the box is already running. It is what is talking to you now.",
+    },
+  },
+  flux: {
+    key: {
+      title: "One key worth having",
+      body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
+      second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
+      third: "It brings pictures, voice and transcription too.",
+      recommendation: "Recommended, because it is the one key that opens everything else.",
+      fieldLabel: "Paste your key",
+      placeholder: "Paste your Flux Router key here",
+      submit: "Save it",
+      working: "Saving",
+      signup: "I need a key",
+      dismiss: "Not now",
+      saved: "Saved, and locked away on this computer. It never appears in our conversation.",
+      failure: "That key did not save. Check it and try again, or carry on without it.",
+    },
+    "no-key": {
+      body: "Noted. We carry on with what is on this machine, and that is plenty to be going on with.",
+      second: "I will bring the key up again only when something you have asked me for actually needs it.",
+    },
+  },
+  apps: {
+    apps: {
+      title: "Where your work actually lives",
+      body: "Connect the accounts your day runs through and I can do the work in them instead of talking about it.",
+      second: "One click each, and one is enough to start.",
+      rows: [
+        { slug: "gmail", label: "Gmail", why: "so I can read your mail and draft the replies" },
+        { slug: "googlecalendar", label: "Google Calendar", why: "so I know what your day already looks like" },
+        { slug: "slack", label: "Slack", why: "so I can keep an eye on the rooms that matter" },
+      ] as readonly FirstRunAppRow[],
+      connect: "Connect",
+      connecting: "Finish it in the window that just opened",
+      connected: "Connected",
+      trust: "On email you stay in charge. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+      desktopOnly: "Connect this from Murage on your computer",
+      dismiss: "Not now",
+      failure: "That connection did not finish. Try it again whenever you are ready.",
+    },
+  },
+  brief: {
+    brief: {
+      title: "Your morning brief",
+      body: "Each morning I read everything that came in overnight and put one page on top: what needs you, what moved, and what you said you would do.",
+      second: "Pick a time and it will be waiting before you sit down.",
+      timeLabel: "What time?",
+      weekdays: "Weekdays only",
+      submit: "Set my morning brief",
+      working: "Setting it up",
+      dismiss: "Not now",
+      failure: "The brief could not be set up. Try again in a moment.",
+    },
+    "brief-ran": {
+      body: "I have just run it, so you can read the real thing rather than take my word for it.",
+    },
+  },
+  routines: {
+    "more-routines": {
+      title: "Two more worth having",
+      body: "Going by what is connected, these are the two I would start with.",
+      rows: [
+        {
+          template: "triage",
+          label: "Triage my inbox",
+          why: "I sort the morning's mail and draft the replies. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+        },
+        {
+          template: "watch",
+          label: "Keep an eye on one thing",
+          why: "Tell me what matters and I will tell you the moment it moves.",
+          placeholder: "For example: anything from my accountant",
+        },
+      ],
+      add: "Set it up",
+      working: "Setting it up",
+      added: "Running",
+      dismiss: "That is enough for now",
+      failure: "That one could not be set up. Try again in a moment.",
+    },
+    next: {
+      title: "So, what shall we do?",
+      body: "Anything here is a fine place to start, and none of it ties you to anything.",
+      workLabel: "Put me to work",
+      work: [
+        { label: "Run my business", say: "Help me run my business." },
+        { label: "Do some research", say: "I would like you to look into something for me." },
+        { label: "Organise my day", say: "Organise my day for me." },
+        { label: "Build and create", say: "I want to build something." },
+      ] as readonly FirstRunOffer[],
+      moreLabel: "Or something bigger",
+      more: [
+        { label: "Start a project", say: "I want to start a project." },
+        { label: "Hire your first teammate", say: "I would like to hire a teammate and give them a job." },
+        { label: "Put me in your pocket", say: "Put Murage on my phone." },
+      ] as readonly FirstRunOffer[],
+      hireWhy: "A teammate is a job, not a crowd. You say what the job is and they turn up and do it.",
+    },
+  },
+  /**
+   * The backups line on the closing card.
+   *
+   * It used to say backups were already running. They were not: turning them
+   * on picks a folder and writes a recovery key, and Murage asks before doing
+   * either. A first run that claimed it had done that would be lying in the
+   * one place a person most needs to be able to believe it.
+   *
+   * So the default is chosen and the whole thing is one press, and the line
+   * tells the truth about which of the two states this computer is in.
+   */
+  backups: {
+    on: "Your backups are running quietly in the background. Nothing for you to do there.",
+    offer: "One more thing worth a press. I can keep a private copy of everything on this computer, taken fresh every day.",
+    offerSecond: "I will ask you where to keep it, write you a recovery key, and take the first one straight away.",
+    turnOn: "Keep me backed up",
+    working: "Setting your backups up",
+    capturing: "Taking your first backup now. Murage closes and reopens its own window to do that, and comes back by itself.",
+    cancelled: "Nothing was changed. Ask me again any time and we will do it then.",
+    unfinished: "Your folder and your recovery key are saved. The daily run is not on yet, so ask me again and I will finish it.",
+    failure: "That did not go through. Ask me again in a little while and we will try once more.",
+    keptKey: "Keep the recovery key somewhere safe. Without it a backup cannot be opened, not even by me.",
+  },
+  phone: {
+    phone: {
+      title: "Put me in your pocket",
+      body: "Point your phone's camera at this and Murage opens on it, already signed in.",
+      second: "Nothing to install, and it stays on your own private network.",
+      codeLabel: "Or type this code",
+      typedLead: "No camera? Open this address on the other device and type the code.",
+      refresh: "Give me a new code",
+      preparing: "Getting your code ready",
+      failure: "The code could not be made. Try again in a moment.",
+      dismiss: "Not now",
+    },
+    "phone-needs-tailscale": {
+      title: "One small thing first",
+      body: "Your phone and this computer need a private line between them, and the app that makes one is called Tailscale.",
+      second: "It is not set up here yet. I will walk you through it right here, one step at a time.",
+      steps: [
+        {
+          label: "Get Tailscale",
+          detail: "I will open its download page for you, and you install it the way you would install anything.",
+          action: "Open the download page",
+        },
+        {
+          label: "Sign in on this computer",
+          detail: "Open Tailscale and sign in. Any of the sign in choices it offers is fine.",
+          action: "Done, I signed in",
+        },
+        {
+          label: "Back to me",
+          detail: "I will look again, and if it is ready your code appears right here in the chat.",
+          action: "Check now",
+        },
+      ] as readonly FirstRunWalkStep[],
+      checking: "Looking",
+      stillMissing: "Still not seeing it. Give it a moment to settle after signing in, then check again.",
+      dismiss: "Not now",
+    },
+  },
+  /**
+   * What the composer says when it catches a key on its way into the chat.
+   *
+   * People paste a key wherever the conversation is, and the conversation is
+   * the only thing on screen. A key that reaches send is a key in the
+   * transcript, on disk, and in the next prompt a model reads, so the
+   * composer takes it out of the message before anything leaves the machine
+   * and says so plainly rather than silently eating what they typed.
+   */
+  pastedKey: {
+    saved: "I caught that key before it reached our conversation and put it straight into secure storage. You are connected.",
+    failed: "That looked like a key, so I kept it out of our conversation. It did not save though, so try it again on the key card.",
+  },
+  /** Said under a card that has been acted on, in place of a row of dead
+   *  buttons. */
+  settled: "Done",
+} as const;
+
+/**
+ * The agents card on a machine that already had engines on it.
+ *
+ * Written as a function because the honest version of this sentence names
+ * the real engines, and a card that said "I found your agents" without
+ * naming them would be a card nobody could check. On a bare machine this is
+ * never called: that is the "bare" variant, which says the opposite thing.
+ */
+export function foundAgentsLine(names: readonly string[]): string {
+  const listed = joinNames(names);
+  if (!listed) return "I have connected the engines that were already on this computer.";
+  return `You already had ${listed} on this computer, so I have connected them.`;
+}
+
+/** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */
+export function joinNames(names: readonly string[]): string {
+  const clean = names.map((name) => name.trim()).filter(Boolean);
+  if (clean.length === 0) return "";
+  if (clean.length === 1) return clean[0];
+  return `${clean.slice(0, -1).join(", ")} and ${clean[clean.length - 1]}`;
+}
+
+/**
+ * A 24 hour time as a person says it out loud.
+ *
+ * "07:00" is how a time input speaks and "7:00 am" is how the owner's
+ * mother reads a sentence, so every sentence in this flow that mentions a
+ * time goes through here first.
+ */
+export function clockLabel(time: string): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return time.trim();
+  const hours = Number(match[1]);
+  const minutes = match[2];
+  if (!Number.isInteger(hours) || hours < 0 || hours > 23) return time.trim();
+  const suffix = hours < 12 ? "am" : "pm";
+  const shown = hours % 12 === 0 ? 12 : hours % 12;
+  return `${shown}:${minutes} ${suffix}`;
+}
+
+/** The second line of the brief-ran card: it is below, and from tomorrow it
+ *  arrives without being asked. */
+export function briefRanLine(time: string): string {
+  return `It is just below. From tomorrow it arrives on its own at ${clockLabel(time)}.`;
+}
+
+/** The confirmation under the two name fields, once the profile really
+ *  saved. Uses their name because that was the point of asking. */
+export function greetingLine(name: string): string {
+  const clean = name.trim();
+  return clean ? `Thank you, ${clean}. I have got that.` : "Thank you. I have got that.";
+}
+
+/** The brief card's button, once a time is chosen. A button that repeats the
+ *  choice back is a button nobody has to think about. */
+export function briefButtonLabel(time: string): string {
+  return `Set my brief for ${clockLabel(time)}`;
+}
+
+/** The default the brief card opens on. Early enough to be there first,
+ *  late enough that nobody is reading it in the dark. */
+export const FIRST_RUN_BRIEF_TIME = "07:00";

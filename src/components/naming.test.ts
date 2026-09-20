@@ -140,9 +140,11 @@ describe("connected apps", () => {
     expect(visibleWords(panel).filter((text) => /\bplugins?\b/i.test(text))).toEqual([]);
   });
 
-  it("says what the key unlocks, without a number nobody has verified", () => {
-    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects hundreds of apps, including Gmail, Slack, Notion and GitHub.");
-    for (const value of Object.values(en)) expect(value).not.toMatch(/\d+\+ (?:more|apps)|and \d+\+ more/);
+  it("says what the key unlocks, in the one claim the product makes", () => {
+    // The claim itself lives in ConnectedAppsLock.tsx and is stated once.
+    // "500+ apps" is the wording; a count of MODELS is still never given.
+    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${APPS_CLAIM}.");
+    for (const value of Object.values(en)) expect(value).not.toMatch(/\d+\+ (?:more|models)|and \d+\+ more/);
     expect(Object.values(en).filter((value) => /FluxRouter/.test(value))).toEqual([]);
   });
 

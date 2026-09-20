@@ -82,10 +82,26 @@ export const SHOWCASE_APPS: ReadonlyArray<{ label: string; hue: string }> = [
   { label: "Todoist", hue: "#e44332" },
 ];
 
+/** What the catalog is called, in the one wording the product uses for it.
+ *
+ * It lived in SetupChecklist.tsx, which is a first-run panel and can go away;
+ * the claim outlives it, so it is stated here, beside the showcase it
+ * describes. Named apps, not a vendor: people recognise Gmail and Slack, and
+ * the company behind the catalog is not something they bought. */
+export const APPS_CLAIM = "500+ apps, including Gmail, Slack, Notion and GitHub";
+
+/** The visible label of the connected-apps key field.
+ *
+ * The Settings deep-link finds that field by this label, so the words and the
+ * selector below must always be the same words. Building one from the other
+ * is the whole point: rewriting the label used to leave the link hunting for
+ * a field that no longer answered to that name, in silence. */
+export const APPS_KEY_FIELD_LABEL = "Connected apps key";
+
 /** Where the two keys are typed, so the lock's buttons can land the cursor
  * in the field rather than at the top of a settings page. */
 export const FLUX_KEY_FIELD_SELECTOR = 'input[name="flux-router-key"]:not([disabled])';
-export const COMPOSIO_KEY_FIELD_SELECTOR = 'input[aria-label="Composio project key"]:not([disabled])';
+export const COMPOSIO_KEY_FIELD_SELECTOR = `input[aria-label="${APPS_KEY_FIELD_LABEL}"]:not([disabled])`;
 
 /** Put the cursor in a settings field once it exists and is enabled.
  *

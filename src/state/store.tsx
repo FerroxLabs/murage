@@ -27,6 +27,7 @@ import type { MascotBodyId } from "../../shared/mascot-bodies";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
+import type { ChannelProject, ChannelProjectInput } from "../../shared/project";
 // The `.js` specifier, and not a bare one, for the reason spelled out in
 // src/lib/onboarding-intake.ts: `shared/intake-turn.ts` is reached by BOTH
 // toolchains, the server under NodeNext (which requires an extension) and
@@ -230,6 +231,14 @@ export interface Group {
   pinnedMessageId?: string;
   /** sidebar section heading this room is filed under (shared with bots) */
   section?: string;
+  /** Filed away. The channel and its whole transcript stay on disk; it just
+   * leaves the main list, exactly as an archived bot does. Never set on a
+   * bot-to-bot chat — the server refuses those. */
+  hidden?: boolean;
+  /** Present = this channel has been given a purpose, which is the only
+   * thing that makes it a project. Absent = an ordinary channel, which is
+   * the normal case. The server owns every timestamp in here. */
+  channelProject?: ChannelProject;
   /** New user-created rooms remain in setup until Save or Skip. */
   setupCompletedAt?: number | null;
   setupSkippedAt?: number | null;
@@ -708,7 +717,19 @@ export type Action =
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
   | { type: "groupDeleted"; groupId: string }
-  | { type: "createGroup"; memberIds: string[]; name?: string; section?: string }
+  | {
+      type: "createGroup";
+      memberIds: string[];
+      name?: string;
+      section?: string;
+      /** Shared instructions for everyone in the channel, saved with the
+       * channel so a person who already knows what the work is never has to
+       * create it and then go and tell it. */
+      bulletin?: string;
+      /** A goal, given at creation: this channel is a project from its first
+       * moment rather than a channel someone converts later. */
+      channelProject?: ChannelProjectInput;
+    }
   | {
       type: "sendGroup";
       groupId: string;
@@ -724,7 +745,14 @@ export type Action =
   | {
       type: "patchGroup";
       groupId: string;
-      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "pinnedMessageId" | "section">>;
+      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "pinnedMessageId" | "section">> & {
+        /** true files the channel away, false brings it back. */
+        hidden?: boolean;
+        /** A goal, a status, or both. `null` clears the purpose and the
+         * channel goes back to being an ordinary channel, keeping its chat,
+         * its bots, its instructions and its folder. */
+        channelProject?: ChannelProjectInput | null;
+      };
     }
   | { type: "deleteGroup"; groupId: string }
   | { type: "newGroupTask"; groupId: string }
@@ -1546,11 +1574,19 @@ export function reducer(state: AppState, action: Action): AppState {
       return updateBot(state, action.botId, (b) => ({ ...b, activeLeafId: cur }));
     }
     // optimistic room edits; the server's group frame confirms them later
-    case "patchGroup":
+    case "patchGroup": {
+      // Every other field is sent in the shape it is stored in, so the merge
+      // is the final value. `channelProject` is not: the wire carries a goal
+      // and a status, and the server builds the stored block, with its
+      // timestamps, from them. Merging the input here would put a block with
+      // no status on screen for a moment. The PATCH reply carries the real
+      // one, so this one field waits for it.
+      const { channelProject: _serverOwned, ...optimistic } = action.patch;
       return {
         ...state,
-        groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...action.patch } : g)),
+        groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...optimistic } : g)),
       };
+    }
     // handled entirely by the async wrapper
     case "pendingQueued": {
       if (state.consumedQueueIds[action.queueId]) {
@@ -2303,7 +2339,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "createGroup":
           api(`/api/groups`, {
             method: "POST",
-            body: JSON.stringify({ memberIds: action.memberIds, name: action.name, section: action.section }),
+            body: JSON.stringify({
+              memberIds: action.memberIds,
+              name: action.name,
+              section: action.section,
+              // Instructions given at creation also finish setup: the person
+              // has just said what this channel is for, so asking them again
+              // on the first screen would be asking twice. Without them the
+              // channel opens on its setup card exactly as before.
+              ...(action.bulletin?.trim()
+                ? {
+                    setup: {
+                      bulletin: action.bulletin,
+                      defaultResponder: { kind: "member", botId: action.memberIds[0] },
+                    },
+                  }
+                : {}),
+              ...(action.channelProject ? { channelProject: action.channelProject } : {}),
+            }),
           })
             .then(({ group }) => {
               rawDispatch({ type: "groupPatched", group });
@@ -2351,7 +2404,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/groups/${action.groupId}`, {
             method: "PATCH",
             body: JSON.stringify(action.patch),
-          }).catch(showError);
+          })
+            .then((result: any) => {
+              // Only the two fields the reducer cannot compute for itself are
+              // taken from the reply. The rest of the record is left alone on
+              // purpose — a group frame carries a `messages` key, and folding
+              // a whole one in here would replace the transcript on screen
+              // with whatever the PATCH reply happened to hold.
+              if (!result?.group) return;
+              rawDispatch({
+                type: "groupPatched",
+                group: {
+                  id: action.groupId,
+                  hidden: result.group.hidden === true ? true : undefined,
+                  channelProject: result.group.channelProject ?? undefined,
+                },
+              });
+            })
+            .catch(showError);
           break;
         case "deleteGroup":
           api(`/api/groups/${action.groupId}`, { method: "DELETE" }).catch(showError);

@@ -2,6 +2,46 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, Route } from "lucide-react";
 
 export const FLUX_SIGNUP_URL = "https://fluxrouter.ai/auth/sign-up";
+
+/** Electron wraps a rejection from the main process in its own channel text
+ * ("Error invoking remote method '…': Error: …"). The same refusal arrives
+ * bare over the browser path, so both are unwrapped to the same sentence. */
+const IPC_REJECTION = /^Error invoking remote method ['"][^'"\r\n]+['"]:\s*(?:Error:\s*)?/i;
+/** Anything that reads as plumbing rather than as something said to a person:
+ * a code, a path, a URL, a stack frame, markup, more than one line. */
+const MACHINERY = /[\n\r\t<>{}[\]|`\\]|https?:|[A-Za-z]:\\|\/[\w.-]+\/|\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|\bat \S+:\d+/;
+/** A thrown runtime fault reads like a sentence and is not one. These are the
+ * words JavaScript itself uses, and nothing a person should be handed. */
+const RUNTIME_FAULT = /\b(?:undefined|null|NaN|[A-Za-z]*Error)\b|is not (?:a function|iterable|defined)|Cannot read propert|Maximum call stack|Unexpected token/i;
+
+/** The server's own sentence, when it has one, and otherwise nothing.
+ *
+ * A refusal here is almost always a refusal for a reason only the server
+ * knows. "Finish running work before changing Flux credentials." is the whole
+ * explanation, and it names the thing the person has to go and do. It is
+ * passed through as written, including a longer version that says which bot
+ * is busy, and only a message that reads like plumbing is held back. */
+export function serverSentence(cause: unknown): string {
+  const text = (cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "")
+    .replace(IPC_REJECTION, "").replace(/^Error:\s*/i, "").trim();
+  if (text.length < 12 || text.length > 400) return "";
+  if (!/^[A-Z]/.test(text) || !/[.!?]$/.test(text) || !text.includes(" ")) return "";
+  return MACHINERY.test(text) || RUNTIME_FAULT.test(text) ? "" : text;
+}
+
+/** What the person is told when one of these actions is refused.
+ *
+ * This used to be a bare catch, so a refusal the server had explained in
+ * plain words arrived as "refresh connections and try again" and there was
+ * nothing to refresh: a bot was mid-task. The card's own wording is the
+ * fallback, for the failures that carry no sentence worth reading. */
+export function fluxActionError(kind: "save" | "test" | "disconnect" | "select", cause: unknown): string {
+  const sentence = serverSentence(cause);
+  if (sentence) return sentence;
+  if (kind === "test") return "Could not check the model catalog. Try again when Flux Router is available.";
+  if (kind === "select") return "The connection could not be selected. Refresh connections and try again.";
+  return "The connection could not be changed. Refresh connections and try again.";
+}
 export interface FluxRouterConnectionProps {
   configured: boolean | null;
   conflict?: boolean;
@@ -40,13 +80,13 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
         setEditing(false); setNotice("Key saved. Test the connection to check its model catalog.");
       } else if (kind === "test") {
         const result = await onTest();
-        if (result.error) setError("The model catalog could not be checked. Check your key or try again later.");
+        if (result.error) setError(serverSentence(result.error) || "The model catalog could not be checked. Check your key or try again later.");
         else setNotice(`Catalog check passed: ${result.modelCount.toLocaleString()} chat models listed. No model request was sent.`);
       } else {
         await onDisconnect(); setDisconnecting(false); setEditing(false); setNotice("Flux Router disconnected.");
       }
-    } catch {
-      setError(kind === "test" ? "Could not check the model catalog. Try again when Flux Router is available." : "The connection could not be changed. Refresh connections and try again.");
+    } catch (cause) {
+      setError(fluxActionError(kind, cause));
     } finally { running.current = false; setBusy(null); }
   };
   const cancelEdit = () => { if (input.current) input.current.value = ""; setEditing(false); setError(""); setInvalid(false); };
@@ -54,7 +94,7 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
     if (running.current || !onSelect) return;
     running.current = true; setBusy("select"); setError(""); setNotice("");
     try { await onSelect(id); setNotice("Flux Router connection selected. Test its model catalog when you are ready."); }
-    catch { setError("The connection could not be selected. Refresh connections and try again."); }
+    catch (cause) { setError(fluxActionError("select", cause)); }
     finally { running.current = false; setBusy(null); }
   };
   return <section id="flux-router-connection" aria-labelledby="flux-router-heading" className="min-w-0 rounded-xl border border-accent/40 bg-panel p-4">
@@ -77,7 +117,9 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Test connection checks the model catalog only. It does not send a model request or verify that a model can answer.</p>
     <a href={FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={`mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] font-medium text-accent hover:underline ${focus}`}>Sign up for Flux Router<ExternalLink size={13} aria-hidden="true" /></a>
     {notice && <p role="status" className="mt-2 text-[12px] leading-relaxed text-success">{notice}</p>}
-    {error && <p id="flux-router-error" role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{error}</p>}
+    {/* The server's sentence can be long and can carry a bot's name, so it
+        wraps rather than stretching the card or being clipped by it. */}
+    {error && <p id="flux-router-error" role="alert" className="mt-2 break-words text-[12px] leading-relaxed text-danger">{error}</p>}
     {children}
   </section>;
 }

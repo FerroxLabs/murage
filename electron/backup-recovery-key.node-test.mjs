@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
@@ -120,7 +120,9 @@ test("the key folder is remembered across launches, and only the folder",async()
     const second=flow();assert.equal(second.lastFolder(),p.safe);
     chosen=null;await second.create();assert.equal(suggested.at(-1),path.join(p.safe,"murage-recovery-key-2.txt"));
     const saved=readFileSync(path.join(p.root,"backup-key-folder.json"),"utf8");
-    assert.deepEqual(JSON.parse(saved),{version:1,folder:p.safe});assert.equal(saved.includes("AGE-SECRET"),false);
+    // A location, and nothing that was in the file at it.
+    assert.deepEqual(JSON.parse(saved),{version:1,folder:p.safe,file:path.join(p.safe,"murage-recovery-key.txt")});
+    assert.equal(saved.includes("AGE-SECRET"),false);assert.equal(saved.includes("age1"),false);
     if(process.platform!=="win32")assert.equal(lstatSync(path.join(p.root,"backup-key-folder.json")).mode&0o077,0);
     // Picking an existing key file in "Choose backup folder and recovery key" remembers its folder too.
     const usb2=path.join(p.root,"usb2");mkdirSync(usb2);second.rememberKeyFile(path.join(usb2,"old-key.txt"));assert.equal(flow().lastFolder(),usb2);
@@ -129,6 +131,73 @@ test("the key folder is remembered across launches, and only the folder",async()
       writeFileSync(path.join(p.root,"backup-key-folder.json"),JSON.stringify({version:1,folder}));assert.equal(flow().lastFolder(),null,String(folder));
     }
     writeFileSync(path.join(p.root,"backup-key-folder.json"),"not json");assert.equal(flow().lastFolder(),null);
+  }finally{p.cleanup();}
+});
+
+// ---- "Save a copy" across a restart.
+//
+// The offer held the key's location in process state, so it was true only in
+// the launch that wrote the key. Quit Murage, come back, press the button the
+// next morning and it could not find the key it was offering to copy — and
+// the key is the one thing that can open the backups. The location is now
+// written down beside the folder that was already remembered: a path, never
+// anything the file contains.
+test("a copy can still be saved in a later launch, from a remembered location",async()=>{
+  const p=place();try{
+    const store=recoveryKeyFolderStore(path.join(p.root,"backup-key-folder.json"));
+    let copyTo=path.join(p.root,"usb-copy.txt");
+    const flow=()=>createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      folderStore:store,defaultFolders:()=>[p.safe],defaultFolder:()=>p.safe,
+      chooseFile:async()=>null,chooseCopyFile:async()=>copyTo});
+    const created=flow().createFor(p.destination);
+    assert.equal(path.dirname(created.file),p.safe);
+
+    // A new flow is a new launch: nothing is held over in memory.
+    const relaunched=flow();
+    assert.equal(relaunched.lastKeyFile(),created.file,"the location outlives the process that wrote it");
+    const copied=await relaunched.saveCopy();
+    assert.equal(copied.saved,true);
+    assert.equal(copied.publicKey,created.publicKey);
+    assert.equal(readFileSync(copyTo,"utf8"),readFileSync(created.file,"utf8"));
+    assert.equal(JSON.stringify(copied).includes("AGE-SECRET"),false);
+
+    // The same rules still hold for the copy: never into the backup folder.
+    copyTo=path.join(p.destination,"beside-the-archives.txt");
+    await assert.rejects(flow().saveCopy(),/BACKUP_RECOVERY_KEY_INSIDE_DESTINATION/);
+    assert.deepEqual(readdirSync(p.destination),[]);
+
+    // The person moved the key, or put something else there. The offer says
+    // it does not know where the key is, rather than failing on plumbing.
+    copyTo=path.join(p.root,"another-copy.txt");
+    writeFileSync(created.file,"this is not a key\n");
+    await assert.rejects(flow().saveCopy(),/BACKUP_RECOVERY_KEY_UNKNOWN/);
+    rmSync(created.file);
+    assert.equal(flow().lastKeyFile(),null);
+    await assert.rejects(flow().saveCopy(),/BACKUP_RECOVERY_KEY_UNKNOWN/);
+    // The folder it lived in is still remembered, so the pickers start there.
+    assert.equal(flow().lastFolder(),p.safe);
+  }finally{p.cleanup();}
+});
+
+test("a remembered location is a location, and is checked before it is trusted",()=>{
+  const p=place();try{
+    const file=path.join(p.root,"backup-key-folder.json"),store=recoveryKeyFolderStore(file);
+    const key=path.join(p.safe,"murage-recovery-key.txt");
+    writeFileSync(key,"placeholder");
+    store.write(p.safe,key);
+    assert.deepEqual(store.read(),{folder:p.safe,file:key});
+    // A file the person no longer has, a file that belongs to another folder,
+    // a directory, a relative path and a non-string all read as "no file".
+    for(const value of [path.join(p.safe,"gone.txt"),path.join(p.root,"elsewhere.txt"),p.safe,"relative/key.txt",42,null]){
+      writeFileSync(file,JSON.stringify({version:1,folder:p.safe,file:value}));
+      assert.deepEqual(store.read(),{folder:p.safe,file:null},String(value));
+    }
+    // A record written before the file was remembered still gives its folder.
+    writeFileSync(file,JSON.stringify({version:1,folder:p.safe}));
+    assert.deepEqual(store.read(),{folder:p.safe,file:null});
+    // A key file outside the folder being written is not written down at all.
+    store.write(p.safe,path.join(p.root,"stray.txt"));
+    assert.deepEqual(JSON.parse(readFileSync(file,"utf8")),{version:1,folder:p.safe});
   }finally{p.cleanup();}
 });
 

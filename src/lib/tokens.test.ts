@@ -263,6 +263,8 @@ describe("token drift", () => {
         "QR code foreground/background — a scanner needs pure black on pure white",
       "src/components/CompanionSection.tsx":
         "the same QR, on the WebUI page — a scanner needs pure black on pure white",
+      "src/components/FirstRunPhoneCard.tsx":
+        "the same QR again, in the first-run chat — a scanner needs pure black on pure white",
       "src/components/RoutineCalendarPage.tsx":
         "calendar chip gradients mixed from EMBER_COLORS; theme-invariant like the mascot",
     };

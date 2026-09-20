@@ -351,7 +351,27 @@ describe("sidebar menus, dialogs and rows say what they are", async () => {
     const panel = between("function NewRoomPanel", "/** Move-to-section popover");
     expect(panel).toMatch(/role="dialog"\s+aria-modal="true"\s+aria-labelledby="new-channel-title"/);
     expect(panel).toContain('id="new-channel-title"');
-    expect(panel).toContain('aria-label="Channel name"');
+    // One panel makes both, so the name field is labelled for whichever is
+    // being made. Both labels have to exist, and neither may be a template.
+    expect(panel).toContain('"Channel name"');
+    expect(panel).toContain('"Project name"');
+  });
+
+  it("offers Channel and Project as two named choices, each saying what it is", () => {
+    const menu = between("export function SidebarCreateMenu", "export function sidebarBotVisible");
+    expect(menu).toContain("New Channel");
+    expect(menu).toContain("A chat with some bots.");
+    expect(menu).toContain("New Project");
+    expect(menu).toContain("A piece of work with its own goal, files and chat.");
+  });
+
+  it("gives a channel row a More-actions control that a touch screen can reach", () => {
+    const row = between("function GroupListItem", "function RoomContextMenu");
+    // A touch device fires no `contextmenu` event and has no Shift+F10, so
+    // a visible control is the only way into the menu there.
+    expect(row).toContain("aria-haspopup=\"menu\"");
+    expect(row).toContain("More actions for ${group.name}");
+    expect(row).toContain("[@media(hover:none)]:opacity-100");
   });
 
   it("keeps member avatars out of a channel row's name", () => {

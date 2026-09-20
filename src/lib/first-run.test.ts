@@ -1,0 +1,228 @@
+// THE BUG THIS FILE EXISTS TO PREVENT.
+//
+// A restored workspace opening into a welcome screen. It is the worst thing
+// this flow can do to somebody: they have just moved machines, or recovered
+// from a dead disk, and the first thing the app says is "hello, who are
+// you?" while their whole working life is sitting behind it.
+//
+// The old shape had three surfaces each deciding for itself whether this
+// install was new, two of them from localStorage, which is empty on a fresh
+// browser however long the person has been a customer. There is one decision
+// now, it is the server's, and these tests drive it from the wire: a view
+// with `firstRun: false` must produce nothing, on every path in.
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { beforeEach, describe, expect, it } from "vitest";
+
+import {
+  FIRST_RUN_RAIL,
+  closeFirstRun,
+  firstRunActive,
+  firstRunRailRows,
+  firstRunRailVisible,
+  openFirstRun,
+  readFirstRunRail,
+  resetFirstRunRail,
+} from "./first-run";
+import { SETUP_STEPS, type SetupStep, type SetupStepStatus, type SetupView } from "../../shared/setup";
+
+const source = readFileSync(fileURLToPath(new URL("./first-run.ts", import.meta.url)), "utf8");
+/** The module with its prose removed. The comments in this file name the
+ *  things it deliberately does NOT do, so a scan for those names has to read
+ *  the code rather than the explanation of the code. */
+const code = source
+  .split("\n")
+  .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+  .join("\n");
+
+/** A setup view as `GET /api/setup` really answers it. Steps default to open
+ *  so a test only has to say the part it is about. */
+function view(over: Partial<SetupView> = {}, statuses: Partial<Record<SetupStep, SetupStepStatus>> = {}): SetupView {
+  const steps = SETUP_STEPS.map((id) => {
+    const status = statuses[id] ?? "open";
+    return {
+      id,
+      done: status === "done",
+      ...(status === "skipped" ? { skipped: true } : {}),
+      status,
+      ...(status === "blocked" ? { block: { reason: "flux-key-needed" as const, message: "A key is needed first." } } : {}),
+    };
+  });
+  const done = steps.filter((step) => step.done).length;
+  return {
+    version: 2,
+    startedAt: 1,
+    chiefBotId: "chief",
+    ownerName: "",
+    engine: { ready: true },
+    agents: [{ id: "fuigo", name: "Fuigo", installed: false }],
+    routines: { total: 0, briefId: null, briefRan: false },
+    crewSize: 0,
+    fluxReady: false,
+    firstRun: true,
+    progress: { done, total: steps.length },
+    blocked: steps.filter((step) => step.status === "blocked").map((step) => step.id),
+    // What `nextSetupStep` really answers: the first step that is neither
+    // done nor passed over. A blocked step is still the one you are on.
+    next: steps.find((step) => !step.done && step.status !== "skipped")?.id ?? null,
+    steps,
+    ...over,
+  };
+}
+
+/** What a restored backup looks like on the wire: the server has already
+ *  seen the answered turns, the saved key, the connected apps and the
+ *  routines, and has said so in one field. */
+const RESTORED = () =>
+  view(
+    { firstRun: false, ownerName: "Sean", fluxReady: true, crewSize: 4, routines: { total: 3, briefId: "r1", briefRan: true } },
+    { hello: "done", agents: "done", flux: "done", apps: "done", brief: "done", routines: "done" },
+  );
+
+beforeEach(() => {
+  resetFirstRunRail();
+});
+
+describe("a restored or established install never sees the first run", () => {
+  it("shows nothing when the server says this is not a first run", () => {
+    expect(firstRunActive(RESTORED())).toBe(false);
+    expect(firstRunRailVisible(RESTORED(), readFirstRunRail())).toBe(false);
+  });
+
+  it("stays away even on a half-finished workspace that has clearly been used", () => {
+    // The dangerous middle: some steps outstanding, but the server has seen
+    // a name, a key and a crew. Counting unfinished steps would call this a
+    // first run. The server's answer does not.
+    const used = view({ firstRun: false, ownerName: "Sean", crewSize: 2 }, { hello: "done", agents: "done" });
+    expect(firstRunRailVisible(used, readFirstRunRail())).toBe(false);
+  });
+
+  it("shows nothing before the server has answered at all", () => {
+    // Not asked yet is not a yes. A frame of the welcome list while the
+    // first read is in flight is the same bug in a smaller window.
+    expect(firstRunRailVisible(null, readFirstRunRail())).toBe(false);
+    expect(firstRunRailVisible(undefined, readFirstRunRail())).toBe(false);
+    expect(firstRunActive(null)).toBe(false);
+  });
+
+  it("has no second opinion to be wrong with", () => {
+    // No storage, no counting of finished steps, no locally derived
+    // "untouched". `view.firstRun` and nothing else.
+    expect(code).not.toMatch(/localStorage|sessionStorage/);
+    expect(code).not.toMatch(/progress\.done|steps\.every|steps\.filter/);
+    expect(code).toContain("view?.firstRun === true");
+  });
+});
+
+describe("a genuinely fresh install does see it", () => {
+  it("offers the rail unasked", () => {
+    expect(firstRunActive(view())).toBe(true);
+    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(true);
+  });
+
+  it("goes away when they close it, and does not come back by itself", () => {
+    closeFirstRun();
+    expect(readFirstRunRail().closed).toBe(true);
+    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(false);
+  });
+});
+
+describe("/setup and the Settings row reach it on any install", () => {
+  it("opens on a workspace the server calls established", () => {
+    openFirstRun();
+    expect(firstRunRailVisible(RESTORED(), readFirstRunRail())).toBe(true);
+  });
+
+  it("reopens one that was closed", () => {
+    closeFirstRun();
+    openFirstRun();
+    expect(readFirstRunRail().closed).toBe(false);
+    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(true);
+  });
+
+  it("counts every ask, so a second one is a second trip to the Chief", () => {
+    openFirstRun();
+    openFirstRun();
+    expect(readFirstRunRail().requests).toBe(2);
+  });
+
+  it("still shows nothing when the server has not answered", () => {
+    openFirstRun();
+    expect(firstRunRailVisible(null, readFirstRunRail())).toBe(false);
+  });
+});
+
+describe("the rows are the server's list", () => {
+  it("renders one row per step the view carries, in the view's order", () => {
+    const rows = firstRunRailRows(view());
+    expect(rows.map((row) => row.id)).toEqual([...SETUP_STEPS]);
+    expect(rows.every((row) => row.label.length > 0)).toBe(true);
+  });
+
+  it("marks done, passed over, waiting and the one they are on", () => {
+    const rows = firstRunRailRows(view({}, { hello: "done", agents: "skipped", flux: "blocked" }));
+    const mark = Object.fromEntries(rows.map((row) => [row.id, row.mark]));
+    expect(mark.hello).toBe("done");
+    expect(mark.agents).toBe("skipped");
+    expect(mark.flux).toBe("blocked");
+    // `next` is the first step that is neither done nor passed over, and the
+    // server works it out. Here that is flux, which is blocked, so the first
+    // plain open row is apps and it is not "now".
+    expect(mark.apps).toBe("todo");
+    expect(mark.routines).toBe("todo");
+    const fresh = firstRunRailRows(view());
+    expect(fresh.find((row) => row.id === "hello")?.mark).toBe("now");
+  });
+
+  it("draws a row for a step it has never heard of rather than dropping it", () => {
+    // A newer server sending a seventh step must not make a step quietly
+    // disappear from the list of what is left to do.
+    const seventh = view();
+    const extended = {
+      ...seventh,
+      steps: [...seventh.steps, { id: "somethingnew" as SetupStep, done: false, status: "open" as SetupStepStatus }],
+    };
+    const rows = firstRunRailRows(extended);
+    expect(rows).toHaveLength(7);
+    expect(rows[6].label).toBe("somethingnew");
+  });
+});
+
+describe("what the rail says", () => {
+  const strings = [
+    FIRST_RUN_RAIL.title,
+    FIRST_RUN_RAIL.close,
+    FIRST_RUN_RAIL.footer,
+    FIRST_RUN_RAIL.progress(2, 6),
+    ...Object.values(FIRST_RUN_RAIL.state),
+    ...firstRunRailRows(view()).map((row) => row.label),
+  ];
+
+  it("promises in so many words that closing it stops nothing", () => {
+    expect(FIRST_RUN_RAIL.footer).toContain("Close this whenever you like");
+    expect(FIRST_RUN_RAIL.footer).toContain("stops you using Murage");
+  });
+
+  it("keeps every copy rule the first run is held to", () => {
+    for (const line of strings) {
+      expect(line, line).not.toMatch(/[—–]/);
+      expect(line.toLowerCase(), line).not.toMatch(/composio/);
+      expect(line.toLowerCase(), line).not.toMatch(/cheap|discount|wholesale|afford|save money|budget|\$|token/);
+      expect(line.toLowerCase(), line).not.toMatch(/lesson|exercise|quiz|assignment|homework/);
+      // Never a model count, and no count of anything but steps.
+      expect(line, line).not.toMatch(/\d+\+\s*models|\d+\s*models/i);
+    }
+  });
+
+  it("counts steps and nothing else", () => {
+    expect(FIRST_RUN_RAIL.progress(2, 6)).toBe("2 of 6 done");
+  });
+
+  it("never states a limit where the product has a capability", () => {
+    for (const line of strings) {
+      expect(line.toLowerCase(), line).not.toMatch(/i can never|cannot send|can't send/);
+    }
+  });
+});

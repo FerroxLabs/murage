@@ -31,23 +31,25 @@ import { webUiReadinessRows, type WebUiReadiness } from "./PhoneSetupFlow";
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
 const app = read("../App.tsx");
-const onboarding = read("./Onboarding.tsx");
+const rail = read("./FirstRunRail.tsx");
+const firstRun = read("../lib/first-run.ts");
 const phoneSetup = read("./PhoneSetupFlow.tsx");
 const companion = read("./CompanionSection.tsx");
 const settings = read("./SettingsPanel.tsx");
 const sidebar = read("./Sidebar.tsx");
 const hook = read("../lib/use-surface.ts");
 
-/** The one early return in <Onboarding> (bf1dc245 folded the workspace check
- *  into it, 347a3f4d the settings dialog). `desktop !== true` is its FIRST
- *  clause, so the unknown surface is refused before anything else is asked. */
-const ONBOARDING_GUARD = 'if (desktop !== true || workspace === "established" || state.appSettingsOpen) return null;';
+/** 0.1.58 folded the welcome screen into the Chief of Staff's thread, and the
+ *  only first-run CHROME left is the progress rail. The gate that replaced
+ *  <Onboarding>'s early return is App.tsx's, and this is it. `desktop === true`
+ *  and not `!== false`: the unknown surface is refused, which was the bug. */
+const RAIL_GATE = "{desktop === true && <FirstRunRail />}";
 
 /** Every file that suppresses something, so a new one cannot quietly answer
  *  the question a different way. */
 const gated: Array<[string, string]> = [
   ["App.tsx", app],
-  ["Onboarding.tsx", onboarding],
+  ["FirstRunRail.tsx", rail],
   ["PhoneSetupFlow.tsx", phoneSetup],
   ["CompanionSection.tsx", companion],
   ["SettingsPanel.tsx", settings],
@@ -96,54 +98,48 @@ describe("1. the welcome / email gate never reaches a phone", () => {
   it("renders only on a CONFIRMED desktop", () => {
     // Not `!== false`, not `!desktop`. The gate is the desktop thing, so the
     // unknown state must withhold it.
-    expect(app).toContain("{desktop === true && gated && <Onboarding onDone={() => setGated(false)} />}");
+    expect(app).toContain(RAIL_GATE);
     expect(app).toContain("const desktop = useDesktopSurface();");
   });
 
-  it("does not decide it from storage alone any more", () => {
-    // `emailGateDone()` reads localStorage, and a phone's localStorage is
-    // empty however long the person has used Murage. It still gates, but it
-    // no longer gates ALONE.
-    const gate = app.slice(app.indexOf("const [gated, setGated]"));
-    expect(gate).toContain("emailGateDone()");
-    expect(app).not.toMatch(/\{gated && <Onboarding/);
-  });
-
-  it("takes the ENGINE SCAN and the workspace check with it", () => {
-    // The screens a paired phone was actually walked through, in order, as
-    // the outcome-first rewrite (bf1dc245) now lays them out: step 0 the
-    // welcome / email gate, step 1 "Choose an engine" — the scan — and step 2
-    // the starter crew. Step 1 polls GET /api/instances for CLIs installed on
-    // THIS COMPUTER and offers to install the missing ones; a phone can
-    // install nothing, and the door refuses those routes anyway. The
-    // workspace check (GET /api/bots) that decides whether the screen is
-    // needed at all is an effect, so it cannot sit behind the early return;
-    // it carries the same condition instead.
+  it("does not decide it from storage at all any more", () => {
+    // THE ORIGINAL BUG, now closed at the root rather than patched.
     //
-    // None of them is separately gated, and that is the design: they are steps
-    // of ONE screen, and the screen does not exist off the desktop.
-    const body = onboarding.slice(onboarding.indexOf("export function Onboarding("));
-    const guard = body.indexOf(ONBOARDING_GUARD);
-    expect(guard).toBeGreaterThan(-1);
-    for (const step of ["{step === 0 && <>", "{step === 1 && <>", "{step === 2 && choice && modelReady && <StarterProfiles", "{step === 2 && !modelReady && <>"]) {
-      expect(body.indexOf(step), step).toBeGreaterThan(guard);
-    }
-    expect(body).toContain("Choose an engine");
-    expect(body).toContain("useEffect(() => { if (desktop === true) void checkWorkspace(); }, [desktop]);");
-    // The phone-setup wizard left this screen for good; it must not creep back.
-    expect(body).not.toContain("<PhoneSetupFlow");
+    // `emailGateDone()` read localStorage, and a phone's localStorage is
+    // empty however long the person has used Murage, so the client's own
+    // answer to "is this a new install" was wrong on the one surface where
+    // being wrong mattered. The client no longer HAS an answer: the server
+    // derives `firstRun` from the workspace itself (setupIsFirstRun,
+    // shared/setup.ts), and every first-run surface reads that. A phone's
+    // empty storage cannot reach a fact measured on the machine.
+    // Code only: the comment above the gate still tells the story of the bug,
+    // and the story is worth keeping. What must be gone is the call.
+    const appCode = app.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(appCode).not.toContain("emailGateDone");
+    expect(appCode).not.toContain("<Onboarding");
+    expect(firstRun).not.toContain("localStorage");
+    expect(firstRun).toContain("view.firstRun");
   });
 
-  it("is locked a second time in the component itself", () => {
-    // So a future caller cannot reopen the hole by mounting <Onboarding>
-    // somewhere new. The guard is the component's only early return, and
-    // `desktop !== true` is its first clause: the workspace and settings
-    // conditions after it can only withhold more, never admit an unknown
-    // surface.
-    expect(onboarding).toContain(ONBOARDING_GUARD);
-    expect(onboarding.match(/return null;/g)).toHaveLength(1);
-    expect(onboarding).toContain("const desktop = useDesktopSurface();");
+  it("is locked a second time inside the rail itself", () => {
+    // So a future caller cannot reopen the hole by mounting the rail
+    // somewhere new. It renders nothing unless the server's own view says
+    // this install is in its first run, and it holds no opinion of its own
+    // about what a new install looks like.
+    expect(rail).toContain("const desktop = useDesktopSurface();");
+    expect(rail).toContain("if (desktop !== true || !view || !firstRunRailVisible(view, rail)) return null;");
+    expect(rail).not.toContain("localStorage");
   });
+
+  // REMOVED WITH THE SCREEN IT GUARDED.
+  //
+  // This used to pin that the engine scan and the workspace check lived
+  // inside <Onboarding>'s one early return, because they were steps of one
+  // screen and the screen did not exist off the desktop. 0.1.58 deleted that
+  // screen. The engine scan is not a step any more, it is detection that
+  // runs before anyone is asked anything, and the workspace check is now the
+  // server's `firstRun`. The rule those assertions protected is covered
+  // above, twice: App.tsx's gate and the rail's own.
 });
 
 describe("2. the phone-setup flow never reaches a phone", () => {
@@ -264,17 +260,17 @@ describe("4. nothing that installs or executes is offered to a phone", () => {
     expect(app).not.toContain("desktop === true && <ChatView");
   });
 
-  it("keeps the engine installer inside the screen that is already gone", () => {
-    // <EngineSetup> is reachable from onboarding step 1 and nowhere else in
-    // this lane, and onboarding no longer mounts off the desktop. Scoped to
-    // the component body, where the guard sits ahead of the tree that mounts
-    // it for the selected engine.
-    expect(onboarding).toContain("<EngineSetup");
-    const body = onboarding.slice(onboarding.indexOf("export function Onboarding("));
-    expect(body).toContain(ONBOARDING_GUARD);
-    expect(body).toContain("<EngineSetup instance={selected}");
-    expect(body.indexOf(ONBOARDING_GUARD))
-      .toBeLessThan(body.indexOf("<EngineSetup instance={selected}"));
+  it("no longer offers to install an engine on a first-run screen at all", () => {
+    // <EngineSetup> polled GET /api/instances for CLIs on THIS computer and
+    // offered to install the missing ones, from inside the welcome screen a
+    // phone was being shown. That screen is gone, and the first run does not
+    // ask the question any more: what is installed is DETECTED before
+    // anybody is asked anything, and the agents card reports the answer.
+    // So the rule is stronger than a guard. There is nothing to guard.
+    expect(rail).not.toContain("<EngineSetup");
+    for (const file of ["./FirstRunCard.tsx", "./FirstRunHelloCard.tsx", "./FirstRunChrome.tsx"]) {
+      expect.soft(read(file), `${file} mounts the engine installer`).not.toContain("<EngineSetup");
+    }
   });
 });
 

@@ -158,7 +158,7 @@ test("the link opens Tools & Connections with the cursor in the Composio key fie
   await open(page);
   await page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
-  const field = page.getByLabel("Composio project key", { exact: true });
+  const field = page.getByLabel("Connected apps key", { exact: true });
   await expect(field).toBeVisible();
   await expect(field).toBeFocused();
   expect(await page.evaluate(() => (window as any).fixtureStore.state.appSettingsSection)).toBe("connections");

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
-import { Onboarding } from "@/components/Onboarding";
-import { emailGateDone, initAnalytics } from "@/lib/analytics";
+import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
@@ -16,7 +15,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
-import { SetupPanel, useSetupOpen } from "@/components/SetupPanel";
+import { FirstRunRail } from "@/components/FirstRunRail";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
@@ -27,10 +26,12 @@ import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
-import { FluxInvite } from "./components/FluxInvite";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // Same three-state answer the whole app uses, and the same rule: only a
+  // CONFIRMED desktop gets a first-run surface. See the comment on App().
+  const desktop = useDesktopSurface();
   const unreadCount =
     state.bots.filter((bot) => !bot.hidden && bot.unread).length +
     state.groups.filter((group) => group.unread).length;
@@ -286,6 +287,14 @@ function Shell() {
           )}
         </main>
       )}
+      {/* The first run's progress list, as a column BESIDE whatever is in the
+          main view rather than on top of it. It owns its own visibility
+          (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
+          `/setup` or the Settings row bring it back on any install. Mounted
+          on a confirmed desktop only. A paired phone coming through the
+          browser door is not a fresh machine and must never be shown a
+          first-run screen. */}
+      {desktop === true && <FirstRunRail />}
       {state.settingsOpen && bot && <BotSettingsDialog key={bot.id} bot={bot} />}
       {state.computerOpen && bot && (
         <ComputerPanel
@@ -298,10 +307,6 @@ function Shell() {
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
-      {/* The guided first run. It owns its own visibility (SetupPanel.tsx):
-          it offers itself on a workspace that has never been through setup,
-          and `/setup` or Settings bring it back on any other. */}
-      <SetupPanel />
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPalette onOpenChange={setPaletteOpen} />
@@ -323,13 +328,13 @@ export default function App() {
   // `undefined` (not asked yet) renders nothing. Nothing is the neutral thing
   // here: the app underneath is already correct on both surfaces, and a frame
   // of the welcome screen on a phone is the whole bug.
+  //
+  // That gate has since been folded into the Chief of Staff's thread and the
+  // progress rail beside it, and the rule survives the screen unchanged: the
+  // rail renders on a CONFIRMED desktop and nowhere else (see Shell above).
+  // Its answer is the server's `view.firstRun`, which no phone's empty
+  // localStorage can get wrong, and it is still withheld on `undefined`.
   const desktop = useDesktopSurface();
-  const [gated, setGated] = useState(() => !emailGateDone());
-  // The guided first run asks for the Flux key as its FIRST card, so the
-  // floating invitation must not also be on screen saying the same thing —
-  // on a phone it lands right over the checklist. It is the same "not while
-  // a first-run screen is up" rule the welcome gate already gets.
-  const setupOpen = useSetupOpen();
   useEffect(() => {
     initAnalytics();
   }, []);
@@ -341,16 +346,10 @@ export default function App() {
     <DesktopCapabilitiesProvider>
       <StoreProvider>
         <Shell />
-        {desktop === true && gated && <Onboarding onDone={() => setGated(false)} />}
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}
         {desktop === false && <InstallPrompt />}
-        {/* The Flux offer owns its own visibility: `fluxInviteVisible` refuses
-            on a non-desktop surface, while the welcome gate is up, once
-            dismissed, and until config has actually answered. So no guard
-            here would be anything but a second copy of that decision. */}
-        <FluxInvite firstRunGate={gated || setupOpen} />
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

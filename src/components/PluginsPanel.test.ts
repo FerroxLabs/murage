@@ -102,7 +102,7 @@ describe("pending OAuth recovery", () => {
 
 describe("the connectors panel names its account", () => {
   it("says which Composio identity is in use", () => {
-    expect(panel).toContain("Connected with your own Composio key");
+    expect(panel).toContain("Connected with your own key");
     expect(en["connectedApps.flux.legacyPlain"]).toBe("Connected through Murage's service.");
   });
 
@@ -463,7 +463,7 @@ describe("the connected-apps lock", () => {
 
   it("lands the cursor in the key field the button names", () => {
     expect(FLUX_KEY_FIELD_SELECTOR).toBe('input[name="flux-router-key"]:not([disabled])');
-    expect(COMPOSIO_KEY_FIELD_SELECTOR).toBe('input[aria-label="Composio project key"]:not([disabled])');
+    expect(COMPOSIO_KEY_FIELD_SELECTOR).toBe('input[aria-label="Connected apps key"]:not([disabled])');
     // The primary goes to Models (where the Flux key lives) and the secondary
     // to Tools & Connections (where the Composio key row lives), each with
     // the field focus queued behind the dialog opening.

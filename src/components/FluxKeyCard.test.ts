@@ -44,13 +44,44 @@ describe("setup links to one Flux key editor", () => {
     expect(models).toContain("Your saved keys are unchanged.");
     expect(models).toContain("Saved Flux connection:");
   });
-  it("routes the invitation and avatar hint to Models", () => {
-    for (const file of ["./FluxInvite.tsx", "./BotProfileAvatarCard.tsx"]) expect(read(file)).toContain('section: "models"');
-    expect(read("./FluxInvite.tsx")).not.toMatch(/<input/);
+  // WHAT REPLACED FluxInvite.tsx AND Onboarding.tsx.
+  //
+  // Both were deleted when the three stacked first-run surfaces collapsed
+  // into one conversation with the Chief of Staff. The two rules they carried
+  // are not deleted with them, so they are asserted here against the things
+  // that took their place: FirstRunFluxCard.tsx, which is where the key is
+  // asked for now, and FirstRunRail.tsx, which is the surface that offers it.
+  it("routes the avatar hint to Models, and keeps the first run's key field on the one road", () => {
+    // The invitation used to hold no field and point at Models instead. The
+    // card in the chat does hold a field, which is the whole improvement, so
+    // the rule it inherits is the one that actually protected the key: one
+    // writer (`saveFluxKey`, the Settings card's own road into the keychain),
+    // masked, dropped from React the moment it is stored, never rendered back.
+    expect(read("./BotProfileAvatarCard.tsx")).toContain('section: "models"');
+    const card = read("./FirstRunFluxCard.tsx");
+    expect(card).toContain('type="password"');
+    expect(card).toContain("saveFluxKey(key,");
+    expect(card).toContain('setKey("")');
+    expect(card).not.toMatch(/\{ flux: \{ apiKey|fluxKeyPatch/);
+    expect(card).not.toMatch(/value=\{[^}]*apiKey/);
   });
-  it("preserves onboarding state while Settings temporarily takes focus", () => {
-    const source = read("./Onboarding.tsx");
-    expect(source).toContain('workspace === "established" || state.appSettingsOpen) return null;');
-    expect(source.indexOf('state.appSettingsOpen) return null;')).toBeGreaterThan(source.lastIndexOf('useEffect('));
+  it("keeps every other first-run surface out of the key business", () => {
+    // FluxInvite's other rule: whatever OFFERS the key does not grow a second
+    // field for it. There is one field in the first run and the rail has none.
+    expect(read("./FirstRunRail.tsx")).not.toMatch(/<input|type="password"|apiKey/);
+    expect(read("./FirstRunCard.tsx")).not.toMatch(/<input|type="password"|apiKey/);
+  });
+  it("preserves first-run state while Settings temporarily takes focus", () => {
+    // Onboarding.tsx had to early-return on `state.appSettingsOpen` so that a
+    // trip to Settings for a key did not wipe a half-typed form. The first run
+    // is a transcript now, so the rule is kept by there being nothing to lose:
+    // no first-run surface is unmounted or reset by a dialog opening, and none
+    // of them is conditioned on one.
+    for (const file of ["./FirstRunRail.tsx", "./FirstRunCard.tsx", "./FirstRunFluxCard.tsx", "./FirstRunHelloCard.tsx"]) {
+      expect(read(file), file).not.toContain("appSettingsOpen");
+    }
+    // ...and the screen that needed the guard is gone from the shell for good.
+    const app = read("../App.tsx");
+    expect(app).not.toMatch(/<Onboarding|<SetupPanel|<FluxInvite/);
   });
 });

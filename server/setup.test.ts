@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  SETUP_SOLO_CREW,
+  SETUP_ROUTINES_TARGET,
   SETUP_STEPS,
   type SetupLiveState,
   fluxKeyLooksValid,
   nextSetupStep,
+  setupIsFirstRun,
   setupProgress,
   setupStepBlock,
   setupStepDetail,
@@ -18,9 +19,11 @@ import {
 import {
   SetupChecklist,
   type SetupBotReading,
+  type SetupInstanceReading,
   type SetupMessageReading,
   chiefDecision,
   readWorkspace,
+  setupAgentsReading,
   threadAnswered,
 } from "./setup.ts";
 
@@ -30,8 +33,13 @@ import {
 const FLUX_KEY = "sk-flux-Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 /** A Flux Router connection as the credential card reports a healthy one. */
 const FLUX_SAVED = { configured: true, conflict: false, looksValid: true };
+/** The engine Murage ships. It is on every machine, which is why `agents` is
+ *  normally done before anybody has typed anything. */
+const BUNDLED = { id: "fuigo", name: "Fuigo", installed: false };
 
 const live = (patch: Partial<SetupLiveState> = {}): SetupLiveState => ({
+  ownerName: "",
+  agents: [BUNDLED],
   flux: { configured: false, conflict: false, looksValid: false },
   bundledEngine: { ready: true },
   chiefInstanceId: "",
@@ -41,7 +49,7 @@ const live = (patch: Partial<SetupLiveState> = {}): SetupLiveState => ({
   crewSize: 0,
   connectedApps: 0,
   botReplyExists: false,
-  chiefMemoryWritten: false,
+  routines: { total: 0, briefId: null, briefRan: false },
   ...patch,
 });
 
@@ -56,45 +64,47 @@ beforeEach(() => {
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 describe("the setup checklist the server owns", () => {
-  it("opens on the eight steps in their fixed order with nothing done", () => {
+  it("opens on the six steps in the order the person experiences them", () => {
     const state = checklist().read(live());
     expect(Object.keys(state.steps)).toEqual([...SETUP_STEPS]);
-    expect(SETUP_STEPS[0]).toBe("flux");
-    expect(setupProgress(state)).toEqual({ done: 0, total: 8 });
-    expect(nextSetupStep(state)).toBe("flux");
+    expect([...SETUP_STEPS]).toEqual(["hello", "agents", "flux", "apps", "brief", "routines"]);
+    // The engine in the box already makes one step true on a bare machine.
+    expect(setupProgress(state)).toEqual({ done: 1, total: 6 });
+    expect(nextSetupStep(state)).toBe("hello");
   });
 
   it("never lets an answer alone mark a derived step done", () => {
     const setup = checklist();
     let state = setup.answer("flux", "I have one", live());
     expect(state.steps.flux).toMatchObject({ done: false, note: "I have one" });
-    state = setup.answer("brain", "Fuigo via Flux Router", live());
-    expect(state.steps.brain.done).toBe(false);
-    state = setup.answer("crew", "a researcher and a writer", live());
-    expect(state.steps.crew.done).toBe(false);
     state = setup.answer("apps", "Gmail and Calendar", live());
     expect(state.steps.apps.done).toBe(false);
-    state = setup.answer("first-task", "draft the launch note", live());
-    expect(state.steps["first-task"].done).toBe(false);
-    expect(setupProgress(state)).toEqual({ done: 0, total: 8 });
+    state = setup.answer("brief", "seven in the morning", live());
+    expect(state.steps.brief.done).toBe(false);
+    state = setup.answer("routines", "inbox and a watch", live());
+    expect(state.steps.routines.done).toBe(false);
   });
 
-  it("ticks a derived step from live state alone, with no answer at all", () => {
+  it("settles hello on a saved profile name, with no answer at all", () => {
+    // Half an exception, and only half: a saved name is a LIVE fact read back
+    // from config. The recorded answer only covers the person who gave a name
+    // and then cleared it.
+    const named = checklist().read(live({ ownerName: "Sean" }));
+    expect(named.steps.hello.done).toBe(true);
+    expect(named.steps.hello.note).toBeUndefined();
+    expect(checklist().answer("hello", "Sean", live()).steps.hello.done).toBe(true);
+  });
+
+  it("ticks every derived step from live state alone", () => {
     const state = checklist().read(live({
+      ownerName: "Sean",
       flux: FLUX_SAVED,
-      chiefInstanceId: "fuigo",
-      chiefAnsweredBy: ["fuigo"],
-      crewSize: 2,
-      connectedApps: 1,
-      botReplyExists: true,
+      connectedApps: 3,
+      routines: { total: 2, briefId: "routine-brief", briefRan: true },
     }));
-    expect(state.steps.flux).toMatchObject({ done: true });
-    expect(state.steps.flux.note).toBeUndefined();
-    expect(state.steps.brain.done).toBe(true);
-    expect(state.steps.crew.done).toBe(true);
-    expect(state.steps.apps.done).toBe(true);
-    expect(state.steps["first-task"].done).toBe(true);
-    expect(nextSetupStep(state)).toBe("purpose");
+    for (const step of SETUP_STEPS) expect(state.steps[step].done, step).toBe(true);
+    expect(nextSetupStep(state)).toBeNull();
+    expect(setupProgress(state)).toEqual({ done: 6, total: 6 });
   });
 
   it("un-ticks a step the moment the live state behind it goes away", () => {
@@ -106,15 +116,10 @@ describe("the setup checklist the server owns", () => {
   });
 
   it("refuses a saved Flux value that is not shaped like a key", () => {
-    // An environment-supplied key never passed the connection card's gate,
-    // so the shape is judged here: a sentence, a stub, or somebody else's
-    // key is not a Flux credential.
     for (const saved of ["yes I have one", "flux", "sk-ant-Aaaaaaaaaaaaaaaaaaaa", "xai-Aaaaaaaaaaaaaaaaaaaa"]) {
       expect(fluxKeyLooksValid(saved), saved).toBe(false);
     }
     expect(fluxKeyLooksValid(`  ${FLUX_KEY}  `)).toBe(true);
-    // Short fixture keys the rest of this suite uses must still pass.
-    expect(fluxKeyLooksValid("sk-flux-FAKE_NEXT")).toBe(true);
     expect(checklist().read(live({ flux: { configured: true, conflict: false, looksValid: false } })).steps.flux.done).toBe(false);
   });
 
@@ -126,52 +131,44 @@ describe("the setup checklist the server owns", () => {
     expect(setupStepBlock("flux", state.steps.flux, conflicted)).toMatchObject({ reason: "flux-choice-needed" });
   });
 
-  it("asks the Chief's OWN engine to have answered, not whichever engine a task used", () => {
-    const setup = checklist();
-    expect(setup.read(live({ chiefInstanceId: "fuigo", chiefAnsweredBy: ["claude"] })).steps.brain.done).toBe(false);
-    expect(setup.read(live({ chiefInstanceId: "", chiefAnsweredBy: ["fuigo"] })).steps.brain.done).toBe(false);
-    expect(setup.read(live({ chiefInstanceId: "fuigo", chiefAnsweredBy: ["claude", "fuigo"] })).steps.brain.done).toBe(true);
+  it("asks the apps step to wait for the key rather than blaming the person", () => {
+    const noKey = live({ ownerName: "Sean" });
+    const state = checklist().read(noKey);
+    expect(setupStepBlock("apps", state.steps.apps, noKey)).toMatchObject({ reason: "flux-key-needed" });
+    const withKey = live({ ownerName: "Sean", flux: FLUX_SAVED });
+    expect(setupStepBlock("apps", checklist().read(withKey).steps.apps, withKey)).toBeUndefined();
   });
 
-  it("accepts one teammate or the deliberate solo choice as a crew", () => {
-    expect(checklist().read(live({ crewSize: 1 })).steps.crew.done).toBe(true);
-    expect(checklist().answer("crew", SETUP_SOLO_CREW, live()).steps.crew.done).toBe(true);
-    expect(checklist().answer("crew", "just one, thanks", live()).steps.crew.done).toBe(false);
-  });
-
-  it("wraps up only when the confirmation and the Chief's lines are both there", () => {
-    // Three separate checklists: they share a data file, and one that had
-    // already recorded the confirmation would hide the half being tested.
-    const fresh = (name: string) => new SetupChecklist(join(directory, `${name}.json`));
-    expect(fresh("note-only").answer("wrap", "confirmed", live()).steps.wrap.done).toBe(false);
-    expect(fresh("lines-only").read(live({ chiefMemoryWritten: true })).steps.wrap.done).toBe(false);
-    expect(fresh("both").answer("wrap", "confirmed", live({ chiefMemoryWritten: true })).steps.wrap.done).toBe(true);
+  it("counts the morning brief itself towards the couple of routines", () => {
+    expect(SETUP_ROUTINES_TARGET).toBe(2);
+    expect(checklist().read(live({ routines: { total: 1, briefId: "b", briefRan: true } })).steps.routines.done).toBe(false);
+    expect(checklist().read(live({ routines: { total: 2, briefId: "b", briefRan: true } })).steps.routines.done).toBe(true);
   });
 
   it("records a skip without marking the step done, and keeps moving", () => {
     const setup = checklist();
-    const state = setup.skip("apps", live());
-    expect(state.steps.apps).toMatchObject({ done: false, skipped: true });
-    expect(nextSetupStep(state)).toBe("flux");
-    expect(setupProgress(setup.skip("voice", live()))).toEqual({ done: 0, total: 8 });
+    const state = setup.skip("flux", live({ ownerName: "Sean" }));
+    expect(state.steps.flux).toMatchObject({ done: false, skipped: true });
+    expect(nextSetupStep(state)).toBe("apps");
+    expect(setupProgress(state).done).toBe(2);
   });
 
   it("clears an earlier skip when the step is answered after all", () => {
     const setup = checklist();
-    setup.skip("purpose", live());
-    const state = setup.answer("purpose", "run my inbox", live());
-    expect(state.steps.purpose).toMatchObject({ done: true, note: "run my inbox" });
-    expect(state.steps.purpose.skipped).toBeUndefined();
+    setup.skip("hello", live());
+    const state = setup.answer("hello", "Sean", live());
+    expect(state.steps.hello).toMatchObject({ done: true, note: "Sean" });
+    expect(state.steps.hello.skipped).toBeUndefined();
   });
 
   it("re-derives on reopen: an answered step reopens, a step live state still backs comes straight back", () => {
     const setup = checklist();
-    setup.answer("purpose", "run my inbox", live());
+    setup.answer("hello", "Sean", live());
     setup.answer("flux", "pasted it", live({ flux: FLUX_SAVED }));
 
-    const reopened = setup.reopen("purpose", live({ flux: FLUX_SAVED }));
-    expect(reopened.steps.purpose).toEqual({ done: false });
-    expect(nextSetupStep(reopened)).toBe("purpose");
+    const reopened = setup.reopen("hello", live({ flux: FLUX_SAVED }));
+    expect(reopened.steps.hello).toEqual({ done: false });
+    expect(nextSetupStep(reopened)).toBe("hello");
 
     const stillDone = setup.reopen("flux", live({ flux: FLUX_SAVED }));
     expect(stillDone.steps.flux.done).toBe(true);
@@ -180,14 +177,16 @@ describe("the setup checklist the server owns", () => {
 
   it("re-reads the recorded answers from disk and re-derives done against today's live state", () => {
     const first = checklist();
-    first.answer("purpose", "run my inbox", live());
+    first.answer("hello", "Sean", live());
     first.answer("flux", "pasted it", live({ flux: FLUX_SAVED }));
     first.recordChief("bot-chief");
+    first.recordBriefRoutine("routine-brief");
 
     const reopenedApp = checklist();
     const state = reopenedApp.read(live());
     expect(state.chiefBotId).toBe("bot-chief");
-    expect(state.steps.purpose).toMatchObject({ done: true, note: "run my inbox" });
+    expect(state.briefRoutineId).toBe("routine-brief");
+    expect(state.steps.hello).toMatchObject({ done: true, note: "Sean" });
     expect(state.steps.flux.done).toBe(false);
     expect(JSON.parse(readFileSync(file, "utf8")).steps.flux.done).toBe(false);
   });
@@ -196,7 +195,103 @@ describe("the setup checklist the server owns", () => {
     writeFileSync(file, "{ not json");
     const state = checklist().read(live({ flux: FLUX_SAVED }));
     expect(state.steps.flux.done).toBe(true);
-    expect(state.steps.purpose.note).toBeUndefined();
+    expect(state.steps.hello.note).toBeUndefined();
+  });
+});
+
+describe("the brief: a promise is not proof", () => {
+  const scheduled = live({ ownerName: "Sean", flux: FLUX_SAVED, connectedApps: 1 });
+
+  it("is not done while the brief exists and has never run", () => {
+    const waiting = live({ ...scheduled, routines: { total: 1, briefId: "routine-brief", briefRan: false } });
+    const state = checklist().read(waiting);
+    expect(state.steps.brief.done).toBe(false);
+    expect(setupStepStatus("brief", state.steps.brief, waiting)).toBe("open");
+    expect(setupStepDetail("brief", state.steps.brief, waiting)).toMatch(/has not run yet/);
+  });
+
+  it("is done once one run has completed", () => {
+    const ran = live({ ...scheduled, routines: { total: 1, briefId: "routine-brief", briefRan: true } });
+    expect(checklist().read(ran).steps.brief.done).toBe(true);
+  });
+
+  it("goes back to outstanding when the brief is deleted", () => {
+    // The pointer is checked against the live routine list on every read, so
+    // `briefId` answers null the moment the routine is gone. A step cannot
+    // stay ticked on the strength of something that no longer exists.
+    const setup = checklist();
+    const ran = live({ ...scheduled, routines: { total: 1, briefId: "routine-brief", briefRan: true } });
+    expect(setup.read(ran).steps.brief.done).toBe(true);
+
+    const deleted = live({ ...scheduled, routines: { total: 0, briefId: null, briefRan: false } });
+    const state = setup.read(deleted);
+    expect(state.steps.brief.done).toBe(false);
+    expect(state.steps.brief.at).toBeUndefined();
+    expect(setupStepDetail("brief", state.steps.brief, deleted)).toMatch(/not set up yet/);
+    expect(nextSetupStep(state)).toBe("brief");
+  });
+
+  it("says nobody can write it when nothing on this machine can think", () => {
+    const stranded = live({ ...scheduled, agents: [], bundledEngine: { ready: false, reason: "fuigo is unavailable" } });
+    const state = checklist().read(stranded);
+    expect(setupStepBlock("brief", state.steps.brief, stranded)).toMatchObject({ reason: "engine-unavailable" });
+    expect(setupStepBlock("agents", state.steps.agents, stranded)?.message).toContain("fuigo is unavailable");
+  });
+});
+
+describe("whether this install has ever been set up", () => {
+  it("says yes to a machine that has done nothing at all", () => {
+    const fresh = checklist().read(live());
+    expect(setupIsFirstRun(fresh, live())).toBe(true);
+    expect(setupView(fresh, live()).firstRun).toBe(true);
+  });
+
+  it("says no to a restored workspace, which is the bug that matters most", () => {
+    // A restored backup trips every one of these at once: answered turns, a
+    // saved key, connected apps, routines and a crew. Interrupting it with a
+    // welcome screen is the worst thing this flow could do.
+    const restored = live({
+      ownerName: "Sean",
+      flux: FLUX_SAVED,
+      connectedApps: 6,
+      crewSize: 4,
+      botReplyExists: true,
+      routines: { total: 5, briefId: null, briefRan: false },
+    });
+    const state = checklist().read(restored);
+    expect(setupIsFirstRun(state, restored)).toBe(false);
+    expect(setupView(state, restored).firstRun).toBe(false);
+  });
+
+  it("says no on any ONE trace of a workspace that has been used", () => {
+    const traces: Array<[string, Partial<SetupLiveState>]> = [
+      ["a name on the profile", { ownerName: "Sean" }],
+      ["a reply an engine actually produced", { botReplyExists: true }],
+      ["a saved key", { flux: FLUX_SAVED }],
+      ["a connected account", { connectedApps: 1 }],
+      ["a routine", { routines: { total: 1, briefId: null, briefRan: false } }],
+      ["a crew", { crewSize: 1 }],
+    ];
+    for (const [why, patch] of traces) {
+      const used = live(patch);
+      expect(setupIsFirstRun(checklist().read(used), used), why).toBe(false);
+    }
+  });
+
+  it("is not fooled by the steps the engine in the box ticks on its own", () => {
+    // `agents` is done on a brand new machine before anybody has typed
+    // anything, because Murage ships an engine. Counting done steps would
+    // call that install "already set up".
+    const bare = live();
+    const state = checklist().read(bare);
+    expect(state.steps.agents.done).toBe(true);
+    expect(setupIsFirstRun(state, bare)).toBe(true);
+  });
+
+  it("says no once the person has passed a step over or answered one", () => {
+    const setup = checklist();
+    expect(setupIsFirstRun(setup.skip("apps", live()), live())).toBe(false);
+    expect(setupIsFirstRun(checklist().answer("hello", "Sean", live()), live())).toBe(false);
   });
 });
 
@@ -221,18 +316,18 @@ describe("a key that authenticates but cannot spend", () => {
     const state = checklist().answer("flux", "pasted it", live(spendCeiling));
     const block = setupStepBlock("flux", state.steps.flux, live(spendCeiling));
     expect(block?.reason).toBe("payment-required");
-    expect(block?.message).toMatch(/nothing to re-paste/);
+    expect(block?.message).toMatch(/nothing to paste again/);
     expect(state.steps.flux.note).toBe("pasted it");
     // "blocked" is its own outcome: not wrong, not missing, not skipped.
     expect(setupStepDetail("flux", state.steps.flux, live(spendCeiling))).toBeUndefined();
   });
 
-  it("blocks the brain and the first task on the same refusal, whoever the provider was", () => {
+  it("blocks the brief and the extra routines on the same refusal, whoever the provider was", () => {
     const ownSubscription = live({ flux: FLUX_SAVED, chiefInstanceId: "claude", chiefRefusal: { httpStatus: 402 } });
     const state = checklist().read(ownSubscription);
-    expect(setupStepStatus("brain", state.steps.brain, ownSubscription)).toBe("blocked");
-    expect(setupStepBlock("brain", state.steps.brain, ownSubscription)?.message).toMatch(/refused on payment/);
-    expect(setupStepStatus("first-task", state.steps["first-task"], ownSubscription)).toBe("blocked");
+    expect(setupStepStatus("brief", state.steps.brief, ownSubscription)).toBe("blocked");
+    expect(setupStepBlock("brief", state.steps.brief, ownSubscription)?.message).toMatch(/refused on payment/);
+    expect(setupStepStatus("routines", state.steps.routines, ownSubscription)).toBe("blocked");
     // The Chief is not on Flux, so this says nothing about the Flux key and
     // that step is left alone rather than blamed for somebody else's bill.
     expect(state.steps.flux.done).toBe(true);
@@ -249,15 +344,14 @@ describe("a key that authenticates but cannot spend", () => {
     const rateLimited = live({ flux: FLUX_SAVED, chiefInstanceId: "fuigo", chiefRefusal: { httpStatus: 429, provider: "flux-router" } });
     const state = checklist().read(rateLimited);
     expect(state.steps.flux.done).toBe(true);
-    expect(setupStepStatus("brain", state.steps.brain, rateLimited)).toBe("open");
+    expect(setupStepStatus("brief", state.steps.brief, rateLimited)).toBe("open");
   });
 
   it("lists every blocked step on the view, separately from what is merely outstanding", () => {
     const blocked = live({ ...spendCeiling, connectedApps: null });
     const view = setupView(checklist().read(blocked), blocked);
-    expect(view.blocked.sort()).toEqual(["apps", "brain", "first-task", "flux"]);
-    expect(view.progress.done).toBe(0);
-    expect(view.steps.find((entry) => entry.id === "crew")?.status).toBe("open");
+    expect(view.blocked.sort()).toEqual(["apps", "brief", "flux", "routines"]);
+    expect(view.steps.find((entry) => entry.id === "hello")?.status).toBe("open");
   });
 
   it("treats an unreadable connector store as unknown rather than as nothing connected", () => {
@@ -271,6 +365,36 @@ describe("a key that authenticates but cannot spend", () => {
     const unknown = live({ connectedApps: null });
     const state = checklist().skip("apps", unknown);
     expect(setupStepStatus("apps", state.steps.apps, unknown)).toBe("skipped");
+  });
+});
+
+describe("what this machine can already run", () => {
+  const instance = (patch: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
+    snapshot: { state: "available" },
+    ...patch,
+  });
+
+  it("reports only engines that are available and switched on", () => {
+    const reading = setupAgentsReading([
+      instance({ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent" }),
+      instance({ instanceId: "claude", displayName: "Claude Code", driverKind: "claudeAgent" }),
+      instance({ instanceId: "off", displayName: "Off", driverKind: "claudeAgent", enabled: false }),
+      instance({ instanceId: "missing", displayName: "Missing", driverKind: "claudeAgent", snapshot: { state: "missing" } }),
+    ]);
+    expect(reading.map((agent) => agent.id)).toEqual(["fuigo", "claude"]);
+  });
+
+  it("never claims the person installed the engine that came in the box", () => {
+    const [bundled, found] = setupAgentsReading([
+      instance({ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent" }),
+      instance({ instanceId: "codex", displayName: "Codex", driverKind: "codexAgent" }),
+    ]);
+    expect(bundled.installed).toBe(false);
+    expect(found).toMatchObject({ name: "Codex", installed: true });
+  });
+
+  it("falls back to the instance id when an engine has no display name", () => {
+    expect(setupAgentsReading([instance({ instanceId: "codex", displayName: "  " })])[0].name).toBe("codex");
   });
 });
 
@@ -394,32 +518,33 @@ describe("who hosts setup", () => {
   });
 });
 
-describe("what the brain step says when the included engine cannot run", () => {
-  it("repeats the resolver's reason instead of offering a default that cannot answer", () => {
-    const stranded = live({ bundledEngine: { ready: false, reason: "the bundled engine is missing" } });
-    const state = checklist().read(stranded);
-    const block = setupStepBlock("brain", state.steps.brain, stranded);
-    expect(block?.reason).toBe("engine-unavailable");
-    expect(block?.message).toContain("the bundled engine is missing");
-    expect(setupStepStatus("brain", state.steps.brain, stranded)).toBe("blocked");
-  });
-
-  it("asks for a hello instead, when the included engine is fine but has not answered", () => {
-    const chosen = live({ chiefInstanceId: "fuigo" });
-    const state = checklist().read(chosen);
-    expect(setupStepStatus("brain", state.steps.brain, chosen)).toBe("open");
-    expect(setupStepDetail("brain", state.steps.brain, chosen)).toMatch(/has not answered yet/);
-  });
-
+describe("the view the panel receives", () => {
   it("drops every detail and block from a step that is done", () => {
-    const configured = live({ flux: FLUX_SAVED });
+    const configured = live({ ownerName: "Sean", flux: FLUX_SAVED });
     const view = setupView(checklist().read(configured), configured);
     expect(view.steps.map((entry) => entry.id)).toEqual([...SETUP_STEPS]);
     const flux = view.steps.find((entry) => entry.id === "flux");
     expect(flux?.status).toBe("done");
     expect(flux?.detail).toBeUndefined();
     expect(flux?.block).toBeUndefined();
-    expect(view.progress).toEqual({ done: 1, total: 8 });
-    expect(view.next).toBe("purpose");
+    expect(view.progress).toEqual({ done: 3, total: 6 });
+    expect(view.next).toBe("apps");
+  });
+
+  it("reports what the Chief can open with, rather than what it should ask", () => {
+    const machine = live({ ownerName: "Sean", agents: [BUNDLED, { id: "claude", name: "Claude Code", installed: true }] });
+    const view = setupView(checklist().read(machine), machine);
+    expect(view.agents.filter((agent) => agent.installed).map((agent) => agent.name)).toEqual(["Claude Code"]);
+    expect(view.engine.ready).toBe(true);
+    expect(view.fluxReady).toBe(false);
+  });
+
+  it("carries the Chief and the brief's own state to the panel", () => {
+    const setup = checklist();
+    setup.recordChief("bot-chief");
+    const ran = live({ routines: { total: 2, briefId: "routine-brief", briefRan: true } });
+    const view = setupView(setup.read(ran), ran);
+    expect(view.chiefBotId).toBe("bot-chief");
+    expect(view.routines).toEqual({ total: 2, briefId: "routine-brief", briefRan: true });
   });
 });

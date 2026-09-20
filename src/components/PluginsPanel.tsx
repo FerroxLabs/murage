@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 import { McpServersPanel } from "./McpServersPanel";
 import {
+  APPS_CLAIM,
   COMPOSIO_KEY_FIELD_SELECTOR,
   ConnectedAppsLock,
   connectedAppsLockState,
@@ -839,7 +840,7 @@ export function PluginsPanel() {
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? "One Flux Router key connects hundreds of apps, including Gmail, Slack, Notion and GitHub. You can add your own MCP tools too." : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? `One Flux Router key connects ${APPS_CLAIM}. You can add your own MCP tools too.` : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
           </div>
           <div className="flex items-center gap-1">
             {surface === "apps" && lockState === "unlocked" && (
@@ -963,7 +964,7 @@ export function PluginsPanel() {
             tested without a renderer. */}
         {configured && mode === "self-hosted" && (
           <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
-            Connected with your own Composio key. These apps stay with your key.
+            Connected with your own key. These apps stay with your key.
           </div>
         )}
         {notices.map((notice, index) => {
@@ -1016,7 +1017,7 @@ export function PluginsPanel() {
                 dispatch({ type: "toggleAppSettings", open: true });
               }}
             >
-              Update your Composio key
+              Update your connected apps key
             </button>{" "}
             for the full catalog.
           </div>
@@ -1062,8 +1063,8 @@ export function PluginsPanel() {
                             : "Finish setup in your browser, or disconnect the pending account below to start again"
                           : failed && !accounts.length
                             ? /^failed$/i.test(serviceStatus?.status ?? "")
-                              ? "Authorization failed — try again"
-                              : "Authorization expired — try again"
+                              ? "Authorization failed. Try again."
+                              : "Authorization expired. Try again."
                             : card.blurb}
                       </div>
                     </div>

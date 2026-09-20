@@ -233,25 +233,47 @@ export function createRecoveryKeyIn(folders, { installation, destination = null,
   throw new Error(refused ?? "BACKUP_RECOVERY_KEY_LOCATION_INVALID");
 }
 
+const usablePath = value => typeof value === "string" && value.length <= 4096 && !value.includes("\0") && path.isAbsolute(value);
 const usableFolder = value => {
-  if (typeof value !== "string" || value.length > 4096 || value.includes("\0") || !path.isAbsolute(value)) return null;
+  if (!usablePath(value)) return null;
   try { return lstatSync(value).isDirectory() ? value : null; } catch { return null; }
 };
-/** Remembers the FOLDER the last recovery key was saved in or picked from,
- * across launches. Only the folder path is written, owner-only; never the
- * key, its name or its content. Unreadable or stale values read as unset. */
+/** A remembered key file counts only while a plain file is still there. The
+ * person may have moved it, renamed it or thrown it away between launches,
+ * and an offer to copy a file that is gone is a worse answer than no offer. */
+const usableKeyFile = value => {
+  if (!usablePath(value)) return null;
+  try { const found = lstatSync(value); return found.isFile() && !found.isSymbolicLink() ? value : null; } catch { return null; }
+};
+/** Remembers WHERE the last recovery key was saved or picked, across
+ * launches: the folder the pickers start in, and the file itself so a second
+ * copy can still be offered in a later launch. A location only, written
+ * owner-only. Never the key, and never anything read out of it.
+ *
+ * Unreadable, stale or disagreeing values read as unset. Records written
+ * before the file was remembered still read back: they carry the folder, and
+ * the copy is simply not offered from them. */
 export function recoveryKeyFolderStore(file) {
   return {
     read() {
-      try { const value = JSON.parse(readFileSync(file, "utf8")); return value?.version === 1 ? usableFolder(value.folder) : null; }
-      catch { return null; }
+      try {
+        const value = JSON.parse(readFileSync(file, "utf8"));
+        if (value?.version !== 1) return null;
+        const folder = usableFolder(value.folder);
+        if (!folder) return null;
+        const keyFile = usableKeyFile(value.file);
+        // The two are written together, so a file from some other folder is a
+        // record that has been edited or half-written: keep only the folder.
+        return { folder, file: keyFile && path.dirname(keyFile) === folder ? keyFile : null };
+      } catch { return null; }
     },
-    write(folder) {
+    write(folder, keyFile = null) {
       if (!usableFolder(folder)) return;
+      const remembered = usablePath(keyFile) && path.dirname(keyFile) === folder ? keyFile : null;
       const temporary = `${file}.${process.pid}.tmp`;
       try {
         mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-        writeFileSync(temporary, JSON.stringify({ version: 1, folder }), { mode: 0o600 });
+        writeFileSync(temporary, JSON.stringify({ version: 1, folder, ...(remembered ? { file: remembered } : {}) }), { mode: 0o600 });
         renameSync(temporary, file);
       } catch { try { rmSync(temporary, { force: true }); } catch { /* Remembering is a convenience only. */ } }
     },
@@ -271,17 +293,26 @@ export async function settleRecoveryKeyRequest(work, log = line => console.warn(
   }
 }
 
+/** Refusals that are about the place the person just picked for the copy, so
+ * they are reported as they are however the source was found. Everything else
+ * a copy can fail on is about the source file. */
+const COPY_TARGET_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECOVERY_KEY_INSIDE_DESTINATION", "BACKUP_RECOVERY_KEY_MUST_BE_INDEPENDENT", "BACKUP_RECOVERY_KEY_LOCATION_INVALID", "BACKUP_RECOVERY_KEY_WRITE_FAILED", "BACKUP_RECOVERY_KEY_UNVERIFIED"]);
+
 /** Native-dialog orchestration. The secret never leaves this process: the
  * caller receives only the chosen file's name and the public recipient. */
 export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null }) {
-  let pending = false, folder = null, lastKeyFile = null;
-  const remember = file => { folder = path.dirname(file); lastKeyFile = file; folderStore?.write(folder); };
-  const lastFolder = () => folder ?? folderStore?.read() ?? null;
+  let pending = false, folder = null, keyFile = null;
+  const remember = file => { folder = path.dirname(file); keyFile = file; folderStore?.write(folder, file); };
+  const remembered = () => folderStore?.read() ?? null;
+  const lastFolder = () => folder ?? remembered()?.folder ?? null;
+  /** The key file this process last created or was pointed at, and failing
+   * that the one a previous launch wrote down, so a copy can be offered
+   * without asking the person where their key is. Null when neither is
+   * known, or when the remembered file is no longer there. */
+  const lastKeyFile = () => keyFile ?? remembered()?.file ?? null;
   return {
     isPending: () => pending,
-    /** The key file this process last created or was pointed at, so a copy can
-     * be offered without asking the person where the key is. */
-    lastKeyFile: () => lastKeyFile,
+    lastKeyFile,
     /** Creates the key with no dialog, in the first allowed default folder.
      * `destination` is the chosen backup folder, which the key may not sit in. */
     createFor(destination) {
@@ -297,10 +328,15 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
     },
     /** Saves a second copy of the key somewhere the person picks. The secret
      * never leaves this process: they get back only the new file's name. */
-    async saveCopy(file = lastKeyFile) {
+    async saveCopy(file = lastKeyFile()) {
       if (pending) throw new Error("BACKUP_BUSY");
       if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
       if (typeof file !== "string" || !path.isAbsolute(file)) throw new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
+      // Whether this process watched that file being written, or only read
+      // its location back from the last launch. A file from a previous launch
+      // may since have been replaced by something that is not a key, and that
+      // is "we no longer know where your key is", not a failure of the copy.
+      const fromMemory = keyFile === file;
       pending = true;
       try {
         const to = await (chooseCopyFile ?? chooseFile)(suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
@@ -308,7 +344,13 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
         if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
         let destination;
         try { destination = await selectedDestination(); } catch { throw new Error("BACKUP_BINDINGS_UNAVAILABLE"); }
-        const copied = copyRecoveryKeyFile({ from: file, to, installation: installation(), destination });
+        let copied;
+        try { copied = copyRecoveryKeyFile({ from: file, to, installation: installation(), destination }); }
+        catch (error) {
+          const code = error instanceof Error ? error.message : "";
+          if (fromMemory || COPY_TARGET_REFUSALS.has(code)) throw error;
+          throw new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
+        }
         return { saved: true, label: copied.label, publicKey: copied.publicKey };
       } finally { pending = false; }
     },

@@ -30,7 +30,7 @@ import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { DiscordSettings } from "./DiscordSettings";
 import { StarterProfiles } from "./StarterProfiles";
-import { openSetup } from "./SetupPanel";
+import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
 import {
@@ -95,23 +95,23 @@ export function sectionsForSurface(
 
 /** Reopens the guided first run.
  *
- * The same eight cards, with the ticks the workspace's own live state earns:
- * a finished step arrives finished and offers Change, so running it again on
- * a working install reinstalls nothing and asks nothing twice. Settings
- * closes first — the checklist sends people back into Settings for the key
- * and the engines, and stacking two dialogs would trap the focus. */
+ * Not a dialog any more: it takes them to their chief of staff, where the
+ * first run happens, and shows the progress rail beside it. Every step still
+ * carries the tick the workspace's own live state earns, so running it again
+ * on a working install reinstalls nothing and asks nothing twice. Settings
+ * closes first, because what it is opening is the app underneath. */
 export function SetupAgainRow() {
   const { dispatch } = useStore();
   return (
     <Card
       title="Get set up"
-      subtitle="Walk through the eight first-run steps again. Everything already done stays done."
+      subtitle="Your chief of staff picks it up where you left it. Everything already done stays done."
     >
       <button
         type="button"
         onClick={() => {
           dispatch({ type: "toggleAppSettings", open: false });
-          openSetup();
+          openFirstRun();
         }}
         className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
       >

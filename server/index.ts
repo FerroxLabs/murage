@@ -147,7 +147,7 @@ import {
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomPendingStop, RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
-import { roomContextMessageIds, roomContextMessages } from "./room-context.ts";
+import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages } from "./room-context.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -235,6 +235,8 @@ import {
   type GoalRunMember,
 } from "./group-goal-run.ts";
 import type { GroupGoalRunCardData, GroupGoalRunStatus } from "../shared/group-goal-run.ts";
+import type { ChannelProject } from "../shared/project.ts";
+import { channelProjectSystemLine, nextChannelProject } from "./project-channel.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
@@ -311,9 +313,12 @@ import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading } from "./setup.ts";
+import { setupConversationPlan } from "./setup-conversation.ts";
+import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
 import {
   type SetupLiveState,
   type SetupRoutineReading,
+  type SetupView,
   fluxKeyLooksValid,
   setupAnswerRequestSchema,
   setupStepRequestSchema,
@@ -1853,6 +1858,163 @@ function setupRoutinesReading(): SetupRoutineReading {
   };
 }
 
+/**
+ * Say the next thing, in the Chief's own thread.
+ *
+ * The first run is a conversation rather than a modal, so each step arrives as
+ * an ordinary bot-authored card exactly like the intake card a new bot is
+ * seeded with. `setupConversationPlan` is pure and decides WHAT is owed; this
+ * is the only part that writes.
+ *
+ * Called on every read of `/api/setup`, which is a poll, so it has to be cheap
+ * and silent when nothing has moved: an established install leaves on the
+ * first line, and a first run that has not advanced finds every card it wants
+ * already in the thread and appends nothing. A workspace with no Chief simply
+ * does nothing, because there is nowhere to say it.
+ */
+function driveSetupConversation(view: SetupView): void {
+  if (!view.chiefBotId) return;
+  const chief = store.bot(view.chiefBotId);
+  if (!chief) return;
+  const threadId = chief.threadId;
+  try {
+    const present = new Map<string, { id: string; card: OptionCardData; setup: SetupCardData }>();
+    for (const message of store.messagesFor(threadId)) {
+      const card = message.card;
+      const parsed = card ? readSetupCard(card) : null;
+      if (card && parsed) present.set(parsed.key, { id: message.id, card, setup: parsed });
+    }
+    const plan = setupConversationPlan(view, new Set(present.keys()));
+    if (plan.append.length === 0 && plan.settle.every((key) => present.get(key)?.setup.settled === true)) return;
+    for (const key of plan.settle) {
+      const existing = present.get(key);
+      if (!existing || existing.setup.settled === true) continue;
+      store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: true } } });
+    }
+    for (const card of plan.append) {
+      store.appendMessage(threadId, {
+        role: "bot",
+        kind: "options",
+        card: {
+          title: card.title,
+          subtitle: card.subtitle,
+          options: [],
+          setup: { step: card.step, variant: card.variant, key: card.key },
+        },
+      });
+    }
+  } catch (error) {
+    // A first-run card is a nicety; the checklist itself is the contract. A
+    // failure here must never take the setup read down with it.
+    console.error(`setup conversation: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// ── the routines the first run creates ─────────────────────────────────
+/**
+ * The three things the guided first run can set running, and the words they
+ * run on. These prompts are shown in the routines list, so they are written
+ * for the person who has to read them later, not for the model.
+ */
+const SETUP_ROUTINE_TEMPLATES = {
+  brief: {
+    name: "Morning brief",
+    prompt: () =>
+      "Go through the calendar, what came in overnight and anything that moved, and boil it down to a few lines. "
+      + "Lead with whatever will not wait. If nothing needs me, say so in one line.",
+  },
+  triage: {
+    name: "Inbox triage",
+    prompt: () =>
+      "Sort the inbox into what needs me, what can wait and what is noise, and draft the replies for approval. "
+      + "You approve, I send. Never send anything unasked.",
+  },
+  watch: {
+    name: "Keep an eye on it",
+    prompt: (subject: string) =>
+      `Keep an eye on ${subject} and speak up when it changes. `
+      + "Say what changed and what it means for me, in a line or two. Stay quiet when nothing has.",
+  },
+} as const;
+
+const setupRoutineRequestSchema = z.object({
+  template: z.enum(["brief", "triage", "watch"]),
+  /** 24 hour clock, this computer's timezone, the same shape the scheduler
+   *  already validates. */
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  weekdaysOnly: z.boolean().optional(),
+  /** The one named thing a watch is about. */
+  subject: z.string().trim().min(1).max(120).optional(),
+}).strict();
+
+/**
+ * Binding a first-run routine to the Chief's own thread.
+ *
+ * `routines.create` only accepts a reporting thread through a confirmation
+ * commit, and that gate exists so a BOT cannot redirect a routine's output:
+ * the model may propose, the person confirms, and the thread is the one the
+ * card was confirmed in. The plain calendar create deliberately cannot pick a
+ * thread at all.
+ *
+ * That rule is untouched here, for three separate reasons:
+ *   1. No thread is ever taken from the request. The body cannot name one.
+ *      The thread is read out of the store as the Chief's OWN thread, and the
+ *      routine is owned by that same Chief, so the only binding this route can
+ *      express is "your Chief reports to you where you are already talking".
+ *   2. The caller is the owner's desktop surface, gated 404 exactly like the
+ *      other routine writes. That is the same authority that confirms a card.
+ *      Nothing a model said can reach this.
+ *   3. `routineSourceOwner` re-checks at report time that the thread belongs
+ *      to the routine's own bot, so even a corrupted definition cannot post
+ *      somewhere else.
+ *
+ * The commit is anchored to a real message: the first-run card in the Chief's
+ * thread that this act answers. And the request id is derived from the whole
+ * commit, which makes the receipt do genuine work. A retried or double
+ * submitted first run finds its own receipt and gets the routine it already
+ * created back, rather than a second morning brief. Because the id is a hash
+ * of every field, two commits sharing an id necessarily share the rest, so the
+ * receipt's mismatch check can never fire on our own traffic.
+ */
+function setupRoutineCommit(
+  chief: { id: string; threadId: string },
+  messageId: string,
+  operation: unknown,
+) {
+  const fingerprint = createHash("sha256").update(JSON.stringify(operation)).digest("hex");
+  const requestId = `setup-${createHash("sha256")
+    .update(JSON.stringify(["create", chief.id, chief.threadId, messageId, fingerprint]))
+    .digest("hex")}`;
+  return {
+    requestId,
+    messageId,
+    botId: chief.id,
+    threadId: chief.threadId,
+    action: "create" as const,
+    fingerprintVersion: 1 as const,
+    fingerprint,
+  };
+}
+
+/**
+ * The message in the Chief's thread this routine is being created from.
+ *
+ * Normally the first-run card for the step it belongs to: the person pressed
+ * a button on that card and this is the result. When the flow has not put that
+ * card up yet, the Chief's opening line stands in. Both are real messages in
+ * the Chief's own thread, and both are STABLE, which is what makes the
+ * request id derived from them worth having: the same submit twice resolves
+ * to the same anchor and so to the same receipt.
+ */
+function setupRoutineAnchor(threadId: string, step: "brief" | "routines"): string | null {
+  const messages = store.messagesFor(threadId);
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const card = messages[index].card ? readSetupCard(messages[index].card) : null;
+    if (card?.step === step) return messages[index].id;
+  }
+  return messages[0]?.id ?? null;
+}
+
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes
@@ -2025,6 +2187,12 @@ function groupIsWorking(group: GroupRecord): boolean {
 }
 
 function publicGroupState(group: GroupRecord) {
+  // The whole record goes out, so `hidden` (archived) and `channelProject`
+  // (this channel has a purpose) reach every client that already receives a
+  // group frame: the hydration route, the SSE broadcast, the create and
+  // patch replies, and groupWithThread below, which is built on this. A
+  // channel with no project block simply has no such key, which is what
+  // every record written before today looks like.
   return { ...group, ...(group.tasks ? { tasks: group.tasks.map(withLastActivity) } : {}), working: groupIsWorking(group) };
 }
 
@@ -6184,11 +6352,29 @@ type GroupTurnOrchestration = {
   onTurnStarted?: (turnId: string) => void;
 };
 
+/** The message the owner pinned to this room thread, if any. Read off the
+ * thread's own task, which is where the pin lives; the group record only
+ * mirrors the active one. */
+function roomPinnedMessageId(threadId: string): string | undefined {
+  const group = store.groupByThread(threadId);
+  if (!group) return undefined;
+  const task = group.tasks?.find((candidate) => candidate.threadId === threadId);
+  return task ? task.pinnedMessageId : group.threadId === threadId ? group.pinnedMessageId : undefined;
+}
+
 function serializeRoomContext(threadId: string, userName: string, permitted?: Message[]): string {
   const messages = permitted ?? store.messagesFor(threadId);
   const messagesById = new Map(messages.map((message) => [message.id, message]));
-  return roomContextMessages(messages)
-    .map((m) => `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${transcriptText(m, messagesById, userName)}`)
+  // A pin the person set is the one thing they asked the room to keep in
+  // mind, and the newest-thirty window is exactly what drops it. It is
+  // labelled so an old line at the top does not read as the start of the
+  // conversation, and it is not repeated when it is still in the window.
+  const pinnedMessageId = roomPinnedMessageId(threadId);
+  return roomContextMessages(messages, GROUP_CONTEXT_MESSAGES, pinnedMessageId)
+    .map((m) => {
+      const line = `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${transcriptText(m, messagesById, userName)}`;
+      return m.id === pinnedMessageId ? `[${ROOM_CONTEXT_PINNED_LABEL}] ${line}` : line;
+    })
     .join("\n");
 }
 
@@ -6474,6 +6660,11 @@ async function runGroupMemberTurn(
     `Personality: ${personalityImprint(bot.persona)}`,
     `Room members: ${roster}, and ${userName} (the human).`,
     group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
+    // When the room is a project, one labelled line saying what the work is,
+    // right next to the room's instructions. One line and no more: the
+    // context budget is real, and this release is not the place to redesign
+    // how a room spends it.
+    channelProjectSystemLine(group.channelProject),
     // A room turn is the ONE place a Chief runs at hop 0 and therefore holds
     // the agents tools. Telling it to @mention instead would send its
     // teammate down the mention chain at hop+1, where those tools are not
@@ -6610,7 +6801,10 @@ async function runGroupMemberTurn(
     // excluded, not only the latest user message (MEMJSON2 follow-up). Read
     // from the thread as a whole rather than the post-reset replay filter —
     // a superset of what is serialized, so nothing in the prompt can echo.
-    const excludeMessageIds=[...new Set([...(latestUser?[latestUser.id]:[]),...roomContextMessageIds(store.messagesFor(threadId))])];
+    // The pin is part of the prompt now, so it is part of the exclusion too:
+    // recall must not hand this member back, as a remembered "source", the
+    // very line the context already carries.
+    const excludeMessageIds=[...new Set([...(latestUser?[latestUser.id]:[]),...roomContextMessageIds(store.messagesFor(threadId),GROUP_CONTEXT_MESSAGES,roomPinnedMessageId(threadId))])];
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
@@ -8411,6 +8605,67 @@ function artifactScopes(): ArtifactScope[] {
   return scopes;
 }
 const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+
+/**
+ * Who is actually busy, in the names the person uses.
+ *
+ * A refusal that says "finish running work" and nothing else is a refusal
+ * nobody can act on: the window looks idle, every bot looks idle, and the
+ * replace-key button keeps failing with no way to find out why. So the
+ * message names the bot. Four sources, every one of them a bot: a bot mid
+ * turn, a detached run, a channel whose current responder is working, and a
+ * queued delegation's target. A busy channel is named by the bot working in
+ * it AND by the room, because "Mel, in Inbox triage" is the sentence that
+ * actually sends someone to the right window.
+ */
+function busyEngineWorkers(): Array<{ name: string; where?: string }> {
+  const byName = new Map<string, { name: string; where?: string }>();
+  const add = (name: string | undefined, where?: string) => {
+    if (!name) return;
+    const existing = byName.get(name);
+    if (!existing) byName.set(name, where ? { name, where } : { name });
+    else if (where && !existing.where) existing.where = where;
+  };
+  for (const bot of store.bots) {
+    if (bot.busy || directRuns.forBot(bot.id).length > 0) add(bot.name);
+  }
+  for (const group of store.groups) {
+    if (!groupIsWorking(group)) continue;
+    const responder = group.busyBotId ? store.bot(group.busyBotId) : null;
+    add(responder?.name, group.dm ? undefined : group.name?.trim().slice(0, 60) || undefined);
+  }
+  for (const pending of pendingDelegationSnapshot()) add(store.bot(pending.toBotId)?.name);
+  return [...byName.values()];
+}
+
+/** "Ada", "Ada and Milo", "Ada, Milo and Rey". */
+function listNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The sentence the Flux credential guard refuses with.
+ *
+ * The plain sentence first, then who: the card passes the server's words
+ * through as written, and the instruction is the part that has to survive a
+ * truncation. When the block is the app's own provider fence rather than a
+ * bot, there is no name to give and it says the plain thing on its own.
+ */
+function fluxCredentialBusyMessage(): string {
+  const base = "Finish running work before changing Flux credentials.";
+  const busy = busyEngineWorkers();
+  if (busy.length === 0) return base;
+  if (busy.length === 1) {
+    const [only] = busy;
+    return only.where
+      ? `${base} ${only.name} is still finishing a task in ${only.where}.`
+      : `${base} ${only.name} is still working.`;
+  }
+  const named = busy.slice(0, 3).map((worker) => worker.name);
+  return `${base} ${busy.length > 3 ? `${listNames(named)} and others` : listNames(named)} are still working.`;
+}
+
 function readFluxConnectionState(): FluxCredentialState {
   let fileWorkspaceKey: string | undefined;
   try { fileWorkspaceKey = JSON.parse(readFileSync(join(DATA_DIR, "config.json"), "utf8")).flux?.apiKey; }
@@ -8419,7 +8674,7 @@ function readFluxConnectionState(): FluxCredentialState {
 }
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
-  assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
+  assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error(fluxCredentialBusyMessage()), { status: 409 }); },
   fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
   apply: async (state, external, restore) => {
     const previous = cfg.modelProviders?.bank;
@@ -11034,7 +11289,22 @@ const server = createServer(async (req, res) => {
         if (!responder) return json(res, 400, { error: "invalid setup.defaultResponder" });
         setup = { bulletin: requested.bulletin, defaultResponder: responder, completed: true };
       }
-      const group = store.createGroup(name, memberIds, false, section, setup);
+      // A channel can be a project from the moment it exists, so the person
+      // who already knows what the work is never has to create a channel and
+      // then go and tell it what it is for. There is still exactly one
+      // creation route: this is the same channel, with a purpose.
+      let channelProject: ChannelProject | undefined;
+      if (body.channelProject !== undefined && body.channelProject !== null) {
+        const outcome = nextChannelProject(undefined, body.channelProject, Date.now());
+        if (!outcome.ok) return json(res, 400, { error: outcome.error });
+        channelProject = outcome.project;
+      }
+      let group = store.createGroup(name, memberIds, false, section, setup);
+      // Persisted as a second write rather than through createGroup: the
+      // create path is shared with imports, packages and DM channels, none
+      // of which have a purpose, and a channel that briefly exists without
+      // its goal is harmless where a broken shared constructor would not be.
+      if (channelProject) group = store.patchGroup(group.id, { channelProject }) ?? group;
       return json(res, 201, { group: { ...publicGroupState(group), messages: [] } });
     }
     if (method === "POST" && path === "/api/packages/export") {
@@ -11961,8 +12231,47 @@ const server = createServer(async (req, res) => {
           else patch.section = trimmed;
         }
       }
+      // A channel with a purpose. `null` clears the block and the channel
+      // goes back to being an ordinary channel, keeping its chat, its bots,
+      // its instructions and its folder: archiving a project leaves the
+      // channel able to live on.
+      if (body.channelProject !== undefined) {
+        if (existing.dm) {
+          return json(res, 400, { error: "a direct-message channel cannot be a project" });
+        }
+        const outcome = nextChannelProject(existing.channelProject, body.channelProject, Date.now());
+        if (!outcome.ok) return json(res, 400, { error: outcome.error });
+        patch.channelProject = outcome.project;
+      }
+      // Archive. Bots archive by setting hidden; channels now do the same,
+      // and for the same reason: delete was the only end state a channel
+      // had, and "I am finished with this" is not "destroy the transcript".
+      let archiving = false;
+      if (body.hidden !== undefined) {
+        if (typeof body.hidden !== "boolean") return json(res, 400, { error: "hidden must be true or false" });
+        if (existing.dm) {
+          return json(res, 400, { error: "direct-message channels cannot be archived" });
+        }
+        if (body.hidden && !existing.hidden && groupIsWorking(existing)) {
+          return json(res, 409, { error: "this channel is working, so stop that turn first" });
+        }
+        archiving = body.hidden === true && existing.hidden !== true;
+        patch.hidden = body.hidden ? true : undefined;
+      }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });
+      // DELETE calls disableForGroup because the room is about to stop
+      // existing and a schedule pointing at it could never run again.
+      // Archiving is not that. The room still exists and can come back, so
+      // the schedule must not be destroyed: disableForGroup only switches a
+      // team-goal routine off and clears its next run, which is exactly the
+      // behaviour wanted here. A calendar entry firing into a channel the
+      // person has just filed away is the surprise worth preventing, and
+      // the routine is still there, paused, ready to be switched back on.
+      // Un-archiving deliberately does NOT switch it back on by itself:
+      // restoring a schedule is a decision a person makes, not one a click
+      // on "unarchive" makes for them.
+      if (archiving) routines!.disableForGroup(group.id);
       return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
@@ -11983,7 +12292,7 @@ const server = createServer(async (req, res) => {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
       if (groupIsWorking(group)) {
-        return json(res, 409, { error: "this channel is working — stop that turn first" });
+        return json(res, 409, { error: "this channel is working, so stop that turn first" });
       }
       const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
       const stagedSkillCleanups = [...threadIds].flatMap(stagedSkillCleanupsForThread);
@@ -13160,7 +13469,9 @@ const server = createServer(async (req, res) => {
       const exists =
         section === "" ||
         store.bots.some((bot) => !bot.hidden && sectionKey(bot.section) === section) ||
-        store.groups.some((group) => sectionKey(group.section) === section);
+        // An archived channel no longer holds its heading open, for the same
+        // reason an archived bot does not: the section is a live list.
+        store.groups.some((group) => !group.hidden && sectionKey(group.section) === section);
       if (!exists) return json(res, 404, { error: "no such section" });
 
       if (method === "GET") {
@@ -14401,12 +14712,99 @@ const server = createServer(async (req, res) => {
 
     // ── guided first run (/setup) ──
     // The server owns the list, the order and every step's "done". The read
-    // re-derives all eight from live state, so a step is finished only while
+    // re-derives all six from live state, so a step is finished only while
     // the thing behind it is still true, and an answer records what the
     // person said without ticking anything.
+    //
+    // The read also DRIVES the conversation: it is the one place that notices
+    // the flow has moved on, so it is where the next card is said. That is
+    // safe to do on a poll because the driver is keyed on card identity and
+    // does nothing when nothing changed.
     if (method === "GET" && path === "/api/setup") {
       const live = await setupLiveState();
-      return json(res, 200, setupView(setup.read(live), live));
+      const view = setupView(setup.read(live), live);
+      driveSetupConversation(view);
+      return json(res, 200, view);
+    }
+
+    // POST /api/setup/routine — the brief, and the couple more after it.
+    //
+    // A routine definition is a spawn schedule, so this is gated exactly like
+    // the other routine writes: 404 rather than 403, because a 403 confirms
+    // the route is here and worth attacking.
+    if (method === "POST" && path === "/api/setup/routine") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = setupRoutineRequestSchema.safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose one of the routines, and a time in HH:MM." });
+      if (parsed.data.template === "watch" && !parsed.data.subject) {
+        return json(res, 400, { error: "Say what to keep an eye on." });
+      }
+      // Read once for its seating side effect: opening setup is what seats
+      // the Chief, and this route can be the first thing that ever asked.
+      await setupLiveState();
+      const chiefBotId = setup.chiefBotId();
+      const chief = chiefBotId ? store.bot(chiefBotId) : null;
+      if (!chief) return json(res, 409, { error: "There is nobody here to own this yet." });
+
+      // There is one morning brief. A second press of the same button, a
+      // retried request, a reopened window: none of them should leave the
+      // person with two briefs to delete. The recorded pointer is checked
+      // against the live routine list, so a brief they deleted is gone and
+      // this makes them a new one.
+      const recordedBrief = setup.briefRoutineId();
+      const existingBrief = parsed.data.template === "brief" && recordedBrief
+        ? routines!.listRoutines().find((routine) => routine.id === recordedBrief)
+        : undefined;
+      if (existingBrief) {
+        const live = await setupLiveState();
+        const view = setupView(setup.read(live), live);
+        driveSetupConversation(view);
+        return json(res, 200, { ...view, routineId: existingBrief.id });
+      }
+
+      const subject = parsed.data.subject ?? "";
+      const { name, prompt } = parsed.data.template === "watch"
+        ? {
+            name: `Keep an eye on ${subject}`.slice(0, 80),
+            prompt: SETUP_ROUTINE_TEMPLATES.watch.prompt(subject),
+          }
+        : {
+            name: SETUP_ROUTINE_TEMPLATES[parsed.data.template].name,
+            prompt: SETUP_ROUTINE_TEMPLATES[parsed.data.template].prompt(),
+          };
+      const schedule = {
+        type: "daily" as const,
+        time: parsed.data.time ?? "07:00",
+        weekdays: parsed.data.weekdaysOnly === true ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6],
+      };
+      const operation = { template: parsed.data.template, name, prompt, schedule };
+      const anchor = setupRoutineAnchor(chief.threadId, parsed.data.template === "brief" ? "brief" : "routines");
+      if (!anchor) return json(res, 409, { error: "There is nothing in this conversation to attach that to yet." });
+
+      let routine;
+      try {
+        routine = routines!.create(
+          { name, prompt, target: "bot", botId: chief.id, runOn: "ember", enabled: true, schedule },
+          setupRoutineCommit(chief, anchor, operation),
+        );
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+
+      // A scheduled routine is a promise; a routine that has run is proof.
+      // The brief runs ONCE, now, so the person SEES the thing work before
+      // they are left alone with it. The other two are offers, not proofs.
+      let runId: string | undefined;
+      if (parsed.data.template === "brief") {
+        setup.recordBriefRoutine(routine.id);
+        runId = routines!.runNow(routine.id)?.id;
+      }
+
+      const live = await setupLiveState();
+      const view = setupView(setup.read(live), live);
+      driveSetupConversation(view);
+      return json(res, 201, { ...view, routineId: routine.id, ...(runId ? { runId } : {}) });
     }
     const setupAction = /^\/api\/setup\/(answer|skip|reopen)$/.exec(path);
     if (method === "POST" && setupAction) {

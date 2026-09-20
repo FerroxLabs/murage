@@ -54,8 +54,14 @@ describe("the bot row's menu is reachable without a right-click", () => {
     // iPad in landscape is wider than `md` and has no hover at all, so both
     // controls stayed at `opacity-0` forever — archive included, which is the
     // one with no keyboard route of its own.
+    //
+    // Three sites since 0.1.58, not two: the channel row gained the same
+    // affordance, because a channel's menu opened on right-click and
+    // Shift+F10 alone and a touch screen has neither. The count is asserted
+    // so that a FOURTH hover-revealed control cannot be added without
+    // somebody reading the rule below and applying it too.
     const sites = [...sidebar.matchAll(/group-hover:opacity-100[^"]*"/g)].map((match) => match[0]);
-    expect(sites.length, "the two hover-revealed controls are gone").toBe(2);
+    expect(sites.length, "a hover-revealed control was added or removed").toBe(3);
     for (const site of sites) {
       expect(site, site).toContain("[@media(hover:none)]:opacity-100");
     }

@@ -5,6 +5,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
+// The label is shared, not copied: the Settings deep-link finds this field by
+// it, and a second spelling here would break that link without a word.
+import { APPS_KEY_FIELD_LABEL } from "./ConnectedAppsLock";
 
 export type ConfigSection = "composio" | "box" | "opencodeGo";
 
@@ -39,12 +42,12 @@ const CREDENTIALS: Record<
   }
 > = {
   composio: {
-    label: "Composio project key",
+    label: APPS_KEY_FIELD_LABEL,
     placeholder: "ak_…",
     description:
-      "Required for connected apps. Gmail, GitHub, Slack, Notion and the rest run through your own Composio project, on your own key.",
+      "Required for connected apps. Gmail, GitHub, Slack, Notion and the rest then run on your own key.",
     href: "https://dashboard.composio.dev",
-    linkLabel: "Create or copy a project key",
+    linkLabel: "Create or copy your key",
     optional: true,
   },
   box: {

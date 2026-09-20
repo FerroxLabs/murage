@@ -35,6 +35,7 @@ import {
   Sparkles,
   Settings,
   Puzzle,
+  Target,
   Trash2,
   Users,
   X,
@@ -43,6 +44,7 @@ import { SectionContextDialog } from "./SectionContextDialog";
 import { sidebarBotRowTone, sidebarGroupRowTone, sidebarNavRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
 import { api, useStore, visibleMessages, type Bot, type Group } from "@/state/store";
+import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
 import { formatListTime, formatTaskMoment } from "@/lib/task-list";
 
 import { BotAvatar, InitialsAvatar } from "./Avatar";
@@ -121,6 +123,9 @@ export interface TeamFeedback {
   detail?: string;
   undo?: TeamImportResult;
   restoreBot?: { id: string; name: string };
+  /** An archived channel, and the Undo that brings it straight back. The
+   * same promise the bot archive makes: nothing was thrown away. */
+  restoreGroup?: { id: string; name: string };
 }
 
 /** Every PATCH the team-import undo sends to put the previous roster back:
@@ -198,15 +203,17 @@ export function TeamFeedbackToast({
   feedback,
   onUndoTeam,
   onUndoBot,
+  onUndoGroup,
 }: {
   feedback: TeamFeedback;
   onUndoTeam: (undo: TeamImportResult) => void;
   onUndoBot: (bot: { id: string; name: string }) => void;
+  onUndoGroup?: (group: { id: string; name: string }) => void;
 }) {
   // Pulled out of `feedback` so each handler closes over a value the type
   // system already knows is there, rather than re-reading a field it would
   // then have to be told again is not null.
-  const { undo, restoreBot } = feedback;
+  const { undo, restoreBot, restoreGroup } = feedback;
   return (
     <div
       role="status"
@@ -228,6 +235,14 @@ export function TeamFeedbackToast({
         {restoreBot && (
           <button
             onClick={() => onUndoBot(restoreBot)}
+            className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
+          >
+            Undo
+          </button>
+        )}
+        {restoreGroup && onUndoGroup && (
+          <button
+            onClick={() => onUndoGroup(restoreGroup)}
             className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
           >
             Undo
@@ -281,13 +296,13 @@ function UpdateButton() {
     pending || status === "checking" || status === "downloading" || status === "installing";
   const label =
     status === "available"
-      ? `Version ${s?.version ?? ""} available — download`
+      ? `Version ${s?.version ?? ""} available, download`
       : status === "downloading"
         ? s?.percent == null
           ? "Starting download…"
           : `Downloading… ${Math.round(s.percent)}%`
         : status === "downloaded"
-          ? `Version ${s?.version ?? ""} ready — restart to update`
+          ? `Version ${s?.version ?? ""} ready, restart to update`
           : status === "installing"
             ? "Restarting to update…"
             : status === "checking"
@@ -416,7 +431,10 @@ function GroupListItem({
     .map((id) => state.bots.find((b) => b.id === id))
     .filter((b): b is Bot => Boolean(b));
   const last = group.messages.at(-1);
+  const isProject = Boolean(group.channelProject);
+  const RowIcon = isProject ? Target : Users;
   return (
+    <div className="group relative">
     <button
       onClick={() => { dispatch({ type: "select", id: group.id }); onNavigate(); }}
       onContextMenu={(e) => {
@@ -435,6 +453,9 @@ function GroupListItem({
       className={cn(
         "relative flex w-full items-center rounded-xl text-left",
         density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
+        // Room on the right for the More-actions control, so a long name
+        // never runs underneath it.
+        density !== "icons" && "pr-12",
         sidebarGroupRowTone(selected),
       )}
       title={density === "icons" ? group.name : undefined}
@@ -444,7 +465,7 @@ function GroupListItem({
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink">
-            <Users size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+            <RowIcon size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <span className="truncate">{group.name}</span>
           </span>
           {selected && last && <span className="shrink-0 text-xs text-ink-secondary" title={formatTaskMoment(last.at)}>{formatListTime(last.at, Date.now())}</span>}
@@ -458,6 +479,28 @@ function GroupListItem({
         <span className="absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
       )}
     </button>
+    {/* This menu used to live behind a right-click and Shift+F10 alone. A
+        touch screen fires no `contextmenu` event and has no Shift+F10, so on
+        a phone or a tablet a channel row had no menu at all: rename, move,
+        archive and delete simply did not exist. This is that menu, as a
+        control you can see and tap — the same one bot rows already have. */}
+    {density !== "icons" && (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          onMenu({ groupId: group.id, x: rect.left, y: rect.bottom });
+        }}
+        aria-label={`More actions for ${group.name}`}
+        aria-haspopup="menu"
+        title={`More actions for ${group.name}`}
+        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+    )}
+    </div>
   );
 }
 
@@ -466,11 +509,13 @@ function RoomContextMenu({
   onClose,
   onRequestDelete,
   onMoveToSection,
+  onArchive,
 }: {
   menu: { groupId: string; x: number; y: number };
   onClose: () => void;
   onRequestDelete: (group: { id: string; name: string }) => void;
   onMoveToSection: (groupId: string) => void;
+  onArchive: (group: Group) => void;
 }) {
   const { state, dispatch } = useStore();
   const group = state.groups.find((g) => g.id === menu.groupId);
@@ -581,6 +626,22 @@ function RoomContextMenu({
         <ClipboardCopy size={16} className="text-ink-secondary" />
         Copy conversation ID
       </button>
+      {/* Archive, above the line from Delete on purpose. Filing something
+          away and destroying it are not neighbours. A bot-to-bot chat has
+          no archive: the server refuses one, because the chat reappears the
+          moment the two bots speak again. */}
+      {!isBotChat && (
+        <button
+          onClick={() => {
+            onArchive(group);
+            onClose();
+          }}
+          className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+        >
+          <Archive size={16} className="text-ink-secondary" />
+          Archive
+        </button>
+      )}
       <button
         onClick={() => {
           if (group) onRequestDelete(group);
@@ -597,12 +658,14 @@ function RoomContextMenu({
 }
 
 /** Pick members and an optional Work/Personal/project context, then create. */
-function NewRoomPanel({ onClose }: { onClose: () => void }) {
+function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind?: "channel" | "project" }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
   const [section, setSection] = useState("");
+  const [goal, setGoal] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const bots = state.bots.filter((b) => !b.hidden);
+  const project = kind === "project";
   const toggle = (id: string) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -610,15 +673,20 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       else next.add(id);
       return next;
     });
+  // A project needs its goal before it can be created: the goal is the only
+  // thing that makes it one, and it doubles as the instructions every bot in
+  // it follows, so the person says what the work is exactly once.
+  const ready = picked.size > 0 && (!project || Boolean(goal.trim()));
   const create = () => {
-    if (!picked.size) return;
+    if (!ready) return;
     dispatch({
       type: "createGroup",
       memberIds: [...picked],
       name: name.trim() || undefined,
       section: section.trim() || undefined,
+      ...(project ? { bulletin: goal.trim(), channelProject: { goal: goal.trim() } } : {}),
     });
-    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
+    track("room_created", { members: picked.size, context: Boolean(section.trim()), project });
     onClose();
   };
   return (
@@ -626,11 +694,14 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div id="new-channel-title" className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
+      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="max-h-[calc(100dvh-24px)] w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
+        <div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div>
+        <p className="mb-3 mt-0.5 text-[12.5px] text-ink-secondary">
+          {project ? "A piece of work with its own goal, files and chat." : "A chat with some bots."}
+        </p>
         <input
           autoFocus
-          aria-label="Channel name"
+          aria-label={project ? "Project name" : "Channel name"}
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -638,9 +709,30 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Channel name (for example, Website launch)"
+          placeholder={project ? "Project name (for example, Website launch)" : "Channel name (for example, Website launch)"}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
+        {project && (
+          <>
+            <label htmlFor="new-project-goal" className="mb-1 block text-[13px] font-semibold text-ink">
+              What is it about?
+            </label>
+            <textarea
+              id="new-project-goal"
+              value={goal}
+              maxLength={CHANNEL_PROJECT_GOAL_MAX}
+              onChange={(e) => setGoal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") onClose();
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
+              }}
+              rows={3}
+              placeholder="For example: Get the new website open in time for the spring."
+              className="mb-1 w-full resize-y rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            />
+            <p className="mb-3 text-[12px] text-ink-secondary">This becomes the instructions every bot in here follows.</p>
+          </>
+        )}
         <input
           value={section}
           maxLength={60}
@@ -650,7 +742,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
             if (e.key === "Escape") onClose();
           }}
           placeholder="Team (optional): Work, Personal, Client…"
-          aria-label="Channel team"
+          aria-label={project ? "Project team" : "Channel team"}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <BotPickerList
@@ -661,10 +753,11 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
         />
         <button
           onClick={create}
-          disabled={!picked.size}
+          disabled={!ready}
           className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
-          Create Channel{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
+          {project ? "Create Project" : "Create Channel"}
+          {picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
         </button>
       </div>
     </div>
@@ -800,20 +893,26 @@ export { leadershipPromotionBlocked } from "@/lib/new-team";
  * the two things that are not creating sit below a line. */
 export function SidebarCreateMenu({
   archivedCount,
+  archivedChannelCount = 0,
   onNewBot,
   onTemplate,
   onNewTeam,
   onNewChannel,
+  onNewProject,
   onExport,
   onArchived,
+  onArchivedChannels,
 }: {
   archivedCount: number;
+  archivedChannelCount?: number;
   onNewBot: () => void;
   onTemplate: () => void;
   onNewTeam: () => void;
   onNewChannel: () => void;
+  onNewProject?: () => void;
   onExport: () => void;
   onArchived: () => void;
+  onArchivedChannels?: () => void;
 }) {
   const row = "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70";
   return (
@@ -830,10 +929,25 @@ export function SidebarCreateMenu({
         <Network size={16} className="text-ink-secondary" />
         New Team
       </button>
-      <button onClick={onNewChannel} className={row}>
-        <Users size={16} className="text-ink-secondary" />
-        New Channel
+      {/* Two ways to start something with bots in it, and one line each
+          saying which is which. A channel is where you talk; a project is a
+          channel that also knows what it is for. */}
+      <button onClick={onNewChannel} className={`${row} items-start`}>
+        <Users size={16} className="mt-0.5 text-ink-secondary" />
+        <span className="flex flex-col">
+          New Channel
+          <span className="text-[12px] text-ink-secondary">A chat with some bots.</span>
+        </span>
       </button>
+      {onNewProject && (
+        <button onClick={onNewProject} className={`${row} items-start`}>
+          <Target size={16} className="mt-0.5 text-ink-secondary" />
+          <span className="flex flex-col">
+            New Project
+            <span className="text-[12px] text-ink-secondary">A piece of work with its own goal, files and chat.</span>
+          </span>
+        </button>
+      )}
       <div role="separator" className="mx-2 my-1 border-t border-hairline/40" />
       <button onClick={onExport} className={row}>
         <ArrowDownToLine size={16} className="text-ink-secondary" />
@@ -846,12 +960,29 @@ export function SidebarCreateMenu({
           <span className="text-[11.5px] text-ink-secondary">{archivedCount}</span>
         </button>
       )}
+      {archivedChannelCount > 0 && onArchivedChannels && (
+        <button onClick={onArchivedChannels} className={row}>
+          <Archive size={16} className="text-ink-secondary" />
+          <span className="flex-1">Archived channels</span>
+          <span className="text-[11.5px] text-ink-secondary">{archivedChannelCount}</span>
+        </button>
+      )}
     </>
   );
 }
 
 export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, showHidden: boolean): boolean {
   return !bot.hidden && (showHidden || !bot.sidebarHidden);
+}
+
+/** The heading unfiled projects sit under. It is an ordinary section id, so
+ * it drags, collapses and saves its position like every other one. */
+export const PROJECTS_SECTION_ID = "builtin:projects";
+
+/** Section headings, with the one this file adds. Everything else comes
+ * from the shared layout module unchanged. */
+export function sectionLabel(id: string): string {
+  return id === PROJECTS_SECTION_ID ? "Projects" : sidebarSectionLabel(id);
 }
 
 export function BotContextMenu({
@@ -1511,6 +1642,180 @@ function ArchivedBotsPanel({
   );
 }
 
+/** One line per archived channel, so the person can read every name before
+ * confirming a bulk delete. Mirrors archivedBotsDeleteItems. */
+export function archivedChannelsDeleteItems(groups: Group[]): string[] {
+  return groups.map((group) => {
+    const messages = group.messages.length;
+    return `${group.name}: ${messages} ${messages === 1 ? "message" : "messages"}`;
+  });
+}
+
+/** The way back from Archive, mirroring Archived bots: the same dialog, the
+ * same Restore, the same promise that nothing was thrown away. A channel
+ * archived by mistake must never feel like a channel that is gone. */
+function ArchivedChannelsPanel({
+  groups,
+  onClose,
+  onRestored,
+}: {
+  groups: Group[];
+  onClose: () => void;
+  onRestored: (message: string) => void;
+}) {
+  const { dispatch } = useStore();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [restoringAll, setRestoringAll] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Group | null>(null);
+  const [error, setError] = useState("");
+  const working = Boolean(busyId) || restoringAll;
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !working && !pendingDelete) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, pendingDelete, working]);
+
+  const restore = async (group: Group) => {
+    setBusyId(group.id);
+    setError("");
+    try {
+      const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
+      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      dispatch({ type: "select", id: group.id });
+      onRestored(`${group.name} is back`);
+      if (groups.length === 1) onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const restoreAll = async () => {
+    setRestoringAll(true);
+    setError("");
+    try {
+      for (const group of groups) {
+        const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
+        dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      }
+      const first = groups[0];
+      if (first) dispatch({ type: "select", id: first.id });
+      onRestored(`${groups.length} ${groups.length === 1 ? "channel" : "channels"} are back`);
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRestoringAll(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="archived-channels-title"
+        tabIndex={-1}
+        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[640px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+      >
+        <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6">
+          <div>
+            <h2 id="archived-channels-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">
+              Archived channels
+            </h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">Every message is still here. Restore one and it comes straight back.</p>
+          </div>
+          <div className="flex items-center gap-1">
+            {groups.length > 1 && (
+              <button
+                onClick={() => void restoreAll()}
+                disabled={working}
+                className="flex items-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
+              >
+                {restoringAll && <Loader2 size={13} className="animate-spin" />}
+                Restore all
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              disabled={working}
+              className="flex size-10 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+              aria-label="Close archived channels"
+            >
+              <X size={21} />
+            </button>
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+          {error && (
+            <p role="alert" className="mb-3 text-[13px] text-danger">
+              {error}
+            </p>
+          )}
+          {!groups.length && <p className="text-[13px] text-ink-secondary">Nothing is filed away.</p>}
+          <div className="flex flex-col gap-1">
+            {groups.map((group) => (
+              <div key={group.id} className="flex items-center gap-3 rounded-xl border border-hairline/40 px-3 py-2.5">
+                {group.channelProject ? (
+                  <Target size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+                ) : (
+                  <Users size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14.5px] text-ink">{group.name}</span>
+                  <span className="block truncate text-[12px] text-ink-secondary">
+                    {group.messages.length} {group.messages.length === 1 ? "message" : "messages"}
+                  </span>
+                </span>
+                <button
+                  onClick={() => void restore(group)}
+                  disabled={working}
+                  className="flex items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
+                >
+                  {busyId === group.id && <Loader2 size={13} className="animate-spin" />}
+                  Restore
+                </button>
+                <button
+                  onClick={() => setPendingDelete(group)}
+                  disabled={working}
+                  className="rounded-lg px-3 py-2 text-[12.5px] text-danger hover:bg-danger/10 disabled:opacity-40"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {pendingDelete && (
+        <ConfirmDelete
+          name={pendingDelete.name}
+          kind={pendingDelete.channelProject ? "project" : "channel"}
+          detail={`Every message in ${pendingDelete.name} goes with it. The bots stay.`}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            dispatch({ type: "deleteGroup", groupId: target.id });
+            if (groups.length === 1) onClose();
+          }}
+        />
+      )}
+    </div>,
+    document.body,
+  );
+}
+
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   // Selection is an explicit navigation event even when its id is unchanged.
   // Row menus and inline rename do not call this callback.
@@ -1530,7 +1835,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   >(null);
   const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
-  const [newRoom, setNewRoom] = useState(false);
+  // null = closed. The value says which of the two the "+" menu asked for,
+  // because a project and a channel are made by the same panel.
+  const [newRoom, setNewRoom] = useState<"channel" | "project" | null>(null);
+  const [archivedChannelsOpen, setArchivedChannelsOpen] = useState(false);
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
@@ -1727,6 +2035,37 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     } finally { hiddenChange.current = false; }
   };
 
+  // Archiving a channel is the end state it never had: delete was the only
+  // way to stop looking at one, and "I am finished with this" is not
+  // "destroy the transcript". The server refuses while a turn is running and
+  // says so, which is the message shown here.
+  const archiveGroup = async (group: Group) => {
+    setTeamFeedback(null);
+    try {
+      const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: true }) });
+      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      if (state.selectedId === group.id) {
+        const next = state.bots.find((candidate) => !candidate.hidden);
+        if (next) dispatch({ type: "select", id: next.id });
+      }
+      setTeamFeedback({ error: false, text: `${group.name} filed away`, restoreGroup: { id: group.id, name: group.name } });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
+  const undoGroupArchive = async (group: { id: string; name: string }) => {
+    setTeamFeedback(null);
+    try {
+      const response = await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) });
+      dispatch({ type: "groupPatched", group: { id: group.id, hidden: response.group?.hidden === true ? true : undefined } });
+      dispatch({ type: "select", id: group.id });
+      setTeamFeedback({ error: false, text: `${group.name} is back` });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
   const undoBotArchive = async (bot: { id: string; name: string }) => {
     setTeamFeedback(null);
     try {
@@ -1770,7 +2109,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         (b.title ?? "").toLowerCase().includes(q) ||
         sidebarBotPreview(b).toLowerCase().includes(q),
     );
-  const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  // An archived channel leaves the list the way an archived bot does: it is
+  // filed away, not gone, and the "+" menu is the way back to it.
+  const archivedChannels = state.groups.filter((g) => g.hidden && !g.dm);
+  const visibleGroups = state.groups.filter((g) => !g.hidden && (!q || g.name.toLowerCase().includes(q)));
   const {
     unsectionedChief,
     pinnedBots,
@@ -1779,6 +2121,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     unsectionedBots,
   } = partitionSidebarBots(matchingBots);
   const { botChats, sectionedRooms, unsectionedRooms } = partitionSidebarGroups(visibleGroups);
+  // Projects get their own heading, because a project is a piece of work and
+  // a channel is a place to talk, and a person looking for one is not
+  // looking for the other. A project filed under a team stays with its team:
+  // the heading is for the ones nobody has filed anywhere.
+  const unsectionedProjects = unsectionedRooms.filter((group) => Boolean(group.channelProject));
+  const unsectionedChannels = unsectionedRooms.filter((group) => !group.channelProject);
 
   // User sections keep first-appearance order. The saved layout keeps an
   // empty section's former slot so it returns there when content comes back.
@@ -1805,7 +2153,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   // Chats is last: it grows on its own, without anybody deciding it should.
   const naturalSectionIds = [
     ...(pinnedBots.length > 0 ? [PINNED_SECTION_ID] : []),
-    ...(unsectionedRooms.length > 0 ? [CHANNELS_SECTION_ID] : []),
+    ...(unsectionedProjects.length > 0 ? [PROJECTS_SECTION_ID] : []),
+    ...(unsectionedChannels.length > 0 ? [CHANNELS_SECTION_ID] : []),
     ...sectionNames.map(userSectionId),
     ...(unsectionedBots.length > 0 ? [BOTS_SECTION_ID] : []),
     ...(botChats.length > 0 ? [BOT_CHATS_SECTION_ID] : []),
@@ -1834,7 +2183,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const position = visibleOrder.indexOf(id);
     if (position < 0) return;
     setReorderAnnouncement(
-      `${sidebarSectionLabel(id)} moved to position ${position + 1} of ${visibleOrder.length}`,
+      `${sectionLabel(id)} moved to position ${position + 1} of ${visibleOrder.length}`,
     );
   };
 
@@ -2079,7 +2428,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   }}
                   onNewChannel={() => {
                     setPlusOpen(false);
-                    setNewRoom(true);
+                    setNewRoom("channel");
+                  }}
+                  onNewProject={() => {
+                    setPlusOpen(false);
+                    setNewRoom("project");
                   }}
                   onExport={() => {
                     setPlusOpen(false);
@@ -2088,6 +2441,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   onArchived={() => {
                     setPlusOpen(false);
                     setArchivedBotsOpen(true);
+                  }}
+                  archivedChannelCount={archivedChannels.length}
+                  onArchivedChannels={() => {
+                    setPlusOpen(false);
+                    setArchivedChannelsOpen(true);
                   }}
                 />
               </div>
@@ -2154,8 +2512,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               ? sectionChiefs.filter((bot) => bot.section === sectionName)
               : [];
             const sectionGroupItems =
-              id === CHANNELS_SECTION_ID
-                ? unsectionedRooms
+              id === PROJECTS_SECTION_ID
+                ? unsectionedProjects
+                : id === CHANNELS_SECTION_ID
+                ? unsectionedChannels
                 : id === BOT_CHATS_SECTION_ID
                   ? botChats
                   : sectionName
@@ -2204,7 +2564,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 )}
                 {density !== "icons" && (
                   <SidebarSectionHeader
-                    name={sidebarSectionLabel(id)}
+                    name={sectionLabel(id)}
                     collapsed={collapsed}
                     attention={attention}
                     onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
@@ -2461,6 +2821,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onClose={() => setRoomMenu(null)}
           onRequestDelete={(group) => setPendingDelete({ kind: "room", id: group.id, name: group.name })}
           onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y })}
+          onArchive={(group) => void archiveGroup(group)}
         />
       )}
       {roomSectionPicker && (
@@ -2490,7 +2851,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           }}
         />
       )}
-      {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {newRoom && <NewRoomPanel kind={newRoom} onClose={() => setNewRoom(null)} />}
+      {archivedChannelsOpen && (
+        <ArchivedChannelsPanel
+          groups={archivedChannels}
+          onClose={() => setArchivedChannelsOpen(false)}
+          onRestored={(message) => setTeamFeedback({ error: false, text: message })}
+        />
+      )}
       {newTeamOpen && (
         <NewTeamDialog
           onClose={() => setNewTeamOpen(false)}
@@ -2532,6 +2900,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             feedback={teamFeedback}
             onUndoTeam={(undo) => void undoTeamLoad(undo)}
             onUndoBot={(bot) => void undoBotArchive(bot)}
+            onUndoGroup={(group) => void undoGroupArchive(group)}
           />,
           document.body,
         )}

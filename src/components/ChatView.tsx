@@ -58,6 +58,8 @@ import { isQuestionCard } from "../../shared/questions";
 import { Composer } from "./Composer";
 import { IntakeTurn } from "./IntakeTurn";
 import { readIntakeCard } from "@/lib/onboarding-intake";
+import { FirstRunCard } from "./FirstRunCard";
+import { readSetupCard } from "../../shared/setup-card";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
@@ -996,6 +998,11 @@ const MessagesList = memo(function MessagesList({
               // the intake route appends exactly such a message on every turn,
               // so the question would vanish the moment it was answered.
               if (readIntakeCard(m.card)) return <IntakeTurn bot={bot} message={m} />;
+              // a step of the guided first run, for the same reasons and in
+              // the same place: it is the Chief of Staff talking, not a
+              // permission ask, and the hide rule below would drop it the
+              // moment the person answered anything.
+              if (readSetupCard(m.card)) return <FirstRunCard bot={bot} message={m} />;
               // a live provider question gets the question card (header,
               // options with descriptions, multi-select, Other, expiry) —
               // before the approval box, which only answers permissions

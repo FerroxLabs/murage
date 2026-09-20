@@ -17,7 +17,6 @@ import { describe, expect, it } from "vitest";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const onboarding = readFileSync(join(root, "components/Onboarding.tsx"), "utf8");
 const hook = readFileSync(join(root, "lib/use-active-skin.ts"), "utf8");
 
 /** Shipped renderer sources: every .ts/.tsx under src that is not a test. */
@@ -54,11 +53,16 @@ describe("the wordmark follows the theme", () => {
   });
 
   it("is not on the welcome step any more, which is text and needs no theme", () => {
-    // bf1dc245: "WELCOME TO MURAGE" as an eyebrow over the outcome question.
-    // The raster left with the avatar; if it comes back it comes back through
-    // the rule above.
-    expect(onboarding).toContain("WELCOME TO MURAGE");
-    expect(onboarding).not.toContain("murage-logo");
+    // bf1dc245 put "WELCOME TO MURAGE" as an eyebrow over the outcome
+    // question and the raster left with the avatar. 0.1.58 deleted that
+    // screen outright: the welcome is now the Chief's first message in the
+    // thread, so there is no welcome step to carry a logo at all. The rule
+    // above covers every file that could bring one back.
+    for (const file of sources(root)) {
+      expect
+        .soft(readFileSync(file, "utf8").includes("murage-logo"), relative(root, file))
+        .toBe(false);
+    }
   });
 
   it("reads the resolved palette, not the stored preference", () => {

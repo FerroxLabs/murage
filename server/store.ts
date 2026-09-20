@@ -32,6 +32,7 @@ import type { RoutineRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
+import type { ChannelProject } from "../shared/project.ts";
 import type { IntakeCardData } from "../shared/intake-turn.ts";
 import type { SetupCardData } from "../shared/setup-card.ts";
 import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
@@ -279,6 +280,24 @@ export interface GroupRecord {
    * and remain immediately usable. */
   setupCompletedAt?: number | null;
   setupSkippedAt?: number | null;
+  /** Filed away. Same word, same meaning and same shape as a bot's `hidden`
+   * (see BotRecord): the channel keeps every member, every message, every
+   * task and its folder, and simply leaves the main list. It is the end
+   * state that is NOT delete, which until now was the only end state a
+   * channel had. Absent on every record written before archiving existed,
+   * which reads as "not archived" and needs no migration. */
+  hidden?: boolean;
+  /** Present = this channel is a project: it has a purpose, not just a
+   * roster. Absent = an ordinary channel, which is the normal case and the
+   * shape every existing record already has. A project HAS a channel; a
+   * channel does not have to be a project.
+   *
+   * Named `channelProject`, never `project`: the bare word already means a
+   * memory scope keyed by a FOLDER, an import mode, two folder leases, a
+   * Composio account key and a GEPA split axis. shared/project.ts spells out
+   * each clash. This block owns none of them, and in particular does not
+   * touch `cwd`: making a channel a project does not give it a folder. */
+  channelProject?: ChannelProject;
 }
 
 /** One task = one conversation with its own context.
@@ -1314,7 +1333,10 @@ export class Store {
       for (const task of bot.tasks ?? []) ids.add(task.threadId);
     }
     for (const group of this.groups) {
-      if (group.dm) continue;
+      // An archived channel is filed away for the same reason a hidden bot
+      // is, so it answers the same way: it still exists and the desktop can
+      // still open it, but a remote door is not shown it.
+      if (group.dm || group.hidden) continue;
       ids.add(group.threadId);
       for (const task of group.tasks ?? []) ids.add(task.threadId);
     }
@@ -1367,7 +1389,7 @@ export class Store {
     );
   }
 
-  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt">>): GroupRecord | null {
+  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "hidden" | "channelProject">>): GroupRecord | null {
     const group = this.group(id);
     if (!group) return null;
     const previousBusyBotId = group.busyBotId;

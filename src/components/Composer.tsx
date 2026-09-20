@@ -33,7 +33,7 @@ import {
   replaceComposerSlashTrigger,
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
-import { openSetup } from "./SetupPanel";
+import { openFirstRun } from "@/lib/first-run";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu } from "./PermissionModeMenu";
@@ -61,6 +61,7 @@ import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
+import { detectFluxKeyInComposer, fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
 import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
 
 /** The active @mention query at the caret: the text between an `@` that
@@ -232,6 +233,9 @@ export function Composer({
   // acting on it, and the next Enter checks again. It belongs to one draft,
   // so switching conversations drops it.
   const [sendNotice, setSendNotice] = useState<ComposerSendNoticeState | null>(null);
+  // Needed by the pasted-key guard in send(): saving a key prefers the
+  // desktop bridge and only falls back to the request path on the web.
+  const desktopSurface = useDesktopSurface();
   const sendNoticeId = useId();
   useEffect(() => setSendNotice(null), [draftId]);
   const editText = useCallback(
@@ -414,10 +418,11 @@ export function Composer({
     if (!slash) return;
     // /goal leaves NO text behind: the mode is the chip, and the draft is
     // just the goal. /learn stays literal because the harness reads it.
-    // /setup is not a message at all — it opens the checklist and leaves the
-    // draft empty, so nothing is ever sent to a bot.
+    // /setup is not a message at all. It takes them to their chief of staff,
+    // where the first run lives, and shows the progress rail beside it. The
+    // draft is left empty, so nothing is ever sent to a bot.
     const replacement = command.id === "learn" ? "/learn " : "";
-    if (command.id === "setup") openSetup();
+    if (command.id === "setup") openFirstRun();
     const next = replaceComposerSlashTrigger(text, slash, replacement);
     editText(next.text);
     setCaret(next.caret);
@@ -537,6 +542,39 @@ export function Composer({
   };
   const send = () => {
     if (locked) return;
+    // A KEY NEVER REACHES THE TRANSCRIPT.
+    //
+    // First, before the size check, before the draft is composed, before
+    // anything at all. People paste a Flux Router key into whatever is on
+    // screen, and during the first run the only thing on screen is this box.
+    // A key that gets past here is a key written into the conversation, saved
+    // to disk with it, and handed to the next model that reads the thread.
+    // There is no taking it back afterwards, so the guard goes before every
+    // other decision this function makes.
+    //
+    // The sentence around it is theirs and is kept: only the key itself is
+    // lifted out, and the composer says where it went.
+    const pastedKey = detectFluxKeyInComposer(effectiveText);
+    if (pastedKey) {
+      setText(pastedKey.rest);
+      setSendNotice({ kind: "flux-key-saved" });
+      void (async () => {
+        try {
+          await saveFluxKey(pastedKey.key, {
+            status: await readFluxStatus(api),
+            bridge: fluxBridge(),
+            request: api,
+            desktop: desktopSurface === true,
+          });
+        } catch {
+          // The key is still out of the transcript, which was the urgent
+          // part. What failed is the saving, and the person is told that
+          // rather than left believing they are connected.
+          setSendNotice({ kind: "flux-key-failed" });
+        }
+      })();
+      return;
+    }
     if (
       attachments.some((attachment) => attachment.kind === "image") &&
       !imageTargetsSupport(effectiveText, effectiveChannelMode)
