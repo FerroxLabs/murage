@@ -7,7 +7,7 @@
 // that contains the words being searched for would prove nothing.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -471,6 +471,57 @@ describe("index admission agrees with the installer", () => {
     const ids = (await mod.searchSkills("aardvark", 10)).map((hit) => hit.id).sort();
     expect(ids).toEqual(["aardvark-one", "aardvark-two"]);
     expect((await mod.skillIndexStats()).count).toBe(2);
+    mod.resetSkillIndex();
+  });
+
+  it("sweeps temp files a killed build left behind, and spares a live one", async () => {
+    // 0.1.56 stopped these blocking every backup. They still piled up: a
+    // build that is killed between opening its temp database and renaming it
+    // over the index leaves the temp, and its SQLite sidecars, for good.
+    const library = temp("murage-sweep-lib-");
+    writeLibrarySkill(library, "numbat-keeper", { description: "Looks after numbats", triggerTerms: ["numbat"] });
+    const data = temp("murage-sweep-data-");
+    const index = join(data, "skill-index.db");
+
+    // A pid that cannot be running: process 0 is never a user process, and
+    // this one is spelled the way a killed build would have spelled it.
+    const abandoned = `${index}.999999.ab12cd.tmp`;
+    writeFileSync(abandoned, "abandoned build");
+    writeFileSync(`${abandoned}-wal`, "");
+    writeFileSync(`${abandoned}-shm`, "");
+    // A build running in ANOTHER process right now, named with a pid that is
+    // unarguably alive. A correct sweep must leave it exactly where it is.
+    const otherLive = `${index}.${process.ppid}.ee88bb.tmp`;
+    writeFileSync(otherLive, "other live build");
+    // Not a build temp at all, and not ours to remove.
+    const unrelated = join(data, "skill-index.db.notes.txt");
+    writeFileSync(unrelated, "someone's notes");
+
+    const mod = await loadAgainst(library, data);
+    // Any search forces the first build, which is when the sweep runs.
+    expect((await mod.searchSkills("numbat", 5)).map((hit) => hit.id)).toEqual(["numbat-keeper"]);
+    const left = readdirSync(data).sort();
+    expect(left).not.toContain(basename(abandoned));
+    expect(left).not.toContain(`${basename(abandoned)}-wal`);
+    expect(left).not.toContain(`${basename(abandoned)}-shm`);
+    expect(left).toContain(basename(otherLive));
+    expect(left).toContain(basename(unrelated));
+    expect(left).toContain("skill-index.db");
+    // The index this build just wrote is intact.
+    expect((await mod.skillIndexStats()).count).toBe(1);
+    // Directly, too. A temp carrying THIS process's pid is litter from an
+    // earlier run of it — only one build runs here at a time — unless it is
+    // the build in progress, which the caller names.
+    const inProgress = `${index}.${process.pid}.ff99aa.tmp`;
+    const ourLeftover = `${index}.${process.pid}.dd77cc.tmp`;
+    writeFileSync(inProgress, "the build running right now");
+    writeFileSync(ourLeftover, "left by an earlier run");
+    expect(mod.sweepStaleIndexTemps(index, inProgress)).toEqual([basename(ourLeftover)]);
+    const after = readdirSync(data);
+    expect(after).toContain(basename(inProgress));
+    expect(after).toContain(basename(otherLive));
+    expect(after).not.toContain(basename(ourLeftover));
+    rmSync(inProgress);
     mod.resetSkillIndex();
   });
 
