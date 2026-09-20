@@ -3590,6 +3590,11 @@ function cleanupDesktopForExit() {
   if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
+  // The bundled adb daemon is not a child: it forks itself off the first adb
+  // command and stays, holding its port. Stop the one this app started, and
+  // start doing so now so it overlaps the rest of shutdown. It resolves
+  // either way, so quitting never waits on a phone.
+  const androidStopped = androidDevice.stop().catch(() => {});
   // A live dictation or recorder session runs its own helper app that holds
   // the mic or a global event tap. Signal both now so they exit in parallel
   // with the harness. The first stage below keeps cleanup, and installation
@@ -3630,6 +3635,8 @@ function cleanupDesktopForExit() {
     desktopCleanupStage = "computer-use startup/cleanup";
     await awaitOwnedWork(cuaReady, "Computer-use startup has not settled", CUA_STOP_TIMEOUT_MS);
     await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);
+    desktopCleanupStage = "android helper";
+    await androidStopped;
     desktopCleanupStage = "installation lease release";
     if (desktopDataOwner) {
       desktopDataOwner.release();
