@@ -1,5 +1,5 @@
 import { expect,it } from "vitest";
-import { enabledSchedule,scheduleDraft,scheduleError,scheduleNeedsReview,schedulePhase,closedJobLabel,closedResultLabel } from "./backup-schedule-ui";
+import { enabledSchedule,scheduleCardNotice,scheduleDraft,scheduleError,scheduleNeedsReview,schedulePhase,closedJobLabel,closedResultLabel } from "./backup-schedule-ui";
 const state:BackupScheduleStatus={supported:true,pending:false,enabled:false,revision:4,phase:"idle",schedule:{enabled:false,preUpgrade:false},refs:{installationRef:"fixture_install",destinationRef:"fixture_dest",recoveryRef:"fixture_key",destinationLabel:"Backup",recoveryLabel:"Recovery.age"}};
 const draft={time:"23:45",timezone:"Asia/Bangkok",catchup:"2",size:"1",duration:"10",preUpgrade:false,closedApp:false};
 it("requires explicit consent and complete host bindings; emits exact scope and units",()=>{
@@ -53,4 +53,21 @@ it("distinguishes prepared registration from enabled backups and rejects private
  expect(closedJobLabel("disabled-removal-pending")).toContain("pending");
  expect(closedResultLabel({status:"verified",at:1,revision:1,privateKey:"SECRET_CANARY"})).toBeNull();
  expect(closedResultLabel({status:"verified",at:1,revision:1})).toEqual({label:"Backup verified",at:1});
+});
+it("does not print the page's attention message a second time inside the schedule card",()=>{
+  // The Windows elevation refusal: it reached the page as a status error, and
+  // both the "Needs attention" list and the schedule card printed it, in the
+  // same words, one above the other.
+  const elevated=scheduleError("BACKUP_ELEVATED");
+  expect(elevated).toContain("running as administrator");
+  expect(scheduleCardNotice(null,"BACKUP_ELEVATED",[elevated])).toBeNull();
+  // The same is true of an error the page carried from an action.
+  expect(scheduleCardNotice(elevated,undefined,[elevated])).toBeNull();
+  // An error the summary does NOT carry still appears beside the controls.
+  expect(scheduleCardNotice(null,"BACKUP_ELEVATED",[])).toBe(elevated);
+  expect(scheduleCardNotice(null,"BACKUP_ELEVATED",["Off-site status needs a refresh."])).toBe(elevated);
+  expect(scheduleCardNotice("Something else entirely.",undefined,[elevated])).toBe("Something else entirely.");
+  // Nothing to say stays nothing.
+  expect(scheduleCardNotice(null,undefined,[])).toBeNull();
+  expect(scheduleCardNotice(null,null,[elevated])).toBeNull();
 });

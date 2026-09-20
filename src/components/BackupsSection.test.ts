@@ -136,6 +136,15 @@ describe("backup summary", () => {
     // No failure recorded: the page says no more than it knows.
     expect(backupSummary({ ...healthy, schedule: { ...s, phase: "needs-review" } }).attention.join(" ")).not.toMatch(/stopped while/);
   });
+  it("prints a schedule refusal once on the page, not in the summary and the card", () => {
+    const source = read("./BackupSettings.tsx");
+    // The card's own line is decided by the shared helper, and it is handed
+    // the very list the "Needs attention" block renders above it.
+    expect(source).toContain("scheduleCardNotice(local,status?.error,attention)");
+    expect(source).not.toContain("{local??scheduleError(status?.error)}");
+    expect(source).toContain("<ScheduleCard s={s} attention={summary.attention}/>");
+    expect(source).toContain("<ScheduleSetup s={s} attention={summary.attention}");
+  });
   it("never claims availability without a bridge", () => {
     const summary = backupSummary({ ...healthy, scheduleBridge: false, schedule: null, remoteBridge: false, remote: null });
     expect(summary.schedule).toBe("Not available in this window");

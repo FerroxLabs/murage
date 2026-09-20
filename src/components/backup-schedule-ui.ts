@@ -66,6 +66,20 @@ export function scheduleError(cause: unknown): string {
   if (/BACKUP_(BINDINGS|DESTINATION|IDENTITY)/.test(code)) return "Choose the destination and an independently saved age recovery key again when the schedule is disabled and no transfer is active. No key is created here.";
   return "Backup settings could not be updated. Your data is preserved. Refresh status before trying again.";
 }
+/** What the schedule card says on its own, over and above the page summary.
+ *
+ * The Backups page shows "Needs attention" above this card and the card's own
+ * line inside it, and both were fed the same status error, so a refusal — an
+ * elevated app on Windows, most visibly — was printed twice on one screen in
+ * the same words. The summary is the page's one list of what needs doing, so
+ * anything it already says is not repeated here; an error it does not carry,
+ * such as one raised by another part of the page, still appears beside the
+ * controls it applies to. */
+export function scheduleCardNotice(areaError: string | null, statusError: string | null | undefined, attention: readonly string[] = []): string | null {
+  const text = areaError ?? (statusError ? scheduleError(statusError) : null);
+  if (!text) return null;
+  return attention.includes(text) ? null : text;
+}
 export function closedJobLabel(state:BackupClosedStatus["state"]|undefined){
  const labels:Record<BackupClosedStatus["state"],string>={unconfigured:"No closed-app job prepared",staged:"Job prepared, not registered",installed:"Job registration confirmed",disabled:"Closed-app job removed","disabled-removal-pending":"Closed-app job removal pending",unavailable:"Closed-app scheduling unavailable"};
  return state?labels[state]??labels.unavailable:"Checking closed-app job status…";
