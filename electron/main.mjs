@@ -3215,6 +3215,11 @@ async function initializeBackupScheduleHost(){
     backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),provider,backup:()=>backupScheduleHost,
     confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Set up background job"],defaultId:0,cancelId:0,noLink:true,message:"Let Murage back up while it's closed?",detail:"This adds a small background job to your user account that checks whether a backup is due. Nothing is backed up until you turn on daily backups. It runs only while you're signed in and doesn't store any passwords."});return answer.response===1;},
   });
+  // An upgrade brings a new trigger, and the registered background job still
+  // names the previous version's. Replace it here, once, without asking again:
+  // it is the same job the person already agreed to. A closed-app run is
+  // exactly when that job is firing, so this never runs there.
+  if(!closedBackupRequested)try{await closedBackupController.restageForUpgrade();}catch{/* The Backups page reports a job that needs attention. */}
   const choose=async(properties,title,defaultPath)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties,...(defaultPath?{defaultPath}:{})});return answer.canceled?null:answer.filePaths[0]??null;};
   backupScheduleHost=createBackupScheduleHost({
     coordinator,installation:()=>installation,

@@ -1,7 +1,7 @@
-import {lstatSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
+import {lstatSync,mkdirSync,readFileSync,realpathSync,rmSync,writeFileSync} from "node:fs";
 import path from "node:path";
 import {assertClosedProfileBinding,closedDigest,closedProfileFolderShared,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
-import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
+import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,removeClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
 
 const refuse=()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -48,7 +48,10 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     }catch{return{...common,state:"unavailable"};}
   }
   async function exclusive(fn){if(running)throw Error("BACKUP_BUSY");running=true;try{return await fn();}finally{running=false;}}
-  async function stage(){return exclusive(async()=>{
+  /** Write the bundled trigger into the private control folder and stage the
+   * job definition that runs it. Shared by staging and by re-staging after an
+   * upgrade, so both write exactly the same thing. */
+  function stageCurrent(){
     if(!supported())refuse();const p=profile(),uid=p.owner.uid,control=location();
     ensurePrivateDirectory(path.dirname(control),uid);ensurePrivateDirectory(control,uid);
     const digest=closedTriggerDigest(triggerSource),triggerEntry=path.join(control,`closed-trigger-${digest}.mjs`);
@@ -61,7 +64,44 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     const staged=stageClosedBackupJob({...p,triggerEntry,triggerSha256:digest},{stagingRoot:control,backupSupported:true});
     const payload=JSON.stringify({version:1,directory:path.basename(staged.directory)});
     try{if(readClosedPrivateFile(pointer())!==payload)refuse();}catch(error){if(error.code!=="ENOENT")throw error;writeFileSync(pointer(),payload,{flag:"wx",mode:0o600,flush:true});}
-    lastState="staged";return status();
+    lastState="staged";return staged;
+  }
+  async function stage(){return exclusive(async()=>{stageCurrent();return status();});}
+  /** Carry an existing registration across an app upgrade.
+   *
+   * The trigger is part of the app, so a new version brings a new one, with a
+   * new digest and a new filename. The registered job still names the file the
+   * PREVIOUS version staged, and staging refuses a changed descriptor rather
+   * than quietly rewriting one — so the job went on running the old app's
+   * trigger, indefinitely, until somebody removed and re-added it by hand.
+   *
+   * Nothing here asks again: the person already said yes to a background job,
+   * and this replaces that job with the same job built from the version they
+   * are now running. It only ever runs when a stage already exists and its
+   * trigger is not the bundled one, and it re-registers only what was
+   * registered before. */
+  async function restageForUpgrade(){return exclusive(async()=>{
+    if(!supported())return status();
+    let current;
+    try{current=readStage();}catch{return status();}
+    if(!current)return status();
+    let digest;
+    try{digest=closedTriggerDigest(triggerSource);}catch{return status();}
+    if(current.descriptor.triggerSha256===digest)return status();
+    const registered=Boolean((await provider.read(current).catch(()=>null))?.registered);
+    if(registered){
+      // The authoritative schedule is NOT touched: this is the same job, not a
+      // withdrawal of consent.
+      const result=await disableClosedBackupJob(current,{disableSchedule:async()=>{},...provider});
+      if(result.state!=="disabled"){lastState="disabled-removal-pending";return status();}
+    }
+    removeClosedBackupStage(current.directory);
+    // The superseded trigger file is this app's litter, and the data folder is
+    // not allowed to hold files Murage cannot account for.
+    try{rmSync(current.descriptor.triggerEntry,{force:true});}catch{/* A trigger left behind never blocks the new job. */}
+    const staged=stageCurrent();
+    if(registered){await installClosedBackupJob(staged,provider);lastState="installed";}
+    return status();
   });}
   async function install(){return exclusive(async()=>{
     if(!supported())refuse();const selected=readStage();if(!selected)refuse();
@@ -80,7 +120,7 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
       return status();
     }catch{lastState="disabled-removal-pending";return{supported:supported(),closedApp:false,state:lastState};}
   });}
-  return{status,stage,install,disable,
+  return{status,stage,install,disable,restageForUpgrade,
     async assertInstalled(){const staged=readStage();if(!staged||!supported())refuse();return assertClosedRegistration(staged.descriptor,staged.descriptorPath,provider);},
     async assertInvocation(descriptor,descriptorPath){const staged=await this.assertInstalled();if(staged.descriptorPath!==descriptorPath||!same(staged.descriptor,descriptor))refuse();},
   };

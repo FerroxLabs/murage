@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {EventEmitter} from "node:events";
-import {chmodSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
+import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -38,6 +38,46 @@ test("controller stages private stable trigger without registration and needs na
   f.setConsent(true);assert.equal((await f.controller.install()).state,"installed");assert.equal(f.installs(),1);
   await f.controller.assertInvocation(stage.descriptor,stage.descriptorPath);
   await f.controller.install();assert.equal(f.installs(),1);
+});
+test("an upgrade re-stages the registered job onto the new trigger without asking again",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);
+  await f.controller.stage();await f.controller.install();
+  const before=f.stage();assert.equal(f.installs(),1);
+  // The app is upgraded: the bundled trigger is now a different file.
+  const upgraded="export const fixture='upgraded';";
+  writeFileSync(path.join(f.root,"bundled-trigger.js"),upgraded,{mode:0o600});
+  // Ordinary staging refuses a changed descriptor, which is why the job used
+  // to keep running the previous version's trigger indefinitely.
+  await assert.rejects(f.controller.stage());
+  assert.equal(f.stage().descriptor.triggerSha256,before.descriptor.triggerSha256);
+  // Nothing asks again: consent was given once and is not re-sought.
+  f.setConsent(false);
+  assert.equal((await f.controller.restageForUpgrade()).state,"installed");
+  const after=f.stage();
+  assert.notEqual(after.descriptor.triggerSha256,before.descriptor.triggerSha256);
+  assert.equal(readFileSync(after.descriptor.triggerEntry,"utf8"),upgraded);
+  // The superseded trigger is not left in the data folder.
+  assert.equal(existsSync(before.descriptor.triggerEntry),false);
+  // The job the system now holds is the new one.
+  assert.equal(f.installs(),2);assert.equal(f.removes(),1);
+  assert.deepEqual(f.getCurrent().files,after.files);
+  await f.controller.assertInvocation(after.descriptor,after.descriptorPath);
+  // Running it again with the same app changes nothing at all.
+  assert.equal((await f.controller.restageForUpgrade()).state,"installed");
+  assert.equal(f.installs(),2);assert.equal(f.removes(),1);
+});
+test("an upgrade re-stages a job that was prepared but never registered, and registers nothing",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);
+  await f.controller.stage();const before=f.stage();
+  writeFileSync(path.join(f.root,"bundled-trigger.js"),"export const fixture='second';",{mode:0o600});
+  assert.equal((await f.controller.restageForUpgrade()).state,"staged");
+  assert.notEqual(f.stage().descriptor.triggerSha256,before.descriptor.triggerSha256);
+  assert.equal(f.installs(),0);assert.equal(f.removes(),0);
+});
+test("nothing staged is left alone by the upgrade re-stage",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);
+  assert.equal((await f.controller.restageForUpgrade()).state,"unconfigured");
+  assert.equal(f.installs(),0);
 });
 test("status names a data folder other accounts can write to instead of a generic refusal",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);chmodSync(f.profile.installation,0o775);
