@@ -74,6 +74,58 @@ function windowsKnownDirs(): string[] {
   ];
 }
 
+/** null = scan the real machine. Never set outside a test; see
+ * restrictInstallScanDirsForTests. */
+let scanDirsOverride: readonly string[] | null = null;
+
+/** The install locations augmentedPath() scans on this platform. The ONLY
+ * place either list is read, so the test seam below has exactly one place to
+ * take effect and cannot drift away from what production scans. */
+function installScanDirs(): string[] {
+  if (scanDirsOverride !== null) return [...scanDirsOverride];
+  // Both platforms scan their standard install locations; only the
+  // login-shell probe stays unix-only, since Windows has no equivalent
+  // rc file to source.
+  return process.platform === "win32" ? windowsKnownDirs() : knownDirs();
+}
+
+/**
+ * Test seam — pretend the machine's install locations are exactly `dirs`,
+ * or pass null to restore the real scan.
+ *
+ * knownDirs() scans ABSOLUTE system directories — /opt/homebrew/bin,
+ * /usr/local/bin — that no environment variable can move. Moving HOME and
+ * emptying PATH therefore does NOT give a test a machine with "nothing
+ * installed": a developer who has the engine under test installed via
+ * Homebrew still gets a hit, the product correctly prefers their own install,
+ * and the test asserts the opposite of what it means to. That is a test
+ * defect, not a product one — resolveFuigoCli's documented order (a
+ * user-installed engine WINS over the bundled copy) is deliberate.
+ *
+ * UNUSED, THIS CHANGES NOTHING: installScanDirs() returns exactly what
+ * knownDirs()/windowsKnownDirs() return today, and env-path.test.ts asserts
+ * that the unrestricted list still carries the hardcoded system directories
+ * so this seam can never quietly become the production behaviour.
+ *
+ * The PATH cache is dropped here so a caller cannot set this and then read a
+ * PATH built before it. resetPathCache*() deliberately does NOT clear the
+ * override: tests reset the cache mid-test, and a reset that silently put
+ * /opt/homebrew/bin back would reintroduce the very flake this removes. The
+ * test that sets it is the test that clears it.
+ */
+export function restrictInstallScanDirsForTests(dirs: readonly string[] | null): void {
+  scanDirsOverride = dirs === null ? null : [...dirs];
+  cached = null;
+  probed = false;
+}
+
+/** Test hook — the install locations installScanDirs() would scan right now,
+ * so a test can assert the UNRESTRICTED list still contains the hardcoded
+ * system directories. */
+export function installScanDirsForTests(): string[] {
+  return installScanDirs();
+}
+
 let cached: string | null = null;
 let probed = false;
 let loginShellPath: string | null = null;
@@ -101,10 +153,7 @@ export function augmentedPath(): string {
       // fresh asynchronous probe. Otherwise resetPathCache() would make
       // rc-only CLIs disappear again for the response that triggered it.
       ...(loginShellPath ? loginShellPath.split(delimiter) : []),
-      // Both platforms scan their standard install locations; only the
-      // login-shell probe below stays unix-only, since Windows has no
-      // equivalent rc file to source.
-      ...(process.platform === "win32" ? windowsKnownDirs() : knownDirs()).filter((d) => existsSync(d)),
+      ...installScanDirs().filter((d) => existsSync(d)),
     ]);
   }
   // belt-and-braces: fold in the login shell's PATH once, in the

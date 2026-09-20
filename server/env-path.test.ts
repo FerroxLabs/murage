@@ -11,9 +11,11 @@ import {
   augmentedPath,
   bundledFuigoPath,
   cmdShimTargets,
+  installScanDirsForTests,
   resetPathCache,
   resetPathCacheForTests,
   resolveFuigoCli,
+  restrictInstallScanDirsForTests,
   splitCliString,
 } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
@@ -143,6 +145,94 @@ describe("augmentedPath", () => {
       resetPathCacheForTests();
       rmSync(localAppData, { recursive: true, force: true });
     }
+  });
+});
+
+// The install-location scan reaches ABSOLUTE system directories that no
+// environment variable can move (/opt/homebrew/bin, /usr/local/bin), so
+// emptying PATH and pointing HOME at a temp dir does NOT give a test a
+// machine with "nothing installed" — a developer with the engine under test
+// installed via Homebrew still gets a hit. restrictInstallScanDirsForTests()
+// is the seam that gets a test there. These cases exist so the seam can never
+// quietly become the production scan.
+describe("install-location scan seam", () => {
+  afterEach(() => {
+    restrictInstallScanDirsForTests(null);
+    vi.unstubAllEnvs();
+    resetPathCacheForTests();
+  });
+
+  posixIt("scans the hardcoded system directories, and the whole known list, when unrestricted", () => {
+    restrictInstallScanDirsForTests(null);
+    const dirs = installScanDirsForTests();
+    // The two entries HOME cannot move, in brew's own precedence order. If
+    // these ever leave the scan, a Finder-launched app stops finding a
+    // brew-installed CLI again (issues #8, #12).
+    expect(dirs).toContain("/opt/homebrew/bin");
+    expect(dirs).toContain("/usr/local/bin");
+    expect(dirs.indexOf("/opt/homebrew/bin")).toBeLessThan(dirs.indexOf("/usr/local/bin"));
+    // ...and the seam replaces the WHOLE list, so "unrestricted" has to keep
+    // every home-relative installer target too.
+    const home = homedir();
+    expect(dirs).toEqual(
+      expect.arrayContaining([
+        join(home, ".local", "bin"),
+        join(home, ".npm-global", "bin"),
+        join(home, ".kimi-code", "bin"),
+        join(home, ".grok", "bin"),
+        join(home, ".fuigo", "bin"),
+        join(home, ".opencode", "bin"),
+        join(home, ".claude", "local"),
+        join(home, ".volta", "bin"),
+        join(home, ".bun", "bin"),
+        join(home, ".asdf", "shims"),
+        join(home, ".deno", "bin"),
+        join(home, "bin"),
+      ]),
+    );
+  });
+
+  it.skipIf(process.platform !== "win32")("scans the Windows install locations when unrestricted", () => {
+    restrictInstallScanDirsForTests(null);
+    const home = homedir();
+    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
+    expect(installScanDirsForTests()).toEqual(
+      expect.arrayContaining([join(appData, "npm"), join(home, ".fuigo", "bin"), join(home, ".local", "bin")]),
+    );
+  });
+
+  posixIt("takes the unmovable system directories out of the scan when restricted", () => {
+    const only = join(homedir(), "seam-only-bin");
+    mkdirSync(only, { recursive: true });
+    // A bare GUI-style PATH, so anything left below comes from the scan.
+    vi.stubEnv("PATH", only);
+    restrictInstallScanDirsForTests([only]);
+
+    expect(installScanDirsForTests()).toEqual([only]);
+    const parts = augmentedPath().split(delimiter);
+    expect(parts).toContain(only);
+    expect(parts).not.toContain("/opt/homebrew/bin");
+    expect(parts).not.toContain("/usr/local/bin");
+    expect(parts).not.toContain(join(homedir(), ".fuigo", "bin"));
+  });
+
+  posixIt("survives a mid-test PATH cache reset — a rescan must not put the machine back", () => {
+    // resetPathCache*() drops the memoized PATH, and tests call it after
+    // every env change. If it also cleared the restriction, /opt/homebrew/bin
+    // would silently return and the precondition would evaporate mid-test.
+    vi.stubEnv("PATH", "/nonexistent-empty-bin");
+    restrictInstallScanDirsForTests([]);
+    resetPathCacheForTests();
+    resetPathCache();
+    expect(installScanDirsForTests()).toEqual([]);
+    expect(augmentedPath().split(delimiter)).not.toContain("/usr/local/bin");
+  });
+
+  posixIt("restores the real machine when handed null", () => {
+    restrictInstallScanDirsForTests([]);
+    expect(installScanDirsForTests()).toEqual([]);
+    restrictInstallScanDirsForTests(null);
+    expect(installScanDirsForTests()).toContain("/usr/local/bin");
   });
 });
 

@@ -2145,6 +2145,21 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");
   });
 
+  // D57 made a bot's writes inside its OWN managed folders stop asking. The
+  // exemption is decided from the paths the DRIVER reports, so an engine that
+  // reports none never gets it — which was every ACP engine, including the
+  // bundled Fuigo the Chief of Staff runs on.
+  it("reports the file an edit permission names, so the own-workspace check can see it", async () => {
+    process.env.FAKE_ACP_PERMISSION_FILE = "/data/workspaces/bot-a/MEMORY.md";
+    await create(GrokAgentDriver, "permission-edit-file");
+    await instance.adapter.sendTurn({ threadId: "t-perm-file", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "edit" });
+    expect((opened as any).filePaths).toEqual(["/data/workspaces/bot-a/MEMORY.md", "/data/workspaces/bot-a/MEMORY.md"]);
+    await instance.adapter.respondToRequest("t-perm-file", (opened as any).requestId, { behavior: "allow" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+  });
+
   it("selectModel confirms the requested model before prompting", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);

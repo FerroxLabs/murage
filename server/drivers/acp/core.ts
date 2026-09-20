@@ -82,6 +82,54 @@ export function acpErrorDiagnostic(base:{eventId:string;turnId:string},processGe
 import { classifyProviderError, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
 
+import { toolFilePaths } from "../../own-workspace-approval.ts";
+
+/** The files an ACP permission request names, for the own-workspace check.
+ *
+ * D57 made a bot's writes inside its OWN managed folders stop asking, but only
+ * the Claude driver reported the paths, so every ACP engine — including the
+ * bundled Fuigo the Chief of Staff runs on — still raised all three cards and
+ * still stalled an unattended routine. This is the same fact, read off the
+ * ACP wire.
+ *
+ * Two sources, and BOTH must be readable or this answers undefined:
+ *   - `locations`, the protocol's own "files this call touches";
+ *   - `rawInput`, the engine's structured tool input, via the same reader the
+ *     Claude driver uses.
+ * The union is returned, never one in preference to the other, so a call that
+ * names an innocent path in one place and an escaping path in the other is
+ * judged on both. `undefined` means "a shape this cannot read", and every
+ * caller treats that as "ask" — never as "allow". */
+export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unknown }): string[] | undefined {
+  const paths: string[] = [];
+  const { locations } = toolCall;
+  if (locations !== undefined) {
+    // Present but not a non-empty array of `{path: string}` is a shape this
+    // does not understand, and the entry it could not read is precisely the
+    // one that would escape.
+    if (!Array.isArray(locations) || locations.length === 0) return undefined;
+    for (const entry of locations) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+      const path = (entry as { path?: unknown }).path;
+      if (typeof path !== "string" || !path) return undefined;
+      paths.push(path);
+    }
+  }
+  if (toolCall.rawInput !== undefined) {
+    const fromInput = toolFilePaths(toolCall.rawInput);
+    // `toolFilePaths` answers undefined both for "names no path" and for "a
+    // path key it could not read". Only the second is dangerous, and it is
+    // the one where a path key is actually present.
+    if (fromInput === undefined) {
+      const input = toolCall.rawInput;
+      const named = Boolean(input) && typeof input === "object" && !Array.isArray(input)
+        && ["file_path", "filePath", "notebook_path", "notebookPath", "path"].some(key => key in (input as Record<string, unknown>));
+      if (named) return undefined;
+    } else paths.push(...fromInput);
+  }
+  return paths.length ? paths : undefined;
+}
+
 /** Some ACP providers wrap actionable billing failures in "Internal error".
  * Classify only the observed shape; never copy nested provider data or URLs
  * into the transcript, where they may contain credentials or request text. */
@@ -1387,6 +1435,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             summary,
             approvalScope: controlsHost ? "local-computer" : undefined,
             ...(questionTool ? { questionTool: true as const } : {}),
+            // Structured, off the wire — never parsed back out of `summary`,
+            // which is composed from what the model wrote.
+            ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
           });
         };
 

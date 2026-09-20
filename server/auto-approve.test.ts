@@ -459,3 +459,72 @@ describe("a wider grant never widens into the guards", () => {
     expect(autoVerdict({ alwaysAllow: ["Bash:git"] }, "Bash", "git status").source).toBe("always-allow");
   });
 });
+
+// D57 (0.1.56 Mac customer test, M2): asking Business Planner one question
+// raised three cards, two of them for the bot editing its OWN MEMORY.md and
+// its OWN thread files — and a routine's "Run now" sat at "Waiting for you…"
+// with a pending approval until someone woke up and allowed exactly those.
+// The fact "every path this request names is inside THIS bot's managed
+// directories" is established in server/own-workspace-approval.ts; this is
+// only where that fact sits in the order of precedence.
+describe("the bot's own workspace is bookkeeping, not a permission", () => {
+  const own = { ownWorkspace: true } as const;
+  const memory = '{"file_path":"/data/workspaces/abc/MEMORY.md","old_string":"a","new_string":"b"}';
+
+  it("does not card a bot in Ask mode editing its own MEMORY.md", () => {
+    const verdict = autoVerdict({}, "Edit", memory, own);
+    expect(verdict.approve).toBe("auto-approved Edit (own workspace)");
+    expect(verdict.source).toBe("own-workspace");
+  });
+
+  it("still cards the same edit when the path was not inside the managed area", () => {
+    const verdict = autoVerdict({}, "Edit", memory);
+    expect(verdict.approve).toBeNull();
+    expect(verdict.source).toBe("no-grant");
+  });
+
+  it("lets an 8am routine finish its own bookkeeping with nobody awake", () => {
+    const verdict = autoVerdict({}, "Edit", memory, { ...own, unattended: true, automated: true });
+    expect(verdict.approve).toBe("auto-approved Edit (own workspace)");
+    expect(verdict.source).toBe("own-workspace");
+  });
+
+  it("does not widen the unattended block for anything else that run does", () => {
+    const verdict = autoVerdict({ autoApprove: true }, "Bash", "git status", { unattended: true });
+    expect(verdict.source).toBe("unattended-block");
+  });
+
+  it("never outranks a question to the owner", () => {
+    expect(autoVerdict({}, "AskUserQuestion", memory, own).source).toBe("question-tool");
+    expect(autoVerdict({}, "Edit", memory, { ...own, question: true }).source).toBe("question-tool");
+  });
+
+  it("never outranks the destructive guard", () => {
+    const verdict = autoVerdict({}, "Edit", '{"file_path":"/data/workspaces/abc/notes.md","new_string":"rm -rf /"}', own);
+    expect(verdict.approve).toBeNull();
+    expect(verdict.source).toBe("destructive-guard");
+  });
+
+  it("never outranks the sensitive guard", () => {
+    const verdict = autoVerdict({}, "Write", '{"file_path":"/data/workspaces/abc/.env"}', own);
+    expect(verdict.approve).toBeNull();
+    expect(verdict.source).toBe("sensitive-guard");
+  });
+
+  it("never covers a request that controls the owner's own computer", () => {
+    // Nothing granted: the ordinary "nobody granted this" card stands.
+    expect(autoVerdict({}, "Edit", memory, { ...own, scope: "local-computer" })).toEqual({ approve: null, source: "no-grant" });
+    // And where a remembered grant would otherwise have fired, the host
+    // block still names itself rather than being waved through as bookkeeping.
+    const granted = { alwaysAllow: ["local-computer:Edit"] };
+    const verdict = autoVerdict(granted, "Edit", memory, { ...own, scope: "local-computer" });
+    expect(verdict.approve).toBeNull();
+    expect(verdict.source).toBe("local-computer-block");
+  });
+
+  it("is off unless the caller says exactly true", () => {
+    for (const value of [undefined, false, null, 1, "yes"]) {
+      expect(autoVerdict({}, "Edit", memory, { ownWorkspace: value as never }).approve).toBeNull();
+    }
+  });
+});

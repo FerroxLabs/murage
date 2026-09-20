@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
-import { resetPathCacheForTests } from "../../env-path.ts";
+import { resetPathCacheForTests, restrictInstallScanDirsForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { FuigoAgentDriver, fuigoLocalSlug, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
@@ -482,10 +482,22 @@ describe("fuigo binary resolution — the bundled engine", () => {
     process.env.PATH = emptyBin;
     process.env.HOME = home;
     process.env.MURAGE_FUIGO_DIR = bundleDir;
+    // ...and moving HOME is still not enough. augmentedPath() also scans
+    // ABSOLUTE system directories — /opt/homebrew/bin, /usr/local/bin — that
+    // no environment variable can redirect, so on any machine with a
+    // brew-installed fuigo these cases found the developer's engine,
+    // resolveFuigoCli correctly answered `source: "path"`, and every
+    // assertion below tested the opposite of what it claims. The product is
+    // right to prefer a user's own install; the tests simply could not reach
+    // the "nothing is installed" precondition they assert under. This is how
+    // they reach it. `[]` — not an empty directory — so nothing on this
+    // machine can satisfy the scan by accident.
+    restrictInstallScanDirsForTests([]);
     resetPathCacheForTests();
   });
 
   afterEach(() => {
+    restrictInstallScanDirsForTests(null);
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

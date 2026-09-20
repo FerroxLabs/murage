@@ -19,6 +19,7 @@ import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../confi
 import { augmentedPath } from "../env-path.ts";
 import { claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
+import { toolFilePaths } from "../own-workspace-approval.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
@@ -1160,6 +1161,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
+              // D57: the file this call names, from the CLI's own tool input
+              // rather than from `summary` (which is that input stringified
+              // and cut at 200 characters, so it stops being readable as data
+              // exactly when the edit is long). Policy reads it only to
+              // recognize the bot's own workspace and thread folders.
+              const filePaths = toolFilePaths(ask.input);
               emit({
                 ...base(threadId, eventTurnId),
                 type: "request.opened",
@@ -1176,6 +1183,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   ? ask.questions[0]!.options.map((option) => option.label)
                   : Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
                 ...(ask.questions?.length ? { questions: ask.questions } : {}),
+                ...(filePaths ? { filePaths } : {}),
               });
             },
             onResolve: (resolved) => {
