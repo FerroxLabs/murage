@@ -369,8 +369,12 @@ describe("a key that authenticates but cannot spend", () => {
 });
 
 describe("what this machine can already run", () => {
+  // An engine with something to think with, which is the ordinary case. The
+  // empty-catalogue case has its own describe block at the end of this file,
+  // because it is the bare machine and it is the one we are selling to.
   const instance = (patch: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
     snapshot: { state: "available" },
+    models: { default: "a-model" },
     ...patch,
   });
 
@@ -546,5 +550,40 @@ describe("the view the panel receives", () => {
     const view = setupView(setup.read(ran), ran);
     expect(view.chiefBotId).toBe("bot-chief");
     expect(view.routines).toEqual({ total: 2, briefId: "routine-brief", briefRan: true });
+  });
+});
+
+// THE BARE MACHINE, WHICH IS THE ONE WE ARE SELLING TO.
+//
+// Murage ships Fuigo's binary, so on a machine with nothing else on it the
+// CLI answers --version and reports itself available. That is NOT the same as
+// being able to think: Fuigo is a client, and with no key, no login and no
+// local runtime to reach, its catalogue merges down to nothing.
+//
+// Reading availability alone said "you have an engine" about a person who had
+// no brain at all, ticked the step, and let the card tell them the one in the
+// box was "already running. It is what is talking to you now." Nothing was
+// talking to them. `pickDefaultEngine` has always required a non-empty
+// catalogue for exactly this reason; this reading has to agree with it.
+describe("what counts as an agent this machine can actually use", () => {
+  const instance = (over: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
+    snapshot: { state: "available" },
+    models: { default: "a-model" },
+    ...over,
+  });
+
+  it("does not count an engine that has nothing to think with", () => {
+    const hollow = instance({ instanceId: "fuigo", driverKind: "fuigoAgent", models: {} });
+    expect(setupAgentsReading([hollow]), "a catalogue-less engine was reported as an agent").toEqual([]);
+  });
+
+  it("counts the one in the box once it has something to think with", () => {
+    const ready = instance({ instanceId: "fuigo", driverKind: "fuigoAgent", models: { default: "flux/auto" } });
+    expect(setupAgentsReading([ready])).toEqual([{ id: "fuigo", name: "fuigo", installed: false }]);
+  });
+
+  it("still ignores an engine that is not there and one that is switched off", () => {
+    expect(setupAgentsReading([instance({ instanceId: "codex", snapshot: { state: "unavailable" } })])).toEqual([]);
+    expect(setupAgentsReading([instance({ instanceId: "codex", enabled: false })])).toEqual([]);
   });
 });

@@ -35,6 +35,11 @@ export const SETUP_CARD_VARIANTS = [
   "found",
   /** agents: nothing was found, and the one in the box is doing the work. */
   "bare",
+  /** agents: nothing was found AND the one in the box has nothing to think
+   *  with yet. Separate from "bare" because the two say opposite things, and
+   *  "it is what is talking to you now" is false on a machine with no key,
+   *  no sign-in and no local model. */
+  "bare-needs-key",
   /** flux: the key card, offered. */
   "key",
   /** flux: they said not now, and local work carries on. */

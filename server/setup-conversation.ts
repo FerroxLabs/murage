@@ -61,7 +61,7 @@ const CLOSING_STEP: SetupStep = SETUP_STEPS[SETUP_STEPS.length - 1];
  */
 const ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> = {
   hello: ["welcome"],
-  agents: ["found", "bare"],
+  agents: ["found", "bare", "bare-needs-key"],
   flux: ["key"],
   apps: ["apps"],
   brief: ["brief"],
@@ -143,8 +143,11 @@ function variantForCurrentStep(step: SetupStep, view: SetupView): SetupCardVaria
       return "welcome";
     case "agents":
       // "I found three agents" on a machine with nothing on it is the kind of
-      // small lie that costs the first hour its credibility.
-      return view.agents.some((agent) => agent.installed) ? "found" : "bare";
+      // small lie that costs the first hour its credibility. So is "the one
+      // in the box is already running" on a machine where it has nothing to
+      // think with, which is every bare install before a key exists.
+      if (view.agents.some((agent) => agent.installed)) return "found";
+      return view.agents.length === 0 ? "bare-needs-key" : "bare";
     case "flux":
       return "key";
     case "apps":

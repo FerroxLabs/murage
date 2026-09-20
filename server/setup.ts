@@ -76,21 +76,43 @@ export interface SetupInstanceReading {
   driverKind?: string;
   enabled?: boolean;
   snapshot: { state: string };
+  /** What it can actually be asked to think with. Empty is the whole point:
+   *  see `setupAgentsReading`. */
+  models?: { default?: string };
 }
 
 /**
  * The engines the agents card may honestly claim.
  *
- * Available AND enabled, because a card that says "I connected Claude Code"
- * about an engine that cannot answer is worse than saying nothing. The
- * bundled engine is `fuigoAgent` and is the one thing on the list the person
- * did not put there, so it is reported with `installed: false`: the Chief
- * says "one came in the box" about that and "you already had these" about
- * the rest, and never confuses the two.
+ * Available AND enabled AND able to think, because a card that says "I
+ * connected Claude Code" about an engine that cannot answer is worse than
+ * saying nothing.
+ *
+ * THE CATALOGUE IS THE PART THAT MATTERS, and it is the part this used to
+ * miss. Murage SHIPS Fuigo's binary, so on a machine with nothing else on it
+ * the CLI answers and reports itself available. That is not the same as being
+ * able to think: Fuigo is a client, and with no key, no login and no local
+ * runtime within reach its catalogue merges down to nothing. Availability
+ * alone therefore told somebody with no brain at all that they had an engine,
+ * ticked their agents step, and let the card say the one in the box was
+ * already running and talking to them. It was not.
+ *
+ * `pickDefaultEngine` has always required a non-empty catalogue for exactly
+ * this reason, and would have handed that same person no engine. The two
+ * readings must agree, or the checklist says yes about the thing the selector
+ * says no about.
+ *
+ * The bundled engine is `fuigoAgent` and is the one thing on the list the
+ * person did not put there, so it is reported with `installed: false`: the
+ * Chief says "one came in the box" about that and "you already had these"
+ * about the rest, and never confuses the two.
  */
 export function setupAgentsReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
   return instances
-    .filter((instance) => instance.enabled !== false && instance.snapshot.state === "available")
+    .filter((instance) =>
+      instance.enabled !== false
+      && instance.snapshot.state === "available"
+      && (instance.models?.default ?? "").trim().length > 0)
     .map((instance) => ({
       id: instance.instanceId,
       name: instance.displayName?.trim() || instance.instanceId,

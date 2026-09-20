@@ -77,6 +77,20 @@ export const FIRST_RUN_COPY = {
       body: "There was nothing else on this computer to connect, and there does not need to be.",
       second: "The one that came in the box is already running. It is what is talking to you now.",
     },
+    /**
+     * The bare machine before there is a key.
+     *
+     * Murage ships the engine. It does not ship a brain, and on a computer
+     * with no key, no sign-in and no local model within reach there is
+     * nothing behind it yet. The "bare" card above says the opposite, and on
+     * this machine it would be the first thing the Chief ever said and it
+     * would be false. Saying it plainly is also the honest lead-in, because
+     * the fix is literally the next card.
+     */
+    "bare-needs-key": {
+      body: "There was nothing else on this computer to connect, so it is you and me.",
+      second: "I came with the engine but not yet with anything to think with. One key sorts that, and it is the next thing I will ask you for.",
+    },
   },
   flux: {
     key: {

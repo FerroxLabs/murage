@@ -238,6 +238,7 @@ export const SETUP_BLOCK_REASONS = [
   "apps-unreadable",
   "flux-choice-needed",
   "flux-key-needed",
+  "engine-needs-model",
 ] as const;
 export type SetupBlockReason = (typeof SETUP_BLOCK_REASONS)[number];
 export interface SetupStepBlock {
@@ -410,14 +411,29 @@ export function setupStepBlock(
   };
   switch (step) {
     case "agents":
-      return live.bundledEngine.ready
-        ? undefined
-        : {
-            reason: "engine-unavailable",
+      if (!live.bundledEngine.ready) {
+        return {
+          reason: "engine-unavailable",
+          message:
+            `The engine in the box cannot run on this system: ${live.bundledEngine.reason ?? "the shipped engine did not resolve"}. `
+            + "Use an AI you already pay for, or a local model.",
+        };
+      }
+      // THE BARE MACHINE. The engine is here and has nothing to think with:
+      // Murage ships the engine, not a brain, and on a computer with no key,
+      // no sign-in and no local model within reach there is nothing behind it
+      // yet. Saying so plainly is the whole job, because the fix is the very
+      // next card and a person who is told "you are set up" will not go
+      // looking for it.
+      return live.agents.length === 0
+        ? {
+            reason: "engine-needs-model",
             message:
-              `The engine in the box cannot run on this system: ${live.bundledEngine.reason ?? "the shipped engine did not resolve"}. `
-              + "Use an AI you already pay for, or a local model.",
-          };
+              "The engine came in the box and has nothing to think with yet. One key turns it on, and it is the "
+              + "next thing I will ask you for. An AI you already pay for, or a model running on this computer, "
+              + "works just as well.",
+          }
+        : undefined;
     case "flux":
       if (fluxRefusedOnPayment(live)) {
         return {

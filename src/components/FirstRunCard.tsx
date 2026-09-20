@@ -37,6 +37,8 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
       return <FirstRunAgentsCard />;
     case "bare":
       return <FirstRunBareAgentsCard />;
+    case "bare-needs-key":
+      return <FirstRunBareAgentsCard needsKey />;
     case "key":
       return <FirstRunFluxCard settled={settled} />;
     case "no-key":
@@ -75,7 +77,7 @@ function FirstRunAgentsCard() {
   const { view } = useSetupView();
   if (!view) return null;
   const names = view.agents.filter((agent) => agent.installed).map((agent) => agent.name);
-  if (names.length === 0) return <FirstRunBareAgentsCard />;
+  if (names.length === 0) return <FirstRunBareAgentsCard needsKey />;
   return (
     <FirstRunBubble>
       <FirstRunLine>{foundAgentsLine(names)}</FirstRunLine>
@@ -84,11 +86,21 @@ function FirstRunAgentsCard() {
   );
 }
 
-function FirstRunBareAgentsCard() {
+/**
+ * Two opposite things to say about a machine with nothing else on it.
+ *
+ * Murage ships the engine, not a brain. When something IS within its reach, a
+ * local model or a key already saved, the one in the box really is running
+ * and really is what is answering. When there is nothing, saying that would
+ * be the first sentence the Chief ever spoke and it would be false, so it
+ * says what is actually true and points at the card that fixes it.
+ */
+function FirstRunBareAgentsCard({ needsKey = false }: { needsKey?: boolean }) {
+  const copy = needsKey ? FIRST_RUN_COPY.agents["bare-needs-key"] : FIRST_RUN_COPY.agents.bare;
   return (
     <FirstRunBubble>
-      <FirstRunLine>{FIRST_RUN_COPY.agents.bare.body}</FirstRunLine>
-      <FirstRunLine>{FIRST_RUN_COPY.agents.bare.second}</FirstRunLine>
+      <FirstRunLine>{copy.body}</FirstRunLine>
+      <FirstRunLine>{copy.second}</FirstRunLine>
     </FirstRunBubble>
   );
 }
