@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
@@ -177,6 +178,44 @@ describe("first run copy: the things the flow promises", () => {
   it("never claims found engines on a bare machine", () => {
     expect(FIRST_RUN_COPY.agents.bare.body).not.toMatch(/found|connected them/i);
     expect(foundAgentsLine(["Claude Code", "Codex"])).toContain("Claude Code and Codex");
+  });
+});
+
+// THE KEY CARD IS READ BY TWO PEOPLE IN DIFFERENT SITUATIONS.
+//
+// Murage ships the engine, not the brain. On a clean machine this key is what
+// gives the engine something to think with, and calling it merely
+// "recommended" is an understatement they discover one card later. On a
+// machine that already had Claude Code or Codex, they are working already and
+// telling them they NEED it would be false, and false in the way that reads
+// as a sales pitch.
+describe("what the key card claims, to whom", () => {
+  const key = FIRST_RUN_COPY.flux.key;
+
+  it("does not tell somebody who is already working that they need it", () => {
+    expect(fluxRecommendation({ agents: [{ id: "claude" }] })).toBe(key.recommendationBonus);
+    expect(key.recommendationBonus).toMatch(/optional/i);
+    expect(key.recommendationBonus).not.toMatch(/\bneed\b|\brequired\b/i);
+  });
+
+  it("does not undersell it to somebody who has nothing", () => {
+    expect(fluxRecommendation({ agents: [] })).toBe(key.recommendationBare);
+    expect(key.recommendationBare).not.toMatch(/optional/i);
+  });
+
+  it("takes the milder claim when it cannot tell", () => {
+    // The claim that is never wrong is the one to make with no answer yet.
+    expect(fluxRecommendation(null)).toBe(key.recommendation);
+    expect(fluxRecommendation({})).toBe(key.recommendation);
+  });
+
+  it("leads on routing in every version, and never counts models", () => {
+    for (const line of [key.body, key.recommendation, key.recommendationBare, key.recommendationBonus]) {
+      expect.soft(line, line).not.toMatch(/\d+\s*\+?\s*models/i);
+      expect.soft(line, line).not.toMatch(/composio/i);
+    }
+    expect(key.body).toMatch(/all the latest/i);
+    expect(key.body).toMatch(/routing/i);
   });
 });
 

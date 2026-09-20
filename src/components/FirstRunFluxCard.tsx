@@ -35,11 +35,32 @@ import {
   failureText,
   openOutside,
   skipSetupStep,
+  useSetupView,
 } from "./FirstRunChrome";
 
 const copy = FIRST_RUN_COPY.flux.key;
 
+/**
+ * Which of the two true sentences this person should read.
+ *
+ * `view.agents` is everything this machine can actually think with right now,
+ * and it is empty exactly when nothing can. Murage ships the engine, not the
+ * brain, so on a clean machine the key is the thing standing between them and
+ * an assistant, and on a machine that already had Claude Code or Codex it is
+ * a genuine extra. Telling the second person they need it would be false.
+ *
+ * Unknown view answers the cautious one: the milder claim is the one that is
+ * never wrong.
+ */
+export function fluxRecommendation(view: { agents?: readonly unknown[] } | null | undefined): string {
+  if (!view?.agents) return copy.recommendation;
+  return view.agents.length === 0 ? copy.recommendationBare : copy.recommendationBonus;
+}
+
 export function FirstRunFluxCard({ settled }: { settled: boolean }) {
+  // Live, because what is true about this key depends on what else this
+  // machine can think with, and that can change while the card is on screen.
+  const { view } = useSetupView();
   const desktop = useDesktopSurface();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,7 +108,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
       <FirstRunLine>{copy.body}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
       <FirstRunLine>{copy.third}</FirstRunLine>
-      <FirstRunLine quiet>{copy.recommendation}</FirstRunLine>
+      <FirstRunLine quiet>{fluxRecommendation(view)}</FirstRunLine>
 
       {!done && (
         <div className="mt-3 grid gap-2">

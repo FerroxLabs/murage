@@ -98,7 +98,29 @@ export const FIRST_RUN_COPY = {
       body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
       second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
       third: "It brings pictures, voice and transcription too.",
+      /**
+       * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
+       * SITUATION.
+       *
+       * Murage ships the engine, not the brain. Somebody on a clean machine
+       * has nothing to think with until this key exists, and calling it
+       * "recommended" to them is an understatement they will discover the
+       * hard way one card later. Somebody who already had Claude Code or
+       * Codex on the machine is working already, and telling THEM they need
+       * this would be false, and the kind of false that reads as a sales
+       * pitch.
+       *
+       * Same key, same card, and the honest sentence about it depends on
+       * which of the two is reading. Chosen in the renderer from live
+       * detection rather than by splitting the card in two, so there is
+       * exactly one key card in the transcript however the machine's answer
+       * changes while they are looking at it.
+       */
       recommendation: "Recommended, because it is the one key that opens everything else.",
+      /** Nothing on this machine can think yet. */
+      recommendationBare: "This is the one that matters. I came with the engine and this is what gives it something to think with.",
+      /** They already have a working engine, so this is a genuine extra. */
+      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and voice on top.",
       fieldLabel: "Paste your key",
       placeholder: "Paste your Flux Router key here",
       submit: "Save it",
