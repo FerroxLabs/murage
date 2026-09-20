@@ -132,6 +132,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // permission modes: the command the approval asks about (default "echo hi")
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
+const permissionFile = process.env.FAKE_ACP_PERMISSION_FILE || "/tmp/fake-acp-edit.md";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // opencode-shaped surface: the session carries its own model catalog and the
 // model is chosen with session/set_config_option, because `opencode acp` takes
@@ -1178,7 +1179,7 @@ function handle(msg: any) {
         });
         return;
       }
-      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first") {
+      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first" || mode === "permission-edit-file") {
         // ask the client to approve a tool, then complete once answered.
         // question-tool: the agent routes its AskUserQuestion tool through
         // request_permission (named in the tool call), exactly the shape a
@@ -1202,6 +1203,16 @@ function handle(msg: any) {
                       multiSelect: false,
                     }],
                   },
+                }
+              : mode === "permission-edit-file"
+              // An edit naming a file, the way an ACP engine reports one:
+              // the protocol's `locations` plus the engine's structured
+              // `rawInput`. FAKE_ACP_PERMISSION_FILE names the file.
+              ? {
+                  kind: "edit",
+                  title: "Edit " + permissionFile,
+                  rawInput: { file_path: permissionFile },
+                  locations: [{ path: permissionFile }],
                 }
               : { kind: "execute", rawInput: { command: permissionCommand }, title: permissionCommand },
             options: mode === "permission-session-first"
