@@ -274,7 +274,10 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
     expect(started.body.steered).not.toBe(true);
     expect(started.body.queued).not.toBe(true);
   }
-  let dump: { pid: number; mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } };
+  // `prompt` is what the engine was actually asked to do. Tests that care
+  // whether a turn RAN on the person's own words read it; everything else
+  // ignores it.
+  let dump: { pid: number; prompt?: unknown; mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } };
   try {
     dump = await readJsonFileWhenReady(fakeClaudeDump);
   } catch (error) {
@@ -9812,5 +9815,142 @@ describe("new-bot setup conversation", () => {
     expect((await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
       slug: "starter-business-team", rename: false,
     })).status).toBe(422);
+  });
+
+  // ── M1 ──────────────────────────────────────────────────────────────
+  //
+  // "the first message to a new bot is treated as its intake answer, the
+  // request is dropped, and it can suggest an absurd profile" — the 0.1.56
+  // Mac customer test, verbatim, including the sentence that reproduced it.
+  //
+  // Two separate defects wear one bug number and each is pinned on its own
+  // here, because fixing either alone still leaves a person worse off than
+  // having no setup conversation at all:
+  //
+  //   THE REQUEST WAS DROPPED. The composer sent a typed answer to the intake
+  //   route INSTEAD of to the bot, so whatever the first message was, it was
+  //   read as an answer to "What do you actually want me for?" and never run.
+  //
+  //   THE PROFILE WAS ABSURD. `game-3d`'s curated terms carry `file` and
+  //   `containing`, from its own summary, and two ordinary words out of ten
+  //   were enough to confirm a Three.js game generator for a request about a
+  //   prices file.
+  describe("M1: a first message is a request, not an answer", () => {
+    /** The exact sentence from the repro. */
+    const REQUEST = 'Save a file named notes/prices.md containing the line "Croissant 3.50". Then say done.';
+
+    it("runs the turn, with the opening question still on the table", async () => {
+      const bot = await makeBot("Nova");
+      // The question really is open: this is the state M1 happens in.
+      const question = await openIdOf(bot.threadId);
+      expect((await openCardOf(bot.threadId)).intake).toMatchObject({ step: "open", asked: 1 });
+
+      // THE SEND, exactly as the composer makes it: the ordinary chat route,
+      // question or no question. The fixture engine's launch dump is the
+      // proof — it carries the prompt the engine was actually given.
+      const turn = await startInternalFixtureTurn(bot.id, undefined, REQUEST);
+      try {
+        expect(JSON.stringify(turn.dump.prompt)).toContain("notes/prices.md");
+        expect(JSON.stringify(turn.dump.prompt)).toContain("Croissant 3.50");
+      } finally {
+        await stopFixtureTurn(bot.id, turn, bot.threadId);
+      }
+
+      // AND THE SETUP CONVERSATION IS TOLD, second, the way the composer tells
+      // it. It listens: it records the answer, it does not repeat the person's
+      // words, and — the catalogue having nothing confident to say about a
+      // prices file — it says nothing.
+      const heard = await api("POST", `/api/bots/${bot.id}/intake`, {
+        messageId: question, text: REQUEST, alongside: true,
+      });
+      expect(heard.status, JSON.stringify(heard.body)).toBe(202);
+
+      const after = await transcript(bot.threadId);
+      expect(after.filter((message) => message.role === "user" && message.text === REQUEST)).toHaveLength(1);
+      // Nothing left to answer, and no second question or verdict appended.
+      expect(openQuestion(after)).toBeNull();
+      expect(intakeCards(after).map((entry) => entry.intake?.step)).toEqual(["open"]);
+      expect(intakeCards(after)[0]).toMatchObject({ answered: REQUEST });
+    });
+
+    it("never names 3D Star Adventure for a request about a prices file", async () => {
+      // THE ROUTE AND THE CATALOGUE THE APP SHIPS. `profile.slug` was
+      // "game-3d" here; the confidence floor is what stops it.
+      const suggested = await api("GET", `/api/library/suggest?q=${encodeURIComponent(REQUEST)}`);
+      expect(suggested.status).toBe(200);
+      expect(suggested.body.profile?.slug).not.toBe("game-3d");
+
+      // And the same sentence through the CONVERSATION's own classifier,
+      // which reads the whole catalogue rather than a bm25 top-8: a fresh
+      // bot answering with it is offered no profile at all.
+      const bot = await makeBot("Second Nova");
+      const question = await openIdOf(bot.threadId);
+      expect((await api("POST", `/api/bots/${bot.id}/intake`, {
+        messageId: question, text: REQUEST, alongside: true,
+      })).status).toBe(202);
+      const cards = intakeCards(await transcript(bot.threadId));
+      expect(cards.flatMap((entry) => entry.intake?.candidate ? [entry.intake.candidate.slug] : [])).toEqual([]);
+    });
+
+    it("the soft case is answered by the bot, not by a second question", async () => {
+      // "Reply with one short sentence: what is the capital of Australia?"
+      // came back as another intake question instead of the answer.
+      const soft = "Reply with one short sentence: what is the capital of Australia?";
+      const bot = await makeBot("Third Nova");
+      const question = await openIdOf(bot.threadId);
+      const turn = await startInternalFixtureTurn(bot.id, undefined, soft);
+      try {
+        expect(JSON.stringify(turn.dump.prompt)).toContain("capital of Australia");
+      } finally {
+        await stopFixtureTurn(bot.id, turn, bot.threadId);
+      }
+      expect((await api("POST", `/api/bots/${bot.id}/intake`, {
+        messageId: question, text: soft, alongside: true,
+      })).status).toBe(202);
+      // No follow-up question, and no "Fine, general it is" either.
+      const after = await transcript(bot.threadId);
+      expect(intakeCards(after).map((entry) => entry.intake?.step)).toEqual(["open"]);
+      expect(after.some((message) => message.text?.startsWith("Fine, general it is"))).toBe(false);
+    });
+
+    it("a confirm card is not spent by a request that has nothing to do with it", async () => {
+      // The same bug one turn later. A person who answers the opening
+      // question, is offered a profile, and then asks for something else must
+      // get the something else — and must not lose the offer, which is a
+      // decision they have not made yet.
+      const bot = await makeBot("Fourth Nova");
+      await say(bot, FIRM_ANSWER);
+      const offer = await openCardOf(bot.threadId);
+      expect(offer.intake).toMatchObject({ step: "confirm", outcome: "profile" });
+      const offerId = await openIdOf(bot.threadId);
+
+      const heard = await api("POST", `/api/bots/${bot.id}/intake`, {
+        messageId: offerId, text: REQUEST, alongside: true,
+      });
+      expect(heard.status).toBe(202);
+
+      const after = await transcript(bot.threadId);
+      // The offer is untouched and still pressable.
+      expect(openQuestion(after)?.id).toBe(offerId);
+      expect(after.find((message) => message.id === offerId)?.card?.answered).toBeUndefined();
+      // Nothing was said over the top of it, and the request is not recorded
+      // here — the chat route carries that.
+      expect(after.some((message) => message.text?.startsWith("Fine, general it is"))).toBe(false);
+      expect(after.some((message) => message.role === "user" && message.text === REQUEST)).toBe(false);
+    });
+
+    it("still offers a profile alongside, when the catalogue has one to name", async () => {
+      // THE FEATURE IS NOT DELETED. A person whose first message really is
+      // about one thing gets their turn AND the offer.
+      const bot = await makeBot("Fifth Nova");
+      const question = await openIdOf(bot.threadId);
+      expect((await api("POST", `/api/bots/${bot.id}/intake`, {
+        messageId: question, text: FIRM_ANSWER, alongside: true,
+      })).status).toBe(202);
+      const after = await transcript(bot.threadId);
+      expect(openQuestion(after)?.card?.intake).toMatchObject({ step: "confirm", outcome: "profile" });
+      // Still without repeating the person's words: the chat route has them.
+      expect(after.filter((message) => message.role === "user" && message.text === FIRM_ANSWER)).toHaveLength(0);
+    });
   });
 }, 120_000);

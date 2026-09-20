@@ -28,6 +28,7 @@ import {
   describeIntakeSkill,
   intakeChipAction,
   intakeClarifiedQuery,
+  intakeCorroborationFloor,
   intakeProfileMatches,
   intakeSkillMatches,
   intakeVocabulary,
@@ -173,6 +174,55 @@ describe("the relevance gate", () => {
 
   it("rejects everything when the answer carried no topic at all", () => {
     expect(intakeProfileMatches(trader, [])).toBe(false);
+  });
+});
+
+describe("the confidence floor", () => {
+  // One whole word carries a short answer; a paragraph has to be spoken to
+  // more than once. The boundaries, pinned, because the whole of M1 is that
+  // ten topic words were claimed by one of them.
+  it("asks for more of a longer sentence", () => {
+    expect([1, 2, 3, 4, 5].map(intakeCorroborationFloor)).toEqual([1, 1, 1, 1, 1]);
+    expect([6, 7, 8, 9].map(intakeCorroborationFloor)).toEqual([2, 2, 2, 2]);
+    expect([10, 11, 12].map(intakeCorroborationFloor)).toEqual([3, 3, 3]);
+  });
+
+  it("never asks for less than one, or more than three", () => {
+    expect(intakeCorroborationFloor(0)).toBe(1);
+    expect(intakeCorroborationFloor(99)).toBe(3);
+  });
+
+  // The gate, over a bag of words standing in for a curated list. `game-3d`'s
+  // real list is scored against the real catalogue in
+  // shared/intake-matches.test.ts; this is the rule underneath it.
+  const generator: IntakeCatalogEntry = {
+    slug: "not-in-the-catalogue",
+    name: "Generator",
+    summary: "Generates a runnable html file containing a platformer game",
+    category: "Games",
+    skills: [],
+  };
+
+  it("one whole word out of ten does not claim the sentence", () => {
+    const ten = intakeTopicTokens(
+      'Save a file named notes/prices.md containing the line "Croissant 3.50". Then say done.',
+    );
+    expect(ten).toHaveLength(10);
+    // `file` and `containing` are both in the summary above, and two is one
+    // short of what ten topic words ask for.
+    expect(intakeProfileMatches(generator, ten)).toBe(false);
+  });
+
+  it("three whole words out of the same length still claim it", () => {
+    const nine = intakeTopicTokens(
+      "generate a runnable html file containing a platformer game with pickups",
+    );
+    expect(nine).toHaveLength(8);
+    expect(intakeProfileMatches(generator, nine)).toBe(true);
+  });
+
+  it("one whole word out of two still claims it", () => {
+    expect(intakeProfileMatches(generator, ["platformer", "qqqq"])).toBe(true);
   });
 });
 
@@ -940,6 +990,14 @@ describe("what the renderer sends back", () => {
     expect(calls).toEqual([
       { path: "/api/bots/bot-1/intake", method: "POST", body: { messageId: "msg-9", text: "chasing invoices" } },
     ]);
+  });
+
+  it("marks a composer send as alongside, so the route knows it is not the turn", () => {
+    // A chip press carries no flag: a chip is only ever an answer, and there
+    // is no engine turn beside it to say so about.
+    const { calls, request } = wire([{ ok: true }]);
+    void replyToIntake("bot-1", "msg-9", "chasing invoices", request, { alongside: true });
+    expect(calls[0]!.body).toEqual({ messageId: "msg-9", text: "chasing invoices", alongside: true });
   });
 
   it("closes a confirm card with an outcome and nothing else", async () => {

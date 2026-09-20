@@ -91,8 +91,29 @@
 //      silently does nothing — removing `trading` once did nothing at all,
 //      because `trade` was still there.
 //
+//   6. THIRD PASS, on the slugs step 5 could not see. Step 5 probed the LIVE
+//      set, and its control suite defined "live" as "declares a skill that
+//      resolves on disk" — but `intakeProfileAt` has offered PLAYBOOK-ONLY
+//      profiles since playbooks landed, and eleven of those declare no skills
+//      at all. Their lists were never judged by eye, and the same step-5 rule
+//      removes four of their terms on sight:
+//
+//        `watch`  (competitor-watch)    "watch the kids while I go to the shop"
+//        `files`  (planning-with-files) "there is a stack of files on my desk"
+//        `broken` (cli-setup)           "the heating system is broken"
+//        `system` (engineering)         the same sentence
+//
+//      All four are SHAPE PROSE lifted from a summary — "detect material
+//      changes", "persistent markdown files", "connect coding-agent CLIs",
+//      "a scoped implementation plan" — and none survives the rule's question,
+//      "would a person typing ONLY this word mean this profile?". `watches`
+//      is deliberately kept: it still reaches the profile from "watch my
+//      competitors" as an inflection, which is a narrowing question rather
+//      than a one-press confirm.
+//
 // WHAT THIS FILE IS NOT: a synonym dictionary, and not a scoring table. Every
-// term is equal, and the gate that reads them is still "one whole word".
+// term is equal, and the gate that reads them is still "enough whole words for
+// the length of the sentence" (`intakeCorroborationFloor`).
 //
 // ADDING A PROFILE: add its slug here. A slug that is missing still works —
 // see `intakeVocabulary` — but it falls back to entry text filtered through
@@ -145,7 +166,7 @@ export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
   "book-publisher": "author book edit kdp publish publisher publishing",
   "book-story-architect": "architect book chapters characters drafting fiction novel outline plot publishing story",
   builder: "automation automations bot bots code scripting workflow",
-  "cli-setup": "authenticate authenticated backend backends broken claude cli clis code codex coding connect connections expert kimi murage opencode qwen setup",
+  "cli-setup": "authenticate authenticated backend backends claude cli clis code codex coding connect connections expert kimi murage opencode qwen setup",
   concierge: "concierge unsure",
   cowork: "artifact cowork description editable finished knowledge oriented outcome useful verifiable workspace",
   creator: "content creative creator image instagram model posts prompt prompts scripts social tiktok video visual youtube",
@@ -161,7 +182,7 @@ export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
   "morph-ppt-3d": "built cinematic deck glb models morph ppt pptx presentations smooth transitions",
   "morph-ppt": "animated animation beautiful deck morph ppt pptx presentations slides",
   "pitch-deck-creator": "creator deck investor narrative officecli pitch powerpoint pptx presentation presentations slides",
-  "planning-with-files": "acquired context disk files manus markdown memory meta persistent productivity survives window",
+  "planning-with-files": "acquired context disk manus markdown memory meta persistent productivity survives window",
   "ppt-creator": "analyzes creator deck edits officecli powerpoint ppt pptx presentations",
   researcher: "citations evidence facts research researcher search source sources",
   "smart-trader": "backtest charts crypto forex futures indicator investing markets portfolio stocks ticker trade trader trades trading tradingview tvcontrol",
@@ -181,7 +202,7 @@ export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
   "cold-outbound": "copy email intake leads outbound outreach prospecting research sales sell",
   "cold-pitch-bench": "buyer email outbound outreach pitch prospect prospecting researcher sell sequence voice",
   "comparison-roundup-builder": "affiliate article comparison copy money page research review roundup schema versus",
-  "competitor-watch": "announcements approved bot changed changes competitor cosmetic dated detect evidence explains ignores intelligence launch material matter moves noise pages positioning pricing product public records strategy watch watches",
+  "competitor-watch": "announcements approved bot changed changes competitor cosmetic dated detect evidence explains ignores intelligence launch material matter moves noise pages positioning pricing product public records strategy watches",
   "content-refresh-crew": "analyst articles blog content copy refresh research seo",
   "content-studio": "blog brand channels content copy editorial pipeline publish publishing social voice",
   "creator-studio": "audience brand channels copy creator creators monetise monetize newsletter sponsorship studio",
@@ -192,7 +213,7 @@ export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
   "ecommerce-engine": "brand channels copy dtc ecommerce fulfillment fulfilment marketplace optimize orders sell shopify store storefront support",
   "editorial-newsroom": "articles audit beacon calendar chief content editor editorial mira newsroom publishing quill scout series",
   "email-lifecycle-crew": "analyst automation broadcast calendar channels copy email flows lifecycle newsletter research sequences",
-  engineering: "backend boundaries calling convert engineering implementation inspects interface owned ownership product protects result safely separates sequenced shipped software system verifies",
+  engineering: "backend boundaries calling convert engineering implementation inspects interface owned ownership product protects result safely separates sequenced shipped software verifies",
   "fine-print-guard": "adversarial agreement audit clause contract contracts counterparty fine legal payment redline redlines risk terms writer",
   "first-customers": "acquisition channels copy customers launch research sales sell",
   "founder-setup": "admin brand counsel financial founder incorporation legal numbers ops setup startup",

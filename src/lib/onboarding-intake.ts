@@ -233,14 +233,58 @@ export function intakeProfileMatches(
   return vocabularyMatches(intakeVocabulary(entry, extra), tokens);
 }
 
+/** How many WHOLE WORDS a profile has to account for before it is allowed to
+ *  claim a sentence. The confidence floor, and the one number that stops
+ *  "I'd set myself up as 3D Star Adventure" from answering a request to write
+ *  a prices file.
+ *
+ *  WHY A FLOOR AT ALL, AND WHY THIS SHAPE. `game-3d`'s curated list carries
+ *  `file` and `containing`, because its own summary is "a complete, runnable
+ *  HTML **file containing** a 3D platformer". Both words are real claims about
+ *  that profile and neither is removable: strip them and "generate an HTML
+ *  file containing a 3D game" stops reaching the profile that exists for it.
+ *  Nothing frequency-shaped separates them from a good term either — measured
+ *  on the shipped lists, `file` appears in exactly ONE list out of 132, the
+ *  same as `invoice`.
+ *
+ *  What does separate them is how much of the SENTENCE each accounts for.
+ *  `invoice` is one word out of the two in "chasing invoices". `file` is one
+ *  out of the ten in 'Save a file named notes/prices.md containing the line
+ *  "Croissant 3.50". Then say done.' The first is the sentence; the second is
+ *  a word that happened to be in it.
+ *
+ *  So: ONE whole word up to FIVE topic words, TWO up to nine, THREE beyond.
+ *  It is the same argument this module already makes one paragraph down about
+ *  inflections ("one inflected hit out of a five-word sentence is a
+ *  coincidence dressed as a match"), extended to whole words — because at ten
+ *  topic words, one whole word is a coincidence too.
+ *
+ *  FIVE IS MEASURED, not chosen for roundness. It is where the shipped
+ *  catalogue's own control set stops tolerating a second required word: "run a
+ *  smoke test on my landing page" is five topic words reaching
+ *  `validation-cell` on `test` alone, and "validate my startup idea before I
+ *  build it" is five reaching `validate-before-build`. Demanding two there
+ *  loses the first. Six is where the M1 soft case sits — "Reply with one short
+ *  sentence: what is the capital of Australia?" reaching `reply-desk` on
+ *  `reply` — and ten is M1 itself.
+ *
+ *  `MAX_TOPIC_TOKENS` is 12, so the cap is reached rather than theoretical;
+ *  it is written down anyway so raising that bound cannot quietly demand four. */
+export function intakeCorroborationFloor(tokenCount: number): number {
+  return Math.min(3, Math.max(1, Math.ceil((tokenCount - 1) / 4)));
+}
+
 /** The gate itself, over any bag of words: a profile's vocabulary or a single
  *  skill's.
  *
- *  ONE WHOLE WORD IS ENOUGH — "chasing invoices" must reach the profile whose
- *  own copy says "invoices", because that sentence is the example printed on
- *  the card. AN INFLECTION ALONE IS NOT, once the person gave us more than one
- *  word to work with: `charts`→`chart` is a real plural, but one inflected hit
- *  out of a five-word sentence is a coincidence dressed as a match.
+ *  ONE WHOLE WORD IS ENOUGH FOR A SHORT ANSWER — "chasing invoices" must reach
+ *  the profile whose own copy says "invoices", because that sentence is the
+ *  example printed on the card. Beyond five topic words it is not enough on
+ *  its own; see `intakeCorroborationFloor`.
+ *
+ *  AN INFLECTION ALONE IS NOT, once the person gave us more than one word to
+ *  work with: `charts`→`chart` is a real plural, but one inflected hit out of
+ *  a five-word sentence is a coincidence dressed as a match.
  *
  *  `Math.min(2, tokens.length)` rather than a flat 2 is deliberate and load
  *  bearing: a one-word answer has no second token to corroborate with, and
@@ -248,11 +292,17 @@ export function intakeProfileMatches(
  *  which is the only stemming this module has. */
 function vocabularyMatches(vocabulary: ReadonlySet<string>, tokens: readonly string[]): boolean {
   if (tokens.length === 0) return false;
-  const needed = Math.min(2, tokens.length);
+  const floor = intakeCorroborationFloor(tokens.length);
+  const needed = Math.max(Math.min(2, tokens.length), floor);
+  let exact = 0;
   let hits = 0;
   for (const token of tokens) {
-    if (vocabulary.has(token)) return true;
-    if (!tokenHits(vocabulary, token)) continue;
+    if (vocabulary.has(token)) {
+      exact += 1;
+      // Whole words carry the sentence on their own, once there are enough of
+      // them for the length of it.
+      if (exact >= floor) return true;
+    } else if (!tokenHits(vocabulary, token)) continue;
     hits += 1;
     if (hits >= needed) return true;
   }
@@ -579,16 +629,25 @@ export function intakePath(botId: string): string {
  *  open. The label goes back exactly as it arrived — the renderer never sends
  *  a step, a slug or a decision, because the server reads the step off its own
  *  stored card and a renderer that decided would be a second source of truth
- *  for the same conversation. */
+ *  for the same conversation.
+ *
+ *  `alongside` is the composer's send, which has ALREADY gone to the bot on
+ *  the ordinary chat route. It is a statement of fact, not a decision: it
+ *  tells the server that this sentence is a turn the engine is running and
+ *  that the transcript already carries it. The server answers by listening
+ *  rather than taking it over — it records the answer, it does not repeat the
+ *  person's words, and it speaks only if the catalogue has a profile to name.
+ *  A chip press sends no flag, because a chip is only ever an answer. */
 export async function replyToIntake(
   botId: string,
   messageId: string,
   text: string,
   request: IntakeRequest,
+  options: { alongside?: boolean } = {},
 ): Promise<void> {
   await request(intakePath(botId), {
     method: "POST",
-    body: JSON.stringify({ messageId, text }),
+    body: JSON.stringify({ messageId, text, ...(options.alongside ? { alongside: true } : {}) }),
   });
 }
 
