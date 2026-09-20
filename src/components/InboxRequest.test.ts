@@ -95,7 +95,12 @@ describe("the Inbox's own view tabs", () => {
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
     expect(html.match(/aria-pressed="false"/g)).toHaveLength(3);
     // the filled chip is the selected one, not some other control
-    expect(/aria-pressed="true"[^>]*class="[^"]*bg-accent /.test(html) || /class="[^"]*bg-accent [^"]*"[^>]*aria-pressed="true"/.test(html)).toBe(true);
+    const selected = html.match(/<button[^>]*aria-pressed="true"[^>]*>/)![0];
+    expect(selected).toMatch(/\bbg-accent\b/);
+    // …and it carries exactly one background. `bg-control bg-accent` leaves
+    // the winner to stylesheet order, which painted white ink on light grey.
+    expect(selected).not.toMatch(/\bbg-control\b/);
+    expect(html.match(/<button[^>]*aria-pressed="false"[^>]*>/)![0]).toMatch(/\bbg-control\b/);
     // the old selected style was a tint on a grey control — invisible
     expect(html).not.toContain("bg-accent/10");
   });

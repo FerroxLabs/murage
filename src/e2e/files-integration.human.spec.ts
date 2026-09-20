@@ -106,9 +106,11 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   const download = page.waitForEvent("download"); await page.getByRole("button", { name: "Download saved copy", exact: true }).click();
   expect(createHash("sha256").update(readFileSync((await (await download).path())!)).digest("hex")).toBe(artifact.sha256);
   await page.getByRole("button", { name: "Close Files", exact: true }).click();
+  // 0.1.57: the Inbox has a sidebar row of its own; Tools keeps Files.
   await sidebar.getByRole("button", { name: /^Tools/ }).click();
-  const menu = sidebar.getByRole("menu", { name: "Tools" }); expect((await menu.getByRole("menuitem").allTextContents()).slice(0, 2)).toEqual(["Inbox", "Files"]);
-  await menu.getByRole("menuitem", { name: "Inbox", exact: true }).click();
+  const menu = sidebar.getByRole("menu", { name: "Tools" }); expect((await menu.getByRole("menuitem").allTextContents()).slice(0, 1)).toEqual(["Files"]);
+  await sidebar.getByRole("button", { name: /^Tools/ }).click();
+  await sidebar.locator("[data-sidebar-needs-you]").click();
   await page.getByRole("button", { name: "Results", exact: true }).click();
   await page.getByRole("button", { name: "Open file", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Files", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();

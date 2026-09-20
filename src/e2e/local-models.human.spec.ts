@@ -222,7 +222,7 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   // behind a disclosure.
   await tabTo(page, `Test ${TOOL_MODEL}`);
   await page.keyboard.press("Enter");
-  await expect(card.getByText("Tools work — ready for agents", { exact: true })).toBeVisible();
+  await expect(card.getByText("Tools work — ready for bots", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Use with a bot", exact: true })).toBeVisible();
   await expect(card.getByText(/^Usable by .*Codex, Claude$/)).toBeVisible();
   await tabTo(page, `Test ${PROSE_MODEL}`);
@@ -284,7 +284,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   await section.getByRole("button", { name: "Add server", exact: true }).click();
   const card = section.getByRole("region", { name: `llama.cpp on ${SERVER_NAME} local model server`, exact: true });
   await card.getByRole("button", { name: `Test ${TOOL_MODEL}`, exact: true }).click();
-  await expect(card.getByText("Tools work — ready for agents", { exact: true })).toBeVisible();
+  await expect(card.getByText("Tools work — ready for bots", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: `Test ${PROSE_MODEL}`, exact: true }).click();
   await expect(card.getByText("This model answers but can't use tools (it came back as text)", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Close settings", exact: true }).click();

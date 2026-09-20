@@ -8,8 +8,17 @@ const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py
 // The selected view is a filled chip, not a grey one with a slightly
 // different edge: on the control tone the old `border-accent bg-accent/10`
 // was invisible at a glance, so all four tabs read as "not selected".
+//
+// Built without the shared button class on purpose. Adding `bg-accent
+// text-accent-ink` ON TOP of that class leaves `bg-control` in the list too,
+// and which one paints is decided by stylesheet order, not by the order the
+// names appear here — which is how white ink ended up on a light grey chip
+// at 1.48:1.
+const tabBase = "min-h-10 rounded-lg border px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const viewTab = (selected: boolean) =>
-  `${button} ${selected ? "border-accent bg-accent font-medium text-accent-ink hover:bg-accent hover:brightness-110" : ""}`;
+  `${tabBase} ${selected
+    ? "border-accent bg-accent font-medium text-accent-ink hover:brightness-110"
+    : "border-hairline/50 bg-control text-ink hover:bg-raised-hover"}`;
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 const statusLabel = (status: string) => status.replaceAll("-", " ").replace(/^./, first => first.toUpperCase());
 /** "Ember · Weekly report" is the thread's label; the bot is its first part. */
