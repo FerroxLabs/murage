@@ -27,12 +27,16 @@ const routineRequest = z.object({ version: z.literal(1), requestId: text, botId:
 const skillRequest = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, stagedId: text, action: z.enum(["create", "update"]), name: text, gist: text, source: text.optional(), preview: text.optional(), sha256: text.optional(), warnings: strings, createdAt: number }).passthrough();
 const candidate = z.object({ slug: text, name: text, skillNames: strings }).passthrough();
 const intake = z.object({ step: z.enum(["open", "narrow", "confirm"]), outcome: z.enum(["profile", "general"]).optional(), candidate: candidate.optional(), choices: z.array(candidate).optional(), asked: z.union([z.literal(1), z.literal(2)]) }).passthrough();
+const setupCard = z.object({ step: text, variant: text, key: text, settled: boolean.optional() }).passthrough();
 const card = z.object({
   title: text, options: strings,
   // Older stored approval cards omit subtitle. Recovery never invents one.
   subtitle: text.optional(), answered: text.optional(), dismissed: boolean.optional(), requestId: text.optional(),
   tool: text.optional(), held: text.optional(), allowKey: text.optional(), approvalScope: z.literal("local-computer").optional(),
   routineRequest: routineRequest.optional(), routineProposalDigest: text.optional(), skillRequest: skillRequest.optional(), intake: intake.optional(),
+  // A guided first run survives a restore intact, so the transcript still
+  // reads as the conversation it was rather than as a row of blank cards.
+  setup: setupCard.optional(),
 }).passthrough();
 const connector = z.object({ slug: text, alias: text.optional(), label: text, description: text, status: z.enum(["required", "authorizing", "connected", "failed"]), resumeKey: text, error: text.optional(), dismissed: boolean.optional(), resumed: boolean.optional() }).passthrough();
 const secret = z.object({ target: z.custom<string>(isCredentialTargetId), label: text, description: text, placeholder: text, helpUrl: text, requestKey: text, provided: boolean.optional(), dismissed: boolean.optional(), resumed: boolean.optional(), error: text.optional() }).passthrough();

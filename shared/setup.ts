@@ -1,17 +1,23 @@
 import { z } from "zod";
 
-// Guided first run — the frozen contract for 0.1.57.
+// Guided first run — the frozen contract for 0.1.58.
 //
 // The SERVER owns the list, the order and every step's `done`. A model may
 // add a sentence of personality between cards; it never decides that a step
 // is finished. Every `done` in here is DERIVED from live state on every
 // read, so re-running `/setup` on a working install shows the finished steps
 // as finished and reinstalls nothing.
+//
+// 0.1.58 re-cut the list. 0.1.57 asked eight questions in a modal; this one
+// answers as many as it can before it asks anything, and what remains is six
+// steps in the order the person experiences them: say hello, see what is
+// already on the machine, unlock the rest with one key, connect the accounts
+// the work actually lives in, get one useful thing running, then add a
+// couple more. Detection comes first everywhere: a question whose answer is
+// already on the machine is a question that should never have been asked.
 
-/** The eight steps, in the order they are presented. `flux` is always first:
- *  the key unlocks the included brain and the connected apps, so it is asked
- *  before anything else. */
-export const SETUP_STEPS = ["flux", "purpose", "brain", "crew", "apps", "first-task", "voice", "wrap"] as const;
+/** The six steps, in the order they are presented. */
+export const SETUP_STEPS = ["hello", "agents", "flux", "apps", "brief", "routines"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 export const setupStepSchema = z.enum(SETUP_STEPS);
 
@@ -20,11 +26,12 @@ export const setupStepSchema = z.enum(SETUP_STEPS);
  *  step configures (MEMORY.md, a bot profile), never in the checklist. */
 export const SETUP_NOTE_MAX = 500;
 
-/** The crew step's "just one assistant" choice, recorded as the step's note.
- *  The one note value the server reads rather than merely stores. */
-export const SETUP_SOLO_CREW = "just-one-assistant";
+/** How many routines count as "a couple more" beyond the morning brief. The
+ *  brief is one of them, so the routines step asks for one more thing, not
+ *  two. */
+export const SETUP_ROUTINES_TARGET = 2;
 
-export const SETUP_STATE_VERSION = 1;
+export const SETUP_STATE_VERSION = 2;
 
 export const setupStepStateSchema = z.object({
   done: z.boolean(),
@@ -39,14 +46,12 @@ export const setupStepStateSchema = z.object({
 export type SetupStepState = z.infer<typeof setupStepStateSchema>;
 
 const setupStepsSchema = z.object({
+  hello: setupStepStateSchema,
+  agents: setupStepStateSchema,
   flux: setupStepStateSchema,
-  purpose: setupStepStateSchema,
-  brain: setupStepStateSchema,
-  crew: setupStepStateSchema,
   apps: setupStepStateSchema,
-  "first-task": setupStepStateSchema,
-  voice: setupStepStateSchema,
-  wrap: setupStepStateSchema,
+  brief: setupStepStateSchema,
+  routines: setupStepStateSchema,
 }).strict();
 
 export const setupStateSchema = z.object({
@@ -56,6 +61,11 @@ export const setupStateSchema = z.object({
   /** The bot the person first met. It is the Chief of Staff and hosts setup;
    *  a crew installed later reports to it and never replaces it. */
   chiefBotId: z.string().min(1).max(180).optional(),
+  /** The routine the brief step created, so the step can find it again
+   *  without matching on a name the person is free to change. Recorded, and
+   *  still checked against the live routine list on every read: a brief the
+   *  person deleted puts the step back. */
+  briefRoutineId: z.string().min(1).max(180).optional(),
 }).strict();
 export type SetupState = z.infer<typeof setupStateSchema>;
 
@@ -94,6 +104,67 @@ export interface SetupFluxReading {
 }
 
 /**
+ * One engine this machine can actually run, as the agents step reports it.
+ *
+ * `installed` separates the two sentences the Chief has to be able to say.
+ * An engine the person installed themselves is news to them only in the
+ * sense that Murage found it ("you already had Claude Code and Codex here,
+ * I have connected them"); the engine Murage ships is not something they
+ * did, so on a bare machine the Chief says it came in the box instead.
+ * Saying "I found three agents" on a machine with nothing on it is the kind
+ * of small lie that costs the whole first hour its credibility.
+ */
+export interface SetupAgentReading {
+  /** The engine instance id, as `/api/instances` reports it. */
+  id: string;
+  /** What to call it on screen. */
+  name: string;
+  /** Found on this computer, rather than shipped inside Murage. */
+  installed: boolean;
+}
+
+/**
+ * Whether this machine can hand the person's phone a working address.
+ *
+ * Pairing runs over Tailscale. Without it the QR code would resolve to an
+ * address the phone cannot reach, so the pairing card is not offered at all:
+ * the Chief offers to set Tailscale up instead. Never a dead button, which is
+ * the same rule the rest of this flow follows.
+ *
+ * NOT part of `SetupLiveState`, and deliberately so. Tailscale is found by
+ * the Electron main process (`findTailscale`, electron/companion-remote-access.mjs),
+ * and the server runs in a forked utility process that cannot see it. The
+ * server reports only what the server can actually measure; the renderer asks
+ * the desktop bridge for this one and decides the card for itself. A field on
+ * the view that the server had to guess at would be a field that lies on some
+ * machine.
+ */
+export interface SetupPhoneReading {
+  /** Tailscale is installed on this computer. */
+  installed: boolean;
+  /** ...and signed in, so an address it hands out would actually resolve. */
+  signedIn: boolean;
+}
+
+/** Whether the pairing card may be offered at all. Both halves are required:
+ *  an installed Tailscale that nobody has signed into hands out an address
+ *  that resolves for no one. */
+export function phonePairable(phone: SetupPhoneReading): boolean {
+  return phone.installed && phone.signedIn;
+}
+
+/** What the brief and routines steps measure. The brief is not done when it
+ *  is scheduled; it is done when it has RUN. */
+export interface SetupRoutineReading {
+  /** Every routine in the workspace, however it was created. */
+  total: number;
+  /** The morning brief, once it exists. */
+  briefId: string | null;
+  /** ...and it has produced at least one completed run. */
+  briefRan: boolean;
+}
+
+/**
  * A provider rejection recorded against an engine — the safe structured
  * facts only, never request or response text.
  *
@@ -113,6 +184,11 @@ export interface SetupRefusalReading {
  *  here is remembered from an earlier answer, and no field may be supplied
  *  by a model or by the request body. */
 export interface SetupLiveState {
+  /** The name on the owner's profile, or "" when they have not given one.
+   *  The hello step's only measurement, and what the Chief calls them. */
+  ownerName: string;
+  /** Engines this machine can run right now, bundled and found. */
+  agents: readonly SetupAgentReading[];
   /** The Flux Router connection as the app's own credential policy reports
    *  it, plus whether the saved key is shaped like a key at all. The key
    *  itself never leaves the server. */
@@ -141,8 +217,8 @@ export interface SetupLiveState {
   connectedApps: number | null;
   /** A settled engine reply exists somewhere in the workspace. */
   botReplyExists: boolean;
-  /** The Chief's MEMORY.md holds something other than the seed template. */
-  chiefMemoryWritten: boolean;
+  /** Routines, and the morning brief's own state. */
+  routines: SetupRoutineReading;
 }
 
 /**
@@ -156,7 +232,13 @@ export interface SetupLiveState {
  * third outcome: it was done properly, and something outside the person's
  * control stops it working. Not wrong, not missing, not skipped.
  */
-export const SETUP_BLOCK_REASONS = ["payment-required", "engine-unavailable", "apps-unreadable", "flux-choice-needed"] as const;
+export const SETUP_BLOCK_REASONS = [
+  "payment-required",
+  "engine-unavailable",
+  "apps-unreadable",
+  "flux-choice-needed",
+  "flux-key-needed",
+] as const;
 export type SetupBlockReason = (typeof SETUP_BLOCK_REASONS)[number];
 export interface SetupStepBlock {
   reason: SetupBlockReason;
@@ -174,6 +256,13 @@ function refusedOnPayment(live: SetupLiveState): boolean {
 /** That payment refusal was Flux Router's account, not somebody else's. */
 function fluxRefusedOnPayment(live: SetupLiveState): boolean {
   return refusedOnPayment(live) && (live.chiefUsesFlux || live.chiefRefusal?.provider === "flux-router");
+}
+
+/** A Flux key is saved, well shaped and unambiguous. The apps step needs one
+ *  before it can offer anything, so it reads this rather than forming its own
+ *  opinion of the flux step. */
+export function fluxUsable(live: SetupLiveState): boolean {
+  return live.flux.configured && live.flux.looksValid && !live.flux.conflict;
 }
 
 /** Prefixes that identify a DIFFERENT provider, as the connection card's own
@@ -206,42 +295,38 @@ export function setupStepAnswered(recorded: SetupStepState): boolean {
 /**
  * The one place a step's `done` is decided.
  *
- * Five of the eight read live state alone, so answering them cannot make them
- * true. `purpose` and `voice` have nothing outside the answer to measure;
- * `wrap` needs both the confirmation and the lines actually on disk; and
- * `crew` takes a deliberate "just one assistant" as an answer to a question
- * whose other answer is a bot that exists.
+ * Five of the six read live state alone, so answering them cannot make them
+ * true. `hello` is the exception, and only half an exception: a saved profile
+ * name is a live fact read back from config, and the recorded answer only
+ * covers the person who gave a name and then cleared it.
+ *
+ * `brief` is the rule this release exists to enforce. A scheduled routine is
+ * a promise; the step is done when the brief has actually RUN once, because
+ * configured is not the same as working and the whole point of the first run
+ * is that the person SEES the thing work before they are left alone with it.
  */
 export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: SetupLiveState): boolean {
   switch (step) {
+    case "hello":
+      return live.ownerName.trim().length > 0 || setupStepAnswered(recorded);
+    case "agents":
+      // Not "an engine is configured": an engine this machine can RUN. On a
+      // bare machine that is the one in the box, which is why this is
+      // normally already true by the time anybody reads it.
+      return live.agents.length >= 1;
     case "flux":
       // A saved, well-shaped key is not the same as a key that can buy a
       // token. When Flux Router itself has refused a turn on payment, this
       // step is NOT done — it is blocked, with the key kept exactly as it
       // is, because the key is right and the spending is not. Several saved
       // keys with none chosen is not done either: nothing is routing yet.
-      return live.flux.configured
-        && live.flux.looksValid
-        && !live.flux.conflict
-        && !fluxRefusedOnPayment(live);
-    case "purpose":
-      return setupStepAnswered(recorded);
-    case "brain":
-      // Not "an engine is selected" and not "some engine answered": the
-      // Chief's OWN selection is the one that has to work, because that is
-      // what every channel and every teammate hand-off will use. A model
-      // picked for one task only does not qualify.
-      return live.chiefInstanceId !== "" && live.chiefAnsweredBy.includes(live.chiefInstanceId);
-    case "crew":
-      return live.crewSize >= 1 || (setupStepAnswered(recorded) && recorded.note?.trim() === SETUP_SOLO_CREW);
+      return fluxUsable(live) && !fluxRefusedOnPayment(live);
     case "apps":
       return (live.connectedApps ?? 0) >= 1;
-    case "first-task":
-      return live.botReplyExists;
-    case "voice":
-      return setupStepAnswered(recorded);
-    case "wrap":
-      return setupStepAnswered(recorded) && live.chiefMemoryWritten;
+    case "brief":
+      return live.routines.briefId !== null && live.routines.briefRan;
+    case "routines":
+      return live.routines.total >= SETUP_ROUTINES_TARGET;
   }
 }
 
@@ -271,6 +356,34 @@ export function nextSetupStep(state: SetupState): SetupStep | null {
   return SETUP_STEPS.find((step) => !state.steps[step].done && !state.steps[step].skipped) ?? null;
 }
 
+/**
+ * Whether this install has never been set up, and may therefore be shown the
+ * first run unasked.
+ *
+ * NOT "no step is done". Half the list is derived from things that are true
+ * the moment the app opens on a brand new machine: the engine in the box
+ * makes `agents` done before anybody has typed anything. Counting those would
+ * say "this install has been set up" about an install that has done nothing.
+ *
+ * So the test is the opposite one: nothing recorded by a person, and no trace
+ * of a workspace that has been USED. A restored backup trips every one of
+ * these — it has answered turns, a saved key, connected apps and routines —
+ * which is the case that matters most, because interrupting someone's
+ * restored workspace with a welcome screen is the worst bug this flow has.
+ */
+export function setupIsFirstRun(state: SetupState, live: SetupLiveState): boolean {
+  const untouched = SETUP_STEPS.every(
+    (step) => !state.steps[step].skipped && (state.steps[step].note ?? "").trim().length === 0,
+  );
+  return untouched
+    && live.ownerName.trim().length === 0
+    && !live.botReplyExists
+    && !live.flux.configured
+    && (live.connectedApps ?? 0) === 0
+    && live.routines.total === 0
+    && live.crewSize === 0;
+}
+
 // ── what the card says ─────────────────────────────────────────────────
 /**
  * What is stopping this step, when the answer is not "you have not done it".
@@ -288,44 +401,56 @@ export function setupStepBlock(
   const payment: SetupStepBlock = {
     reason: "payment-required",
     message:
-      "Your Chief's engine was refused on payment, so it cannot answer yet. Its own error card says what the " +
-      "provider reported. Until that clears, use an engine you already pay for.",
+      "Your engine was refused on payment, so it cannot answer yet. Its own error card says what the provider "
+      + "reported. Until that clears, use an engine you already pay for.",
+  };
+  const needsKey: SetupStepBlock = {
+    reason: "flux-key-needed",
+    message: "Your accounts connect through your key, so this one waits for that.",
   };
   switch (step) {
+    case "agents":
+      return live.bundledEngine.ready
+        ? undefined
+        : {
+            reason: "engine-unavailable",
+            message:
+              `The engine in the box cannot run on this system: ${live.bundledEngine.reason ?? "the shipped engine did not resolve"}. `
+              + "Use an AI you already pay for, or a local model.",
+          };
     case "flux":
       if (fluxRefusedOnPayment(live)) {
         return {
           reason: "payment-required",
           message:
-            "Flux Router accepted this key and then refused a turn on payment. The key is saved and there is " +
-            "nothing to re-paste — this is the account's spending, not the key — but the included brain and " +
-            "the connected apps cannot answer until it clears.",
+            "Flux Router accepted this key and then refused a turn on payment. The key is saved and there is "
+            + "nothing to paste again, because this is the account's spending rather than the key. What the key "
+            + "unlocks stays locked until that clears.",
         };
       }
       return live.flux.conflict
         ? {
             reason: "flux-choice-needed",
             message:
-              "More than one Flux Router key is saved and none has been chosen, so nothing is routing through " +
-              "Flux yet. Pick the one to use on the Flux Router connection card.",
+              "More than one Flux Router key is saved and none has been chosen, so nothing is routing through "
+              + "Flux yet. Pick the one to use on the Flux Router connection card.",
           }
         : undefined;
-    case "brain":
+    case "apps":
+      if (live.connectedApps === null) {
+        return { reason: "apps-unreadable", message: "Your connected accounts could not be read, so this is unknown rather than empty." };
+      }
+      return fluxUsable(live) ? undefined : needsKey;
+    case "brief":
       if (refusedOnPayment(live)) return payment;
-      return live.chiefInstanceId === "" && !live.bundledEngine.ready
+      return live.agents.length === 0
         ? {
             reason: "engine-unavailable",
-            message:
-              `The included brain cannot run on this system: ${live.bundledEngine.reason ?? "the shipped engine did not resolve"}. ` +
-              "Use the AI you already pay for, or a local model.",
+            message: "Nothing here can think yet, so there is nobody to write your brief.",
           }
         : undefined;
-    case "first-task":
+    case "routines":
       return refusedOnPayment(live) ? payment : undefined;
-    case "apps":
-      return live.connectedApps === null
-        ? { reason: "apps-unreadable", message: "Connected apps could not be read, so this is unknown rather than empty." }
-        : undefined;
     default:
       return undefined;
   }
@@ -344,24 +469,20 @@ export function setupStepStatus(step: SetupStep, recorded: SetupStepState, live:
 export function setupStepDetail(step: SetupStep, recorded: SetupStepState, live: SetupLiveState): string | undefined {
   if (setupStepDone(step, recorded, live) || setupStepBlock(step, recorded, live)) return undefined;
   switch (step) {
+    case "hello":
+      return "I do not know what to call you yet.";
     case "flux":
       return live.flux.configured
-        ? "The saved Flux Router key is not in a shape Flux Router issues — paste it again."
-        : "No Flux Router key is saved. The included brain and the connected apps stay locked without one.";
-    case "brain":
-      return live.chiefInstanceId === ""
-        ? "Your Chief has no engine selected yet."
-        : "Your Chief has an engine, but it has not answered yet. Say hello to prove it can.";
-    case "crew":
-      return "No bots beyond your Chief yet.";
+        ? "The saved key is not in a shape Flux Router issues. Paste it again."
+        : "One key turns on the latest models, your accounts, pictures and voice.";
     case "apps":
-      return "No apps are connected yet.";
-    case "first-task":
-      return "No bot has produced a real reply yet.";
-    case "wrap":
-      return live.chiefMemoryWritten
-        ? "Confirm the lines your Chief will remember."
-        : "Your Chief's notebook is still empty.";
+      return "None of your accounts are connected yet.";
+    case "brief":
+      return live.routines.briefId === null
+        ? "Your morning brief is not set up yet."
+        : "Your morning brief is set up and has not run yet.";
+    case "routines":
+      return "One routine so far. Most people keep two or three.";
     default:
       return undefined;
   }
@@ -381,10 +502,26 @@ export interface SetupView {
   version: number;
   startedAt: number;
   chiefBotId?: string;
+  /** What to call the person. "" until they say. */
+  ownerName: string;
   /** The engine Murage ships, as this machine can run it. Reported whatever
-   *  the Chief is currently on, so the brain card can name the included
+   *  the Chief is currently on, so the agents card can name the included
    *  option and say plainly when it is not available here. */
   engine: SetupEngineReading;
+  /** Engines this machine can run, bundled and found, so the Chief can open
+   *  with an answer rather than a question. */
+  agents: readonly SetupAgentReading[];
+  /** Routines, and the morning brief's own state. */
+  routines: SetupRoutineReading;
+  /** Visible bots other than the Chief, for the "hire your first teammate"
+   *  card: it is an offer on an empty bench and a nudge on a full one. */
+  crewSize: number;
+  /** Whether a saved key is routing. The key never leaves the server; this
+   *  is the only thing the client is told about it. */
+  fluxReady: boolean;
+  /** An install that has never been set up and has never been used. Only
+   *  such an install is shown the first run without being asked. */
+  firstRun: boolean;
   progress: { done: number; total: number };
   /** Steps that are neither done nor passed over, and are stopped by
    *  something the person did not do wrong. */
@@ -410,7 +547,13 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     version: state.version,
     startedAt: state.startedAt,
     ...(state.chiefBotId ? { chiefBotId: state.chiefBotId } : {}),
+    ownerName: live.ownerName,
     engine: live.bundledEngine,
+    agents: live.agents,
+    routines: live.routines,
+    crewSize: live.crewSize,
+    fluxReady: fluxUsable(live),
+    firstRun: setupIsFirstRun(state, live),
     progress: setupProgress(state),
     blocked: steps.filter((step) => step.status === "blocked").map((step) => step.id),
     next: nextSetupStep(state),

@@ -310,9 +310,10 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
-import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace } from "./setup.ts";
+import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading } from "./setup.ts";
 import {
   type SetupLiveState,
+  type SetupRoutineReading,
   fluxKeyLooksValid,
   setupAnswerRequestSchema,
   setupStepRequestSchema,
@@ -1818,14 +1819,37 @@ async function setupLiveState(): Promise<SetupLiveState> {
   })();
   const flux = fluxCredentialStatus(readFluxConnectionState());
   return {
+    ownerName: (cfg.profile?.name ?? "").trim(),
+    agents: setupAgentsReading(await registry.describe()),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps,
-    chiefMemoryWritten: chiefBotId ? readMemoryFile(chiefBotId).text.trim().length > 0 : false,
+    routines: setupRoutinesReading(),
     ...readWorkspace(
       { bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },
       chiefBotId,
     ),
+  };
+}
+
+/**
+ * The morning brief, measured rather than remembered.
+ *
+ * `briefId` answers null the moment the recorded routine is gone, so deleting
+ * the brief puts the step back instead of leaving it ticked forever. And
+ * `briefRan` asks for a COMPLETED run: a routine that is scheduled has been
+ * promised, not proven, and the first run exists to show the person the thing
+ * working rather than to tell them it will.
+ */
+function setupRoutinesReading(): SetupRoutineReading {
+  const all = routines.listRoutines();
+  const recorded = setup.briefRoutineId();
+  const briefId = recorded && all.some((routine) => routine.id === recorded) ? recorded : null;
+  return {
+    total: all.length,
+    briefId,
+    briefRan: briefId !== null
+      && routines.listRuns().some((run) => run.routineId === briefId && run.status === "completed"),
   };
 }
 

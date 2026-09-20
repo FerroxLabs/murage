@@ -15,6 +15,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  type SetupAgentReading,
   type SetupLiveState,
   type SetupRefusalReading,
   type SetupState,
@@ -63,6 +64,38 @@ export function bundledEngineStatus(
   } catch (error) {
     return { ready: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// ── what this machine can already run ──────────────────────────────────
+/** An engine as `registry.describe()` reports it. Structural, like
+ *  `ReachableBot`, so this module never pulls the registry's own types into
+ *  the contract. */
+export interface SetupInstanceReading {
+  instanceId: string;
+  displayName?: string;
+  driverKind?: string;
+  enabled?: boolean;
+  snapshot: { state: string };
+}
+
+/**
+ * The engines the agents card may honestly claim.
+ *
+ * Available AND enabled, because a card that says "I connected Claude Code"
+ * about an engine that cannot answer is worse than saying nothing. The
+ * bundled engine is `fuigoAgent` and is the one thing on the list the person
+ * did not put there, so it is reported with `installed: false`: the Chief
+ * says "one came in the box" about that and "you already had these" about
+ * the rest, and never confuses the two.
+ */
+export function setupAgentsReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
+  return instances
+    .filter((instance) => instance.enabled !== false && instance.snapshot.state === "available")
+    .map((instance) => ({
+      id: instance.instanceId,
+      name: instance.displayName?.trim() || instance.instanceId,
+      installed: instance.driverKind !== "fuigoAgent",
+    }));
 }
 
 // ── reading the workspace ──────────────────────────────────────────────
@@ -282,6 +315,25 @@ export class SetupChecklist {
   recordChief(botId: string): SetupState {
     if (this.state.chiefBotId === botId) return this.state;
     return this.persist({ ...this.state, chiefBotId: botId });
+  }
+
+  briefRoutineId(): string | undefined {
+    return this.state.briefRoutineId;
+  }
+
+  /**
+   * Remember which routine is the morning brief.
+   *
+   * A pointer rather than a flag on the routine itself, and rather than a
+   * name match. The person is free to rename their brief, to have three
+   * routines with "brief" in the name, or to have imported one from a
+   * package; none of that should change which routine this step is about.
+   * The pointer is checked against the live routine list on every read, so a
+   * deleted brief puts the step back rather than leaving it done forever.
+   */
+  recordBriefRoutine(routineId: string): SetupState {
+    if (this.state.briefRoutineId === routineId) return this.state;
+    return this.persist({ ...this.state, briefRoutineId: routineId });
   }
 
   /** Record an answer. It clears a previous skip and is stored, never

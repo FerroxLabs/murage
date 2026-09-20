@@ -33,6 +33,7 @@ import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
 // this renderer under `bundler` (which forbids a bare `.ts` one). Type-only,
 // so nothing survives to runtime either way.
 import type { IntakeCardData } from "../../shared/intake-turn.js";
+import type { SetupCardData } from "../../shared/setup-card.js";
 import type { InstalledPackageMetadata } from "../../shared/installed-package.js";
 import {
   reviewedSkillSha256,
@@ -111,6 +112,10 @@ export interface OptionCardData {
    * ends of this seam drift. Read defensively through `readIntakeCard`
    * (src/lib/onboarding-intake.ts); never both set with `requestId`. */
   intake?: IntakeCardData;
+  /** Present when this card is a step of the guided first run. Mirrors
+   * `server/store.ts` by importing the one shared definition. Read
+   * defensively through `readSetupCard` (shared/setup-card.ts). */
+  setup?: SetupCardData;
 }
 
 export interface ConnectorCardData {

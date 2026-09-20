@@ -33,6 +33,7 @@ import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
 import type { IntakeCardData } from "../shared/intake-turn.ts";
+import type { SetupCardData } from "../shared/setup-card.ts";
 import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 import { withoutQuestionGrants } from "./auto-approve.ts";
@@ -111,6 +112,10 @@ export interface OptionCardData {
    * the desktop boundary already lives. Never set together with
    * `requestId`: an intake turn is not a live provider ask. */
   intake?: IntakeCardData;
+  /** Present when this card is a step of the guided first run. Read
+   * defensively through `readSetupCard` (shared/setup-card.ts); never both
+   * set with `requestId` or with `intake`. */
+  setup?: SetupCardData;
 }
 
 export interface ConnectorCardData {
@@ -1775,6 +1780,11 @@ export class Store {
         message.card &&
         !message.card.requestId &&
         !message.card.intake &&
+        // A first-run card is not an onboarding suggestion the person has
+        // moved past by typing; it IS the conversation they are typing into.
+        // Dismissing it here would delete the step they are standing on the
+        // first time they answer their Chief in words.
+        !message.card.setup &&
         !message.card.dismissed,
     );
     if (!card?.card) return null;
