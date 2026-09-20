@@ -33,10 +33,18 @@ afterPack: ./scripts/after-pack.mjs
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  # Every shared/*.mjs the main process imports must be named here: this list
+  # is explicit, not a glob, so adding an import without adding a line here
+  # packages an app that dies on launch with ERR_MODULE_NOT_FOUND. That shipped
+  # as far as the Linux packaged smoke test in 0.1.57 —
+  # shared/backup-capture-failure.mjs was imported by backup-schedule-host.mjs
+  # and left out. scripts/check-packaged-shared-imports.mjs now proves the list
+  # matches the imports.
   - shared/backup-age-pins.mjs
   - shared/path-identity.mjs
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
+  - shared/backup-capture-failure.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
