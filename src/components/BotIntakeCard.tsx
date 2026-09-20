@@ -457,7 +457,7 @@ export function BotSetupAction({ bot }: { bot: Bot }) {
       <div className="rounded-xl bg-card p-4">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[15px] font-medium text-ink">Set up this bot</div>
+            <div className="text-[15px] font-medium text-ink">What is this bot for?</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {checking ? `Checking what ${bot.name} already has…` : unavailable ? `Could not read ${bot.name}'s skills. Retry the check before starting setup.` : warns
                 ? `Say what you want ${bot.name} for and pick a specialist profile or skills to match. ${bot.name} is already set up, so this will say what it would change first.`

@@ -146,7 +146,7 @@ describe("the intake card", () => {
     // could bring it back. The way back is the bot's own profile, which is
     // always there — which is also what lets a person walk out of the
     // conversation in the transcript without losing anything.
-    expect(card).toContain("Set up this bot");
+    expect(card).toContain("What is this bot for?");
     expect(settings).toContain("<BotSetupAction bot={bot} />");
   });
 

@@ -35,16 +35,26 @@ export function botRole(bot: RoleBot): BotRole {
 export const BOT_ROLE_BADGE: Record<BotRole, string> = {
   chief: "Chief of Staff",
   leader: "Team lead",
-  individual: "Individual",
+  individual: "On its own",
   member: "",
 };
 
 export const BOT_ROLE_TITLE: Record<BotRole, string> = {
   chief: "Chief of Staff",
   leader: "Team leader",
-  individual: "Individual assistant",
+  individual: "On its own",
   member: "Team member",
 };
+
+/** What to CALL this bot's place, which is not always what the three stored
+ * fields spell. A brand-new bot is stored as a team member, and named its
+ * team "General" — a team the person never made. When there is no team, say
+ * so plainly instead of inventing one. */
+export function botRoleTitle(bot: RoleBot): string {
+  const role = botRole(bot);
+  if (role === "member" && !(bot.section ?? "").trim()) return BOT_ROLE_TITLE.individual;
+  return BOT_ROLE_TITLE[role];
+}
 
 /** The PATCH body that moves a bot to `role`.
  *

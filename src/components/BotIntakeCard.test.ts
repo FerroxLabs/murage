@@ -112,13 +112,20 @@ describe("the composer belongs to the conversation", () => {
 });
 
 describe("setup is somewhere you go and ask for it", () => {
-  it("lives on the bot's own profile, beside the role control", () => {
-    // Removing the composer entry is only safe because this exists. An agent
+  it("opens the bot's own profile, above everything else on it", () => {
+    // Removing the composer entry is only safe because this exists. A bot
     // with no skills and no way anywhere in the app to ask for some is the
     // one-way door the whole feature was built to remove.
+    //
+    // 0.1.57 puts it FIRST: the avatar studio used to open this panel, and
+    // the Role control now waits for a second bot to exist, so this is the
+    // only thing guaranteed to be on screen.
     expect(settings).toContain('import { BotSetupAction } from "./BotIntakeCard";');
-    expect(settings).toMatch(/<BotSetupAction bot=\{bot\} \/>[\s\S]{0,600}<BotRoleControl/);
-    expect(profileEntry).toContain("Set up this bot");
+    const overview = settings.indexOf('<SettingsSection id="overview" active={section}>');
+    expect(settings.indexOf("<BotSetupAction bot={bot} />", overview)).toBeGreaterThan(overview);
+    expect(settings.indexOf("<BotSetupAction bot={bot} />", overview))
+      .toBeLessThan(settings.indexOf("<BotRoleControl", overview));
+    expect(profileEntry).toContain("What is this bot for?");
   });
 
   it("is offered on EVERY bot, however configured", () => {

@@ -28,6 +28,7 @@ import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
+import { botRoleTitle } from "@/lib/bot-role";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 
 function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children: React.ReactNode }) {
@@ -409,6 +410,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
   const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
+  // "A second bot exists" — an archived one is not somebody to report to.
+  const hasTeammates = state.bots.filter((candidate) => !candidate.hidden).length > 1;
   const connectedAppsEnabled = bot.composio !== false;
   const canUseBrowser = engine?.capabilities?.browserMcp === true;
   const browserFeature = builtInBrowserEnabled(state.config);
@@ -462,7 +465,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             </div>
           )}
           <SettingsSection id="overview" active={section}>
-          <details open={section === undefined || section === "overview" ? true : undefined} className="rounded-xl bg-card p-3">
+          {/* What this bot is FOR comes first. The avatar studio used to open
+              the panel, with the purpose and the role below the fold. */}
+          <BotSetupAction bot={bot} />
+          <details className="rounded-xl bg-card p-3">
             <summary className="cursor-pointer text-[13px] font-medium">Appearance</summary>
           <BotProfileAvatarCard
             bot={bot}
@@ -471,8 +477,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onPatch={patch}
           />
           </details>
-          <div className="rounded-xl bg-card p-4 text-[13px]">
-            <p className="font-medium">{settingsRoleLabel(activeSettingsRole(bot))}</p>
+          {/* An org chart needs an org. With one bot in the workspace there is
+              nobody to lead and nobody to report to, so the role summary and
+              the Role control below are both hidden until a second bot
+              exists. */}
+          {hasTeammates && <div className="rounded-xl bg-card p-4 text-[13px]">
+            <p className="font-medium">{botRoleTitle(bot)}</p>
             <p className="mt-1 text-ink-secondary">{bot.title || "No title set"}{bot.section ? ` · ${bot.section}` : ""}</p>
             {bot.installedPackage?.sourceRole && <div className="mt-3 border-t border-hairline/40 pt-3">
               <p>Imported role: {settingsRoleLabel(bot.installedPackage.sourceRole)}</p>
@@ -482,7 +492,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 : "The imported role is not active. Use the role control below to assign a role explicitly."}</p>
               <p className="mt-1 text-ink-secondary">Importing a profile does not grant permissions.</p>
             </div>}
-          </div>
+          </div>}
           </SettingsSection>
           <SettingsSection id="identity" active={section}>
           <Field label="Name">
@@ -532,7 +542,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             />
             <div className="mt-1.5 flex items-start justify-between gap-3">
               <p className="text-[12px] leading-relaxed text-ink-secondary">
-                How this agent talks, spoken to it, and read by nothing else. A teammate
+                How this bot talks, spoken to it, and read by nothing else. A teammate
                 deciding who to delegate to never sees it.
               </p>
               <span className="shrink-0 pt-px text-[11.5px] tabular-nums text-ink-secondary">
@@ -551,9 +561,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               before it touches an agent that already has skills, a
               description, or a conversation behind it. */}
           <SettingsSection id="overview" active={section}>
-          <BotSetupAction bot={bot} />
-
-          <BotRoleControl bot={bot} canCoordinate={canCoordinate} />
+          {hasTeammates && <BotRoleControl bot={bot} canCoordinate={canCoordinate} />}
           </SettingsSection>
 
 
