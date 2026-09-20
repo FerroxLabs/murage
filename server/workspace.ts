@@ -55,9 +55,19 @@ export function ensureTaskWorkspace(botId:string,threadId:string):string {
   mkdirSync(dir,{recursive:true,mode:0o700});return dir;
 }
 
+/** The bot's own workspace folder under a given data dir. `workspaceDir`
+ * above is this for the running installation; this form takes the data dir
+ * explicitly, so policy and tests can name a folder without depending on the
+ * process's own DATA_DIR. Same id gate as `taskWorkspacePath`, which is the
+ * only reason an id may be joined into a path at all. */
+export function botWorkspacePath(dataDir: string, botId: string): string {
+  if (!/^[\w-]+$/.test(botId)) throw new Error("Invalid bot workspace");
+  return join(dataDir, "workspaces", botId);
+}
+
 export function taskWorkspacePath(dataDir: string, botId: string, threadId: string): string {
   if (!/^[\w-]+$/.test(botId) || !/^[\w-]+$/.test(threadId)) throw new Error("Invalid task workspace");
-  return join(dataDir, "workspaces", botId, "threads", threadId);
+  return join(botWorkspacePath(dataDir, botId), "threads", threadId);
 }
 
 export interface FileWorkspaceSelection { root: string; managed: boolean }
