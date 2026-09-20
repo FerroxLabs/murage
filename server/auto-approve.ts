@@ -238,6 +238,10 @@ export type AutoVerdictSource =
   | "always-allow"
   | "auto-mode"
   | "full-access"
+  /** 0.1.57 D57: the bot writing inside its OWN managed workspace or thread
+   * folder. Not a grant and not a mode — the action was never the person's
+   * to authorize (see the comment on `ownWorkspace` below). */
+  | "own-workspace"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
@@ -293,6 +297,21 @@ export function autoVerdict(
     /** the turn is the workspace owner's own Telegram, Slack or Discord
      * message (it is also unattended and automated) */
     channelOwner?: boolean;
+    /** 0.1.57 D57: the caller established — from the engine's STRUCTURED tool
+     * input, never from the card text — that every filesystem path this
+     * request names lies inside the directories Murage manages for THIS bot:
+     * its own workspace folder and its own thread folder under the data dir.
+     * The fact is decided in server/own-workspace-approval.ts, which is where
+     * the boundary (real paths, segment comparison, `..`, symlinks, another
+     * bot's folder) lives; this flag only places it in the order below.
+     *
+     * Why it is not a permission at all: Murage creates those folders, tells
+     * the bot where they are, and shows them in Memory and Files. A bot
+     * writing there is the product doing its own bookkeeping, not an action
+     * taken on the person's behalf. Before this, one question to a bot in Ask
+     * mode raised a card for its own MEMORY.md and another for its own thread
+     * file, and an unattended routine simply stopped until someone woke up. */
+    ownWorkspace?: boolean;
   },
 ): AutoVerdict {
   // A question outranks everything, including the unattended and host
@@ -315,6 +334,18 @@ export function autoVerdict(
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
   const sensitive = destructive ? null : matchFirst(SENSITIVE, summary);
+  // D57: the bot's own bookkeeping, ahead of the unattended and host blocks
+  // because those exist to stop a MODE or a GRANT standing in for a person,
+  // and this is neither — nobody ever authorized Murage's own folders, and an
+  // 8am routine that cannot write its own thread file simply never runs.
+  //
+  // It is placed BEHIND the two guards on purpose. They cost nothing here (a
+  // bot does not normally write `rm -rf` or a `.env` into its own memory) and
+  // keeping them in front means this can never become the one rule that lets
+  // something the guards were written for through unattended.
+  if (context?.ownWorkspace === true && !destructive && !sensitive && context.scope !== "local-computer") {
+    return { approve: `auto-approved ${tool} (own workspace)`, source: "own-workspace" };
+  }
   // The grant is computed even when a hard block will refuse it: the row
   // worth auditing is "this WOULD have auto-approved, and only the block
   // stood in the way", which cannot be told apart from an ordinary
