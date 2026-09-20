@@ -107,6 +107,6 @@ export function TelegramSettings() {
     {status?.deliveryRetryAt && <p role="status" className="mt-2 text-[12px] text-ink-secondary">A reply is queued for a scheduled delivery retry.</p>}
     {(error || refreshError || status?.error) && <p role="alert" className="mt-2 text-[12px] text-danger">{error ?? refreshError ?? "Telegram reported a connection problem. Refresh status or review your setup."}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</p>}
-    <p className="mt-3 text-[12px] text-ink-secondary">Discord and WhatsApp: coming soon.</p>
+    <p className="mt-3 text-[12px] text-ink-secondary">WhatsApp: coming soon.</p>
   </section>;
 }

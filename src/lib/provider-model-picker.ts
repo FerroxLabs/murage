@@ -243,7 +243,7 @@ export function pickerEmptyState(
  *  warn about — an untested model is not accused of anything. */
 export function localToolsWarning(row: PickerModel): string {
   if (row.chatOnly) return "Chat only — this engine sends no tools, so it can chat with any model";
-  if (row.localTools === "failed") return "Tools test failed — chat only, not usable for agent work";
+  if (row.localTools === "failed") return "Tools test failed — chat only, not usable for bot work";
   if (row.localTools === "partial") return "Tools test passed with gaps — see Settings → Models";
   return "";
 }

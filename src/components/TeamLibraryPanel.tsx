@@ -249,14 +249,13 @@ function TeamRow({
   busySlug: string | null;
   onLoad: (entry: TeamCatalogEntry) => Promise<void>;
 }) {
-  // 28 of the 58 one-person profiles declare zero skills — they carry a
-  // playbook instead, and playbooks have no surface of their own yet. Printing
-  // "0 playbooks" under half the catalog reads as broken. Where there is no
-  // count to give, the summary is the evidence, and it is already on the line
-  // above.
+  // 28 of the 58 one-person profiles declare zero skills — their instructions
+  // travel inside the package instead. Printing "0 skills" under half the
+  // catalog reads as broken. Where there is no count to give, the summary is
+  // the evidence, and it is already on the line above.
   const facts = [
     `${entry.members} ${entry.members === 1 ? "bot" : "bots"}`,
-    entry.skills.length > 0 ? `${entry.skills.length} playbooks` : "",
+    entry.skills.length > 0 ? `${entry.skills.length} ${entry.skills.length === 1 ? "skill" : "skills"}` : "",
     entry.requires.apps.length > 0 ? entry.requires.apps.join(", ") : "",
     entry.setupMinutes ? `~${entry.setupMinutes} min` : "",
   ].filter(Boolean);
@@ -943,15 +942,15 @@ export function TeamLibraryPanel({
                 </button>
               )}
               <h2 id="team-library-title" className="truncate text-[22px] font-semibold tracking-[-0.01em] text-ink">
-                {pending ? pending.name : "Library"}
+                {pending ? pending.name : view === "skills" ? "Skills" : view === "bots" ? "Templates" : "Library"}
               </h2>
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
                 {pending
                   ? pending.kind === "package"
-                    ? `${pending.members.length} bots · portable Markdown playbook`
+                    ? `${pending.members.length} bots · portable Markdown package`
                     : `${pending.members.length} ready-to-load bots`
-                  : "Find an individual bot, a team, or a skill for your work."}
+                  : view === "skills" ? "Ready-made skills your bots can use." : view === "bots" ? "Ready-to-load bots you can start from." : "Find an individual bot, a team, or a skill for your work."}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -959,7 +958,7 @@ export function TeamLibraryPanel({
               onClick={onClose}
               disabled={importing}
               className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
-              aria-label="Close teams"
+              aria-label="Close"
             >
               <X size={21} />
             </button>
@@ -1000,8 +999,8 @@ export function TeamLibraryPanel({
               {pending.kind === "package" && (
                 <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
                   {pending.chiefOfStaff && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Crown size={13} />{pending.chiefOfStaff} leads</span>}
-                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><MessageSquare size={13} />{pending.rooms} {pending.rooms === 1 ? "room" : "rooms"}</span>
-                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><BookOpen size={13} />{pending.playbooks} playbooks</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><MessageSquare size={13} />{pending.rooms} {pending.rooms === 1 ? "channel" : "channels"}</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><BookOpen size={13} />{pending.playbooks} {pending.playbooks === 1 ? "skill" : "skills"}</span>
                   <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><CalendarClock size={13} />{pending.routines} paused routines</span>
                   <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{pending.apps.length} connections</span>
                 </div>
@@ -1025,7 +1024,7 @@ export function TeamLibraryPanel({
                 <Check size={15} className="mt-0.5 shrink-0 text-success" />
                 <p>
                   {pending.kind === "package"
-                    ? "Bots, Chief of Staff, rooms, and reviewed playbooks are loaded. Suggested routines arrive paused, and connected apps stay off until you approve them. Conversations, credentials, permissions, and computer access stay private."
+                    ? "Bots, Chief of Staff, channels, and reviewed skills are loaded. Suggested routines arrive paused, and connected apps stay off until you approve them. Conversations, credentials, permissions, and computer access stay private."
                     : "Only roles and appearance are loaded. Your conversations, account connections, permissions, and computer access stay private."}
                 </p>
               </div>
@@ -1039,7 +1038,7 @@ export function TeamLibraryPanel({
                     Joins your {currentBotCount} current {currentBotCount === 1 ? "bot" : "bots"}. Nothing is removed or replaced.
                   </>
                 ) : (
-                  pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created; you can make one later if you want."
+                  pending.kind === "package" ? "Review the complete setup, then load it." : "No channel is created; you can make one later if you want."
                 )}
               </div>
               <button
@@ -1051,7 +1050,7 @@ export function TeamLibraryPanel({
                 {importing
                   ? "Loading…"
                   : pending.kind === "package" && currentBotCount === 0
-                    ? "Activate playbook"
+                    ? "Load package"
                     : currentBotCount === 0
                       ? pending.members.length === 1 ? "Load bot" : "Load team"
                       : pending.members.length === 1 ? "Add bot" : "Add team"}
@@ -1387,7 +1386,7 @@ export function TeamLibraryPanel({
                     >
                       <UploadCloud size={27} className="text-accent" />
                       <span className="mt-3 text-[14px] font-medium text-ink">Choose a team file</span>
-                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a package .zip, EmberBot.md playbook or legacy .emberteam.json here</span>
+                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a package .zip, an EmberBot.md file or a legacy .emberteam.json here</span>
                     </button>
 
                     <div className="flex min-h-56 flex-col justify-center rounded-2xl bg-raised/25 px-6">

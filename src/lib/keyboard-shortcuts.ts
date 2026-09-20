@@ -17,7 +17,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     { id: "suggestion", description: "Choose the highlighted suggestion", keys: ["Enter / Tab"], context: "Mention or slash-command menu" },
   ] },
   { title: "Workspace", items: [
-    { id: "bulletin", description: "Save a channel bulletin", keys: ["Mod", "Enter"], context: "Bulletin editor" },
+    { id: "bulletin", description: "Save channel instructions", keys: ["Mod", "Enter"], context: "Channel instructions editor" },
     { id: "reorder", description: "Move a sidebar section", keys: ["Alt", "↑ / ↓"], context: "Focused, movable section heading" },
   ] },
 ];

@@ -187,7 +187,7 @@ export function EngineSetup({
   const description = signInOnly
     ? "Finish the account sign-in in Terminal, then check again below."
     : intent === "inject"
-      ? "Install the agent once, then you can run it with local models; no cloud sign-in required."
+      ? "Install the engine once, then you can run it with local models; no cloud sign-in required."
       : `Install the command-line app once. Models will appear here as soon as it’s ready${signInCommand ? "; sign-in may follow" : ""}.`;
 
   if (instance.driverKind === "fuigoAgent" && signInOnly) {

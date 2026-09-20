@@ -1006,9 +1006,9 @@ export function BotContextMenu({
         ),
         divider("d1"),
         item(<BookOpen size={16} className="text-ink-secondary" />, "Add a skill", () => {
-          dispatch({ type: "showTeamLibrary", botId: bot.id });
+          dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" });
         }),
-        item(<Pencil size={16} className="text-ink-secondary" />, "Edit Profile", () => {
+        item(<Pencil size={16} className="text-ink-secondary" />, "Bot settings", () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true });
         }),
@@ -2313,8 +2313,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             )}
             <button
               onClick={() => dispatch({ type: "showRoutines" })}
-              aria-label={density === "icons" ? "Calendar" : undefined}
-              title={density === "icons" ? "Calendar" : undefined}
+              aria-label={density === "icons" ? "Routines" : undefined}
+              title={density === "icons" ? "Routines" : undefined}
               className={cn(
                 "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
                 density === "icons" ? "justify-center px-2" : "gap-3 px-3",
@@ -2322,7 +2322,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               )}
             >
               <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Calendar</span>
+              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Routines</span>
               {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
                 <span className="size-2 rounded-full bg-danger" />
               )}
@@ -2374,7 +2374,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 : []),
               {
                 key: "routines",
-                label: "Calendar",
+                label: "Routines",
                 icon: <CalendarDays size={18} />,
                 active: state.activeView === "routines",
                 // folded away, this dot would otherwise vanish with the row
@@ -2479,7 +2479,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
           detail={
             pendingDelete.kind === "bot"
-              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone. Archive it instead if you might want it back."
+              ? "Its entire conversation history goes with it, along with any skills it was given. This cannot be undone. Archive it instead if you might want it back."
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}

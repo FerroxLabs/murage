@@ -1443,7 +1443,7 @@ export function ComputerPanel({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
               <CalendarClock size={16} className="text-accent" />
-              Scheduled tasks
+              Routines
             </div>
             {botRoutines.length > 0 && (
               <span className="rounded-full bg-control px-2 py-0.5 text-[10px] font-medium text-ink-secondary">
@@ -1457,7 +1457,7 @@ export function ComputerPanel({
           {!computerDestination && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
               <Power size={13} className="mt-0.5 shrink-0" />
-              Scheduled tasks on this computer will not have desktop access while this is Off. Choose Cloud VM in the schedule editor to run the whole job there.
+              Routines on this computer will not have desktop access while this is Off. Choose Cloud VM in the routine editor to run the whole job there.
             </div>
           )}
           {activeRoutineRun && (
@@ -1497,15 +1497,15 @@ export function ComputerPanel({
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110"
             >
               <Plus size={14} />
-              Create schedule
+              New routine
             </button>
             <button
               onClick={() => dispatch({ type: "showRoutines" })}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
-              title="Open schedules"
+              title="Open Routines"
             >
               <CalendarDays size={14} />
-              Schedules
+              Routines
             </button>
           </div>
         </div>

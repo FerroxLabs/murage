@@ -37,7 +37,7 @@ export function PermissionModeMenu({
       className="absolute bottom-full left-0 z-30 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
     >
       <div className="border-b border-hairline/20 px-4 py-3 text-[13px] font-medium text-ink-secondary">
-        How should {botName} actions be approved?
+        How should {botName}’s actions be approved?
       </div>
       <div className="flex flex-col py-1">
         {PERMISSION_MODES.map((entry) => {

@@ -492,7 +492,7 @@ function Bubble({
                 : !tts?.configured
                   ? "Add an ElevenLabs key to read messages aloud"
                   : !speakReady
-                    ? "Pick a voice in this agent's profile to read aloud"
+                    ? "Pick a voice in this bot's settings to read aloud"
                     : "Read aloud",
               icon: speaking ? <Square size={18} className="fill-current" /> : <Volume2 size={18} />,
               disabled: !speakReady && !speaking,

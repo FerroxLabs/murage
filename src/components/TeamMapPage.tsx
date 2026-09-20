@@ -285,7 +285,7 @@ export function TeamMapPage() {
 
         <section className="mt-7 max-w-[900px]">
           <div className="mb-2.5 flex items-center justify-between">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">Agent handoffs</h2>
+            <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">Bot handoffs</h2>
             <span className="text-[11px] text-ink-secondary">Running and queued first</span>
           </div>
           <div className="space-y-2">

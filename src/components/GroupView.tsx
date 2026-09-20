@@ -731,7 +731,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
           <div>
             <h1 id="room-setup-title" className="text-xl font-semibold tracking-tight text-ink">Set up {group.name}</h1>
             <p className="mt-1 max-w-[560px] text-[13.5px] leading-relaxed text-ink-secondary">
-              Give this room a shared workspace, response style, and a little context before the first conversation starts.
+              Give this channel a shared workspace, response style, and a little context before the first conversation starts.
             </p>
           </div>
         </div>
@@ -745,7 +745,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
       >
         <label className="block">
           <span className="text-[13px] font-semibold text-ink">Working folder</span>
-          <span className="mt-1 block text-[12px] text-ink-secondary">Where room members run file and shell tools. {t("folderTrust.pickerNote")}</span>
+          <span className="mt-1 block text-[12px] text-ink-secondary">Where channel members run file and shell tools. {t("folderTrust.pickerNote")}</span>
           <div className="mt-2 flex gap-2">
             <input
               value={folder}
@@ -885,7 +885,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                 </span>
                 Everyone responds
               </span>
-              <span className="ml-6 mt-2 text-[11.5px] text-ink-secondary">All room members</span>
+              <span className="ml-6 mt-2 text-[11.5px] text-ink-secondary">All channel members</span>
             </button>
 
             <button
@@ -921,7 +921,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
         </fieldset>
 
         <label className="block">
-          <span className="text-[13px] font-semibold text-ink">Room instructions</span>
+          <span className="text-[13px] font-semibold text-ink">Channel instructions</span>
           <span className="mt-1 block text-[12px] text-ink-secondary">A shared brief every member sees on each turn. You can edit it later.</span>
           <textarea
             value={instructions}
@@ -1241,7 +1241,7 @@ export function GroupView({ group }: { group: Group }) {
           <button
             onClick={() => setBulletinOpen(true)}
             className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-raised/40"
-            title="Channel bulletin — shared instructions for every bot here"
+            title="Channel instructions — shared with every bot here"
           >
             <Pin size={12} className="shrink-0 text-ink-secondary" />
             <span className={cn("truncate text-[12.5px]", group.bulletin ? "text-ink-secondary" : "text-ink-secondary/60")}>
@@ -1333,7 +1333,7 @@ export function GroupView({ group }: { group: Group }) {
           ref={transcriptRef}
           role="log"
           aria-live="polite"
-          aria-label={`Room ${group.name}`}
+          aria-label={`Channel ${group.name}`}
         >
           {group.messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">

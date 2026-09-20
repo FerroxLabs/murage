@@ -36,13 +36,13 @@ describe("verified people controls", () => {
     expect(rows[0].granted.map(audience => audience.id)).toEqual(["room-1", "missing"]);
     expect(shareAudienceLabel(rows[0].granted[1])).toBe("Audience: Unavailable audience");
     expect(rows[0].available.map(audience => audience.id)).toEqual(["team-1"]);
-    expect(shareAudienceLabel(audiences[0])).toBe("Room: Launch room");
+    expect(shareAudienceLabel(audiences[0])).toBe("Channel: Launch room");
   });
   it("shows share controls only when the server reports current shares", () => {
     const base = { disabled: false, audiences, onLink: async () => {}, onShare: async () => {}, onRefresh: async () => {} };
     expect(renderToStaticMarkup(createElement(MemoryPeople, { ...base, people: { ownerPersonId: owner, bindings } }))).not.toContain("Shared audiences");
     const html = renderToStaticMarkup(createElement(MemoryPeople, { ...base, people: { ownerPersonId: owner, bindings, shares: [{ personId: "person-b", scopeId: "room-1", granted: true, revision: 1 }] } }));
-    expect(html).toContain("Shared audiences for Discord account"); expect(html).toContain("Room: Launch room"); expect(html).toContain("Stop sharing");
+    expect(html).toContain("Shared audiences for Discord account"); expect(html).toContain("Channel: Launch room"); expect(html).toContain("Stop sharing");
     expect(html).toContain("Share audience"); expect(html).toContain("Team: General"); expect(html).not.toContain("Private bot"); expect(html).not.toContain("person:workspace-owner");
     const none = renderToStaticMarkup(createElement(MemoryPeople, { ...base, people: { ownerPersonId: owner, bindings, shares: [] } }));
     expect(none).toContain("recalls only their own conversations and preferences");

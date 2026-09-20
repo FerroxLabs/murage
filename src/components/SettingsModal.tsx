@@ -62,7 +62,7 @@ const SECTIONS: Array<{
   { id: "models", label: "Models", icon: Globe, desktopOnly: true, keywords: ["models", "providers", "keys", "catalog", "flux", "pricing", "openai", "anthropic"] },
   { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
   { id: "connections", label: "Tools & Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "paste", "env", "search", "tavily", "exa", "transcription"] },
-  { id: "channels", label: "Channels", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging"] },
+  { id: "channels", label: "Messaging apps", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging", "channels"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
@@ -785,7 +785,7 @@ export function SettingsModal() {
             {desktop === true && section === "connections" && (
               <Card
                 title="Tools & Connections"
-                subtitle="Connect apps for your bots. If the connected apps service isn't ready, add your Composio key below."
+                subtitle="Keys for search, images, transcription and connected apps. Apps themselves live under Tools → Connected apps."
               >
                 <div className="flex flex-col gap-4">
                   {state.config?.composio.mode === "managed" ? (

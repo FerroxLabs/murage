@@ -775,7 +775,7 @@ export function Composer({
                   </span>
                 )}
                 <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{peer.name}</span>
-                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? "Agent" : "Channel"}</span>
+                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? "Bot" : "Channel"}</span>
               </button>
             ))}
           </div>
@@ -969,7 +969,7 @@ export function Composer({
             bot?.awaitingThreadSnapshot
               ? "Loading replacement conversation…"
               : setupLocked
-              ? "Finish room setup to start chatting"
+              ? "Finish channel setup to start chatting"
               : approval
               ? "Answer the approval above to continue"
               : recording
