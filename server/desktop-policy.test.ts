@@ -31,3 +31,11 @@ it("guards the Slack channel namespace without granting adjacent or internal rou
     expect(requiresDesktopAuthority(method, path)).toBe(true);
   expect(requiresDesktopAuthority("GET", "/api/slack-other")).toBe(false);
 });
+
+it("guards the first-run checklist, including step routes added later", () => {
+  expect(requiresDesktopAuthority("GET","/api/setup")).toBe(true);
+  for (const action of ["answer","skip","reopen","something-new"]) {
+    expect(requiresDesktopAuthority("POST",`/api/setup/${action}`)).toBe(true);
+  }
+  expect(requiresDesktopAuthority("POST","/api/setup-other")).toBe(false);
+});

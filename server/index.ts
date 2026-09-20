@@ -200,6 +200,7 @@ import {
 import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli } from "./env-path.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
+import { isFluxModel } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import {
   MAX_MCP_SERVERS,
@@ -308,6 +309,14 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
+import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace } from "./setup.ts";
+import {
+  type SetupLiveState,
+  fluxKeyLooksValid,
+  setupAnswerRequestSchema,
+  setupStepRequestSchema,
+  setupView,
+} from "../shared/setup.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
@@ -1753,6 +1762,72 @@ const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 seedFolderTrustFromStore();
+
+// ── the Chief of Staff ────────────────────────────────────────────────
+const setup = new SetupChecklist();
+
+/**
+ * Seat the bot that hosts setup.
+ *
+ * The bot a fresh install created first is the one the person meets, so it IS
+ * the Chief of Staff, on whatever `defaultSelection()` resolved — which
+ * prefers the bundled Fuigo engine, the only one this app ships a binary for.
+ *
+ * Seated when the checklist is first opened rather than at boot. The role
+ * changes routing, delegation and what the sidebar shows, and a workspace
+ * where nobody has opened setup must not be rewired behind their back — an
+ * automated installation, a restored backup, a headless run. Opening `/setup`
+ * is the person asking for exactly this.
+ *
+ * Idempotent, and the choice stands: a crew installed later reports to the
+ * Chief already met and never takes the role.
+ */
+function seatChiefOfStaff(): void {
+  const decision = chiefDecision(setup.chiefBotId(), store.bots);
+  if (decision.kind === "none") return;
+  if (decision.kind === "elect") store.setChiefOfStaff(decision.botId, decision.section, "workspace");
+  setup.recordChief(decision.botId);
+}
+
+/**
+ * Everything the checklist measures, read fresh.
+ *
+ * The Flux half is the connection card's own status rather than a second
+ * opinion, so the step and the card can never disagree; only the key's shape
+ * is judged here, and only because an environment-supplied key never passed
+ * the card's gate. The key itself is read and discarded, never returned.
+ *
+ * The connected-app count is the only reading that can leave the machine, and
+ * an unreadable connector store answers `null` — "we do not know what is
+ * connected" is not "nothing is connected", the same distinction
+ * `GET /api/connectors/connected` already draws with `credentialStore`.
+ */
+async function setupLiveState(): Promise<SetupLiveState> {
+  seatChiefOfStaff();
+  const chiefBotId = setup.chiefBotId();
+  const connectedApps = await (async () => {
+    const availability = composio.connectorAvailability(cfg);
+    if (availability === "unconfigured") return 0;
+    if (availability !== "configured") return null;
+    try {
+      return Object.values(await composio.connectedServices(cfg)).filter((service) => service.connected).length;
+    } catch {
+      return null;
+    }
+  })();
+  const flux = fluxCredentialStatus(readFluxConnectionState());
+  return {
+    flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
+    bundledEngine: bundledEngineStatus(),
+    connectedApps,
+    chiefMemoryWritten: chiefBotId ? readMemoryFile(chiefBotId).text.trim().length > 0 : false,
+    ...readWorkspace(
+      { bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },
+      chiefBotId,
+    ),
+  };
+}
+
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes
@@ -14255,6 +14330,32 @@ const server = createServer(async (req, res) => {
       }
       if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
       return json(res, 200, { command });
+    }
+
+    // ── guided first run (/setup) ──
+    // The server owns the list, the order and every step's "done". The read
+    // re-derives all eight from live state, so a step is finished only while
+    // the thing behind it is still true, and an answer records what the
+    // person said without ticking anything.
+    if (method === "GET" && path === "/api/setup") {
+      const live = await setupLiveState();
+      return json(res, 200, setupView(setup.read(live), live));
+    }
+    const setupAction = /^\/api\/setup\/(answer|skip|reopen)$/.exec(path);
+    if (method === "POST" && setupAction) {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = await readBody(req);
+      if (setupAction[1] === "answer") {
+        const parsed = setupAnswerRequestSchema.safeParse(body);
+        if (!parsed.success) return json(res, 400, { error: "Choose a setup step and give an answer." });
+        const live = await setupLiveState();
+        return json(res, 200, setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live));
+      }
+      const parsed = setupStepRequestSchema.safeParse(body);
+      if (!parsed.success) return json(res, 400, { error: "Choose a setup step." });
+      const live = await setupLiveState();
+      const state = setupAction[1] === "skip" ? setup.skip(parsed.data.step, live) : setup.reopen(parsed.data.step, live);
+      return json(res, 200, setupView(state, live));
     }
 
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the

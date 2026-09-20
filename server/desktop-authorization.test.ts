@@ -24,6 +24,7 @@ const administration: Array<[string, string]> = [
   ...["run", "stop", "remove", "screenshot"].map((action): [string, string] => ["POST", `/api/bots/{bot}/local-computer/${action}`]),
   ...["provision", "sleep", "exec", "screenshot", "remove", "control", "viewer-close"].map((action): [string, string] => ["POST", `/api/bots/{bot}/computer/${action}`]),
   ["POST", "/api/cli-test"], ["PATCH", "/api/instances/verification"],
+  ["POST", "/api/setup/answer"], ["POST", "/api/setup/skip"], ["POST", "/api/setup/reopen"],
   ["POST", "/api/mcp/servers"], ["POST", "/api/mcp/servers/example/test"],
   ["PUT", "/api/mcp/servers/example"], ["PATCH", "/api/mcp/servers/example"], ["DELETE", "/api/mcp/servers/example"],
   ["POST", "/api/routines"], ["PATCH", "/api/routines/example"], ["DELETE", "/api/routines/example"],
