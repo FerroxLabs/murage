@@ -23,6 +23,7 @@ import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { t } from "@/lib/i18n";
+import { possessive } from "@/lib/possessive";
 import { stateForBot } from "@/lib/mascot";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
@@ -323,7 +324,7 @@ export function ChatHeader({
           // gaps shrink, and the target stays a 32px square.
           className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50 chip-trim:size-8"
           title="Bot settings"
-          aria-label={`Open ${bot.name}'s profile`}
+          aria-label={`Open ${possessive(bot.name)} profile`}
         >
           <BotAvatar
             bot={bot}
