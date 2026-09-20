@@ -962,6 +962,11 @@ function openOnboardingCard(bot: Bot): Message | undefined {
       && message.card
       && !message.card.requestId
       && !message.card.intake
+      // ...and a first-run card is the fifth. The guided first run happens
+      // IN this thread: its cards are what the person is answering, so a
+      // typed reply must not dismiss the step they are standing on. The
+      // server's own `dismissOnboardingCard` carries the same exemption.
+      && !message.card.setup
       && !message.card.dismissed,
   );
 }
