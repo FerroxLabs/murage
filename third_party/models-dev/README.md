@@ -10,8 +10,8 @@ distribution as `licenses/models-dev/LICENSE` (`electron-builder.yml`).
 The API served at <https://models.dev/api.json> is fetched once, by hand, when
 the snapshot is refreshed. **The app never calls it.** The snapshot is compiled
 into the renderer bundle by Vite, so there is no runtime request, no cache, and
-no "last refreshed N days ago" state in front of a user — Sean's decision,
-2026-09-18.
+no "last refreshed N days ago" state in front of a user — a deliberate
+product decision, 2026-09-18.
 
 ## Taken
 
@@ -41,7 +41,7 @@ Everything else upstream carries: `description`, `family`, `knowledge`,
 1.1 MB as Vite inlines it, 122 KB gzipped inside the asar.
 
 This began as a 13-provider allow-list of what Murage can reach, which cut the
-file to 133 KB. It was the wrong trade and was reverted (Sean, 2026-09-18): an
+file to 133 KB. It was the wrong trade and was reverted (2026-09-18): an
 `openai-compat` connection can point at any of these gateways, OpenRouter alone
 re-exposes most of the field, and a user seeing "Price unavailable" on a model
 we could have priced is a worse outcome than a megabyte of JSON. Keeping
