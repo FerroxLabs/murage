@@ -25,9 +25,19 @@ const config = (over: Partial<ConfigStatus> = {}): ConfigStatus => ({
 } as ConfigStatus);
 
 describe("the connected apps key row", () => {
+  it("never names the broker, and makes the 500+ claim", () => {
+    for (const mode of ["self-hosted", "managed", "unavailable"] as const) {
+      const state = credentialRowState("composio", config({ composio: { configured: mode !== "unavailable", mode } }));
+      expect.soft(state.detail, mode).not.toMatch(/composio/i);
+      expect.soft(state.status, mode).not.toMatch(/composio/i);
+      expect.soft(state.detail, mode).toMatch(/500\+/);
+    }
+  });
+
   it("says Connected only when this row's own key is the one running", () => {
     const own = credentialRowState("composio", config({ composio: { configured: true, mode: "self-hosted" } }));
     expect(own).toMatchObject({ stored: true, working: true, status: "Connected", tone: "own" });
+    expect(own.detail).toMatch(/your own key/i);
   });
 
   it("does not claim a saved key when a broker is carrying it", () => {
@@ -38,7 +48,13 @@ describe("the connected apps key row", () => {
     expect(borrowed.stored, "a managed connection reported the row's key as stored").toBe(false);
     expect(borrowed.tone).toBe("borrowed");
     expect(borrowed.status).not.toBe("Connected");
-    expect(borrowed.status).toMatch(/Flux Router/);
+    expect(borrowed.status).toBe("Already connected via Flux Router");
+    // ...and the line underneath tells them there is nothing to do, while
+    // still leaving their own key on the table. It used to say this key was
+    // REQUIRED, which is what sent them hunting for one.
+    expect(borrowed.detail).toMatch(/nothing to do/i);
+    expect(borrowed.detail).toMatch(/your own key/i);
+    expect(borrowed.detail).not.toMatch(/required/i);
   });
 
   it("says nothing at all when it is neither", () => {

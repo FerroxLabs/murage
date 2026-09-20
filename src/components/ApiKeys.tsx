@@ -48,7 +48,7 @@ const SECTIONS: Record<
     // carrying it, which is exactly the case this row was getting wrong.
     stored: (c) => c.composio.mode === "self-hosted",
     working: (c) => c.composio.configured,
-    elsewhere: "Running on your Flux Router key",
+    elsewhere: "Already connected via Flux Router",
   },
   box: { body: (v) => ({ box: { token: v } }), stored: (c) => c.box.configured, working: (c) => c.box.configured },
   opencodeGo: {
@@ -64,18 +64,26 @@ export interface CredentialRowState {
   working: boolean;
   /** The green "Connected", or the quieter sentence, or nothing at all. */
   status: string;
+  /** The line under the field. It changes with the answer, because "add your
+   *  own key" and "you do not need one" are different advice and the static
+   *  sentence here used to say this key was REQUIRED, which was wrong in both
+   *  directions once a broker could carry it. */
+  detail: string;
   /** Green only for this row's own key. A borrowed one is not this row's. */
   tone: "own" | "borrowed" | "none";
 }
 
 export function credentialRowState(section: ConfigSection, config: ConfigStatus | null | undefined): CredentialRowState {
   const spec = SECTIONS[section];
-  if (!config) return { stored: false, working: false, status: "", tone: "none" };
+  const base = CREDENTIALS[section].description;
+  if (!config) return { stored: false, working: false, status: "", tone: "none", detail: base };
   const stored = spec.stored(config);
   const working = spec.working(config);
-  if (stored) return { stored, working, status: "Connected", tone: "own" };
-  if (working && spec.elsewhere) return { stored, working, status: spec.elsewhere, tone: "borrowed" };
-  return { stored, working, status: "", tone: "none" };
+  if (stored) return { stored, working, status: "Connected", tone: "own", detail: `${base} Running on your own key.` };
+  if (working && spec.elsewhere) {
+    return { stored, working, status: spec.elsewhere, tone: "borrowed", detail: `${base} Nothing to do here. Add your own key only if you would rather run them on that.` };
+  }
+  return { stored, working, status: "", tone: "none", detail: base };
 }
 
 const ELECTRON_CREDENTIAL: Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey"> = {
@@ -99,8 +107,7 @@ const CREDENTIALS: Record<
   composio: {
     label: APPS_KEY_FIELD_LABEL,
     placeholder: "ak_…",
-    description:
-      "Required for connected apps. Gmail, GitHub, Slack, Notion and the rest then run on your own key.",
+    description: "Gmail, Slack, Notion, GitHub and 500+ more.",
     href: "https://dashboard.composio.dev",
     linkLabel: "Create or copy your key",
     optional: true,
@@ -126,6 +133,11 @@ const CREDENTIALS: Record<
 
 function CredentialHelp({ section }: { section: ConfigSection }) {
   const credential = CREDENTIALS[section];
+  // Read live, because this sentence changes with the answer: "add your own
+  // key" and "you do not need one" are different advice, and the static
+  // version used to tell everyone this key was required.
+  const { state } = useStore();
+  const detail = credentialRowState(section, state.config).detail;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -171,7 +183,7 @@ function CredentialHelp({ section }: { section: ConfigSection }) {
           aria-label={`${credential.label} help`}
           className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[270px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
         >
-          <div className="text-[12px] leading-[1.45] text-ink-secondary">{credential.description}</div>
+          <div className="text-[12px] leading-[1.45] text-ink-secondary">{detail}</div>
           {credential.warning && (
             <div className="mt-2 flex gap-1.5 rounded-lg border border-warning/25 bg-warning/10 px-2 py-1.5 text-[11px] leading-[1.4] text-warning">
               <TriangleAlert size={13} className="mt-px shrink-0" aria-hidden="true" />
