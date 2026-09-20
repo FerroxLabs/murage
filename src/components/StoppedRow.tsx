@@ -26,6 +26,30 @@ export function StoppedRow({ reason }: { reason: string }) {
   );
 }
 
+/** A turn the PERSON stopped, with nothing running on the screen. Same quiet
+ * family as the two rows above, and for the same reason: pressing Stop is a
+ * normal thing to do, not a tool run and not an error. It used to be an
+ * ordinary activity chip, so with Settings → Tool calls off — the default —
+ * the transcript ended on the person's own message and said nothing at all;
+ * "Stopped by you" appeared only in the sidebar's thread preview. */
+export function StoppedByYouRow() {
+  return (
+    <div className="flex justify-start">
+      <div
+        role="status"
+        data-testid="stopped-by-you-row"
+        title={t("hostStop.byYouDescription")}
+        className={`${CHIP} text-ink-secondary`}
+      >
+        <span className="shrink-0" aria-hidden="true">
+          <Square size={11} className="fill-current opacity-70" />
+        </span>
+        <span className={CHIP_NAME}>{t("hostStop.byYou")}</span>
+      </div>
+    </div>
+  );
+}
+
 /** A stop the person made while a desktop action was already running on
  * their screen (server/host-computer-broker.ts withdrew it). The action may
  * still have finished, so the line says to look before retrying. */

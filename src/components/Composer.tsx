@@ -1162,6 +1162,7 @@ export function Composer({
       <div className="pointer-events-auto">
       <LocalComputerAutoWarning
         open={autoWarn !== false}
+        mode={autoWarn === "full" ? "full" : "auto"}
         onCancel={() => setAutoWarn(false)}
         onConfirm={() => {
           if (autoBot) {

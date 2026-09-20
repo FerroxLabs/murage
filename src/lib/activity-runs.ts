@@ -7,6 +7,10 @@
 // separate one run from the next.
 import type { Message } from "@/state/store";
 import { formatElapsed } from "@/lib/working-time";
+import { isStoppedMidDesktopAction } from "../../shared/host-stop";
+import { folderTrustNotice } from "../../shared/folder-trust";
+import { browserUnavailableReason } from "../../shared/browser-unavailable";
+import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 
 export type ActivityTranscriptItem =
   | { kind: "message"; message: Message }
@@ -25,7 +29,20 @@ function foldable(message: Message): boolean {
   if (message.kind !== "activity" || !tool) return false;
   if (message.comm) return false;
   if (tool.ok !== true) return false;
+  if (isQuietNote(tool.name)) return false;
   return !tool.name.startsWith("error:");
+}
+
+/** A notice the transcripts render as their own row so it stays visible with
+ * Settings → Tool calls off: a stop, a folder-trust notice, a turn that ran
+ * without its browser. A run is hidden entirely by that same setting, and
+ * these notices settle `ok: true` right after the tool calls they follow —
+ * so folding one would put it straight back behind the setting its own row
+ * exists to escape. A host stop never reached here (it settles `ok: false`);
+ * the rest did. */
+function isQuietNote(name: string): boolean {
+  if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
+  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name));
 }
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;

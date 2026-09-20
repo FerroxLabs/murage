@@ -878,6 +878,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
     </aside>
     <LocalComputerAutoWarning
       open={localAutoWarning !== null}
+      mode={localAutoWarning === "full" ? "full" : "auto"}
       onCancel={() => setLocalAutoWarning(null)}
       onConfirm={() => {
         if (localAutoWarning === "auto") patch({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });

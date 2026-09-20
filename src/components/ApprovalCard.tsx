@@ -27,6 +27,33 @@ const SKILL_SETTLED_LABEL = {
   update: "Skill updated",
 } as const;
 
+/** An ACP engine — Fuigo, the one the included Chief of Staff runs on —
+ * does not send a tool NAME with `session/request_permission`. It sends the
+ * permission KIND, and the driver forwards that kind in place of a tool name
+ * (server/drivers/acp/core.ts, `kind === "execute" ? "shell" : …`). These are
+ * the ACP kinds, spelled as the sentence they belong to; without them the
+ * first approval a new person ever sees read "Business Planner wants to
+ * other". The raw name the engine asked about is still in the card body. */
+const ACP_KIND_LABEL: ToolLabels = {
+  read: "read a file",
+  edit: "edit a file",
+  delete: "delete a file",
+  move: "move a file",
+  search: "search",
+  fetch: "fetch a web page",
+  execute: "run a command",
+  shell: "run a command",
+  think: "think it through",
+  switch_mode: "change its mode",
+  other: "use a tool",
+};
+
+/** True for a bare ACP permission kind. A kind is not a tool name, so it is
+ * never shown in the monospace badge beside the sentence. */
+export function isAcpPermissionKind(tool?: string): boolean {
+  return Boolean(tool) && Object.hasOwn(ACP_KIND_LABEL, tool!);
+}
+
 /** The tool's own name is noise to a human: mcp__muragebox__computer_batch is
  * "computer batch", Bash is "run a command". */
 function toolLabel(tool?: string): string {
@@ -44,7 +71,7 @@ function toolLabel(tool?: string): string {
     stage_skill: "enable a learned skill",
     update_skill: "update a learned skill",
   };
-  return nice[tool] ?? bare;
+  return nice[tool] ?? ACP_KIND_LABEL[tool] ?? bare;
 }
 
 export function ApprovalCard({
@@ -86,7 +113,7 @@ export function ApprovalCard({
             ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
             : <>{bot ? `${bot.name} wants to ` : "Wants to "}{toolLabel(displayTool)}</>}
         </div>
-        {displayTool && !isHostConsent && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
+        {displayTool && !isHostConsent && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>
 
       {/* what, exactly */}

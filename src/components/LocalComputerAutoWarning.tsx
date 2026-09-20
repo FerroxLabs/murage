@@ -4,12 +4,22 @@ import { AlertTriangle } from "lucide-react";
 export const LOCAL_COMPUTER_AUTO_WARNING =
   "Auto mode will let this bot click, type, and run tools on this computer without asking first. Destructive and sensitive actions still stop. Continue only if you are watching.";
 
+/** The same question for Full access. It is a different answer, not a louder
+ * one: Auto keeps a stop in front of destructive and sensitive actions and
+ * Full access does not, so the Auto sentence would be a promise this mode
+ * cannot keep. */
+export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
+  "Full access will let this bot click, type, and run tools on this computer without asking first — including destructive and sensitive actions. Continue only if you are watching.";
+
 export function LocalComputerAutoWarning({
   open,
+  /** which switch the person actually chose; the dialog says so */
+  mode = "auto",
   onCancel,
   onConfirm,
 }: {
   open: boolean;
+  mode?: "auto" | "full";
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -46,10 +56,10 @@ export function LocalComputerAutoWarning({
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
           <div>
             <h2 id="local-auto-warning-title" className="text-[15px] font-semibold text-ink">
-              Allow Auto mode on this computer?
+              {mode === "full" ? "Allow Full access on this computer?" : "Allow Auto mode on this computer?"}
             </h2>
             <p id="local-auto-warning-body" className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
-              {LOCAL_COMPUTER_AUTO_WARNING}
+              {mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
             </p>
           </div>
         </div>

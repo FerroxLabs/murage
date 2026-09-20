@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 
 import { nextRename } from "@/lib/rename";
+import { possessive } from "@/lib/possessive";
 import { cn } from "@/lib/cn";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 
@@ -91,7 +92,7 @@ export function RenameTitle({
           <button
             type="button"
             onClick={onActivate}
-            aria-label={`Open ${value}'s profile`}
+            aria-label={`Open ${possessive(value)} profile`}
             className={cn("min-w-0 truncate text-left", className)}
             title="Bot settings"
           >

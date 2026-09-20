@@ -594,6 +594,8 @@
   "composer.dismissNotice": "Dismiss",
   "hostStop.label": "Stopped — {reason}",
   "hostStop.description": "Murage stopped this turn. Send another message to continue.",
+  "hostStop.byYou": "Stopped by you",
+  "hostStop.byYouDescription": "You stopped this turn. Send another message to continue.",
   "hostStop.midDesktopAction": "Stopped while an action was running on your screen — it may have finished anyway. Check the screen before retrying.",
   "folderTrust.withheldLabel": "Folder not trusted — {sources} left out",
   "folderTrust.withheldDescription": "This folder's own instructions, tools or skills were not applied, because it is not trusted. The bot still works here.",
