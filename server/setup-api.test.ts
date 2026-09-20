@@ -173,9 +173,8 @@ describe("the first-run checklist on a real server whose engine never answers", 
     // Nothing is blocked here: this engine simply never answered, which is
     // an open step, not a refusal the person can do nothing about.
     expect(view.blocked).toEqual([]);
-    // The checklist has run out of things to present: what is left is
-    // outstanding or deliberately passed over, and neither is a claim of
-    // success.
+    // It keeps presenting the brain step rather than declaring the hour
+    // finished — the engine that never answered is still the next thing.
     expect(view.next).toBe("brain");
     expect(step(view, "apps").skipped).toBe(true);
   });
