@@ -2127,6 +2127,24 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");
   });
 
+  // The exact wrapper Fuigo 1.0.20 produced against a live capped Flux Router
+  // account on 2026-09-20. Before this, it read as a generic HTTP 402 and the
+  // transcript carried the engine's own sentence, sum and support address.
+  it("answers a monthly spending limit without the credits advice the provider contradicts", () => {
+    const capped = "API error (status 402 Payment Required): This account has reached its $10.00 monthly spend ceiling. The ceiling rises automatically as your account builds payment history — adding credit will not lift it. Email support@fluxrouter.ai if you need it raised sooner.";
+    const message = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: capped } });
+    expect(message).toBe("Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine.");
+    expect(message.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(message).not.toMatch(/\$10|support@|Add credits in/);
+    // Without a fluxrouter.ai locator the limit is still recognised, but the
+    // provider is not named on the strength of provider prose alone.
+    const bare = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "account_monthly_budget_exhausted" } });
+    expect(bare).toBe("This account has reached its monthly spending limit with the model provider. Adding credit will not lift it — ask them to raise it, or use another engine.");
+    expect(bare.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    // A ceiling is not an exhausted balance: the credits copy must not move.
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");
+  });
+
   it("selectModel confirms the requested model before prompting", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);

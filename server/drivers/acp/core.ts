@@ -88,6 +88,13 @@ import { redactSecretsInText } from "../../redact.ts";
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
   const info = classifyProviderError(error);
   if (info?.kind === "payment") return "Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.";
+  // A ceiling the account reached, not a balance it spent. Saying "add
+  // credits" here would be advice the provider itself contradicts.
+  if (info?.kind === "spend-cap") {
+    return info.provider === "flux-router"
+      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine."
+      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it — ask them to raise it, or use another engine.";
+  }
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
       return "Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.";
@@ -1868,7 +1875,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // `error.data`) when it sent one; fixed credit copy still wins.
               // Classification above keeps reading the JSON-RPC message.
               const rpc = e as { acpMethod?: unknown; data?: unknown };
-              const engineText = providerError?.kind !== "credits" && providerError?.kind !== "payment" && !reasoningOnlyData(rpc?.data) && typeof rpc?.acpMethod === "string"
+              const engineText = providerError?.kind !== "credits" && providerError?.kind !== "payment" && providerError?.kind !== "spend-cap" && !reasoningOnlyData(rpc?.data) && typeof rpc?.acpMethod === "string"
                 ? acpEngineErrorText(rpc.data) : undefined;
               // The kind travels structurally. The card reads this field, not
               // the error text, so an engine cannot claim a kind in prose.
