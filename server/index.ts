@@ -3497,7 +3497,7 @@ bus.subscribe((event: RuntimeEvent) => {
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
             // ...and the owner's own channel message, if the bot allows it
             channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
-            // D57: the bot editing its own MEMORY.md or its own thread files
+            // The bot editing its own MEMORY.md or its own thread files
             // is Murage's own bookkeeping, not a permission — including on an
             // unattended routine run, which used to sit at "Waiting for you…"
             // until someone woke up and allowed exactly those two edits.

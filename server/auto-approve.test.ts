@@ -460,7 +460,7 @@ describe("a wider grant never widens into the guards", () => {
   });
 });
 
-// D57 (0.1.56 Mac customer test, M2): asking Business Planner one question
+// Asking one bot a single question used to raise three approval cards:
 // raised three cards, two of them for the bot editing its OWN MEMORY.md and
 // its OWN thread files — and a routine's "Run now" sat at "Waiting for you…"
 // with a pending approval until someone woke up and allowed exactly those.

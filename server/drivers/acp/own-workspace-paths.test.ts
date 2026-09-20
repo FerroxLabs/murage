@@ -1,4 +1,4 @@
-// The own-workspace exemption (D57) only stops asking when the driver reports
+// The own-workspace exemption only stops asking when the driver reports
 // which files a permission request names. The Claude driver did; every ACP
 // engine did not — including the bundled Fuigo the Chief of Staff runs on, so
 // the fix reached nobody on Murage's own default engine.

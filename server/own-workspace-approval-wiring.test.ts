@@ -1,4 +1,4 @@
-// D57 — the wiring, end to end, on the engine that reported the bug.
+// The wiring, end to end, on the engine that reported the bug.
 //
 // The boundary is tested in own-workspace-approval.test.ts and the order of
 // precedence in auto-approve.test.ts. Neither proves the one thing that made
@@ -64,7 +64,7 @@ beforeEach(async () => {
   process.env.FAKE_CLAUDE_MODE = "hang";
   instance = await ClaudeDriver.create({
     instanceId: "claude-d57",
-    displayName: "Claude D57",
+    displayName: "Claude Test",
     environment: {},
     enabled: true,
     config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },

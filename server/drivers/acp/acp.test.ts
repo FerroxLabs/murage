@@ -2145,7 +2145,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");
   });
 
-  // D57 made a bot's writes inside its OWN managed folders stop asking. The
+  // A bot's writes inside its OWN managed folders no longer ask. The
   // exemption is decided from the paths the DRIVER reports, so an engine that
   // reports none never gets it — which was every ACP engine, including the
   // bundled Fuigo the Chief of Staff runs on.

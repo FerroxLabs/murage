@@ -49,7 +49,7 @@ describe("free text is an answer at every turn", () => {
   });
 
   it("NEVER takes the turn off the engine, which is M1", () => {
-    // THE REGRESSION GUARD FOR M1 (0.1.56 Mac customer test). This branch used
+    // THE REGRESSION GUARD for the dropped first message. This branch used
     // to `return` before `dispatch({ type: "send" ... })`, so the first thing
     // a person typed went to the intake route INSTEAD of to the bot: `Save a
     // file named notes/prices.md containing the line "Croissant 3.50". Then

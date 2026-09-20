@@ -154,7 +154,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * folder. The server persists it on the card and, once the owner
          * answers, records the decision for the folder's trust key. */
         folderTrust?: { key: string; folder: string; sources: string[] };
-        /** 0.1.57 D57 (additive): the file paths this permission acts on, read
+        /** Additive: the file paths this permission acts on, read
          * from the ENGINE's structured tool input — never from `summary`,
          * which is display text composed from model output. Policy uses them
          * for one thing only: recognizing a bot writing inside its own managed

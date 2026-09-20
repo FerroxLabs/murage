@@ -1161,7 +1161,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
-              // D57: the file this call names, from the CLI's own tool input
+              // The file this call names, from the CLI's own tool input
               // rather than from `summary` (which is that input stringified
               // and cut at 200 characters, so it stops being readable as data
               // exactly when the edit is long). Policy reads it only to

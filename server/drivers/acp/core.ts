@@ -86,7 +86,7 @@ import { toolFilePaths } from "../../own-workspace-approval.ts";
 
 /** The files an ACP permission request names, for the own-workspace check.
  *
- * D57 made a bot's writes inside its OWN managed folders stop asking, but only
+ * A bot's writes inside its OWN managed folders no longer ask, but only
  * the Claude driver reported the paths, so every ACP engine — including the
  * bundled Fuigo the Chief of Staff runs on — still raised all three cards and
  * still stalled an unattended routine. This is the same fact, read off the

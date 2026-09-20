@@ -1,4 +1,4 @@
-// 0.1.57 D57 — a bot writing inside its OWN managed directories is
+// A bot writing inside its OWN managed directories is
 // bookkeeping, not an action taken on the person's behalf.
 //
 // The bug (0.1.56 Mac customer test, M2): one question to Business Planner in

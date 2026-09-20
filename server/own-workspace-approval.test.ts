@@ -1,4 +1,4 @@
-// D57 — the boundary itself, on a real filesystem.
+// The boundary itself, on a real filesystem.
 //
 // This decides whether a permission card is raised, so every test here is an
 // escape attempt: the happy path is one describe block and the rest is the

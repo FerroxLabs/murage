@@ -238,7 +238,7 @@ export type AutoVerdictSource =
   | "always-allow"
   | "auto-mode"
   | "full-access"
-  /** 0.1.57 D57: the bot writing inside its OWN managed workspace or thread
+  /** The bot writing inside its OWN managed workspace or thread
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
@@ -297,7 +297,7 @@ export function autoVerdict(
     /** the turn is the workspace owner's own Telegram, Slack or Discord
      * message (it is also unattended and automated) */
     channelOwner?: boolean;
-    /** 0.1.57 D57: the caller established — from the engine's STRUCTURED tool
+    /** The caller established — from the engine's STRUCTURED tool
      * input, never from the card text — that every filesystem path this
      * request names lies inside the directories Murage manages for THIS bot:
      * its own workspace folder and its own thread folder under the data dir.
@@ -334,7 +334,7 @@ export function autoVerdict(
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
   const sensitive = destructive ? null : matchFirst(SENSITIVE, summary);
-  // D57: the bot's own bookkeeping, ahead of the unattended and host blocks
+  // The bot's own bookkeeping, ahead of the unattended and host blocks
   // because those exist to stop a MODE or a GRANT standing in for a person,
   // and this is neither — nobody ever authorized Murage's own folders, and an
   // 8am routine that cannot write its own thread file simply never runs.

@@ -359,7 +359,7 @@ describe("the size of the lists", () => {
 
 // ── the confidence floor ──────────────────────────────────────────────
 //
-// M1 from the 0.1.56 Mac customer test: a request to write a prices file was
+// Reported from a real install: a request to write a prices file was
 // answered with "I'd set myself up as 3D Star Adventure". Measured here
 // against the shipped catalogue, `game-3d` is STRONG for that sentence on
 // exactly two words — `file` and `containing` — both of which are in its
