@@ -576,6 +576,45 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(joined).toContain("mcp_servers.browser.command");
   });
 
+  it("does not move a colliding server on top of one of the bot's own servers", async () => {
+    const codexHome = join(scratch, "double-collision-codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "config.toml"), '[mcp_servers.fibery]\nurl = "https://mcp-eu-svc.fibery.io/mcp"\n');
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "double-collision.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-mcp-double-collision",
+      text: "go",
+      integrations: {
+        custom: {
+          // the owner's name collides with the first; the second is the bot's
+          // own server, already sitting on the alias the first wants
+          fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} },
+          fibery_murage: { command: "npx", args: ["-y", "@x/fibery-murage"], env: {} },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+
+    // each server's command lands under its own mcp_servers.<mount>. prefix,
+    // and the two prefixes are different — one -c override merging into the
+    // other is the same silent capability merge, caused by Murage this time
+    const mountOf = (command: string): string => {
+      const arg = argv.find((entry) => entry.startsWith("mcp_servers.") && entry.endsWith(`.command=${JSON.stringify(command)}`));
+      return arg ? arg.slice("mcp_servers.".length, arg.indexOf(".command=")) : "";
+    };
+    const movedAside = mountOf("uv");
+    const ownServer = mountOf("npx");
+    expect(ownServer).toBe("fibery_murage");
+    expect(movedAside).not.toBe("");
+    expect(movedAside).not.toBe(ownServer);
+    // and nothing is written into the owner's own table
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../testing/cleanup.ts";
-import { codexConfigMcpServerNames, mcpServerNamesInToml, mountedMcpServerName } from "./codex-mcp-names.ts";
+import { codexConfigMcpServerNames, mcpServerNamesInToml, mountedMcpServerNames } from "./codex-mcp-names.ts";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -69,12 +69,40 @@ describe("codexConfigMcpServerNames", () => {
   });
 });
 
-describe("mountedMcpServerName", () => {
+describe("mountedMcpServerNames", () => {
   it("keeps a free name and moves a taken one aside, deterministically", () => {
-    expect(mountedMcpServerName("notes", new Set())).toBe("notes");
-    expect(mountedMcpServerName("fibery", new Set(["fibery"]))).toBe("fibery_murage");
-    expect(mountedMcpServerName("fibery", new Set(["fibery", "fibery_murage"]))).toBe("fibery_murage2");
+    expect([...mountedMcpServerNames(["notes"], new Set())]).toEqual([["notes", "notes"]]);
+    expect(mountedMcpServerNames(["fibery"], new Set(["fibery"])).get("fibery")).toBe("fibery_murage");
+    expect(mountedMcpServerNames(["fibery"], new Set(["fibery", "fibery_murage"])).get("fibery"))
+      .toBe("fibery_murage2");
     // same inputs, same answer — codex keeps per-server state under this name
-    expect(mountedMcpServerName("fibery", new Set(["fibery"]))).toBe("fibery_murage");
+    expect(mountedMcpServerNames(["fibery"], new Set(["fibery"])).get("fibery")).toBe("fibery_murage");
+  });
+
+  it("never mounts two of the bot's own servers under one name", () => {
+    // the owner declares `fibery`; the bot happens to have BOTH `fibery` and a
+    // server literally called `fibery_murage`. Allocating the alias against the
+    // owner's file alone lands them both on `mcp_servers.fibery_murage`.
+    const both = mountedMcpServerNames(["fibery", "fibery_murage"], new Set(["fibery"]));
+    expect(both.get("fibery_murage")).toBe("fibery_murage");
+    expect(both.get("fibery")).not.toBe("fibery_murage");
+    expect(new Set(both.values()).size).toBe(both.size);
+
+    // the same in the other declaration order, and with the alias ladder
+    // already partly occupied by the bot itself
+    const laddered = mountedMcpServerNames(
+      ["fibery_murage2", "fibery_murage", "fibery"],
+      new Set(["fibery"]),
+    );
+    expect(new Set(laddered.values()).size).toBe(3);
+    expect(laddered.get("fibery")).toBe("fibery_murage3");
+    expect(laddered.get("fibery_murage")).toBe("fibery_murage");
+    expect(laddered.get("fibery_murage2")).toBe("fibery_murage2");
+
+    // two colliding servers cannot be given the same alias either
+    const twoCollisions = mountedMcpServerNames(["a", "a_murage"], new Set(["a", "a_murage"]));
+    expect(new Set(twoCollisions.values()).size).toBe(2);
+    expect(twoCollisions.get("a")).toBe("a_murage2");
+    expect(twoCollisions.get("a_murage")).toBe("a_murage_murage");
   });
 });

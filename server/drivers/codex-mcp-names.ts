@@ -67,13 +67,41 @@ export function codexConfigMcpServerNames(env: Record<string, string | undefined
   }
 }
 
-/** The name to mount a custom server under: its own, unless that name is
- * already taken in the owner's Codex config. Deterministic, so the same
- * collision produces the same mount name on every turn and Codex's own
- * per-server state stays with the right server. */
-export function mountedMcpServerName(name: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(name)) return name;
-  let candidate = `${name}_murage`;
-  for (let i = 2; taken.has(candidate); i++) candidate = `${name}_murage${i}`;
-  return candidate;
+/** Mount name for each of a bot's custom servers, keyed by the bot's own name.
+ * A server keeps its name unless the owner's Codex config already declares one
+ * by that name; then it is moved aside.
+ *
+ * Every value is distinct, and that is the whole reason this takes the servers
+ * together rather than one at a time. An alias has to dodge three things, not
+ * just the owner's file: the owner's declared names, the bot's OTHER custom
+ * names, and the aliases already handed out in this same pass. Move `foo` aside
+ * while the bot also has a server literally called `foo_murage` and both mount
+ * under `mcp_servers.foo_murage` — the second `-c` override merges into the
+ * first, which is the same silent capability merge this module exists to stop,
+ * only now caused by Murage instead of the owner.
+ *
+ * Deterministic: the same inputs give the same mount names on every turn, so
+ * Codex's per-server state stays with the right server. Insertion order of
+ * `names` is part of that determinism, and it comes from the bot's stored
+ * config, which is stable. */
+export function mountedMcpServerNames(
+  names: Iterable<string>,
+  declared: ReadonlySet<string>,
+): Map<string, string> {
+  const wanted = [...names];
+  // Seeded with the bot's own names so an alias never lands on a sibling that
+  // is about to mount, or has already mounted, under that exact name.
+  const taken = new Set<string>([...declared, ...wanted]);
+  const mounts = new Map<string, string>();
+  for (const name of wanted) {
+    if (!declared.has(name)) {
+      mounts.set(name, name);
+      continue;
+    }
+    let candidate = `${name}_murage`;
+    for (let i = 2; taken.has(candidate); i++) candidate = `${name}_murage${i}`;
+    taken.add(candidate);
+    mounts.set(name, candidate);
+  }
+  return mounts;
 }

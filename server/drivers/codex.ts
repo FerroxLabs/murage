@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
-import { codexConfigMcpServerNames, mountedMcpServerName } from "./codex-mcp-names.ts";
+import { codexConfigMcpServerNames, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -93,8 +93,11 @@ const renamedMcpServers = new Set<string>();
  * to know the server was moved aside rather than lost. Carries names only —
  * never the server's command, args or env. */
 function noteRenamedMcpServer(name: string, mountName: string): void {
-  if (renamedMcpServers.has(name)) return;
-  renamedMcpServers.add(name);
+  // Keyed by the pair, not the name: if the same server later moves to a
+  // different mount name, that is a different fact and worth a line.
+  const said = JSON.stringify([name, mountName]);
+  if (renamedMcpServers.has(said)) return;
+  renamedMcpServers.add(said);
   console.error(`codex: MCP server ${JSON.stringify(name)} is also declared in Codex's own config.toml — mounted as ${JSON.stringify(mountName)} so the two definitions do not merge`);
 }
 
@@ -281,10 +284,19 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // un-cards the server that was mounted below with preApproved:false.
         // Such a server gets a mount name of its own.
         const declaredInCodexConfig = codexConfigMcpServerNames(env);
-        for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
-          if (name === "murage-memory") continue;
-          if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
-          const mountName = mountedMcpServerName(name, declaredInCodexConfig);
+        // The servers that actually get mounted, chosen BEFORE any name is
+        // allocated: a skipped server must not reserve its name, and a moved
+        // server must not land on a sibling's.
+        const customMcpServers = Object.entries(turn.integrations?.custom ?? {}).filter(
+          ([name, server]) =>
+            name !== "murage-memory" && !Object.keys(server.env).some(isHarnessOwnedMcpEnvName),
+        );
+        const mountNames = mountedMcpServerNames(
+          customMcpServers.map(([name]) => name),
+          declaredInCodexConfig,
+        );
+        for (const [name, server] of customMcpServers) {
+          const mountName = mountNames.get(name) ?? name;
           if (mountName !== name) noteRenamedMcpServer(name, mountName);
           mountMcpServer(appServerArgs, env, mountName, server, false);
         }
