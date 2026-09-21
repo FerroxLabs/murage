@@ -387,6 +387,108 @@ describe("an install that has already been used", () => {
   });
 });
 
+// A PARK NOBODY CHECKS IS A DELETION WITH EXTRA STEPS.
+//
+// Eight variants are held in the union with their copy intact and their
+// components compiling, because the owner has not ruled on where the work
+// behind them goes: the morning brief cards, the standalone apps step, the
+// closing card, and the phone and Tailscale walkthrough. The backups row
+// rides on the closing card, and it is the one that matters most, because
+// there is a standing rule that setup must end VERIFIED.
+//
+// The two walks above pin the exact card sequence for a machine that found
+// something and for a blank one. Neither would notice a parked card reaching
+// somebody down a THIRD path: an engine that is here and signed out, a key
+// passed over, a brief that has already run, apps already connected, a crew
+// already hired. That is the shape this park fails in, and it fails silently,
+// in a real person's transcript, on a card whose step no longer exists.
+//
+// THE LIVE LIST IS THE SMALL ONE, ON PURPOSE. A variant added to the union
+// and wired to nothing is PARKED by default and this test says so. The cost
+// of that being wrong is one line in a list; the cost of the other direction
+// is the card in the transcript.
+const LIVE_VARIANTS = [
+  "welcome",
+  "found",
+  "bare",
+  "bare-needs-key",
+  "signed-out",
+  "key",
+  "no-key",
+  "jobs",
+  "do-it",
+] as const;
+
+const PARKED_VARIANTS = SETUP_CARD_VARIANTS.filter(
+  (variant) => !(LIVE_VARIANTS as readonly string[]).includes(variant),
+);
+
+describe("nothing parked ever reaches a person", () => {
+  it("holds the eight the re-cut orphaned, and no others", () => {
+    expect([...PARKED_VARIANTS]).toEqual([
+      "sample-brief",
+      "apps",
+      "brief",
+      "brief-ran",
+      "more-routines",
+      "next",
+      "phone",
+      "phone-needs-tailscale",
+    ]);
+  });
+
+  it("plans none of them, from any state this flow can reach", () => {
+    const BRIEF_RAN = { total: 2, briefId: "r1", briefRan: true };
+    // Named, because `hello` is settled by a saved owner name and an unnamed
+    // machine holds the whole matrix on step one. The one unnamed row is here
+    // so the opening is covered too.
+    const named = (patch: Partial<SetupLiveState> = {}) => live({ ownerName: "Sean", ...patch });
+    const machines: Array<[string, SetupLiveState]> = [
+      ["nobody has said who they are", live()],
+      ["the engine in the box", named()],
+      ["nothing to think with", named({ agents: [], signedOutAgents: [] })],
+      ["signed out and nothing else", named({ agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] })],
+      ["something they installed", named({ agents: [{ ...BUNDLED, installed: true }] })],
+      ["a key in the keychain", named({ flux: FLUX_SAVED })],
+      ["apps already connected", named({ flux: FLUX_SAVED, connectedAppIds: ["gmail", "googlecalendar"], connectedApps: 2 })],
+      ["a brief that has already run", named({ flux: FLUX_SAVED, routines: BRIEF_RAN })],
+      ["a crew already hired", named({ flux: FLUX_SAVED, crewSize: 3, botReplyExists: true, routines: BRIEF_RAN })],
+    ];
+    const checklists: Array<[string, SetupState]> = [
+      ["untouched", state()],
+      ["detection read", state({ detect: DETECTED })],
+      ["key passed over", state({ detect: DETECTED, flux: { skipped: true } })],
+      ["a job chosen", state({ detect: DETECTED, chat: { note: "brief" } })],
+      ["the job finished", state({ detect: DETECTED, chat: { note: "brief" }, flow: { note: "tomorrow morning" } })],
+    ];
+
+    const everyVariant = new Set<string>();
+    for (const [machineName, machine] of machines) {
+      for (const [checklistName, recorded] of checklists) {
+        const where = `${machineName}, ${checklistName}`;
+        // Seeded with the opening card so the conversation is live in every
+        // combination: a machine with a key and a crew is not a first run by
+        // `view.firstRun`, and an unseeded run there would plan nothing and
+        // prove nothing.
+        const present = new Set<string>([setupCardKey("hello", "welcome")]);
+        for (let round = 0; round < 8; round++) {
+          const next = setupConversationPlan(view(machine, recorded), present).append;
+          if (!next.length) break;
+          for (const card of next) {
+            expect(PARKED_VARIANTS, `${where} planned the parked card ${card.variant}`)
+              .not.toContain(card.variant);
+            everyVariant.add(card.variant);
+            present.add(card.key);
+          }
+        }
+      }
+    }
+    // ...and the matrix really walked the flow, rather than passing because
+    // nothing was ever planned at all.
+    expect(everyVariant.size).toBeGreaterThanOrEqual(5);
+  });
+});
+
 // THE HOLE THAT SHIPPED ONCE, AND THE TEST THAT EXECUTES RATHER THAN SCANS.
 //
 // `plan()` built its block with `...CARD_COPY[variant]`, and spreading

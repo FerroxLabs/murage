@@ -31,7 +31,7 @@ import { webUiReadinessRows, type WebUiReadiness } from "./PhoneSetupFlow";
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
 const app = read("../App.tsx");
-const rail = read("./FirstRunRail.tsx");
+const phases = read("./FirstRunPhases.tsx");
 const firstRun = read("../lib/first-run.ts");
 const phoneSetup = read("./PhoneSetupFlow.tsx");
 const companion = read("./CompanionSection.tsx");
@@ -40,16 +40,17 @@ const sidebar = read("./Sidebar.tsx");
 const hook = read("../lib/use-surface.ts");
 
 /** 0.1.58 folded the welcome screen into the Chief of Staff's thread, and the
- *  only first-run CHROME left is the progress rail. The gate that replaced
- *  <Onboarding>'s early return is App.tsx's, and this is it. `desktop === true`
- *  and not `!== false`: the unknown surface is refused, which was the bug. */
-const RAIL_GATE = "{desktop === true && <FirstRunRail />}";
+ *  only first-run CHROME left is the phase bar (the progress rail it replaced
+ *  carried this same gate). The gate that replaced <Onboarding>'s early return
+ *  is App.tsx's, and this is it. `desktop === true` and not `!== false`: the
+ *  unknown surface is refused, which was the bug. */
+const PHASES_GATE = "{desktop === true && <FirstRunPhases />}";
 
 /** Every file that suppresses something, so a new one cannot quietly answer
  *  the question a different way. */
 const gated: Array<[string, string]> = [
   ["App.tsx", app],
-  ["FirstRunRail.tsx", rail],
+  ["FirstRunPhases.tsx", phases],
   ["PhoneSetupFlow.tsx", phoneSetup],
   ["CompanionSection.tsx", companion],
   ["SettingsPanel.tsx", settings],
@@ -98,7 +99,7 @@ describe("1. the welcome / email gate never reaches a phone", () => {
   it("renders only on a CONFIRMED desktop", () => {
     // Not `!== false`, not `!desktop`. The gate is the desktop thing, so the
     // unknown state must withhold it.
-    expect(app).toContain(RAIL_GATE);
+    expect(app).toContain(PHASES_GATE);
     expect(app).toContain("const desktop = useDesktopSurface();");
   });
 
@@ -121,14 +122,14 @@ describe("1. the welcome / email gate never reaches a phone", () => {
     expect(firstRun).toContain("view.firstRun");
   });
 
-  it("is locked a second time inside the rail itself", () => {
-    // So a future caller cannot reopen the hole by mounting the rail
+  it("is locked a second time inside the phase bar itself", () => {
+    // So a future caller cannot reopen the hole by mounting the bar
     // somewhere new. It renders nothing unless the server's own view says
     // this install is in its first run, and it holds no opinion of its own
     // about what a new install looks like.
-    expect(rail).toContain("const desktop = useDesktopSurface();");
-    expect(rail).toContain("if (desktop !== true || !view || !firstRunRailVisible(view, rail)) return null;");
-    expect(rail).not.toContain("localStorage");
+    expect(phases).toContain("const desktop = useDesktopSurface();");
+    expect(phases).toContain("if (desktop !== true || !view || !firstRunPhasesVisible(view, bar)) return null;");
+    expect(phases).not.toContain("localStorage");
   });
 
   // REMOVED WITH THE SCREEN IT GUARDED.
@@ -139,7 +140,7 @@ describe("1. the welcome / email gate never reaches a phone", () => {
   // screen. The engine scan is not a step any more, it is detection that
   // runs before anyone is asked anything, and the workspace check is now the
   // server's `firstRun`. The rule those assertions protected is covered
-  // above, twice: App.tsx's gate and the rail's own.
+  // above, twice: App.tsx's gate and the phase bar's own.
 });
 
 describe("2. the phone-setup flow never reaches a phone", () => {
@@ -267,7 +268,7 @@ describe("4. nothing that installs or executes is offered to a phone", () => {
     // ask the question any more: what is installed is DETECTED before
     // anybody is asked anything, and the agents card reports the answer.
     // So the rule is stronger than a guard. There is nothing to guard.
-    expect(rail).not.toContain("<EngineSetup");
+    expect(phases).not.toContain("<EngineSetup");
     for (const file of ["./FirstRunCard.tsx", "./FirstRunHelloCard.tsx", "./FirstRunChrome.tsx"]) {
       expect.soft(read(file), `${file} mounts the engine installer`).not.toContain("<EngineSetup");
     }
