@@ -4,6 +4,7 @@ import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
+  botsEyebrowLine,
   briefButtonLabel,
   briefRanLine,
   clockLabel,
@@ -72,6 +73,10 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
   { path: "localModelLine(none)", text: localModelLine("", "") },
   { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
+  { path: "botsEyebrowLine(0)", text: botsEyebrowLine(0) },
+  { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
+  { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
+  { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
 ];
 
 const everything = [...readable, ...assembled];
@@ -102,7 +107,10 @@ describe("first run copy: the house rules", () => {
   it("never sells on price", () => {
     // Money in any form: the adjectives, the nouns, and the figures. The
     // first run says what the thing does, never what it costs.
-    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
+    // `pay` was missing, and "Any OpenAI-style service you already pay for"
+    // was live on the no-key branch of a blank machine for the whole of this
+    // release. A rule with a hole in it is not a rule; it is the hole.
+    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|pay\w*|paid|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
     for (const { path, text } of everything) {
       const hit = banned.exec(text);
       expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null).toBeNull();
@@ -140,6 +148,30 @@ describe("first run copy: the house rules", () => {
     }
   });
 
+  // THE CEILING THAT WAS STATED AT THE TOP OF THE FILE AND ASSERTED NOWHERE.
+  //
+  // "Three sentences is the ceiling for a card body" has been in the rule
+  // list the whole time with nothing behind it, which is how a rule that
+  // lives only in a comment ends: everything else on the list got a test and
+  // this one got a promise. It applies to every string, not just the fields
+  // named `body`, because the renderer sets `second` and `third` and a row's
+  // `why` as their own lines and a person reads them the same way. Four
+  // sentences on a card is the paragraph this flow was re-cut to get rid of.
+  function sentences(text: string): number {
+    return text
+      // A decimal point, a version and a time are not ends of sentences: an
+      // end is punctuation with whitespace or nothing after it.
+      .split(/[.!?]+(?=\s|$)/)
+      .filter((part) => part.trim().length > 0).length;
+  }
+
+  it("keeps every line to the three sentence ceiling", () => {
+    for (const { path, text } of everything) {
+      const count = sentences(text);
+      expect.soft(count > 3 ? `${path}: ${count} sentences in "${text}"` : null).toBeNull();
+    }
+  });
+
   // ONE NAMED EXEMPTION, AND ONLY ONE.
   //
   // The rule is that the flow does not hand somebody a signpost instead of
@@ -173,13 +205,31 @@ describe("first run copy: the house rules", () => {
 });
 
 describe("first run copy: the things the flow promises", () => {
+  // THIS ASSERTED ON STRINGS NOBODY COULD READ, AND THAT IS WHY THEY WERE
+  // STILL THERE.
+  //
+  // It checked `flux.key.body`, `.second` and `.third`: the three-sentence
+  // version of this card, which the approved flow replaced with a heading, a
+  // lead and six rows. The same commit that stopped rendering them marked
+  // them SUPERSEDED and left them in, and this test then held them alive,
+  // house rules and all, for a card no person reaches. Prose pinned to dead
+  // prose. The strings are deleted and the order is now asserted on
+  // `features`, which is what the card actually renders (one after the
+  // other, checked as rendered in FirstRunCard.test.ts).
   it("leads the Flux Router card with routing, then apps, then media", () => {
     const flux = FIRST_RUN_COPY.flux.key;
-    expect(flux.body).toContain("all the latest AI models");
-    expect(flux.body).toContain("smart routing");
-    expect(flux.second).toContain("500+ apps");
-    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(flux.second).toContain(named);
-    expect(flux.third).toMatch(/pictures.*transcription/);
+    const order = flux.features.map((row) => row.id);
+    expect(order[0], "routing does not lead the card").toBe("routing");
+    expect(order[1], "the apps do not follow routing").toBe("apps");
+    // Pictures and dictation are the media rows, and they come after the
+    // models claim rather than in front of it.
+    for (const media of ["pictures", "dictation"]) {
+      expect.soft(order.indexOf(media), media).toBeGreaterThan(order.indexOf("models"));
+    }
+    const apps = flux.features.find((row) => row.id === "apps")!;
+    expect(apps.title).toContain("500+ apps");
+    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(apps.body).toContain(named);
+    expect(flux.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
   });
 
@@ -280,10 +330,53 @@ describe("first run copy: the things the flow promises", () => {
     }
   });
 
-  it("puts email on graduated trust wherever email is mentioned", () => {
-    const line = "You approve, I send. Once you trust me with a kind of email, I can send those myself.";
-    expect(FIRST_RUN_COPY.apps.apps.trust).toContain(line);
-    expect(FIRST_RUN_COPY.routines["more-routines"].rows[0].why).toContain(line);
+  // WHAT THE APPROVAL SYSTEM CAN KEY IS THE CEILING ON WHAT THE COPY MAY
+  // PROMISE, AND THIS TEST USED TO REQUIRE A SENTENCE THAT BROKE IT.
+  //
+  // It demanded, verbatim: "You approve, I send. Once you trust me with a
+  // kind of email, I can send those myself." The second half is not true and
+  // cannot be made true. A remembered approval is keyed by the WHOLE tool
+  // name (`approvalKey`, server/auto-approve.ts: anything that is not a
+  // command tool keys on the tool itself), and every connected-app call,
+  // read or write, Gmail or Slack, arrives through one wrapper tool
+  // (server/composio.ts). There is no key for "this kind of email", so a
+  // grant can never be narrowed to one. That the two are inseparable is
+  // asserted against the real function in
+  // server/first-run-email-trust.test.ts; here the subject is the words.
+  //
+  // AND THE TEST WAS THE REASON THE WORDS COULD NOT BE FIXED. Pinning a
+  // sentence cannot check anything: the sentence is whatever it says it is.
+  // All a pin can do is fail the moment somebody corrects it, which is the
+  // fifth time prose pinning has held a claim in place in this file and the
+  // second time it held a FALSE one. So this asserts the property. Any
+  // sentence at all is allowed, as long as approval comes before sending and
+  // no grant is promised that the approval system could not key.
+  const SENDS_MAIL = /\b(e-?mails?|mail|replies|reply)\b/i;
+  const SENDING = /\bsend(?:s|ing)?\b/i;
+  /** A grant narrowed to a subset of what one key covers. There is exactly
+   *  one key for all of it, so any of these is a promise nothing can keep. */
+  const NARROWER_THAN_KEYABLE =
+    /\b(?:a|an|any|each|one|this|that|these|those|some|certain|particular)\s+(?:kind|kinds|type|types|sort|sorts|category|categories)\s+of\b/i;
+
+  it("puts sending email behind approval wherever the flow mentions it", () => {
+    const sending = everything.filter(({ text }) => SENDS_MAIL.test(text) && SENDING.test(text));
+    // If this ever drops to nothing, the flow stopped talking about email
+    // rather than the rule being satisfied, and the rule would be vacuous.
+    expect(sending.length, "no email-sending copy left to check").toBeGreaterThan(0);
+    for (const { path, text } of sending) {
+      expect.soft(`${path}: ${text}`, `${path} talks about sending mail without approval first`)
+        .toMatch(/\byou approve\b/i);
+    }
+  });
+
+  it("never promises a grant narrower than the approval system can key", () => {
+    for (const { path, text } of everything) {
+      const hit = NARROWER_THAN_KEYABLE.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "promises a per-category grant; approvals are keyed by the whole tool",
+      ).toBeNull();
+    }
   });
 
   it("offers a job rather than a team on the closing card", () => {
@@ -310,6 +403,75 @@ describe("first run copy: the things the flow promises", () => {
       expect.soft(mention.path, `${mention.path} talks about backups outside the backups group`)
         .toMatch(/^FIRST_RUN_COPY\.backups\./);
     }
+  });
+
+  // WHAT THE BACKUP TAKES IS THE CEILING ON WHAT THE CARD MAY OFFER.
+  //
+  // The offer read "a private copy of everything on this computer, taken
+  // fresh every day". The capture is Murage's own installation data and
+  // nothing else: server/installation-fidelity-snapshot.ts walks the data
+  // directory, keeps a named set of application roots and EXCLUDES the rest
+  // by name, credentials and native custody and models and logs and browser
+  // profiles among them. Documents, applications and working folders are not
+  // in it. The card was parked and unreachable when the audit found this,
+  // which is not a defence: the words were in the tree, the copy test walked
+  // them, and an unreachable card is one render away from being reachable.
+  //
+  // The property is what the offer may CLAIM, not which sentence it uses: no
+  // string in the flow may offer a copy of the machine, and the offer has to
+  // name what it really takes rather than going vague to slip past the ban.
+  it("never offers a backup wider than the installation it takes", () => {
+    const WHOLE_MACHINE =
+      /\b(?:everything|every file|all (?:your |the )?(?:files|data)|anything) (?:on|from) (?:this|your) (?:computer|machine|laptop|mac|pc|drive)\b|\byour (?:whole|entire) (?:computer|machine|laptop|drive)\b|\byour documents\b|\bhard drive\b/i;
+    const backups = readable.filter((entry) => entry.path.startsWith("FIRST_RUN_COPY.backups."));
+    expect(backups.length, "the backups group vanished").toBeGreaterThan(0);
+    for (const { path, text } of backups) {
+      const hit = WHOLE_MACHINE.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "offers a copy of the computer; the capture is the Murage installation",
+      ).toBeNull();
+    }
+    // And it says what it does take, so "a private copy, taken fresh every
+    // day" cannot pass the ban by naming nothing at all.
+    const offer = FIRST_RUN_COPY.backups.offer;
+    for (const named of [/\bbots\b/i, /\broutines\b/i]) {
+      expect.soft(offer, "the offer does not name what is in the backup").toMatch(named);
+    }
+  });
+
+  // A CROWD IS COUNTED, NOT REMEMBERED.
+  //
+  // "Two bots" was written as a literal twice: on the job row offered before
+  // anything is installed, and as `botsEyebrowMany` on the crew screen. Both
+  // were claims about `starter-solo-business.json` rather than readings of
+  // it, and the second one rendered directly above the names, so a package
+  // that grew a third bot would have said "Two bots" over three of them.
+  //
+  // The eyebrow now counts what `businessResult` was handed. Nothing else in
+  // the flow states a number of bots at all, because nothing else in the
+  // flow has the package in front of it when it renders.
+  it("never states a crew size the screen has not counted", () => {
+    const counting = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+bots?\b/i;
+    // The two eyebrow pieces are the counter's own words and are excluded by
+    // path, not by a list of sentences: "One bot" is chosen only when the
+    // reading says one.
+    for (const { path, text } of readable.filter((entry) => !/\.botsEyebrow\w*$/.test(entry.path))) {
+      const hit = counting.exec(text);
+      expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null, "claims a crew size").toBeNull();
+    }
+  });
+
+  it("counts the crew it is given, however big the package turns out to be", () => {
+    expect(botsEyebrowLine(1)).toBe("One bot");
+    expect(botsEyebrowLine(2)).toBe("Two bots");
+    // The one that mattered: a third bot changes the eyebrow rather than
+    // leaving it saying two.
+    expect(botsEyebrowLine(3)).toBe("Three bots");
+    // A package with nothing in it still leaves words on the screen, and a
+    // count past spelling out is a figure rather than a wrong word.
+    expect(botsEyebrowLine(0)).toBe("No bots");
+    expect(botsEyebrowLine(12)).toBe("12 bots");
   });
 
   it("never claims found engines on a bare machine", () => {
@@ -347,12 +509,20 @@ describe("what the key card claims, to whom", () => {
   });
 
   it("leads on routing in every version, and never counts models", () => {
-    for (const line of [key.body, key.recommendation, key.recommendationBare, key.recommendationBonus]) {
+    // `key.body` was three of these four, and `key.body` was not rendered.
+    // The versions a person really reads are the two leads, the three
+    // recommendations and the rows.
+    const rendered = [
+      key.lead, key.leadBare, key.recommendation, key.recommendationBare, key.recommendationBonus,
+      ...key.features.flatMap((row) => [row.title, row.body]),
+    ];
+    for (const line of rendered) {
       expect.soft(line, line).not.toMatch(/\d+\s*\+?\s*models/i);
       expect.soft(line, line).not.toMatch(/composio/i);
     }
-    expect(key.body).toMatch(/all the latest/i);
-    expect(key.body).toMatch(/routing/i);
+    expect(key.features[0].title).toMatch(/routing/i);
+    expect(key.lead).toMatch(/picks for you/i);
+    expect(key.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
   });
 });
 

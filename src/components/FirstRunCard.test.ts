@@ -476,8 +476,23 @@ describe("card four: the accounts", () => {
     expect(markup).not.toContain(`>${copy.connect}</button>`);
   });
 
-  it("puts email on graduated trust rather than on a limit", () => {
-    expect(render(PARKED, "apps")).toContain(copy.trust);
+  // The rendered half of the rule in first-run-copy.test.ts. This card is
+  // where the person is actually asked for their mail account, so this is
+  // where a promise about what happens to it lands on screen.
+  //
+  // It used to require, on screen, "Once you trust me with a kind of email,
+  // I can send those myself". No such grant can exist: a remembered approval
+  // is keyed by the whole tool name (`approvalKey`, server/auto-approve.ts)
+  // and every connected-app call arrives through one wrapper tool, so
+  // reading mail and sending it share one key. Asserting the sentence made
+  // the sentence unfixable, so the assertion is the property: approval comes
+  // before sending, and nothing narrower than one key is offered.
+  it("puts email on graduated trust, and offers no grant the system cannot key", () => {
+    const markup = render(PARKED, "apps");
+    expect(markup).toContain(copy.trust);
+    expect(markup).toMatch(/\byou approve\b/i);
+    expect(markup).not.toMatch(/\b(?:kind|kinds|type|types|sort|sorts|categor\w+)\s+of\s+e-?mail/i);
+    expect(markup).not.toMatch(/\bi (?:can|will|could) send (?:those|them|these)\b/i);
   });
 });
 

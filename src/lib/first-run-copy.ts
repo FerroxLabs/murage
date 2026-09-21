@@ -18,7 +18,14 @@
 //     transcription. NOT voice: the key transcribes and does not speak, and
 //     the only row allowed to mention speaking is one marked "Coming soon".
 //   Never describe a capability as a limit. Sending email is graduated
-//     trust: you approve, I send, and then I can send that kind myself.
+//     trust: you approve, I send, and you can raise how much I do on my own.
+//   Never promise a grant the approval system cannot key. A remembered
+//     approval is keyed by the WHOLE tool name (`approvalKey`,
+//     server/auto-approve.ts) and every connected-app call, read or write,
+//     Gmail or Slack, arrives through one wrapper tool (server/composio.ts).
+//     So "once you trust me with a kind of email" was a key that cannot
+//     exist, and it shipped for as long as it did because a test required
+//     that exact sentence.
 //   No school framing. Nobody is being taught a lesson.
 //
 // Three sentences is the ceiling for a card body, which is why most bodies
@@ -328,9 +335,13 @@ export const FIRST_RUN_COPY = {
        * in first-run-copy.test.ts.
        */
       heading: "Get the right answer faster.",
+      // Five sentences, on the card the whole release leads with, under a
+      // rule that has said "three is the ceiling" since the file was written.
+      // Nothing was asserting it. The words are unchanged; the two-word
+      // sentences that were doing the work of one clause are now one clause.
       lead:
-        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask. "
-        + "Big job, big model. Quick job, quick model. You just get the answer.",
+        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask: "
+        + "big job, big model, quick job, quick model. You just get the answer.",
       /**
        * THE SECOND OPENING, ON A MACHINE WHERE DETECTION NEVER RAN.
        *
@@ -343,7 +354,7 @@ export const FIRST_RUN_COPY = {
       headingBare: "Your bots need a brain first.",
       leadBare:
         "Murage came with an engine. It did not come with anything to think with, and there is nothing on "
-        + "this computer I can use. One connection fixes that. It is the same one your apps run through.",
+        + "this computer I can use. One connection fixes that, and it is the same one your apps run through.",
       /** The card's own two corners. */
       cardTitle: "Flux Router",
       cardAccount: "Your account",
@@ -415,33 +426,13 @@ export const FIRST_RUN_COPY = {
       connectAgain: "Open the page again",
       connectCancel: "Cancel",
 
-      // ── SUPERSEDED BY THE SIX ROWS ABOVE, AND PARKED RATHER THAN CUT. ──
-      //
-      // `title`, `body`, `second`, `third` and `signup` are the three-sentence
-      // version of this card. The approved flow replaced them with a heading,
-      // a lead and six rows, and nothing renders these any more.
-      //
-      // They stay because they are still held to the house rules by the copy
-      // walk, and because the claims in them are the ones that were argued
-      // over: routing first, the apps named by example, no model count, and
-      // transcription rather than voice. Anybody tempted to rewrite a row
-      // above can read what the same promise looked like when it was fought
-      // over. They are NOT a second source of truth: the card reads `features`
-      // and only `features`.
-      title: "One key worth having",
-      body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
-      second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
-      /**
-       * NOT "voice". Flux Router has no synthesis endpoint of any kind:
-       * server/voice/flux-voice.ts says so in its own header, and
-       * src/lib/flux-invite.ts already refused to claim speech for the same
-       * reason. Murage speaks through ElevenLabs on the person's OWN key, or
-       * the free OS voices, never on this one. Transcription IS on this key
-       * (POST /v1/audio/transcriptions), which is the half worth selling:
-       * dictation that works from a phone, where the native macOS helper
-       * cannot reach.
-       */
-      third: "It brings pictures, and transcription so you can talk instead of type from your phone.",
+      // The three-sentence version of this card, `title`/`body`/`second`/
+      // `third`, used to sit here, marked SUPERSEDED in the same commit that
+      // stopped rendering it and kept alive by a test that asserted on it.
+      // It is gone. What this card says is `heading`, `lead` and `features`,
+      // and there is no second version of the claims for anybody to read,
+      // edit or accidentally believe is the live one.
+
       /**
        * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
        * SITUATION.
@@ -516,7 +507,12 @@ export const FIRST_RUN_COPY = {
        * flow that does not exist yet.
        */
       bodyBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
-      secondBare: "Any OpenAI-style service you already pay for will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
+      // "Any OpenAI-style service you already PAY for" was the one money
+      // word left in the flow, on the one branch a blank machine reaches by
+      // declining the key. The banned-word regex had every other spelling of
+      // money and not that one. What matters about the service is that they
+      // already have it, not what they hand over for it.
+      secondBare: "Any OpenAI-style service you already use will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
     },
   },
   /**
@@ -575,7 +571,11 @@ export const FIRST_RUN_COPY = {
         {
           id: "business",
           title: "Help me run my business",
-          sub: "Two bots and a Monday review, set up in one go.",
+          // A count claimed on a row that renders BEFORE anything is
+          // installed, and with no package in front of it to read. The
+          // crew screen counts because it has the reading; this row cannot,
+          // so it stops claiming a number rather than claiming a stale one.
+          sub: "Your crew and a Monday review, set up in one go.",
         },
       ] as readonly FirstRunJobRowCopy[],
       /** What one missing thing is called out loud. Shared by the tag on a
@@ -724,8 +724,15 @@ export const FIRST_RUN_COPY = {
          * one routine. A first run that announced a third bot would be
          * describing a crew the person does not then have, on the one screen
          * whose whole job is showing them what they just got.
+         *
+         * The fix for that was "Two bots and one review", which is the same
+         * mistake with today's number in it: this line is one of three shown
+         * while the package installs, and `workingLines` is handed the job
+         * and what the person typed, never the crew. So it names the crew
+         * rather than counting one it cannot see. The counting happens on
+         * the screen that follows, which does have the reading.
          */
-        businessBuilt: "Two bots and one review, and no plumbing for you to do.",
+        businessBuilt: "Your crew and one review, and no plumbing for you to do.",
         topicSourced: "Keeping what has a source, flagging what does not.",
         /** Wrapped around the first words of what they typed, so they can
          *  see it is their topic and not a generic one. */
@@ -829,8 +836,17 @@ export const FIRST_RUN_COPY = {
       business: {
         header: "Your crew",
         lead: "Installed and running. Change any of it whenever you like.",
+        /**
+         * THE EYEBROW COUNTS, IT DOES NOT REMEMBER.
+         *
+         * `botsEyebrowMany` was the literal "Two bots", so a package that
+         * grew a third would have put "Two bots" directly above three names,
+         * on the one screen whose entire job is showing somebody what they
+         * just got. The count now comes off the crew reading through
+         * `botsEyebrowLine`; these are the noun it counts.
+         */
         botsEyebrowOne: "One bot",
-        botsEyebrowMany: "Two bots",
+        botsEyebrowMany: "bots",
         roles: {
           "business-planner": "priorities, and what finished means",
           "draft-partner": "writes it, then reviews it",
@@ -882,7 +898,18 @@ export const FIRST_RUN_COPY = {
       /** Said once above the rows when at least one of them arrived with the
        *  key, so the rows themselves stay short. */
       cameWithKey: "Some of these are already on, because they came with your Flux Router key. You connected them once and they work everywhere you sign in.",
-      trust: "On email you stay in charge. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+      /**
+       * GRADUATED TRUST, SAID AS THE SYSTEM CAN ACTUALLY KEEP IT.
+       *
+       * This promised "once you trust me with a kind of email, I can send
+       * those myself". Nothing can deliver that. A remembered approval is
+       * keyed by the whole tool name (`approvalKey`, server/auto-approve.ts)
+       * and every connected-app call arrives through one wrapper tool, so
+       * there is no key that separates sending mail from reading it, let
+       * alone one kind of mail from another. What really exists is a level:
+       * ask every time, or hand me more, and take it back whenever.
+       */
+      trust: "On email you stay in charge. You approve, I send. You can raise how much I do on my own later, and lower it again just as easily.",
       desktopOnly: "Connect this from Murage on your computer",
       dismiss: "Not now",
       failure: "That connection did not finish. Try it again whenever you are ready.",
@@ -926,7 +953,7 @@ export const FIRST_RUN_COPY = {
         {
           template: "triage",
           label: "Triage my inbox",
-          why: "I sort the morning's mail and draft the replies. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+          why: "I sort the morning's mail and draft the replies. You approve, I send, and you can raise how much I do on my own whenever you like.",
         },
         {
           template: "watch",
@@ -973,7 +1000,20 @@ export const FIRST_RUN_COPY = {
    */
   backups: {
     on: "Your backups are running quietly in the background. Nothing for you to do there.",
-    offer: "One more thing worth a press. I can keep a private copy of everything on this computer, taken fresh every day.",
+    /**
+     * WHAT IS IN THE BACKUP, SAID AS WHAT IS IN THE BACKUP.
+     *
+     * This offered "a private copy of everything on this computer". It is
+     * not. The capture is Murage's own installation data and nothing else:
+     * server/installation-fidelity-snapshot.ts walks the data directory,
+     * keeps a named set of application roots (bots, routines, messages,
+     * channels, workspaces, attachments, skills, events) and excludes the
+     * rest by name, credentials and models and logs and browser profiles
+     * among them. Documents, applications and working folders were never in
+     * it. Somebody who believed that sentence would find out on the day they
+     * lost the laptop, which is the one day it must not be wrong.
+     */
+    offer: "One more thing worth a press. I can keep a private copy of your Murage: your bots, your routines, everything we have said and the work we have made in here, taken fresh every day.",
     offerSecond: "I will ask you where to keep it, write you a recovery key, and take the first one straight away.",
     turnOn: "Keep me backed up",
     working: "Setting your backups up",
@@ -1098,6 +1138,24 @@ export function signedOutAgentsLine(names: readonly string[]): string {
   // and two is the ordinary case on a developer's machine.
   const them = names.filter((name) => name.trim()).length > 1 ? "them" : "it";
   return `You have ${listed} on this computer, and nobody is signed in to ${them} yet.`;
+}
+
+/**
+ * "One bot", "Two bots", "Three bots": the crew eyebrow, counted.
+ *
+ * Spelled out because the whole flow says numbers the way a person says
+ * them, and spelled only as far as a crew plausibly goes; past that the
+ * figure is better than a word nobody reads. Zero is "No bots" rather than
+ * "Zero bots", and it exists because a package with no agents in it must
+ * still leave words on the screen.
+ */
+const SPELLED = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"] as const;
+
+export function botsEyebrowLine(count: number): string {
+  const words = FIRST_RUN_COPY.flow["do-it"].business;
+  const whole = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (whole === 1) return words.botsEyebrowOne;
+  return `${SPELLED[whole] ?? String(whole)} ${words.botsEyebrowMany}`;
 }
 
 /** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */

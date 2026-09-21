@@ -21,6 +21,7 @@
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
+  botsEyebrowLine,
   clockLabel,
 } from "./first-run-copy.ts";
 import {
@@ -393,8 +394,9 @@ export function businessResult(crew: FirstRunCrewReading): FirstRunBusinessResul
   const roles: Record<string, string> = words.roles;
   const routine = crew.routine;
   // The eyebrow counts what is really there. A profile that grew a third bot
-  // would say so here rather than having this screen keep saying two.
-  const botsEyebrow = crew.agents.length === 1 ? words.botsEyebrowOne : words.botsEyebrowMany;
+  // would say so here rather than having this screen keep saying two, which
+  // is what it did while `botsEyebrowMany` was the literal "Two bots".
+  const botsEyebrow = botsEyebrowLine(crew.agents.length);
   const days = routine?.weekdays.map((day) => WEEKDAY_NAMES[day]).filter(Boolean) ?? [];
   return {
     header: words.header,
