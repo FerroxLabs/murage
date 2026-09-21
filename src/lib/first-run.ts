@@ -53,8 +53,10 @@ const PHASE_NAMES: Record<string, string> = {
 
 /** The pill's own text. A middle dot, not a dash of any kind: the house rules
  *  ban em and en dashes outright and `first-run.test.ts` checks every string
- *  here for one. */
-export function firstRunPhaseLabel(number: number, name: string): string {
+ *  here for one. Not exported: a second caller building this string somewhere
+ *  else is how a separator drifts, and the labels the pills carry are already
+ *  on every row `firstRunPhaseRows` returns. */
+function firstRunPhaseLabel(number: number, name: string): string {
   return `${number} · ${name}`;
 }
 
