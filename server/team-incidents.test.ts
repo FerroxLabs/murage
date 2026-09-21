@@ -10,6 +10,7 @@ import {
   TEAM_INCIDENT_MUTE_AFTER,
   TeamIncidentLedger,
   chiefForBrokenBot,
+  routineIncidentMuteKeys,
   teamIncidentChip,
   teamIncidentText,
   type TeamIncident,
@@ -71,7 +72,38 @@ describe("who hears about a broken run", () => {
 });
 
 describe("a crash loop is one incident, not a storm", () => {
-  it("mutes a thread after the limit and keeps counting honestly up to it", () => {
+  it("mutes a routine that fails every run, though every run is a NEW thread", () => {
+    // The shape of the only caller there is. server/routines.ts creates a task
+    // per run and store.createTask mints a fresh threadId for it, so a routine
+    // on a five-minute interval presents a thread nobody has ever seen each
+    // time it breaks. Keyed on the thread, `muted` never becomes true and the
+    // Chief gets an unthrottled LLM turn per failure; keyed on the routine, the
+    // crash loop is the one incident this module says it is.
+    const ledger = new TeamIncidentLedger();
+    const counts = Array.from({ length: TEAM_INCIDENT_MUTE_AFTER + 1 }, (_, run) =>
+      ledger.note(routineIncidentMuteKeys({ routineId: "r-morning-brief", threadId: `t-run-${run}` })),
+    );
+    expect(counts.map((c) => c.count)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(counts.map((c) => c.muted)).toEqual([false, false, false, false, false, true]);
+  });
+
+  it("still mutes ONE shared-channel conversation that several routines are failing in", () => {
+    // A shared channel run legitimately reuses one thread across routines, and
+    // that conversation can storm on its own — so the thread is still counted,
+    // it is simply no longer the only thing counted.
+    const ledger = new TeamIncidentLedger({ muteAfter: 2 });
+    const inChannel = (routineId: string) => ledger.note(routineIncidentMuteKeys({ routineId, threadId: "t-channel" }));
+    expect(inChannel("r-a").muted).toBe(false);
+    expect(inChannel("r-b").muted).toBe(false);
+    expect(inChannel("r-c").muted).toBe(true);
+  });
+
+  it("counts a run that broke before it reached a thread against its routine anyway", () => {
+    expect(routineIncidentMuteKeys({ routineId: "r-brief" })).toEqual(["routine:r-brief"]);
+    expect(routineIncidentMuteKeys({ routineId: "r-brief", threadId: "t-1" })).toEqual(["routine:r-brief", "thread:t-1"]);
+  });
+
+  it("mutes a key after the limit and keeps counting honestly up to it", () => {
     let now = 1_000_000;
     const ledger = new TeamIncidentLedger({ now: () => now });
     const counts = Array.from({ length: TEAM_INCIDENT_MUTE_AFTER + 1 }, () => ledger.note("t-broken"));
@@ -79,7 +111,7 @@ describe("a crash loop is one incident, not a storm", () => {
     expect(counts.map((c) => c.muted)).toEqual([false, false, false, false, false, true]);
   });
 
-  it("counts each thread separately", () => {
+  it("counts each key separately", () => {
     const ledger = new TeamIncidentLedger({ muteAfter: 1 });
     expect(ledger.note("t-a").muted).toBe(false);
     expect(ledger.note("t-b").muted).toBe(false);
@@ -132,7 +164,7 @@ describe("the report the Chief reads", () => {
 
   it("states a repeat as a fact, not as a permission that has run out", () => {
     const repeat = teamIncidentText(incident, { count: 3, muted: false });
-    expect(repeat).toContain("third incident on that thread within the hour");
+    expect(repeat).toContain("third incident for that work within the hour");
     // and the instruction it gives is the same one it always gives — the
     // count never silently becomes a different set of options
     expect(repeat.slice(repeat.indexOf("Decide, in this order:"))).toBe(text.slice(text.indexOf("Decide, in this order:")));
@@ -198,6 +230,9 @@ describe("a failed routine is where this is wired in", () => {
     const handler = index.slice(at, index.indexOf("\n  },", at));
     expect(handler).toContain('buildNotification("routine-failed"');
     expect(handler).toContain('reportTeamIncident({ kind: "routine-failed"');
+    // and counts it against the routine, not against the throwaway thread the
+    // run happened to be given (see routineIncidentMuteKeys)
+    expect(handler).toContain("muteKeys: routineIncidentMuteKeys(run)");
   });
 
   it("starts the Chief's report as an unattended turn", () => {

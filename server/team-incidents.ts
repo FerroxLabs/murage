@@ -81,23 +81,31 @@ export function chiefForBrokenBot<T extends TeamIncidentBot>(bots: readonly T[],
   return workspaceChief && canReach(workspaceChief, bot) ? workspaceChief : null;
 }
 
-/** After this many incidents on ONE thread inside the window, nothing more is
- * raised for it until the window passes. A bot crash-looping is one incident,
- * not a storm, and the Chief's own thread must not become the thing that
- * breaks next. */
+/** After this many incidents against ONE key inside the window, nothing more
+ * is raised for it until the window passes. A bot crash-looping is one
+ * incident, not a storm, and the Chief's own thread must not become the thing
+ * that breaks next. */
 export const TEAM_INCIDENT_MUTE_AFTER = 5;
 export const TEAM_INCIDENT_WINDOW_MS = 60 * 60_000;
 
 export interface TeamIncidentCount {
-  /** incidents on this thread inside the window, this one included */
+  /** incidents against the busiest of this incident's keys inside the window,
+   * this one included */
   count: number;
-  /** nothing more is raised for this thread until the window passes. The one
+  /** nothing more is raised for this work until the window passes. The one
    * real control here, and the harness is what enforces it. */
   muted: boolean;
 }
 
-/** Per-thread memory of recent incidents. In memory on purpose: a restart is
- * a fresh start, and the worst a lost count costs is one extra report. */
+/** Memory of recent incidents, per key. In memory on purpose: a restart is a
+ * fresh start, and the worst a lost count costs is one extra report.
+ *
+ * The key is the caller's to choose and choosing it wrong silently disables
+ * the mute, which is why nothing here defaults it: see
+ * `routineIncidentMuteKeys` for why a thread id is the WRONG key for a
+ * scheduled routine. Several keys may be noted at once, and any one of them
+ * reaching the limit mutes the incident — a crash loop and a busy thread are
+ * two different storms and either is enough. */
 export class TeamIncidentLedger {
   private readonly at = new Map<string, number[]>();
   private readonly options: { now?: () => number; windowMs?: number; muteAfter?: number };
@@ -106,18 +114,43 @@ export class TeamIncidentLedger {
     this.options = options;
   }
 
-  note(threadId: string): TeamIncidentCount {
+  note(key: string | readonly string[]): TeamIncidentCount {
     const now = this.options.now?.() ?? Date.now();
     const windowMs = this.options.windowMs ?? TEAM_INCIDENT_WINDOW_MS;
-    const recent = (this.at.get(threadId) ?? []).filter((time) => now - time < windowMs);
-    recent.push(now);
-    this.at.set(threadId, recent);
-    return { count: recent.length, muted: recent.length > (this.options.muteAfter ?? TEAM_INCIDENT_MUTE_AFTER) };
+    const muteAfter = this.options.muteAfter ?? TEAM_INCIDENT_MUTE_AFTER;
+    const keys = [...new Set(typeof key === "string" ? [key] : key)];
+    let count = 0;
+    let muted = false;
+    for (const one of keys) {
+      const recent = (this.at.get(one) ?? []).filter((time) => now - time < windowMs);
+      recent.push(now);
+      this.at.set(one, recent);
+      count = Math.max(count, recent.length);
+      if (recent.length > muteAfter) muted = true;
+    }
+    return { count, muted };
   }
 
-  forget(threadId: string): void {
-    this.at.delete(threadId);
+  forget(key: string | readonly string[]): void {
+    for (const one of typeof key === "string" ? [key] : key) this.at.delete(one);
   }
+}
+
+/** What a failed routine run's incidents are counted against.
+ *
+ * NOT the thread on its own. A scheduled routine gets a brand new task, and
+ * therefore a brand new thread id, on every single run (see `createTask` in
+ * the scheduler's dispatch), so a routine failing every five minutes would
+ * present a thread the ledger had never seen each time, `muted` would never
+ * become true, and the module's headline defence — a crash loop is one
+ * incident, not a storm — would be false for the only caller there is. The
+ * routine's own id is what survives from one run to the next.
+ *
+ * The thread is noted as well, and only when the run actually reached one,
+ * because a shared channel run legitimately reuses one conversation across
+ * different routines and that conversation can storm on its own. */
+export function routineIncidentMuteKeys(run: { routineId: string; threadId?: string | null }): string[] {
+  return run.threadId ? [`routine:${run.routineId}`, `thread:${run.threadId}`] : [`routine:${run.routineId}`];
 }
 
 /** One line, no fences, no newlines, bounded. Everything folded through here
@@ -170,7 +203,10 @@ export function teamIncidentText(incident: TeamIncident, count: TeamIncidentCoun
   ];
   if (incident.lastRequest) lines.push(`The request there was: "${fold(incident.lastRequest, 300)}"`);
   if (incident.lastReply) lines.push(`${fold(incident.bot.name, 60)} last said: "${fold(incident.lastReply, 300)}"`);
-  if (count.count > 1) lines.push(`This is the ${ordinal(count.count)} incident on that thread within the hour.`);
+  // "for that work", not "on that thread": a scheduled routine runs in a new
+  // thread every time, so the repeat the count is describing is the routine's,
+  // not one conversation's.
+  if (count.count > 1) lines.push(`This is the ${ordinal(count.count)} incident for that work within the hour.`);
   lines.push(
     [
       "Decide, in this order:",

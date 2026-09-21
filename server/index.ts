@@ -382,7 +382,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, teamIncidentChip, teamIncidentText, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -5924,12 +5924,15 @@ function teamIncidentContext(threadId: string): { lastRequest: string | null; la
  *
  * The whole body is guarded. This runs on the failure path, and an incident
  * report that throws would turn one broken routine into two. */
-function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string; detail: string }): void {
+function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string; muteKeys: readonly string[]; detail: string }): void {
   try {
     const { bot, threadId } = input;
     const chief = chiefForBrokenBot(store.bots, bot);
     if (!chief) return;
-    const count = teamIncidentLedger.note(threadId);
+    // `muteKeys`, never the thread on its own: the thread a scheduled routine
+    // runs in is new on every run, so counting per thread would never see the
+    // repeat it exists to stop. The caller says what stays the same.
+    const count = teamIncidentLedger.note(input.muteKeys);
     // a crash loop is one incident, not a storm
     if (count.muted) return;
     const task = store.taskByThread(bot.id, threadId);
@@ -6156,7 +6159,7 @@ routines = new RoutineManager({
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
-    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? bot.threadId, detail });
+    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? bot.threadId, muteKeys: routineIncidentMuteKeys(run), detail });
   },
 });
 procedureReviews = createProcedureReviewHost({
