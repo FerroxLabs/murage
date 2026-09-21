@@ -67,6 +67,7 @@ export const FIRST_RUN_SURFACES = {
  */
 export const FIRST_RUN_SURFACE_MODULES: Readonly<Record<string, string>> = {
   "first-run-copy.ts": "surface: FIRST_RUN_COPY",
+  "first-run-copy-rules.ts": "the rules themselves; the only strings in it are patterns",
   "setup-conversation.ts": "surface: SETUP_CARD_COPY",
   "first-run-surfaces.ts": "the register itself",
   "first-run-crew.ts": "shapes the crew screen reads; its words come from FIRST_RUN_COPY",
