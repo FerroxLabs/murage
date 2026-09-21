@@ -210,7 +210,7 @@ import {
   parseStoredMcpServer,
 } from "./mcp-registry.ts";
 import { probeMcpServer } from "./mcp-probe.ts";
-import { buildNotification, type Notification } from "./notify.ts";
+import { buildNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import {
   isEffortLevel,
@@ -383,6 +383,7 @@ import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -5851,18 +5852,14 @@ async function startTurn(
       // a setting only a person can change — an unattended user would
       // otherwise learn nothing until they next opened the thread.
       //
-      // Only for a turn the person started themselves, which is the same
-      // three-part test the unattended window uses at :2695. A routine
-      // reaches this same catch and then reports through onDispatchError,
-      // which raises routine-failed; buzzing here too would ring twice for
-      // one failure. A delegated sub-turn is reported to the bot that asked
-      // for it, in its own thread, so it does not need a second channel. And
-      // a card continuation is a resume the person is already looking at —
-      // the card itself carries the error.
+      // Only for a turn the person started themselves. `turnFailureBuzzes` in
+      // notify.ts holds that test and says why each term is in it — it is
+      // policy, it is the whole once-not-twice invariant, and it was wrong
+      // here for a turn nobody started.
       //
       // The body is redacted: a dispatch failure can carry a provider's
       // verbatim stderr, and this one goes to an OS notification banner.
-      if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
+      if (turnFailureBuzzes(opts)) {
         notify(
           buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
         );
@@ -5897,6 +5894,96 @@ function routineSourceOwner(run: RoutineRun) {
 
 function routineSourceThread(run: RoutineRun): string | null {
   return routineSourceOwner(run)?.threadId ?? null;
+}
+
+// ── a broken routine reaches somebody on the team ──────────────────────
+// A failed routine buzzes the owner and leaves a routine.run card, and that
+// is where it stopped: nobody on the team was told, so nothing on the team
+// responded, and a 7am brief that broke sat there until the person opened
+// the desktop. Policy — who hears, how often, what the report says — is in
+// server/team-incidents.ts and is tested there. This is only the wiring.
+const teamIncidentLedger = new TeamIncidentLedger();
+
+/** What the broken thread was about: the last thing asked in it and the last
+ * thing the bot said. Both are quoted into another bot's prompt, so both are
+ * marked as data by teamIncidentText and bounded by it.
+ *
+ * Only ever the thread the broken run was actually given. A run that failed
+ * before the scheduler could make it a task has no thread, and there is no
+ * substitute for one: the bot's live chat is a different, private, unrelated
+ * conversation, and lifting its last exchange into a PEER's prompt would send
+ * the person's words to a bot that had nothing to do with the failure. */
+function teamIncidentContext(threadId: string | null): { lastRequest: string | null; lastReply: string | null } {
+  if (!threadId) return { lastRequest: null, lastReply: null };
+  const messages = [...store.messagesFor(threadId)].reverse();
+  return {
+    lastRequest: messages.find((message) => message.role === "user" && message.kind === "text" && message.text)?.text ?? null,
+    lastReply: messages.find((message) => message.role === "bot" && message.kind === "text" && message.text)?.text ?? null,
+  };
+}
+
+/** Deliver one incident to the bot's Chief, or do nothing.
+ *
+ * Doing nothing is a complete outcome here, not a failure: every caller has
+ * ALREADY notified the owner by the time it gets here, so a workspace with no
+ * Chief on duty is a workspace where the person has been told and there is
+ * nobody else to tell. That is also what keeps the once-not-twice
+ * notification invariant — this path never raises a second banner.
+ *
+ * The whole body is guarded. This runs on the failure path, and an incident
+ * report that throws would turn one broken routine into two. */
+function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; muteKeys: readonly string[]; detail: string }): void {
+  try {
+    const { bot, threadId } = input;
+    const chief = chiefForBrokenBot(store.bots, bot);
+    if (!chief) return;
+    // `muteKeys`, never the thread on its own: the thread a scheduled routine
+    // runs in is new on every run, so counting per thread would never see the
+    // repeat it exists to stop. The caller says what stays the same.
+    const count = teamIncidentLedger.note(input.muteKeys);
+    // a crash loop is one incident, not a storm
+    if (count.muted) return;
+    // Both of these describe the broken thread, so both are skipped when there
+    // was not one. A title read off the bot's live chat is the person's own
+    // words for their current conversation, which is no more this peer's
+    // business than the messages in it.
+    const task = threadId ? store.taskByThread(bot.id, threadId) : undefined;
+    const group = threadId ? store.groupByThread(threadId) : undefined;
+    const incident: TeamIncident = {
+      bot: { id: bot.id, name: bot.name },
+      threadId,
+      title: task?.title ?? null,
+      room: group?.name ?? null,
+      detail: redactSecretsInText(input.detail),
+      ...teamIncidentContext(threadId),
+    };
+    const incidents = store.tasks(chief.id).find((candidate) => candidate.title === TEAM_INCIDENTS_THREAD_TITLE)
+      ?? store.createTask(chief.id, TEAM_INCIDENTS_THREAD_TITLE, false);
+    // The broken thread must never be the reporting thread: that would append
+    // a report about a failure into the conversation that just failed.
+    if (!incidents || incidents.threadId === threadId) return;
+    store.appendMessage(incidents.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: teamIncidentChip(incident), ok: false },
+    });
+    // teamIncidentTurnOptions, not an object literal: the shape of this turn
+    // is what keeps it from ringing the person a second time for the failure
+    // it is reporting, and that is policy, not wiring.
+    void startTurn(chief.id, teamIncidentText(incident, count), teamIncidentTurnOptions(incidents.threadId))
+      .catch((error) => {
+        // The Chief being busy is the common case and is not worth a banner —
+        // the chip above is already durable in its incidents thread.
+        const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
+        store.appendMessage(incidents.threadId, {
+          role: "bot",
+          kind: "activity",
+          tool: { name: `error: this incident could not reach ${chief.name} — ${why}`, ok: false },
+        });
+      });
+  } catch {
+    // never make the failure we are reporting worse than it already is
+  }
 }
 
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
@@ -6084,6 +6171,11 @@ routines = new RoutineManager({
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
+    // `run.threadId ?? null`, never the bot's live chat: a run that broke
+    // before it had a thread has none, and the notification above can fall
+    // back to the bot's current conversation because it goes to the person
+    // who owns it. This report goes to a PEER.
+    reportTeamIncident({ bot, threadId: run.threadId ?? null, muteKeys: routineIncidentMuteKeys(run), detail });
   },
 });
 procedureReviews = createProcedureReviewHost({
