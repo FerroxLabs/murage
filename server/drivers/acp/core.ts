@@ -34,7 +34,7 @@ import {
   type FolderTrustDecision,
 } from "../../../shared/folder-trust.ts";
 import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
-import { resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
+import { resolveToolIdentity, resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
 import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
@@ -1033,8 +1033,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // A tool_call_update need not repeat the call's title, and whether an
         // image in its output is a deliverable or one of Murage's own screen
         // frames turns on the tool's name. Kept from the opening tool_call and
-        // dropped when the terminal update consumes it.
-        const toolNames = new Map<string, string>();
+        // dropped when the terminal update consumes it. Two names, because the
+        // chip's is a display string and retention cannot be decided on it.
+        const toolNames = new Map<string, { label: string; identity?: string }>();
         let nextId = 1;
         let sessionId: string | null = null;
         let promptStartedAt: number | null = null;
@@ -1505,7 +1506,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // Engines that route every call through a wrapper ("use a tool")
               // put the real tool in the arguments. Name that, not the wrapper.
               const label = resolveToolLabel(u.title, u.rawInput);
-              if (typeof u.toolCallId === "string" && toolNames.size < 512) toolNames.set(u.toolCallId, label.name);
+              // `resolveToolLabel` shows a shell command in place of the tool
+              // for any call that carries one, so its name cannot be used to
+              // decide whether this tool is one of Murage's screen surfaces.
+              // Keep the tool the engine actually named alongside it.
+              const identity = resolveToolIdentity(u.title, u.rawInput);
+              if (typeof u.toolCallId === "string" && toolNames.size < 512) toolNames.set(u.toolCallId, { label: label.name, identity });
               emit({
                 ...base(threadId, turnId),
                 type: "item.started",
@@ -1534,10 +1540,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // the tool's output had no route at all: not the message, not
                 // Files. ACP wraps each output part as {type:"content",…}, and
                 // engines that pass the raw MCP result put it in `rawOutput`.
-                const toolName = typeof u.toolCallId === "string" ? toolNames.get(u.toolCallId) : undefined;
+                const called = typeof u.toolCallId === "string" ? toolNames.get(u.toolCallId) : undefined;
                 if (typeof u.toolCallId === "string") toolNames.delete(u.toolCallId);
-                for (const image of extractMcpImages(u.content ?? u.rawOutput, toolName)) {
-                  emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: image.data, alt: toolName });
+                for (const image of extractMcpImages(u.content ?? u.rawOutput, called?.identity)) {
+                  emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: image.data, alt: called?.label });
                 }
               }
               break;

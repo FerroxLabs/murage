@@ -148,6 +148,45 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     });
   });
 
+  // Retention was being decided on the chip's name, and the chip shows a
+  // shell command in place of the tool for any call that carries one. A
+  // `computer_exec` running `firefox` therefore stopped matching the screen
+  // surface it is, and its live frame became a permanent Files artifact.
+  it("withholds the computer surface's frame even when the chip reads as the shell command", async () => {
+    process.env.FAKE_ACP_MODE = "computer-exec-image";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-computer-exec", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // the chip still says what it ran — that part is the point of the label
+    const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
+    expect(started).toMatchObject({ title: "firefox" });
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
+    expect(images).toEqual([]);
+  });
+
+  // The chip drops a tool's server namespace on purpose, so a custom server's
+  // `screenshot` reached through a wrapper arrived at the retention filter as
+  // the bare `screenshot` and was discarded as if it were Murage's own screen.
+  it("keeps a custom MCP server's screenshot reached through a wrapper tool", async () => {
+    process.env.FAKE_ACP_MODE = "wrapped-tool-image";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-wrapped-image", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // the chip still names the inner tool, not the wrapper and not the mount
+    const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
+    expect(started).toMatchObject({ title: "screenshot" });
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      alt: "screenshot",
+    });
+  });
+
   it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();
