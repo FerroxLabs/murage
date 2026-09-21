@@ -419,6 +419,32 @@ export function nothingToThinkWith(live: SetupLiveState): boolean {
   return live.agents.length === 0 && live.signedOutAgents.length === 0;
 }
 
+/**
+ * NOTHING ON THIS MACHINE CAN ANSWER RIGHT NOW.
+ *
+ * A DIFFERENT QUESTION FROM THE ONE ABOVE, AND THE DIFFERENCE IS A DEFECT
+ * THAT SHIPPED. `nothingToThinkWith` decides whether DETECTION is shown, and
+ * its second term is right for that: a machine with a signed-out Claude Code
+ * on it is not blank, it has something worth telling the person about, so it
+ * goes through detection and gets the sign-in offer.
+ *
+ * It is the wrong predicate for JOB READINESS, and it was being reused as
+ * one. On a machine whose only engine is Claude Code or Codex installed and
+ * never signed in, `signedOutAgents` is non-empty, so `nothingToThinkWith` is
+ * false, so notes, research and business all reported ready now. `agents` is
+ * empty, so nothing could actually answer, and research could be dispatched
+ * with no runnable engine behind it at all.
+ *
+ * `live.agents` is already filtered by `runnable()` AND by not being signed
+ * out (server/setup.ts), so its emptiness IS "nothing here can answer". Read
+ * off that list rather than restated, for the same reason `nothingToThinkWith`
+ * is computed once: a second copy of the rule is a second chance to write
+ * `state === "available"` instead of `runnable()` and bring c0e4eb13 back.
+ */
+export function nothingCanAnswer(live: SetupLiveState): boolean {
+  return live.agents.length === 0;
+}
+
 /** Prefixes that identify a DIFFERENT provider, as the connection card's own
  *  gate lists them. A key that carries one of these is somebody else's. */
 const FOREIGN_KEY_PREFIXES = ["sk-ant-", "sk-or-", "sk-proj-", "sk-svcacct-", "sk-admin-", "xai-", "gsk_"] as const;
@@ -795,6 +821,16 @@ export interface SetupView {
    */
   nothingToThinkWith: boolean;
   /**
+   * Nothing on this computer can answer a question right now.
+   *
+   * THE JOB READINESS PREDICATE, AND IT IS NOT `nothingToThinkWith`. That one
+   * counts a signed-out engine as something, which is correct for deciding
+   * whether to run detection and wrong for deciding whether a job can be
+   * done: an engine nobody is signed into cannot answer anything. See
+   * `nothingCanAnswer`.
+   */
+  nothingCanAnswer: boolean;
+  /**
    * Which of the first run's two connectable apps are connected, or null when
    * the connector store could not be read.
    *
@@ -856,6 +892,7 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     crewSize: live.crewSize,
     fluxReady: fluxUsable(live),
     nothingToThinkWith: nothingToThinkWith(live),
+    nothingCanAnswer: nothingCanAnswer(live),
     connectedJobApps: live.connectedAppIds === null
       ? null
       : SETUP_JOB_APPS.filter((app) => jobAppConnected(live, app)),

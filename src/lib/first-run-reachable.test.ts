@@ -45,6 +45,7 @@ const {
   FirstRunWorkingView,
 } = await import("@/components/FirstRunJobsCard");
 const { SETUP_JOB_APPS } = await import("../../shared/setup");
+const { FIRST_RUN_COPY } = await import("./first-run-copy");
 type SetupJobApp = import("../../shared/setup").SetupJobApp;
 
 /**
@@ -76,18 +77,38 @@ const APP_SETS: readonly (readonly SetupJobApp[])[] = [
   [...SETUP_JOB_APPS],
 ];
 
+/**
+ * THE THREE ENGINE STATES A MACHINE CAN REALLY BE IN, as the pair of
+ * predicates the flow reads: [nothingToThinkWith, nothingCanAnswer].
+ *
+ * The sweep used to run only the first of the two, which is exactly how the
+ * middle row got shipped unchecked. A machine whose only engine is Claude
+ * Code or Codex installed and never signed in has SOMETHING on it, so
+ * detection runs and `nothingToThinkWith` is false, and NOTHING that can
+ * answer, so every job on it still has to ask for a key first.
+ *
+ * The fourth combination does not exist: an empty machine that can answer is
+ * a contradiction, and `nothingToThinkWith` implies `nothingCanAnswer`
+ * because `agents` is empty in both.
+ */
+const ENGINE_STATES: readonly (readonly [boolean, boolean])[] = [
+  [true, true],   // nothing on it at all
+  [false, true],  // an engine is here and nobody is signed in to it
+  [false, false], // something here can answer
+];
+
 /** Every machine this flow can be opened on, stated as the facts it reads.
  *  The unreadable-store case is included with an empty set, because that is
  *  exactly how a job is told to treat it. */
 function everyMachine(): FirstRunJobWorld[] {
   const worlds: FirstRunJobWorld[] = [];
   for (const fluxReady of [false, true]) {
-    for (const nothingToThinkWith of [false, true]) {
+    for (const [nothingToThinkWith, nothingCanAnswer] of ENGINE_STATES) {
       for (const connected of APP_SETS) {
         for (const appsUnreadable of [false, true]) {
           for (const search of ROUTINGS) {
             if (appsUnreadable && connected.length > 0) continue;
-            worlds.push({ fluxReady, nothingToThinkWith, connected, appsUnreadable, search });
+            worlds.push({ fluxReady, nothingToThinkWith, nothingCanAnswer, connected, appsUnreadable, search });
           }
         }
       }
@@ -160,13 +181,24 @@ describe("the Chief's own screen, on every machine", () => {
     }
   });
 
-  it("never offers a job as ready on a machine that cannot run it", () => {
+  // READ OFF `nothingCanAnswer`, WHICH IS THE READINESS QUESTION. This used
+  // to skip every machine whose only engine was signed out, because that
+  // machine has `nothingToThinkWith` false, and those are precisely the
+  // machines on which every job was being offered as ready now with nothing
+  // behind it.
+  it("never offers a job as ready on a machine that cannot answer", () => {
+    let checked = 0;
     for (const world of MACHINES) {
-      if (!world.nothingToThinkWith || world.fluxReady) continue;
+      if (!world.nothingCanAnswer || world.fluxReady) continue;
+      checked += 1;
       for (const row of firstRunJobRows(world)) {
         expect(row.press, `${JSON.stringify(world)} ${row.id}`).toBe("connect");
+        expect(row.tag.text, `${JSON.stringify(world)} ${row.id}`).not.toBe(FIRST_RUN_COPY.chat.jobs.tags.ready);
       }
     }
+    // The signed-out row of the sweep really is in here, not filtered away.
+    expect(MACHINES.some((world) => !world.nothingToThinkWith && world.nothingCanAnswer)).toBe(true);
+    expect(checked).toBeGreaterThan(0);
   });
 });
 
@@ -420,7 +452,7 @@ describe("every result has a body and a way on, whatever was typed", () => {
 /** The morning offer's heading, as the only screen that carries it words it. */
 function briefRoutineOfferHeading(): string {
   return dayResult(FIRST_RUN_JOB_SHAPES.brief, [], {
-    fluxReady: true, nothingToThinkWith: false, connected: [], appsUnreadable: false, search: "anonymous",
+    fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, connected: [], appsUnreadable: false, search: "anonymous",
   }).morning!.heading;
 }
 
@@ -447,7 +479,7 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
     // asking for a key before letting somebody type a sentence is the form
     // this release exists to delete.
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingCanAnswer: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(flowStageFor(FIRST_RUN_JOB_SHAPES.notes, blank)).toBe("connect");
     expect(escapeHatchScreen(blank).kind).toBe("notes");
@@ -455,7 +487,7 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
 
   it("keeps what they wrote and starts nothing, on the machine with nothing", () => {
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingCanAnswer: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(typedMayShowWorking(blank)).toBe(false);
     expect(said(typedReply(blank))).toBe(true);

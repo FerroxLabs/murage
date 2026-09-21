@@ -99,9 +99,14 @@ export interface FirstRunJobTag {
  */
 export interface FirstRunJobWorld {
   fluxReady: boolean;
-  /** Nothing on this computer can answer. Computed server-side over
-   *  `runnable()`, never re-derived here: see `SetupView`. */
+  /** There is NOTHING ON THIS COMPUTER AT ALL, not even a signed-out engine,
+   *  so detection was skipped and the Flux screen carries its framing. The
+   *  framing predicate, not the readiness one: see `nothingCanAnswer`. */
   nothingToThinkWith: boolean;
+  /** Nothing here can answer a question right now. Computed server-side over
+   *  `runnable()`, never re-derived here: see `SetupView`. A signed-out
+   *  engine counts as nothing, because it is. */
+  nothingCanAnswer: boolean;
   /** Which of the two first-run apps are connected. */
   connected: readonly SetupJobApp[];
   /**
@@ -120,12 +125,13 @@ export interface FirstRunJobWorld {
 }
 
 export function firstRunJobWorld(
-  view: Pick<SetupView, "fluxReady" | "nothingToThinkWith" | "connectedJobApps">,
+  view: Pick<SetupView, "fluxReady" | "nothingToThinkWith" | "nothingCanAnswer" | "connectedJobApps">,
   search: FirstRunSearchRouting,
 ): FirstRunJobWorld {
   return {
     fluxReady: view.fluxReady,
     nothingToThinkWith: view.nothingToThinkWith,
+    nothingCanAnswer: view.nothingCanAnswer,
     connected: view.connectedJobApps ?? [],
     appsUnreadable: view.connectedJobApps === null,
     search,
@@ -135,16 +141,23 @@ export function firstRunJobWorld(
 /**
  * What this job is still waiting on, in the order it should be asked for.
  *
- * THE SECOND TERM IS THE ONE TO GET RIGHT. On a machine with nothing to
- * think with, every job needs Flux first, including `notes` and `business`
- * which normally need nothing: there is no engine behind them, so "ready
- * now" would be a promise the machine cannot keep. This is the same
- * predicate that skipped the detection step, read off the view rather than
- * worked out again here.
+ * THE SECOND TERM IS THE ONE TO GET RIGHT. On a machine where nothing can
+ * answer, every job needs Flux first, including `notes` and `business` which
+ * normally need nothing: there is no engine behind them, so "ready now" would
+ * be a promise the machine cannot keep.
+ *
+ * IT USED TO BE `nothingToThinkWith`, WHICH IS A DIFFERENT QUESTION. That one
+ * decides whether DETECTION is shown, and it counts a signed-out engine as
+ * something on the machine, correctly. Reused here it meant that a computer
+ * whose only engine was Claude Code or Codex installed and never signed in
+ * had `nothingToThinkWith` false, so notes, research and business were all
+ * tagged ready now, and research could be dispatched with nothing runnable
+ * behind it. `nothingCanAnswer` is the readiness question, read off the same
+ * view rather than worked out again here.
  */
 export function missingForJob(job: FirstRunJobShape, world: FirstRunJobWorld): readonly FirstRunJobNeed[] {
   const missing: FirstRunJobNeed[] = job.needs.filter((app) => !world.connected.includes(app));
-  if ((job.flux === "required" || world.nothingToThinkWith) && !world.fluxReady) missing.unshift("flux");
+  if ((job.flux === "required" || world.nothingCanAnswer) && !world.fluxReady) missing.unshift("flux");
   return missing;
 }
 
@@ -385,11 +398,18 @@ export function chiefLead(world: FirstRunJobWorld): string {
  * are a wait that never ends, and a person who watched a spinner for a
  * minute has been told something false by the interface rather than by the
  * words.
+ *
+ * READ OFF `nothingCanAnswer`, NOT `nothingToThinkWith`. A signed-out Claude
+ * Code is something on the machine, which is why detection runs; it is not
+ * something that can answer, which is what this box is asking. On the old
+ * predicate that machine showed the spinner and waited for a reply that no
+ * engine was ever going to produce, which is the precise wait this function
+ * exists to refuse.
  */
 export type FirstRunTypedOutcome = "answer" | "keep";
 
 export function typedOutcome(world: FirstRunJobWorld): FirstRunTypedOutcome {
-  return world.nothingToThinkWith && !world.fluxReady ? "keep" : "answer";
+  return world.nothingCanAnswer && !world.fluxReady ? "keep" : "answer";
 }
 
 /** Whether the box may show a working state at all. Never on the `keep`

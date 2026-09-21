@@ -11,6 +11,7 @@ import {
   fluxKeyLooksValid,
   jobAppConnected,
   nextSetupStep,
+  nothingCanAnswer,
   nothingToThinkWith,
   setupIsFirstRun,
   setupProgress,
@@ -368,6 +369,45 @@ describe("a machine with nothing to think with", () => {
     const state = checklist().read(machine);
     expect(state.steps.detect.done).toBe(false);
     expect(nextSetupStep(state)).toBe("detect");
+  });
+
+  // THE SAME MACHINE, AND THE OTHER QUESTION ABOUT IT.
+  //
+  // "Not blank" and "can answer" are different questions, and the first run
+  // was asking the first one and acting on the answer to the second. On a
+  // machine whose only engine is an installed, never-signed-in Claude Code,
+  // `nothingToThinkWith` is false, which is right: detection runs and offers
+  // the sign-in. Read as job readiness it said every job was ready now, on a
+  // machine where `agents` is empty and nothing can answer anything.
+  it("still has nothing that can answer when the only engine is signed out", () => {
+    const signedOut = instance({ instanceId: "claude", displayName: "Claude Code", driverKind: "claudeAgent", snapshot: { state: "available", authenticated: false } });
+    const machine = live({
+      ownerName: "Sean",
+      agents: setupAgentsReading([SHIPPED_BUT_EMPTY, signedOut]),
+      signedOutAgents: setupSignedOutReading([SHIPPED_BUT_EMPTY, signedOut]),
+    });
+    expect(machine.agents, "a signed-out engine was counted as able to answer").toEqual([]);
+    expect(nothingToThinkWith(machine), "detection would be skipped on a machine worth detecting").toBe(false);
+    expect(nothingCanAnswer(machine)).toBe(true);
+
+    const view = setupView(checklist().read(machine), machine);
+    expect(view.nothingToThinkWith).toBe(false);
+    expect(view.nothingCanAnswer, "the view told the jobs this machine could answer").toBe(true);
+  });
+
+  it("has something that can answer once an engine is signed in and has a model", () => {
+    const keyed = instance({ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent", models: { default: "flux/auto" } });
+    const machine = live({ ownerName: "Sean", agents: setupAgentsReading([keyed]), signedOutAgents: setupSignedOutReading([keyed]) });
+    expect(nothingCanAnswer(machine)).toBe(false);
+    expect(setupView(checklist().read(machine), machine).nothingCanAnswer).toBe(false);
+  });
+
+  // The blank machine answers true to BOTH, which is the implication the
+  // predicates carry: `agents` is empty in either reading of it.
+  it("can answer nothing on a machine with nothing on it at all", () => {
+    const bare = bareMachine();
+    expect(nothingToThinkWith(bare)).toBe(true);
+    expect(nothingCanAnswer(bare)).toBe(true);
   });
 
   it("is not blank when the shipped engine has something to think with", () => {

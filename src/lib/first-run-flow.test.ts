@@ -30,14 +30,21 @@ import { SETUP_JOB_APPS } from "../../shared/setup";
  * the person's own day.
  */
 function machine(over: Partial<FirstRunJobWorld> = {}): FirstRunJobWorld {
-  return {
+  const world: FirstRunJobWorld = {
     fluxReady: false,
     nothingToThinkWith: false,
+    nothingCanAnswer: false,
     connected: [],
     appsUnreadable: false,
     search: "anonymous",
     ...over,
   };
+  // A machine with NOTHING on it has nothing that can answer either: both
+  // readings have an empty `agents` list. Stating the first without the
+  // second would build a machine that cannot exist, and the two are separate
+  // fields precisely because the middle case, an engine here that nobody is
+  // signed in to, is neither.
+  return world.nothingToThinkWith ? { ...world, nothingCanAnswer: true } : world;
 }
 
 const READY = machine({ fluxReady: true, connected: [...SETUP_JOB_APPS] });
