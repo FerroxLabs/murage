@@ -914,11 +914,6 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     }
   };
 
-  // A job that has not been chosen yet is not this card's to guess at. It is
-  // never the normal case: the server only plans this card once `chat` is
-  // settled, and `chat` is settled by a recorded job id.
-  if (!job || !id || !world) return null;
-
   // NOTHING IS NOT A CARD, AND THIS RETURNED NOTHING.
   //
   // RELEASE BLOCK #2, SECOND HALF. A job that has not been chosen is not this
