@@ -26,18 +26,22 @@
 // starting anything.
 import { canReach, isWorkspaceChief, sectionKey, type ReachableBot } from "./store.ts";
 
-/** How a run broke. Each one is a different sentence to a person reading it
- * later, which is the only reason they are distinguished. */
-export type TeamIncidentKind = "failed" | "stalled" | "could-not-start" | "routine-failed";
-
 export interface TeamIncidentBot extends ReachableBot {
   id: string;
   name: string;
   hidden?: boolean;
 }
 
+/** One failed scheduled routine.
+ *
+ * There used to be a `kind` here, with "failed", "stalled" and
+ * "could-not-start" beside "routine-failed" and a sentence written for each.
+ * Nothing raised the other three. Nothing could: the only wiring there is sits
+ * in the RoutineManager host. Four tests asserted the exact wording of those
+ * sentences, so the module read as four times as covered as it was, and that
+ * is the same false floor that hid a mute which could not mute and a report
+ * that rang twice. A kind comes back when a second caller does. */
 export interface TeamIncident {
-  kind: TeamIncidentKind;
   bot: Pick<TeamIncidentBot, "id" | "name">;
   /** the thread the run was actually given — null when it broke before it got
    * one. Null means null: there is no sensible substitute, and the bot's
@@ -185,31 +189,17 @@ const fold = (text: string, max: number): string => {
 
 const ordinal = (n: number): string => (n === 1 ? "first" : n === 2 ? "second" : n === 3 ? "third" : `${n}th`);
 
+/** Named, not located. A routine runs in a throwaway thread it is given per
+ * run, and a routine that broke before the scheduler could make one has no
+ * thread at all — so a sentence that placed it "in its main conversation"
+ * would be pointing at the bot's live chat, which had nothing to do with
+ * this. A room is different: a room-goal routine really did break there. */
 function whatHappened(incident: TeamIncident): string {
-  const where = incident.room
-    ? `in the room "${fold(incident.room, 60)}"`
-    : incident.title
-      ? `in its thread "${fold(incident.title, 60)}"`
-      : "in its main conversation";
-  const detail = incident.detail ? `: "${fold(incident.detail, 240)}"` : "";
   const name = fold(incident.bot.name, 60);
-  switch (incident.kind) {
-    case "stalled":
-      return `${name}'s run ${where} stopped after showing no activity${detail}`;
-    case "could-not-start":
-      return `${name}'s run ${where} could not start${detail}`;
-    case "routine-failed": {
-      // Named, not located. A routine runs in a throwaway thread it is given
-      // per run, and a routine that broke before the scheduler could make one
-      // has no thread at all — "in its main conversation" would then point at
-      // the bot's live chat, which had nothing to do with this.
-      const named = incident.title ? ` "${fold(incident.title, 60)}"` : "";
-      const room = incident.room ? ` in the room "${fold(incident.room, 60)}"` : "";
-      return `${name}'s scheduled routine${named}${room} failed${detail}`;
-    }
-    default:
-      return `${name}'s run ${where} failed${detail}`;
-  }
+  const named = incident.title ? ` "${fold(incident.title, 60)}"` : "";
+  const room = incident.room ? ` in the room "${fold(incident.room, 60)}"` : "";
+  const detail = incident.detail ? `: "${fold(incident.detail, 240)}"` : "";
+  return `${name}'s scheduled routine${named}${room} failed${detail}`;
 }
 
 /** The one-line chip left in the incidents thread ahead of the report, and

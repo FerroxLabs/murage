@@ -132,7 +132,6 @@ describe("a crash loop is one incident, not a storm", () => {
 });
 
 const incident: TeamIncident = {
-  kind: "routine-failed",
   bot: { id: "ada", name: "Ada" },
   threadId: "t-broken",
   title: "Morning brief",
@@ -188,28 +187,17 @@ describe("the report the Chief reads", () => {
 });
 
 describe("the one-line chip", () => {
-  const shapes: Array<[TeamIncident["kind"], string]> = [
-    ["failed", `Incident: Ada's run in its thread "Morning brief" failed`],
-    ["stalled", `Incident: Ada's run in its thread "Morning brief" stopped after showing no activity`],
-    ["could-not-start", `Incident: Ada's run in its thread "Morning brief" could not start`],
-    ["routine-failed", `Incident: Ada's scheduled routine "Morning brief" failed`],
-  ];
-  for (const [kind, expected] of shapes) {
-    it(`says what ${kind} means in words`, () => {
-      expect(teamIncidentChip({ ...incident, kind, detail: "" })).toBe(expected);
-    });
-  }
+  it("says in words what broke", () => {
+    expect(teamIncidentChip({ ...incident, detail: "" })).toBe(`Incident: Ada's scheduled routine "Morning brief" failed`);
+  });
 
   it("carries the reason when there is one", () => {
     expect(teamIncidentChip(incident)).toContain('failed: "Morning brief: the engine returned no result"');
   });
 
-  it("names the room instead of the thread when it broke in one", () => {
-    expect(teamIncidentChip({ ...incident, kind: "failed", room: "Launch", detail: "" })).toContain('in the room "Launch"');
-  });
-
-  it("falls back to the main conversation when there is neither", () => {
-    expect(teamIncidentChip({ ...incident, kind: "failed", title: null, detail: "" })).toContain("in its main conversation");
+  it("names the room when it broke in one", () => {
+    expect(teamIncidentChip({ ...incident, room: "Launch", detail: "" }))
+      .toBe(`Incident: Ada's scheduled routine "Morning brief" in the room "Launch" failed`);
   });
 
   it("names a routine rather than locating it, because a routine has no conversation of its own", () => {
@@ -244,7 +232,7 @@ describe("a failed routine is where this is wired in", () => {
     expect(at, "onRunFailed has moved out of the RoutineManager host").toBeGreaterThan(-1);
     const handler = index.slice(at, index.indexOf("\n  },", at));
     expect(handler).toContain('buildNotification("routine-failed"');
-    expect(handler).toContain('reportTeamIncident({ kind: "routine-failed"');
+    expect(handler).toContain("reportTeamIncident({ bot,");
     // and counts it against the routine, not against the throwaway thread the
     // run happened to be given (see routineIncidentMuteKeys)
     expect(handler).toContain("muteKeys: routineIncidentMuteKeys(run)");

@@ -382,7 +382,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -5927,7 +5927,7 @@ function teamIncidentContext(threadId: string | null): { lastRequest: string | n
  *
  * The whole body is guarded. This runs on the failure path, and an incident
  * report that throws would turn one broken routine into two. */
-function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string | null; muteKeys: readonly string[]; detail: string }): void {
+function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; muteKeys: readonly string[]; detail: string }): void {
   try {
     const { bot, threadId } = input;
     const chief = chiefForBrokenBot(store.bots, bot);
@@ -5945,7 +5945,6 @@ function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; thr
     const task = threadId ? store.taskByThread(bot.id, threadId) : undefined;
     const group = threadId ? store.groupByThread(threadId) : undefined;
     const incident: TeamIncident = {
-      kind: input.kind,
       bot: { id: bot.id, name: bot.name },
       threadId,
       title: task?.title ?? null,
@@ -6171,7 +6170,7 @@ routines = new RoutineManager({
     // before it had a thread has none, and the notification above can fall
     // back to the bot's current conversation because it goes to the person
     // who owns it. This report goes to a PEER.
-    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? null, muteKeys: routineIncidentMuteKeys(run), detail });
+    reportTeamIncident({ bot, threadId: run.threadId ?? null, muteKeys: routineIncidentMuteKeys(run), detail });
   },
 });
 procedureReviews = createProcedureReviewHost({
