@@ -861,6 +861,19 @@ export const FIRST_RUN_COPY = {
       /** The way back to the Chief, on every result. Clears the job, the
        *  text and the parsed items; none of them was ever persisted. */
       again: "Take something else off my plate",
+      /**
+       * A SCREEN THAT COULD NOT BE DRAWN, SAID OUT LOUD INSTEAD OF SHOWN AS
+       * A BLANK.
+       *
+       * The screen builders return null when there is nothing to assemble,
+       * which is the honest answer: a connect screen with nothing missing
+       * and an input screen for a job with no box are both "there is nothing
+       * here". What the card may not do with that null is draw a lead with
+       * nothing under it, or draw nothing at all. `firstRunStage` makes the
+       * case unreachable; this is what it would say if it ever were, and it
+       * carries the way back like every other screen in the flow.
+       */
+      lost: "I have lost my place on that one. Pick something and I will start again.",
       /** Something in the step itself did not go through. Said where it
        *  happened, and whatever they were pressing stays pressable. */
       failure: "That did not go through. Try it again whenever you are ready.",

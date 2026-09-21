@@ -15,6 +15,7 @@ const {
   dayResult,
   escapeHatchScreen,
   firstRunInputScreen,
+  firstRunStage,
   flowStageFor,
   notesResult,
   parseLines,
@@ -495,6 +496,93 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
 });
 
 /**
+ * A PIN MUST NOT OUTLIVE THE STATE IT WAS PINNED AGAINST.
+ *
+ * The card derived its stage as `moved ?? (...)`, so once `moved` was pinned
+ * to "connect" it beat the live state for ever. Connect one of a job's two
+ * accounts, have polling then discover the other was completed somewhere
+ * else, and the pinned "connect" still won, `firstRunConnectScreen` returned
+ * null because nothing was missing, and the card rendered its generic lead
+ * and nothing else: no advance, no input, no control.
+ *
+ * The property asserted here is the strong one, and it is asserted by walking
+ * every job across every machine with every pin the card can hold: what comes
+ * back can ALWAYS be drawn.
+ */
+const PINS: readonly (import("./first-run-flow").FirstRunFlowStage | null)[] = [
+  null, "connect", "input", "working", "result",
+];
+
+describe("the stage the card lands on can always be drawn", () => {
+  it("never returns a stage whose screen would be null, on any machine", () => {
+    for (const world of MACHINES) {
+      for (const id of FIRST_RUN_JOB_IDS) {
+        const job = FIRST_RUN_JOB_SHAPES[id];
+        for (const escaped of [false, true]) {
+          for (const moved of PINS) {
+            const label = `${id} pinned ${moved} escaped=${escaped} on ${JSON.stringify(world)}`;
+            const stage = firstRunStage(job, world, moved, escaped);
+            expect(stage, label).not.toBeNull();
+            if (stage === "connect") {
+              expect(firstRunConnectScreen(job, world), label).not.toBeNull();
+            }
+            if (stage === "input" && !escaped) {
+              expect(firstRunInputScreen(job, world), label).not.toBeNull();
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // THE EXACT WALK THE AUDIT DESCRIBED. Two accounts wanted, one connected
+  // here, the second discovered by a poll as already done elsewhere.
+  it("lets go of a connect pin the moment the machine says there is nothing to connect", () => {
+    const job = FIRST_RUN_JOB_SHAPES.brief;
+    const keyed = { fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, appsUnreadable: false, search: "anonymous" } as const;
+    const halfway: FirstRunJobWorld = { ...keyed, connected: ["gmail"] };
+    const both: FirstRunJobWorld = { ...keyed, connected: [...SETUP_JOB_APPS] };
+
+    // Pinned while it is still true.
+    expect(firstRunStage(job, halfway, "connect", false)).toBe("connect");
+    expect(firstRunConnectScreen(job, halfway)).not.toBeNull();
+
+    // The poll lands and the pin is gone, which is what `afterConnect` would
+    // have said had it been asked a second time.
+    expect(firstRunStage(job, both, "connect", false)).toBe(afterConnect(job, both));
+    expect(firstRunStage(job, both, "connect", false)).not.toBe("connect");
+  });
+
+  it("keeps the pins that are about the person rather than the machine", () => {
+    const job = FIRST_RUN_JOB_SHAPES.brief;
+    const both: FirstRunJobWorld = {
+      fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false,
+      connected: [...SETUP_JOB_APPS], appsUnreadable: false, search: "anonymous",
+    };
+    // They typed and it is working, or they have their answer. A poll landing
+    // underneath must not drag them back to the box.
+    for (const moved of ["input", "working", "result"] as const) {
+      expect(firstRunStage(job, both, moved, false), moved).toBe(moved);
+    }
+  });
+
+  it("holds nothing at all until the job and the machine are both known", () => {
+    const world = MACHINES[0];
+    expect(firstRunStage(null, world, null, false)).toBeNull();
+    expect(firstRunStage(FIRST_RUN_JOB_SHAPES.notes, null, null, false)).toBeNull();
+    expect(firstRunStage(null, null, "input", false)).toBe("input");
+  });
+
+  it("gives the screen that could not be drawn words and a way off it", async () => {
+    const { FirstRunLostView } = await import("@/components/FirstRunJobsCard");
+    const markup = screenOf(createElement(FirstRunLostView, { onAgain: noop }), "lost");
+    expect(markup, "no way off the screen that could not be drawn").toMatch(/<button/);
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.flow["do-it"].lost));
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.flow["do-it"].again));
+  });
+});
+
+/**
  * THE TWO FACTS ABOUT THE CARD THAT THIS SUITE CANNOT EXECUTE.
  *
  * Everything above runs the real rules and renders the real screens. `finish`
@@ -517,6 +605,19 @@ const cardSource = (await import("node:fs")).readFileSync(
 const code = cardSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the do-it card settles through the rule rather than around it", () => {
+  it("derives its stage through the rule rather than pinning moved for ever", () => {
+    expect(code, "the card stopped deriving its stage through the rule").toMatch(/firstRunStage\(job, world, moved,/);
+    expect(code, "the eternal pin is back").not.toMatch(/moved\s*\n?\s*\?\?\s*\(job/);
+  });
+
+  it("draws a screen when a builder returns null, never a lead on its own", () => {
+    // Both null branches used to be blanks: one rendered the generic connect
+    // lead with no control under it, the other returned null outright.
+    const nulls = [...code.matchAll(/if \(!screen\) return ([^;]+);/g)].map((match) => match[1]);
+    expect(nulls.length, "the null branches went missing").toBe(2);
+    for (const drawn of nulls) expect(drawn, "a screen builder's null still draws a blank").toContain("FirstRunLostView");
+  });
+
   it("runs the finish through finishFirstRunJob", () => {
     expect(code, "the card no longer settles through the rule").toMatch(/await finishFirstRunJob\(/);
   });

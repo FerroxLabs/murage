@@ -26,6 +26,7 @@ import {
 } from "./first-run-copy.ts";
 import {
   FIRST_RUN_JOB_SHAPES,
+  firstRunConnectScreen,
   missingForJob,
   type FirstRunJobId,
   type FirstRunJobShape,
@@ -432,6 +433,59 @@ export type FirstRunFlowStage = "connect" | "input" | "working" | "result";
 export function flowStageFor(job: FirstRunJobShape, world: FirstRunJobWorld): FirstRunFlowStage {
   if (missingForJob(job, world).length > 0) return "connect";
   return job.input === null ? "working" : "input";
+}
+
+/** Whether this stage has a screen behind it on this machine, for this job.
+ *  `working` and `result` draw from the job and from what was typed, so they
+ *  always do; the other two are assembled by builders that return null when
+ *  there is nothing to assemble, which is the honest answer and a body the
+ *  card may not draw. */
+function drawableStage(
+  job: FirstRunJobShape,
+  world: FirstRunJobWorld,
+  stage: FirstRunFlowStage,
+  escaped: boolean,
+): boolean {
+  if (stage === "connect") return firstRunConnectScreen(job, world) !== null;
+  // The escape hatch is the notes box, which always has one.
+  if (stage === "input") return escaped || firstRunInputScreen(job, world) !== null;
+  return true;
+}
+
+/**
+ * WHERE THE CARD IS, GIVEN WHERE THE PERSON MOVED TO AND WHAT THE MACHINE IS
+ * SAYING NOW.
+ *
+ * `moved` wins, and has to: once the person has moved they are driving, and a
+ * re-render because a poll landed must not throw them back to a screen they
+ * have already come through.
+ *
+ * A PIN MUST NOT OUTLIVE THE STATE IT WAS PINNED AGAINST, WHICH IS THE DEFECT.
+ * `connect` is the one stage that is a statement about the MACHINE rather than
+ * about the person: it means "there are things still missing". Pinned, it won
+ * for ever. Connect one of a job's two accounts, have polling then discover
+ * the other was completed somewhere else, and the pinned `connect` still beat
+ * the live state, `firstRunConnectScreen` returned null because nothing was
+ * missing, and the card rendered its lead and nothing else. No advance, no
+ * input, no control. That is the same failure class as the blank cards this
+ * release has already shipped twice.
+ *
+ * So a pin is kept only while it can still be drawn, and otherwise the stage
+ * is derived again from the machine, which is exactly what `afterConnect`
+ * would have said had it been asked a second time. Stated as a property
+ * rather than as a special case for `connect`: what comes back can ALWAYS be
+ * drawn, because `flowStageFor` only ever names a stage whose screen exists.
+ */
+export function firstRunStage(
+  job: FirstRunJobShape | null,
+  world: FirstRunJobWorld | null,
+  moved: FirstRunFlowStage | null,
+  escaped: boolean,
+): FirstRunFlowStage | null {
+  if (!job || !world) return moved;
+  const derived: FirstRunFlowStage = escaped ? "input" : flowStageFor(job, world);
+  if (!moved) return derived;
+  return drawableStage(job, world, moved, escaped) ? moved : derived;
 }
 
 /**

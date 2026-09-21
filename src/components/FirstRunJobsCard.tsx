@@ -37,7 +37,7 @@ import {
   escapeHatchScreen,
   finishFirstRunJob,
   firstRunInputScreen,
-  flowStageFor,
+  firstRunStage,
   notesResult,
   parseLines,
   researchResult,
@@ -563,6 +563,31 @@ export function FirstRunResearchResultView(
 }
 
 /**
+ * THE SCREEN THAT COULD NOT BE ASSEMBLED, WHICH IS STILL A SCREEN.
+ *
+ * Every screen builder in the two modules can return null on purpose: a
+ * connect screen with nothing left missing and an input screen for a job with
+ * no box are both "there is nothing here to draw", and null is the honest
+ * answer to give the card. What the CARD may not do with that null is render
+ * a lead with nothing under it, or render nothing at all. Both shapes have
+ * shipped in this release already.
+ *
+ * `firstRunStage` now makes both cases unreachable by dropping a pin the
+ * moment it stops being drawable. This is what would be drawn if one ever
+ * were, and like every other screen in the flow it carries the way back.
+ */
+export function FirstRunLostView({ onAgain }: { onAgain: () => void }) {
+  return (
+    <FirstRunBubble>
+      <FirstRunLine>{flowCopy.lost}</FirstRunLine>
+      <button type="button" onClick={onAgain} className={`mt-3 ${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+        {flowCopy.again}
+      </button>
+    </FirstRunBubble>
+  );
+}
+
+/**
  * THE CREW IS STILL INSTALLING, OR IT REFUSED.
  *
  * The result screen names two bots and a review, and it must not draw any of
@@ -702,12 +727,15 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   //
   // `moved` wins once the person has moved, because after that they are
   // driving and a re-render because a poll landed must not throw them back to
-  // the connect screen they have just come through. The escape hatch is the
-  // one path that skips the gate: the notes job reaches for no account, and
-  // asking for a key before letting somebody type a sentence is the form this
-  // release exists to delete.
-  const stage: FirstRunFlowStage | null = moved
-    ?? (job && world ? (tookEscapeHatch() ? "input" : flowStageFor(job, world)) : null);
+  // the connect screen they have just come through. BUT A PIN MUST NOT
+  // OUTLIVE THE STATE IT WAS PINNED AGAINST, which is why this is a rule in
+  // the module rather than a `??` here: a `connect` pinned against "two
+  // things are missing" used to win for ever, so a second account completed
+  // in a browser tab left the card with a lead and nothing else. The escape
+  // hatch is the one path that skips the gate: the notes job reaches for no
+  // account, and asking for a key before letting somebody type a sentence is
+  // the form this release exists to delete.
+  const stage: FirstRunFlowStage | null = firstRunStage(job, world, moved, tookEscapeHatch());
 
   /**
    * The ordinary send, exactly as the composer sends, AND HEARD BACK FROM.
@@ -892,8 +920,14 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
 
   if (stage === "connect") {
     const screen = firstRunConnectScreen(job, world);
-    // Nothing missing any more, which a poll can do underneath this screen.
-    if (!screen) return <FirstRunBubble><FirstRunLine>{flowCopy.connect.lead}</FirstRunLine></FirstRunBubble>;
+    // UNREACHABLE, AND DRAWN ANYWAY. `firstRunStage` drops a pin the moment
+    // it stops being drawable, so a connect stage with nothing missing no
+    // longer arrives here. It used to, and what it rendered was the generic
+    // lead on its own: no advance, no input, no control. A card that renders
+    // a lead and nothing else is the same failure class as the blank cards
+    // this release has already shipped twice, so the null case gets a screen
+    // with words and a way off it rather than a body that is not there.
+    if (!screen) return <FirstRunLostView onAgain={() => void elsewhere()} />;
     return (
       <FirstRunConnectView
         screen={screen}
@@ -909,7 +943,9 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
 
   if (stage === "input") {
     const screen = tookEscapeHatch() ? escapeHatchScreen(world) : firstRunInputScreen(job, world);
-    if (!screen) return null;
+    // The same rule, and this one used to return null outright: a job with no
+    // box, pinned to the input stage, drew literally nothing.
+    if (!screen) return <FirstRunLostView onAgain={() => void elsewhere()} />;
     return (
       <FirstRunInputView
         screen={screen}

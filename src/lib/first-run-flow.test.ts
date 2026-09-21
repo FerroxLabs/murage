@@ -585,7 +585,7 @@ describe("the flow copy stays where the flow can find it", () => {
     // A string that drifts out of here is a string the walk in
     // first-run-copy.test.ts stops covering.
     expect(Object.keys(FIRST_RUN_COPY.flow["do-it"]).sort()).toEqual([
-      "again", "business", "connect", "day", "failure", "input", "morning", "notes", "research", "working",
+      "again", "business", "connect", "day", "failure", "input", "lost", "morning", "notes", "research", "working",
     ]);
   });
 });
