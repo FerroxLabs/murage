@@ -155,12 +155,25 @@ export const FIRST_RUN_COPY = {
       recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and voice on top.",
       fieldLabel: "Paste your key",
       placeholder: "Paste your Flux Router key here",
-      submit: "Save it",
-      working: "Saving",
+      /**
+       * THE BUTTON SAYS WHAT HAPPENS, NOT WHAT IT DOES MECHANICALLY.
+       *
+       * It said "Save it". Both cross-research models, independently, attacked
+       * that whole framing: the person does not want to save a key, they want
+       * the thing the key turns on, and "save" describes our plumbing. The
+       * headline above stays warm on purpose. The button is where a person
+       * looks to find out what pressing it will do, so it is the one place
+       * that has to be literal.
+       *
+       * The field still says paste, because pasting is still honestly what
+       * they do next.
+       */
+      submit: "Connect Flux Router",
+      working: "Connecting",
       signup: "I need a key",
       dismiss: "Not now",
-      saved: "Saved, and locked away on this computer. It never appears in our conversation.",
-      failure: "That key did not save. Check it and try again, or carry on without it.",
+      saved: "Connected, and the key is locked away on this computer. It never appears in our conversation.",
+      failure: "That key did not connect. Check it and try again, or carry on without it.",
     },
     "no-key": {
       body: "Noted. We carry on with what is on this machine, and that is plenty to be going on with.",
