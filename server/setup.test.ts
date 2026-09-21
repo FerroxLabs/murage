@@ -199,15 +199,36 @@ describe("the setup checklist the server owns", () => {
   });
 });
 
-describe("the brief: a promise is not proof", () => {
+// THE PRINCIPLE, AND THE ONE PLACE IT WAS TOO EXPENSIVE.
+//
+// A scheduled routine is a promise and a routine that has run is proof, and
+// this release holds that line everywhere a claim is MADE. It used to hold it
+// here too: the brief step was not done until a run had completed.
+//
+// That was reversed deliberately, by the owner, after using it. The first run
+// of a real brief reaches for mail and calendar, every one of those tool
+// calls raises an approval card because nothing is auto-approved on a fresh
+// install, and the whole of setup stood still behind it while he approved
+// them one at a time. His words: it should "run in the background and
+// continue on".
+//
+// What is NOT given up is the claim. `brief-ran`, the card that says the
+// thing has already run, is keyed on the run itself and not on this step
+// (server/setup-conversation.ts), so nothing tells anybody a brief happened
+// until one did. The step means "you have a brief"; the card means "here is
+// what it said". Those were one thing and are now two.
+describe("the brief: scheduling it is enough to move on", () => {
   const scheduled = live({ ownerName: "Sean", flux: FLUX_SAVED, connectedApps: 1 });
 
-  it("is not done while the brief exists and has never run", () => {
+  it("is done once the brief exists, so the flow does not wait on its first run", () => {
     const waiting = live({ ...scheduled, routines: { total: 1, briefId: "routine-brief", briefRan: false } });
     const state = checklist().read(waiting);
-    expect(state.steps.brief.done).toBe(false);
-    expect(setupStepStatus("brief", state.steps.brief, waiting)).toBe("open");
-    expect(setupStepDetail("brief", state.steps.brief, waiting)).toMatch(/has not run yet/);
+    expect(state.steps.brief.done).toBe(true);
+  });
+
+  it("is still not done when there is no brief at all", () => {
+    const none = live({ ...scheduled, routines: { total: 0, briefId: null, briefRan: false } });
+    expect(checklist().read(none).steps.brief.done).toBe(false);
   });
 
   it("is done once one run has completed", () => {

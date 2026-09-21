@@ -289,6 +289,7 @@ import {
   roomResponders,
   sectionKey,
   Store,
+  UNTITLED_TASK,
   type BotRecord,
   type GroupDefaultResponder,
   type GroupRecord,
@@ -1843,6 +1844,36 @@ function setupRoutinesReading(): SetupRoutineReading {
  * routes are re-entered on retries, and a doubled "Sean" in the transcript is
  * the kind of small wrongness that makes a person stop trusting the rest.
  */
+/** What the Chief's first thread is called while setup is happening in it.
+ *  Plain words: nobody is being walked through "onboarding". */
+const SETUP_TASK_TITLE = "Getting you set up";
+
+/**
+ * The Chief's own task, named for what is happening in it.
+ *
+ * A task takes its title from the first thing the PERSON said, and on a fresh
+ * install the first run does all its talking before they say anything, so the
+ * thread sat there called "New task" through the whole of setup. Reported
+ * exactly that way. Worse since the transcript started echoing answers: the
+ * first user line is now a name and an email address, which is not a title
+ * either.
+ *
+ * Set once, and only over the untitled default, so a person who renames it
+ * keeps their name for it.
+ */
+function nameTheSetupTask(): void {
+  const chiefBotId = setup.chiefBotId();
+  const chief = chiefBotId ? store.bot(chiefBotId) : null;
+  if (!chief) return;
+  const task = chief.tasks?.find((entry) => entry.threadId === chief.threadId);
+  if (!task || (task.title ?? "").trim() !== UNTITLED_TASK) return;
+  try {
+    store.renameTask(chief.id, chief.threadId, SETUP_TASK_TITLE);
+  } catch {
+    // A title is the nicest part of this and never the job.
+  }
+}
+
 function echoSetupAnswer(step: SetupStep, answer: string): void {
   if (step !== "hello") return;
   const said = answer.trim();
@@ -2027,6 +2058,7 @@ async function driveSetup(view: SetupView): Promise<void> {
     console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
   }
   driveSetupConversation(view);
+  nameTheSetupTask();
   // Told to the client AFTER the cards are appended, so a view that carries
   // `conversationLive` is a view whose thread is already up to date.
   view.conversationLive = conversationLive(view, setupCardKeysInChiefThread(view));

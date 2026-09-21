@@ -87,6 +87,7 @@ export function FirstRunBriefCard({ settled }: { settled: boolean }) {
       <div className="text-[15px] font-semibold text-ink">{copy.title}</div>
       <FirstRunLine>{copy.body}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
+      <FirstRunLine quiet>{copy.permission}</FirstRunLine>
 
       {!done && (
         <div className="mt-3 flex flex-wrap items-end gap-3">

@@ -294,6 +294,20 @@ export const FIRST_RUN_COPY = {
   brief: {
     brief: {
       title: "Your morning brief",
+      /**
+       * SAID BEFORE IT HAPPENS, NOT AFTER.
+       *
+       * The first real brief reaches for mail and calendar, and nothing is
+       * auto-approved on a fresh install, so it raises an approval card for
+       * each one. Unwarned, that reads as the app breaking: the person set a
+       * time and was immediately handed a stack of permission questions.
+       *
+       * Warned, it reads as the thing working exactly as promised, because
+       * "you approve, I send" is the line this whole release is built on. The
+       * same sentence also says it is not blocking them, which is the other
+       * half of the complaint: they can carry on while it runs.
+       */
+      permission: "The first one will ask your permission as it reaches for each thing. Answer those whenever you like, it carries on in the background.",
       body: "Each morning I read everything that came in overnight and put one page on top: what needs you, what moved, and what you said you would do.",
       second: "Pick a time and it will be waiting before you sit down.",
       timeLabel: "What time?",

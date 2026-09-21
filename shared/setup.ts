@@ -350,7 +350,24 @@ export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: S
     case "apps":
       return (live.connectedApps ?? 0) >= 1;
     case "brief":
-      return live.routines.briefId !== null && live.routines.briefRan;
+      // THE BRIEF RUNS IN THE BACKGROUND; THE FLOW DOES NOT WAIT FOR IT.
+      //
+      // This required `briefRan`, on the principle that a scheduled routine
+      // is a promise and a routine that has run is proof. The principle is
+      // right and the cost turned out to be too high: the first run of a
+      // real brief reaches for mail and calendar, every one of those tool
+      // calls raises an approval card because nothing is auto-approved on a
+      // fresh install, and the whole of setup stopped dead behind it. The
+      // owner sat approving things one at a time before he could reach the
+      // next step. Reported as "now they have to wait for the morning brief
+      // to run rather than let it run in the background and continue on".
+      //
+      // So the step lands when the brief EXISTS and a run has been started,
+      // and the proof still arrives: `brief-ran` is a separate report card
+      // that appends when the run completes, whenever that is. Nothing is
+      // claimed that did not happen; the person is simply not made to stand
+      // and watch it.
+      return live.routines.briefId !== null;
     case "routines":
       return live.routines.total >= SETUP_ROUTINES_TARGET;
   }

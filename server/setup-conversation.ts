@@ -245,7 +245,15 @@ export function setupConversationPlan(
   // The release's central rule, in card form: a scheduled routine is a
   // promise, a routine that has run is proof. `brief` is done only once a run
   // completed, so this card can only appear after the person saw it work.
-  if (stepView(view, "brief")?.done === true) wanted.push(plan("brief", "brief-ran"));
+  // KEYED ON THE RUN, NOT ON THE STEP.
+  //
+  // It used to read the step's `done`, which was the same thing while the
+  // step required a completed run. It no longer does: the flow stopped
+  // waiting for the brief so that approving its tool calls could happen in
+  // the background. Left as it was, "it has already run" would appear the
+  // moment the brief was merely scheduled, which is the exact claim this
+  // release exists to stop making.
+  if (view.routines.briefRan) wanted.push(plan("brief", "brief-ran"));
 
   // SHOW BEFORE ASKING, AND SHOW IT NEXT TO THE THING IT IS ASKING FOR.
   //
