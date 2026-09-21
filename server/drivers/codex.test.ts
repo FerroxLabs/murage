@@ -576,6 +576,111 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(joined).toContain("mcp_servers.browser.command");
   });
 
+  it("does not move a colliding server on top of one of the bot's own servers", async () => {
+    const codexHome = join(scratch, "double-collision-codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "config.toml"), '[mcp_servers.fibery]\nurl = "https://mcp-eu-svc.fibery.io/mcp"\n');
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "double-collision.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-mcp-double-collision",
+      text: "go",
+      integrations: {
+        custom: {
+          // the owner's name collides with the first; the second is the bot's
+          // own server, already sitting on the alias the first wants
+          fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} },
+          fibery_murage: { command: "npx", args: ["-y", "@x/fibery-murage"], env: {} },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+
+    // each server's command lands under its own mcp_servers.<mount>. prefix,
+    // and the two prefixes are different — one -c override merging into the
+    // other is the same silent capability merge, caused by Murage this time
+    const mountOf = (command: string): string => {
+      const arg = argv.find((entry) => entry.startsWith("mcp_servers.") && entry.endsWith(`.command=${JSON.stringify(command)}`));
+      return arg ? arg.slice("mcp_servers.".length, arg.indexOf(".command=")) : "";
+    };
+    const movedAside = mountOf("uv");
+    const ownServer = mountOf("npx");
+    expect(ownServer).toBe("fibery_murage");
+    expect(movedAside).not.toBe("");
+    expect(movedAside).not.toBe(ownServer);
+    // and nothing is written into the owner's own table
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+  });
+
+  const mountPrefixes = (dump: string): string[] => {
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+    return argv.filter((arg) => arg.endsWith(".command=\"uv\"")).map((arg) => arg.slice(0, arg.indexOf(".command=")));
+  };
+
+  it("moves a colliding server aside however the owner's config.toml spells the table", async () => {
+    // none of these is a `[mcp_servers.fibery]` header, and every one of them
+    // defines the same table that `-c mcp_servers.fibery.command=…` merges into
+    const spellings = [
+      ['mcp_servers.fibery.url = "https://mcp-eu-svc.fibery.io/mcp"\n', "dotted"],
+      ['["mcp_servers".fibery]\nurl = "https://mcp-eu-svc.fibery.io/mcp"\n', "quoted-root"],
+      ['mcp_servers = { fibery = { url = "https://mcp-eu-svc.fibery.io/mcp" } }\n', "inline"],
+      ['[mcp_servers]\nfibery = { url = "https://mcp-eu-svc.fibery.io/mcp" }\n', "under-header"],
+    ] as const;
+
+    for (const [config, label] of spellings) {
+      const codexHome = join(scratch, `spelling-${label}`);
+      mkdirSync(codexHome, { recursive: true });
+      writeFileSync(join(codexHome, "config.toml"), config);
+      await create({ environment: { CODEX_HOME: codexHome } });
+      const dump = join(scratch, `spelling-${label}.json`);
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({
+        threadId: `t-spelling-${label}`,
+        text: "go",
+        integrations: { custom: { fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} } } },
+      });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(mountPrefixes(dump), label).toEqual(["mcp_servers.fibery_murage"]);
+
+      recorder.stop();
+      await instance.dispose();
+    }
+  });
+
+  it("moves every custom server aside when the owner's config.toml cannot be read", async () => {
+    // a directory where config.toml should be: the file is there in some form
+    // and Murage cannot see inside it. Mounting under the bot's own names would
+    // merge each override into whatever the owner actually wrote, including a
+    // default_tools_approval_mode that un-cards the server.
+    const codexHome = join(scratch, "unreadable-codex-home");
+    mkdirSync(join(codexHome, "config.toml"), { recursive: true });
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "unreadable.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-unreadable-config",
+      text: "go",
+      integrations: {
+        custom: { fibery: { command: "uv", args: [], env: {} }, notes: { command: "uv", args: ["notes"], env: {} } },
+        browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+
+    expect(mountPrefixes(dump).sort()).toEqual(["mcp_servers.fibery_murage", "mcp_servers.notes_murage"]);
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.notes."))).toBe(false);
+    // the moved servers are still carded, and harness mounts are untouched
+    expect(argv.some((arg) => arg.includes("_murage.default_tools_approval_mode"))).toBe(false);
+    expect(argv.join(" ")).toContain("mcp_servers.browser.command");
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
