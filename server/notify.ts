@@ -41,6 +41,34 @@ export function summarize(text: string, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
+/** Whether a turn that died before it started is worth a banner of its own.
+ *
+ * Only a turn the PERSON started themselves. Every other kind already has a
+ * channel, and buzzing here as well rings twice for one failure:
+ *   - a routine run reports through `onDispatchError`, which raises
+ *     routine-failed;
+ *   - a delegated sub-turn is reported to the bot that asked for it, in its
+ *     own thread;
+ *   - a card continuation is a resume the person is already looking at, and
+ *     the card itself carries the error;
+ *   - and a turn Murage started while nobody was at the keyboard exists
+ *     BECAUSE something already buzzed — a team incident report is raised on
+ *     the back of the routine-failed banner that has just gone out, so its own
+ *     dispatch failure is the same failure a second time.
+ *
+ * That last term is the one this predicate exists for. It was written inline
+ * in the dispatch catch without it, which made the team-incident turn — whose
+ * commonest cause of failure, a provider being down, is also a leading cause
+ * of the routine failure it is reporting — ring the person twice. */
+export function turnFailureBuzzes(opts?: {
+  automationSource?: string;
+  commsDepth?: number;
+  cardContinuation?: boolean;
+  unattended?: boolean;
+}): boolean {
+  return opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation && !opts?.unattended;
+}
+
 export interface NotifyBot {
   id: string;
   name: string;

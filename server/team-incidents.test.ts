@@ -6,11 +6,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { turnFailureBuzzes } from "./notify.ts";
+
 import {
   TEAM_INCIDENT_MUTE_AFTER,
   TeamIncidentLedger,
   chiefForBrokenBot,
   routineIncidentMuteKeys,
+  teamIncidentTurnOptions,
   teamIncidentChip,
   teamIncidentText,
   type TeamIncident,
@@ -239,14 +242,46 @@ describe("a failed routine is where this is wired in", () => {
     // Nobody is at the keyboard and the prompt quotes a run that just broke.
     // An attended turn here would let the Chief's own tool calls run under
     // whatever grant the person left switched on.
+    expect(teamIncidentTurnOptions("t-incidents")).toEqual({ threadId: "t-incidents", unattended: true });
     const at = index.indexOf("function reportTeamIncident(");
     expect(at, "reportTeamIncident has been renamed or removed").toBeGreaterThan(-1);
     const body = index.slice(at, index.indexOf("\n}\n", at));
     expect(body).toContain("teamIncidentText(incident, count)");
-    expect(body).toContain("unattended: true");
+    expect(body).toContain("teamIncidentTurnOptions(incidents.threadId)");
+  });
+});
+
+describe("one failure rings the person once", () => {
+  // This body contains no notify() and no buildNotification(), which is true
+  // and was never the question. The report is delivered as a TURN, and a turn
+  // that dies before it starts buzzes turn-failed from startTurn's own
+  // dispatch catch — for any turn that passes the test below. So the incident
+  // turn's options are run THROUGH that test here rather than read off the
+  // page, because the defect was a term missing from the test, not a call
+  // anybody could see in this function.
+  it("does not buzz for the incident turn, whose failure is the one already reported", () => {
+    expect(turnFailureBuzzes(teamIncidentTurnOptions("t-incidents"))).toBe(false);
   });
 
-  it("raises no second banner of its own, because every caller has already told the person", () => {
+  it("still buzzes for a turn the person started themselves", () => {
+    expect(turnFailureBuzzes()).toBe(true);
+    expect(turnFailureBuzzes({})).toBe(true);
+  });
+
+  it("does not buzz for the other turns that already have a channel of their own", () => {
+    expect(turnFailureBuzzes({ automationSource: "schedule" })).toBe(false);
+    expect(turnFailureBuzzes({ commsDepth: 1 })).toBe(false);
+    expect(turnFailureBuzzes({ cardContinuation: true })).toBe(false);
+  });
+
+  it("is the single test the dispatch catch uses, so it cannot drift from this file", () => {
+    const at = index.indexOf("buildNotification(\"turn-failed\"");
+    expect(at, "the turn-failed banner has moved").toBeGreaterThan(-1);
+    const gate = index.lastIndexOf("if (", at);
+    expect(index.slice(gate, at)).toContain("turnFailureBuzzes(opts)");
+  });
+
+  it("raises no banner directly either, because every caller has already told the person", () => {
     const at = index.indexOf("function reportTeamIncident(");
     const body = index.slice(at, index.indexOf("\n}\n", at));
     expect(body).not.toContain("notify(");

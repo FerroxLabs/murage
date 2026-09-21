@@ -153,6 +153,24 @@ export function routineIncidentMuteKeys(run: { routineId: string; threadId?: str
   return run.threadId ? [`routine:${run.routineId}`, `thread:${run.threadId}`] : [`routine:${run.routineId}`];
 }
 
+/** How the Chief's incident turn is started.
+ *
+ * `unattended`, because nobody is at the keyboard and the report quotes a run
+ * that just broke: the Chief's own tool calls are judged accordingly.
+ *
+ * And `unattended` is also what keeps the once-not-twice notification
+ * invariant true, which is why this is a value the tests can hand to
+ * `turnFailureBuzzes` rather than an object literal buried in the harness.
+ * Without it, a dispatch failure of THIS turn buzzes turn-failed, on top of
+ * the routine-failed banner the person already got for the same incident —
+ * and a provider being down is both the commonest way this turn fails and a
+ * leading cause of the routine failure it is reporting. The body of the
+ * report says the module raises no second banner; this is the term that
+ * makes that true. */
+export function teamIncidentTurnOptions(threadId: string): { threadId: string; unattended: true } {
+  return { threadId, unattended: true };
+}
+
 /** One line, no fences, no newlines, bounded. Everything folded through here
  * is third-party text — a provider's stop reason, a person's thread title,
  * whatever the failed run last said — and it is about to be interpolated into

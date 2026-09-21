@@ -210,7 +210,7 @@ import {
   parseStoredMcpServer,
 } from "./mcp-registry.ts";
 import { probeMcpServer } from "./mcp-probe.ts";
-import { buildNotification, type Notification } from "./notify.ts";
+import { buildNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import {
   isEffortLevel,
@@ -382,7 +382,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -5847,18 +5847,14 @@ async function startTurn(
       // a setting only a person can change — an unattended user would
       // otherwise learn nothing until they next opened the thread.
       //
-      // Only for a turn the person started themselves, which is the same
-      // three-part test the unattended window uses at :2695. A routine
-      // reaches this same catch and then reports through onDispatchError,
-      // which raises routine-failed; buzzing here too would ring twice for
-      // one failure. A delegated sub-turn is reported to the bot that asked
-      // for it, in its own thread, so it does not need a second channel. And
-      // a card continuation is a resume the person is already looking at —
-      // the card itself carries the error.
+      // Only for a turn the person started themselves. `turnFailureBuzzes` in
+      // notify.ts holds that test and says why each term is in it — it is
+      // policy, it is the whole once-not-twice invariant, and it was wrong
+      // here for a turn nobody started.
       //
       // The body is redacted: a dispatch failure can carry a provider's
       // verbatim stderr, and this one goes to an OS notification banner.
-      if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
+      if (turnFailureBuzzes(opts)) {
         notify(
           buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
         );
@@ -5956,9 +5952,10 @@ function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; thr
       kind: "activity",
       tool: { name: teamIncidentChip(incident), ok: false },
     });
-    // `unattended`, because nobody is at the keyboard and the report quotes a
-    // failed run: the Chief's own tool calls are judged accordingly.
-    void startTurn(chief.id, teamIncidentText(incident, count), { threadId: incidents.threadId, unattended: true })
+    // teamIncidentTurnOptions, not an object literal: the shape of this turn
+    // is what keeps it from ringing the person a second time for the failure
+    // it is reporting, and that is policy, not wiring.
+    void startTurn(chief.id, teamIncidentText(incident, count), teamIncidentTurnOptions(incidents.threadId))
       .catch((error) => {
         // The Chief being busy is the common case and is not worth a banner —
         // the chip above is already durable in its incidents thread.
