@@ -196,10 +196,53 @@ describe("first run copy: the things the flow promises", () => {
     }
   });
 
-  it("puts email on graduated trust wherever email is mentioned", () => {
-    const line = "You approve, I send. Once you trust me with a kind of email, I can send those myself.";
-    expect(FIRST_RUN_COPY.apps.apps.trust).toContain(line);
-    expect(FIRST_RUN_COPY.routines["more-routines"].rows[0].why).toContain(line);
+  // WHAT THE APPROVAL SYSTEM CAN KEY IS THE CEILING ON WHAT THE COPY MAY
+  // PROMISE, AND THIS TEST USED TO REQUIRE A SENTENCE THAT BROKE IT.
+  //
+  // It demanded, verbatim: "You approve, I send. Once you trust me with a
+  // kind of email, I can send those myself." The second half is not true and
+  // cannot be made true. A remembered approval is keyed by the WHOLE tool
+  // name (`approvalKey`, server/auto-approve.ts: anything that is not a
+  // command tool keys on the tool itself), and every connected-app call,
+  // read or write, Gmail or Slack, arrives through one wrapper tool
+  // (server/composio.ts). There is no key for "this kind of email", so a
+  // grant can never be narrowed to one. That the two are inseparable is
+  // asserted against the real function in
+  // server/first-run-email-trust.test.ts; here the subject is the words.
+  //
+  // AND THE TEST WAS THE REASON THE WORDS COULD NOT BE FIXED. Pinning a
+  // sentence cannot check anything: the sentence is whatever it says it is.
+  // All a pin can do is fail the moment somebody corrects it, which is the
+  // fifth time prose pinning has held a claim in place in this file and the
+  // second time it held a FALSE one. So this asserts the property. Any
+  // sentence at all is allowed, as long as approval comes before sending and
+  // no grant is promised that the approval system could not key.
+  const SENDS_MAIL = /\b(e-?mails?|mail|replies|reply)\b/i;
+  const SENDING = /\bsend(?:s|ing)?\b/i;
+  /** A grant narrowed to a subset of what one key covers. There is exactly
+   *  one key for all of it, so any of these is a promise nothing can keep. */
+  const NARROWER_THAN_KEYABLE =
+    /\b(?:a|an|any|each|one|this|that|these|those|some|certain|particular)\s+(?:kind|kinds|type|types|sort|sorts|category|categories)\s+of\b/i;
+
+  it("puts sending email behind approval wherever the flow mentions it", () => {
+    const sending = everything.filter(({ text }) => SENDS_MAIL.test(text) && SENDING.test(text));
+    // If this ever drops to nothing, the flow stopped talking about email
+    // rather than the rule being satisfied, and the rule would be vacuous.
+    expect(sending.length, "no email-sending copy left to check").toBeGreaterThan(0);
+    for (const { path, text } of sending) {
+      expect.soft(`${path}: ${text}`, `${path} talks about sending mail without approval first`)
+        .toMatch(/\byou approve\b/i);
+    }
+  });
+
+  it("never promises a grant narrower than the approval system can key", () => {
+    for (const { path, text } of everything) {
+      const hit = NARROWER_THAN_KEYABLE.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "promises a per-category grant; approvals are keyed by the whole tool",
+      ).toBeNull();
+    }
   });
 
   it("offers a job rather than a team on the closing card", () => {

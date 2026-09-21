@@ -16,7 +16,14 @@
 //   Never a model count. "All the latest models" is the claim.
 //   Flux Router leads with routing, then the apps, then pictures and voice.
 //   Never describe a capability as a limit. Sending email is graduated
-//     trust: you approve, I send, and then I can send that kind myself.
+//     trust: you approve, I send, and you can raise how much I do on my own.
+//   Never promise a grant the approval system cannot key. A remembered
+//     approval is keyed by the WHOLE tool name (`approvalKey`,
+//     server/auto-approve.ts) and every connected-app call, read or write,
+//     Gmail or Slack, arrives through one wrapper tool (server/composio.ts).
+//     So "once you trust me with a kind of email" was a key that cannot
+//     exist, and it shipped for as long as it did because a test required
+//     that exact sentence.
 //   No school framing. Nobody is being taught a lesson.
 //
 // Three sentences is the ceiling for a card body, which is why most bodies
@@ -295,7 +302,18 @@ export const FIRST_RUN_COPY = {
       /** Said once above the rows when at least one of them arrived with the
        *  key, so the rows themselves stay short. */
       cameWithKey: "Some of these are already on, because they came with your Flux Router key. You connected them once and they work everywhere you sign in.",
-      trust: "On email you stay in charge. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+      /**
+       * GRADUATED TRUST, SAID AS THE SYSTEM CAN ACTUALLY KEEP IT.
+       *
+       * This promised "once you trust me with a kind of email, I can send
+       * those myself". Nothing can deliver that. A remembered approval is
+       * keyed by the whole tool name (`approvalKey`, server/auto-approve.ts)
+       * and every connected-app call arrives through one wrapper tool, so
+       * there is no key that separates sending mail from reading it, let
+       * alone one kind of mail from another. What really exists is a level:
+       * ask every time, or hand me more, and take it back whenever.
+       */
+      trust: "On email you stay in charge. You approve, I send. You can raise how much I do on my own later, and lower it again just as easily.",
       desktopOnly: "Connect this from Murage on your computer",
       dismiss: "Not now",
       failure: "That connection did not finish. Try it again whenever you are ready.",
@@ -339,7 +357,7 @@ export const FIRST_RUN_COPY = {
         {
           template: "triage",
           label: "Triage my inbox",
-          why: "I sort the morning's mail and draft the replies. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
+          why: "I sort the morning's mail and draft the replies. You approve, I send, and you can raise how much I do on my own whenever you like.",
         },
         {
           template: "watch",
