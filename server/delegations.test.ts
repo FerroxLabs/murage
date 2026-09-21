@@ -1051,3 +1051,130 @@ describe("delegated turn status helpers", () => {
     )).toEqual([]);
   });
 });
+
+// ── spare-thread admission ─────────────────────────────────────────────────
+//
+// A handoff runs on ONE of the target's threads and the harness admits it on
+// three conditions (that thread idle, no room turn on the bot, under the
+// three-thread limit). Admission here used to test `bot.busy` instead, which
+// is the union over ALL of a bot's threads. So a teammate running a scheduled
+// routine in a detached task thread refused handoffs its two free threads
+// could have taken — and after MAX_BUSY_ATTEMPTS the handoff was not parked,
+// it was CANCELLED, over capacity the teammate had the whole time.
+
+describe("a busy teammate with a free thread", () => {
+  let store: Store;
+  let from: BotRecord;
+  let target: BotRecord;
+  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let broadcastOnly: CommsBus["broadcast"];
+
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    store = new Store(selection);
+    from = store.createBot();
+    target = store.createBot();
+    store.patchBot(target.id, { name: "Helper" });
+    const buses = setupBuses(store);
+    approvalBus = buses.approvalBus;
+    broadcastOnly = buses.commsBus.broadcast;
+    // busy on SOMETHING, which is all `bot.busy` has ever meant
+    store.patchBot(target.id, { busy: true });
+  });
+
+  /** A bus whose harness answers the admission question directly, the way
+   *  server/index.ts's handoffCanStartNow does. */
+  const busWith = (canStartHandoff: (botId: string, sourceThreadId: string) => boolean): CommsBus =>
+    ({ store, broadcast: broadcastOnly, canStartHandoff });
+
+  const chips = (needle: string) =>
+    store.messagesFor(from.threadId).filter((m) => m.kind === "activity" && m.tool?.name?.includes(needle)).length;
+
+  it("takes the handoff now instead of parking it", async () => {
+    const bus = busWith(() => true);
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![0]).toBe(target.id);
+    expect(chips("waiting — they're busy")).toBe(0);
+  });
+
+  it("is asked about the thread the handoff would actually run on", async () => {
+    const asked: Array<[string, string]> = [];
+    const bus = busWith((botId, sourceThreadId) => {
+      asked.push([botId, sourceThreadId]);
+      return true;
+    });
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, vi.fn());
+    await waitFor(() => asked.length > 0);
+    expect(asked[0]).toEqual([target.id, from.threadId]);
+  });
+
+  it("still parks, and still gives up, when that thread really is taken", async () => {
+    const bus = busWith(() => false);
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    for (let attempt = 1; attempt <= MAX_BUSY_ATTEMPTS; attempt += 1) {
+      releaseDelegationsWaitingOn(target.id);
+      drainDelegations(bus, approvalBus, from.threadId, runTarget);
+      await waitFor(() => chips("waiting — they're busy") + chips("canceled — still busy after") === attempt);
+    }
+    expect(runTarget).not.toHaveBeenCalled();
+    expect(chips("canceled — still busy after")).toBe(1);
+    expect(_pendingCount(from.threadId)).toBe(0);
+  });
+
+  it("re-checks the same way after a human approval that sat there", async () => {
+    // The card can sit for fifteen minutes, so everything checked before it
+    // is a stale snapshot. That re-check must use the new rule too, or an
+    // approved handoff is refused by the rule the first gate stopped using.
+    // The target stays bot-wide busy for the whole test, so a second gate
+    // still reading `current.busy` would park the handoff after the allow.
+    store.patchBot(from.id, { approvePeerComms: true });
+    const bus = busWith(() => true);
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    const card = await waitFor(() => store.messagesFor(from.threadId).find((m) => m.card?.requestId));
+    expect(runTarget).not.toHaveBeenCalled();
+    expect(store.bot(target.id)?.busy).toBe(true);
+    resolvePeerComms(approvalBus, card.card!.requestId!, "allow");
+    await waitFor(() => runTarget.mock.calls.length === 1);
+    expect(chips("waiting — they're busy")).toBe(0);
+  });
+
+  it("keeps the old bot-wide rule for a bus that cannot answer", async () => {
+    // Stricter, never looser: an embedder with no thread bookkeeping — and
+    // every older test above — sees exactly the behaviour it saw before.
+    const bus: CommsBus = { store, broadcast: broadcastOnly };
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chips("waiting — they're busy") === 1);
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("the harness answers that question the way it dispatches", () => {
+  // server/index.ts boots a server on import, so this is read as source, with
+  // comments stripped first: a test on this branch once matched a sentence in
+  // a comment and so enforced a claim the code did not make.
+  const index = (() => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    return source.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  })();
+
+  it("mirrors all three of startTurn's admission conditions, and is wired to the bus", () => {
+    const at = index.indexOf("function handoffCanStartNow(");
+    expect(at, "handoffCanStartNow has been renamed or removed").toBeGreaterThan(-1);
+    const body = index.slice(at, index.indexOf("\n}\n", at));
+    expect(body).toContain("directThreadBusy(botId, threadId)");
+    expect(body).toContain("activeGroupTurnForBot(botId)");
+    expect(body).toContain("MAX_CONCURRENT_BOT_THREADS");
+    // and the thread it asks about is the one runDelegatedTurn picks
+    expect(body).toContain("humanTask(store, botId, threadHumanPrincipal(sourceThreadId))");
+    expect(index).toContain("canStartHandoff: handoffCanStartNow");
+  });
+});

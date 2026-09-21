@@ -107,6 +107,25 @@ const MAX_RECEIPTS = 100;
 const RECEIPT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const RESULT_MAX_CHARS = 4_000;
 export const MAX_BUSY_ATTEMPTS = 3;
+
+/** Must this handoff wait for the target?
+ *
+ * NOT `target.busy`, which is the union over every one of the bot's threads
+ * (Store.refreshBotActivity): a bot running a scheduled routine in a detached
+ * task thread reads busy even though the thread a handoff would run on is
+ * idle and two of its three thread slots are free. Admission said no while
+ * dispatch would have said yes, and after MAX_BUSY_ATTEMPTS the handoff was
+ * not parked but CANCELLED — "stayed busy through 3 retries" — over capacity
+ * the teammate had the whole time.
+ *
+ * So ask the harness the same question the dispatch asks. Without the hook
+ * (an embedder with no thread bookkeeping, and every test that fakes this
+ * bus) this is the bot-wide flag exactly as before, which is stricter, never
+ * looser: this change can only ever let a handoff through sooner. */
+function mustWaitFor(bus: CommsBus, target: BotRecord, sourceThreadId: string): boolean {
+  if (bus.canStartHandoff) return !bus.canStartHandoff(target.id, sourceThreadId);
+  return Boolean(target.busy);
+}
 const validEventId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
 
@@ -518,7 +537,7 @@ async function processOne(
   if (dropIfUnreachable(bus, sender, target, sourceThreadId, item)) {
     return "settled";
   }
-  if (target.busy) {
+  if (mustWaitFor(bus, target, sourceThreadId)) {
     if (item.waitingOnBusy) return "requeued";
     item.attempts += 1;
     item.waitingOnBusy = true;
@@ -610,7 +629,7 @@ async function processOne(
     if (dropIfUnreachable(bus, currentSender, current, sourceThreadId, item)) {
       return "settled";
     }
-    if (current.busy) {
+    if (mustWaitFor(bus, current, sourceThreadId)) {
       if (item.waitingOnBusy) return "requeued";
       item.attempts += 1;
       item.waitingOnBusy = true;

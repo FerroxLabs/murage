@@ -12,6 +12,18 @@ export interface CommsBus {
   store: Store;
   /** Admission capacity, independent of how many handoffs are queued. */
   canDispatch?: () => boolean;
+  /** Could a handoff from `sourceThreadId` start on this bot RIGHT NOW?
+   *
+   * The question delegation admission has to ask is the one the dispatch
+   * itself asks: is the ONE thread the handoff would run on free, is no room
+   * turn holding the bot, and is it under the three-thread limit. A bot is
+   * `busy` the moment any one of its threads is working, and a bot busy on a
+   * routine in a detached task thread can still take a handoff in the thread
+   * the handoff actually uses.
+   *
+   * Optional so an embedder that has no thread bookkeeping (and every test
+   * that fakes this bus) keeps the older, stricter bot-wide behaviour. */
+  canStartHandoff?: (botId: string, sourceThreadId: string) => boolean;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   /** SSE broadcast (kind: "group" envelope) for a single group. */

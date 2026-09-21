@@ -6618,7 +6618,32 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
 // comms bus: passed into the visibility helpers in comms-visibility.ts so
 // they can mirror messages + chips without re-deriving SSE plumbing. Same
 // shape every comms entry point uses (ask_bot, delegate_bot).
-const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity };
+/** Delegation admission, asking the question the dispatch will ask.
+ *
+ * `runDelegatedTurn` runs the handoff on ONE thread — the target's task for
+ * this source thread's human principal, its main thread otherwise — and
+ * `startTurn` admits it on exactly three conditions. Admission used to test
+ * `bot.busy` instead, which is the union over all of the bot's threads, so a
+ * teammate busy on a routine in a detached task thread refused handoffs its
+ * free threads could have taken. This mirrors the three real conditions so
+ * admission and dispatch can no longer disagree.
+ *
+ * Throwing is not an option on the drain path, and an unreadable principal
+ * means "not now", which is where a busy target already ends up. */
+function handoffCanStartNow(botId: string, sourceThreadId: string): boolean {
+  const profile = store.bot(botId);
+  if (!profile) return false;
+  let threadId: string;
+  try {
+    threadId = humanTask(store, botId, threadHumanPrincipal(sourceThreadId))?.threadId ?? profile.threadId;
+  } catch {
+    return false;
+  }
+  if (directThreadBusy(botId, threadId) || activeGroupTurnForBot(botId)) return false;
+  return directRuns.forBot(botId).length < MAX_CONCURRENT_BOT_THREADS;
+}
+
+const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity, canStartHandoff: handoffCanStartNow };
 
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
