@@ -165,11 +165,15 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
 /** The other half of card three: they said not now, and that is a real
  *  answer rather than a postponement with a reminder attached. */
 export function FirstRunNoKeyCard() {
+  const { view } = useSetupView();
   const copyNoKey = FIRST_RUN_COPY.flux["no-key"];
+  // Nothing on this machine can think, so "we carry on with what is here" is
+  // not a thing that can be said. `view.agents` is empty exactly then.
+  const bare = view ? view.agents.length === 0 : false;
   return (
     <FirstRunBubble>
-      <FirstRunLine>{copyNoKey.body}</FirstRunLine>
-      <FirstRunLine>{copyNoKey.second}</FirstRunLine>
+      <FirstRunLine>{bare ? copyNoKey.bodyBare : copyNoKey.body}</FirstRunLine>
+      <FirstRunLine>{bare ? copyNoKey.secondBare : copyNoKey.second}</FirstRunLine>
     </FirstRunBubble>
   );
 }

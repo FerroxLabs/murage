@@ -430,8 +430,8 @@ export function setupStepBlock(
             reason: "engine-needs-model",
             message:
               "The engine came in the box and has nothing to think with yet. One key turns it on, and it is the "
-              + "next thing I will ask you for. An AI you already pay for, or a model running on this computer, "
-              + "works just as well.",
+              + "next thing I will ask you for. Any key does it: a Flux Router one is what I would pick, and any "
+              + "OpenAI-style service you already pay for works just as well.",
           }
         : undefined;
     case "flux":

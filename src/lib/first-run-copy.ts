@@ -133,6 +133,21 @@ export const FIRST_RUN_COPY = {
     "no-key": {
       body: "Noted. We carry on with what is on this machine, and that is plenty to be going on with.",
       second: "I will bring the key up again only when something you have asked me for actually needs it.",
+      /**
+       * THE SAME ANSWER FROM SOMEBODY WITH NOTHING MEANS SOMETHING ELSE.
+       *
+       * "We carry on with what is on this machine" is true and friendly when
+       * there is something on the machine. On a bare install there is
+       * nothing, and saying it would leave a person sitting in front of an
+       * assistant that cannot think, believing they had chosen that.
+       *
+       * The engine takes any OpenAI-style endpoint with a key, which is most
+       * of the industry, so this is not a dead end and must not read like
+       * one. It names the two real ways on, and it does not invent an in-chat
+       * flow that does not exist yet.
+       */
+      bodyBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
+      secondBare: "Any OpenAI-style service you already pay for will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
     },
   },
   apps: {

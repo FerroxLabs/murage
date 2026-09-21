@@ -123,11 +123,34 @@ describe("first run copy: the house rules", () => {
     }
   });
 
-  it("never sends the person to Settings", () => {
-    // The whole point of this release: a guided chat, not a signpost to a
-    // settings pane.
+  // ONE NAMED EXEMPTION, AND ONLY ONE.
+  //
+  // The rule is that the flow does not hand somebody a signpost instead of
+  // doing the thing. It is about the PATH THROUGH: every step the Chief asks
+  // for, it also carries out, in the conversation, which is the whole point
+  // of this release and what the modal it replaced got wrong.
+  //
+  // It is not a ban on the word. Somebody who has just declined the key on a
+  // machine with nothing on it has deliberately stepped off that path, and
+  // the two ways back, their own endpoint or a local model, genuinely live in
+  // Settings and have no in-chat flow yet. Refusing to say so would not keep
+  // them out of Settings; it would only stop them finding the thing that
+  // rescues them. When that walk-through exists in the chat, this exemption
+  // goes with it.
+  const SETTINGS_EXEMPT = new Set(["FIRST_RUN_COPY.flux.no-key.secondBare"]);
+
+  it("never sends the person to Settings on the way through", () => {
     for (const { path, text } of everything) {
+      if (SETTINGS_EXEMPT.has(path)) continue;
       expect.soft(`${path}: ${text}`).not.toMatch(/\bsettings\b/i);
+    }
+  });
+
+  it("keeps that exemption down to the branch it was written for", () => {
+    // A growing list here is the rule quietly being repealed.
+    expect(SETTINGS_EXEMPT.size).toBe(1);
+    for (const path of SETTINGS_EXEMPT) {
+      expect(everything.some((entry) => entry.path === path), `${path} no longer exists`).toBe(true);
     }
   });
 });
@@ -216,6 +239,29 @@ describe("what the key card claims, to whom", () => {
     }
     expect(key.body).toMatch(/all the latest/i);
     expect(key.body).toMatch(/routing/i);
+  });
+});
+
+// THE NO-KEY BRANCH IS NOT A DEAD END, AND MUST NOT READ LIKE ONE.
+//
+// The engine takes any OpenAI-style endpoint with a key, which is most of the
+// industry, plus anything running on the machine itself. So "not now" always
+// has a way on. What it must never do is tell somebody with nothing that they
+// are carrying on with what is on their machine, because there is nothing on
+// their machine and they would sit there believing they had chosen it.
+describe("saying not now to the key", () => {
+  const noKey = FIRST_RUN_COPY.flux["no-key"];
+
+  it("does not claim there is something to carry on with when there is not", () => {
+    expect(noKey.body).toMatch(/carry on/i);
+    expect(noKey.bodyBare).not.toMatch(/carry on/i);
+  });
+
+  it("names a real way on, and does not promise a flow that does not exist", () => {
+    expect(noKey.secondBare).toMatch(/openai/i);
+    // No "I will walk you through it": nothing implements that walk yet, and
+    // the whole point of this release is not promising what has not happened.
+    expect(noKey.secondBare).not.toMatch(/walk you through|I will set (it|that) up/i);
   });
 });
 
