@@ -74,12 +74,25 @@ export interface FirstRunWalkStep {
  * walked through "the flux step".
  */
 export const FIRST_RUN_STEP_HEADINGS: Partial<Record<SetupCardVariant, string>> = {
-  welcome: "Hello",
-  found: "What is already here",
-  bare: "What is already here",
-  "bare-needs-key": "What is already here",
-  "signed-out": "What is already here",
-  key: "One key",
+  // THE APPROVED FLOW'S TOP BARS, WORD FOR WORD.
+  //
+  // The simulation puts a top bar above each step and the build spec quotes
+  // all three: "Welcome", "Looking around", "Flux Router". In this build the
+  // first run is a thread rather than a stack of full screens, so the separator
+  // rule IS the top bar: it is the one thing on the page that says which part
+  // of the conversation you are in. Same words, so a person who saw the
+  // simulation and a person who runs the app are looking at the same flow.
+  //
+  // `bare-needs-key` moved with its step. It used to say "What is already
+  // here", which is the detection step's bar, and it is the FLUX step's second
+  // opening on a machine where detection never ran. A separator naming a step
+  // the person was never shown is a separator that lies about where they are.
+  welcome: "Welcome",
+  found: "Looking around",
+  bare: "Looking around",
+  "bare-needs-key": "Flux Router",
+  "signed-out": "Looking around",
+  key: "Flux Router",
   apps: "Where your work lives",
   "sample-brief": "Your mornings",
   "more-routines": "A couple more",
@@ -91,16 +104,29 @@ export function stepHeadingFor(variant: SetupCardVariant): string | null {
 
 export const FIRST_RUN_COPY = {
   hello: {
+    /**
+     * STEP ONE, AND IT IS ASKED BEFORE DETECTION IS REPORTED.
+     *
+     * Not a UX preference. The owner ruled that this builds the list and is a
+     * business requirement, so it goes first and the look around the machine
+     * happens underneath it while they type. Every word here is the approved
+     * flow's, and the two fields say what each one is FOR: a name is what the
+     * Chief calls them, an email is how it reaches them when they are not sat
+     * in front of this computer. A field with no stated purpose is a field
+     * people skip, and this is the one step that cannot afford that.
+     */
     welcome: {
-      body: "Hello. I am your chief of staff, and I work for you.",
-      second: "Tell me your name and where to reach you, and I will set the rest up around you.",
+      heading: "First, who am I working for?",
+      lead:
+        "I am your chief of staff. Your name is what I call you. Your email is how I reach you when you are "
+        + "away from this computer, and how Murage tells you when there is something new it can do.",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email",
       emailPlaceholder: "you@example.com",
-      submit: "That is me",
+      submit: "Continue",
       working: "Saving",
-      skip: "Skip this",
+      skip: "Skip for now",
       detecting: "While you type, I am having a look around this computer to see what is already here.",
       failure: "That did not save. Try once more, or skip it and carry on.",
     },
@@ -556,6 +582,31 @@ export function briefRanLine(time: string): string {
 export function greetingLine(name: string): string {
   const clean = name.trim();
   return clean ? `Good to meet you, ${clean}. Right then.` : "Good to meet you. Right then.";
+}
+
+/**
+ * What the Chief calls somebody who skipped the name field.
+ *
+ * The approved flow says skipping sets the name to "there", and the sentence
+ * it is there for is the Chief's question a step later: "What can I take off
+ * your plate, there?", which reads correctly and warmly.
+ *
+ * IT IS A RENDER FALLBACK AND IT WRITES NOTHING. The simulation sets its own
+ * `S.name`, which is a variable in a mock-up. The obvious translation of that
+ * is to save "there" onto the owner profile when the step is skipped, and that
+ * would be wrong twice over. It would put a word the person never typed into
+ * the profile every other surface in the app reads from, and it would defeat
+ * the greeting rule in the same spec: a skipped name DROPS the clause, so
+ * `greetingLine` says "Good to meet you." and a stored "there" would make it
+ * say "Good to meet you, there." Address and greeting want different things
+ * from the same blank, which is only possible while the blank stays blank.
+ *
+ * So nothing is persisted, `live.ownerName` stays "" and `setupStepDone` keeps
+ * treating the step as skipped rather than answered, and the only thing that
+ * changes is the word on screen in the one sentence that needs one.
+ */
+export function firstRunAddress(name: string | null | undefined): string {
+  return (name ?? "").trim() || "there";
 }
 
 /** The brief card's button, once a time is chosen. A button that repeats the

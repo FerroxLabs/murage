@@ -33,6 +33,24 @@ import {
 const copy = FIRST_RUN_COPY.hello.welcome;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/**
+ * Whether Continue may be pressed.
+ *
+ * BOTH, OR NEITHER, and it is its own function so the rule can be executed by
+ * a test rather than inferred from a disabled attribute in a string of markup.
+ *
+ * This used to be the email alone, so Continue lit up with the name box empty
+ * and a person could send a profile carrying an address and nobody's name. The
+ * approved flow is explicit: Continue stays disabled until BOTH validate. That
+ * is not a wall, because the way past is a button rather than a valid form.
+ * "Skip for now" sits beside it and passes the whole step over. What the flow
+ * does not have is a half answer, where the Chief has somewhere to write to
+ * and nothing to call the person it is writing to.
+ */
+export function helloAnswerReady(name: string, email: string): boolean {
+  return name.trim().length > 0 && EMAIL.test(email.trim());
+}
+
 export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -53,7 +71,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [acted, setActed] = useState(false);
   const done = acted || settled;
 
-  const valid = EMAIL.test(email.trim());
+  const valid = helloAnswerReady(name, email);
 
   const save = async () => {
     if (busy || !valid) return;
@@ -99,8 +117,8 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
   return (
     <FirstRunBubble>
-      <FirstRunLine>{copy.body}</FirstRunLine>
-      <FirstRunLine>{copy.second}</FirstRunLine>
+      <div className="text-[15px] font-semibold text-ink">{copy.heading}</div>
+      <FirstRunLine>{copy.lead}</FirstRunLine>
 
       {!done && (
         <div className="mt-3 grid gap-2">
@@ -112,6 +130,16 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               value={name}
               disabled={busy}
               onChange={(event) => setName(event.target.value)}
+              // Enter moves the form on from either field. It used to work
+              // from the email box alone, which is the box a person is in
+              // second; somebody who types a name and presses Enter should
+              // not have to discover that it does nothing here.
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void save();
+                }
+              }}
               className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
             />
           </label>

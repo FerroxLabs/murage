@@ -13,7 +13,8 @@ vi.mock("@/state/store", () => ({
 vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard } = await import("./FirstRunCard");
-const { FIRST_RUN_COPY } = await import("@/lib/first-run-copy");
+const { helloAnswerReady } = await import("./FirstRunHelloCard");
+const { FIRST_RUN_COPY, firstRunAddress, greetingLine } = await import("@/lib/first-run-copy");
 const { setupCardKey } = await import("../../shared/setup-card");
 
 type AnyMessage = Parameters<typeof FirstRunCard>[0]["message"];
@@ -72,17 +73,64 @@ describe("card one: hello", () => {
   const copy = FIRST_RUN_COPY.hello.welcome;
   it("asks for two things, offers a way past, and says detection is already running", () => {
     const markup = render("hello", "welcome");
-    expect(markup).toContain(copy.body);
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.lead);
     expect(markup).toContain(`aria-label="${copy.nameLabel}"`);
     expect(markup).toContain(`aria-label="${copy.emailLabel}"`);
     expect(markup).toContain(copy.skip);
     expect(markup).toContain(copy.detecting);
   });
 
+  it("asks the approved question and says what each field is for", () => {
+    // The step that builds the owner's list, so its words are the ones that
+    // were signed off rather than a paraphrase of them. Both fields say what
+    // they are FOR: a field with no stated purpose is a field people skip.
+    expect(copy.heading).toBe("First, who am I working for?");
+    expect(copy.lead).toContain("Your name is what I call you.");
+    expect(copy.lead).toContain("how I reach you when you are away from this computer");
+    expect(copy.submit).toBe("Continue");
+    expect(copy.skip).toBe("Skip for now");
+  });
+
   it("will not save until the email is one", () => {
     // The button is the only way to save and it starts disabled, so a typo
     // never reaches /api/config.
     expect(render("hello", "welcome")).toContain("disabled=\"\"");
+  });
+
+  // THE DEFECT: Continue used to need only the email.
+  //
+  // So it lit up with the name box empty, and the profile that reached
+  // /api/config and then the signup carried an address and nobody's name. The
+  // approved flow is explicit that BOTH have to validate, and the way past an
+  // unfinished form is the Skip button beside it, not a half answer.
+  it("needs both a name and an email before Continue does anything", () => {
+    expect(helloAnswerReady("Sean", "sean@example.com")).toBe(true);
+    expect(helloAnswerReady("", "sean@example.com")).toBe(false);
+    expect(helloAnswerReady("   ", "sean@example.com")).toBe(false);
+    expect(helloAnswerReady("Sean", "")).toBe(false);
+    expect(helloAnswerReady("Sean", "sean@example")).toBe(false);
+    expect(helloAnswerReady("Sean", "not an address")).toBe(false);
+    // Whitespace around a real pair is a paste, not a refusal.
+    expect(helloAnswerReady("  Sean  ", "  sean@example.com  ")).toBe(true);
+  });
+
+  // SKIPPING SETS THE NAME TO "there", AND IT SETS IT ON SCREEN ONLY.
+  //
+  // The two sentences want opposite things from the same blank: the Chief's
+  // question a step later reads "What can I take off your plate, there?", and
+  // the greeting DROPS the clause rather than saying "Good to meet you,
+  // there." Both are only possible while the blank stays blank, which is why
+  // nothing writes a word the person never typed onto the owner profile.
+  it("calls a skipped person there, and still greets them without a name", () => {
+    expect(firstRunAddress("")).toBe("there");
+    expect(firstRunAddress("   ")).toBe("there");
+    expect(firstRunAddress(null)).toBe("there");
+    expect(firstRunAddress(undefined)).toBe("there");
+    expect(firstRunAddress("Sean")).toBe("Sean");
+    expect(firstRunAddress("  Sean  ")).toBe("Sean");
+    expect(greetingLine("")).toBe("Good to meet you. Right then.");
+    expect(greetingLine("")).not.toContain("there");
   });
 });
 
