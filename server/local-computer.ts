@@ -309,16 +309,48 @@ export function validateLinuxDescriptorRuntime(
   }
 }
 
+/** A legacy darwin/win32 descriptor still names ANY command to run, and
+ * unlike the Linux one it carries nothing the shape check can bind to a
+ * driver we shipped. So at runtime the file itself has to be one only this
+ * user could have written: a regular file, not a symlink, owned by this user
+ * and closed against group and other writes — and in a directory with the
+ * same properties, because a directory anyone may write is how a
+ * well-permissioned file gets replaced.
+ *
+ * libuv reports every writable Windows file as uid 0 mode 0o666, so the
+ * ownership and permission bits cannot carry meaning there; on win32 only
+ * the regular-file and symlink refusals apply. */
+export function validateLegacyDescriptorRuntime(
+  descriptorFile: string,
+  platform: NodeJS.Platform,
+  { uid = process.getuid?.() ?? -1 }: { uid?: number } = {},
+): boolean {
+  try {
+    const descriptorStat = lstatSync(descriptorFile);
+    const directoryStat = lstatSync(dirname(descriptorFile));
+    if (!descriptorStat.isFile() || descriptorStat.isSymbolicLink()) return false;
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) return false;
+    if (platform === "win32") return true;
+    if (descriptorStat.uid !== uid || (descriptorStat.mode & 0o022) !== 0) return false;
+    if (directoryStat.uid !== uid || (directoryStat.mode & 0o022) !== 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function readCuaConnection({
   platform = process.platform,
   userData = process.env.MURAGE_USER_DATA,
   home = homedir(),
   validateLinuxRuntime = validateLinuxDescriptorRuntime,
+  validateLegacyRuntime = validateLegacyDescriptorRuntime,
 }: {
   platform?: NodeJS.Platform;
   userData?: string;
   home?: string;
   validateLinuxRuntime?: (file: string, raw: LinuxConnectionDescriptor) => boolean;
+  validateLegacyRuntime?: (file: string, platform: NodeJS.Platform) => boolean;
 } = {}): LocalComputerConnection | null {
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
   if (platform === "darwin") {
@@ -336,7 +368,7 @@ export function readCuaConnection({
         if (decoded && validateLinuxRuntime(file, raw)) return decoded;
       } else {
         const decoded = decodeLegacyDescriptor(raw, platform);
-        if (decoded) return decoded;
+        if (decoded && validateLegacyRuntime(file, platform)) return decoded;
       }
     } catch {
       // Missing, invalid, tampered, or stale descriptors are unavailable.
