@@ -2,82 +2,35 @@ import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
-  FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
   botsEyebrowLine,
   briefButtonLabel,
-  briefRanLine,
   clockLabel,
   foundAgentsLine,
   greetingLine,
-  localModelLine,
-  signedOutAgentsLine,
   joinNames,
 } from "./first-run-copy";
+import { firstRunAssembledStrings, firstRunStoredStrings } from "./first-run-surfaces";
 
 /**
  * THE COPY GATE.
  *
- * Every string a person can read during the first run is in one module, so
- * the rules the product owner has rejected work over can be checked over all
- * of it at once rather than argued about per pull request. A rule that lives
- * only in a brief is a rule that comes back.
+ * Every string a person can read during the first run obeys rules the product
+ * owner has rejected work over, so the rules are checked over ALL of it at
+ * once rather than argued about per pull request. A rule that lives only in a
+ * brief is a rule that comes back.
  *
- * The walk is deep and type blind on purpose: a new card added to
- * FIRST_RUN_COPY is covered the moment it exists, without anyone remembering
- * to add it here. Strings produced by the module's formatters are fed in
- * beside it, because a sentence assembled at render time is still a sentence
- * on screen.
+ * IT WALKED ONE FILE AND CALLED IT "EVERY STRING". `FIRST_RUN_COPY` is not
+ * the whole first run: `SETUP_CARD_COPY` in server/setup-conversation.ts is
+ * the title and subtitle of every card the Chief puts in the thread, and no
+ * house rule reached it. "Talk to me and I will answer out loud." on the jobs
+ * card passed 244 tests. The surfaces are registered in
+ * src/lib/first-run-surfaces.ts now, the gate walks the register, and
+ * first-run-surfaces.test.ts fails any module in the area that holds prose
+ * and has not joined it.
  */
-function walk(value: unknown, path: string, into: Array<{ path: string; text: string }>): void {
-  if (typeof value === "string") {
-    into.push({ path, text: value });
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => walk(item, `${path}[${index}]`, into));
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) walk(item, `${path}.${key}`, into);
-  }
-}
-
-const strings: Array<{ path: string; text: string }> = [];
-walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
-// Slugs, template names and row ids are wire identifiers and nobody reads
-// them. Everything else on a row is read out loud by somebody's eyes.
-//
-// `.id` earns its place here rather than being an oversight: the Flux row
-// keyed `voice` is a React key and a stable handle for the row, and a rule
-// about what a person may be TOLD has no business failing because of the word
-// an array is keyed by. What the person actually reads is `title` and `body`,
-// and both of those stay in the walk.
-const IDENTIFIER = /\.(slug|template|id)$/;
-const readable = strings.filter((entry) => !IDENTIFIER.test(entry.path));
-
-const assembled: Array<{ path: string; text: string }> = [
-  { path: "foundAgentsLine(one)", text: foundAgentsLine(["Claude Code"]) },
-  { path: "foundAgentsLine(two)", text: foundAgentsLine(["Claude Code", "Codex"]) },
-  { path: "foundAgentsLine(three)", text: foundAgentsLine(["Claude Code", "Codex", "Fuigo"]) },
-  { path: "foundAgentsLine(none)", text: foundAgentsLine([]) },
-  { path: "briefRanLine", text: briefRanLine(FIRST_RUN_BRIEF_TIME) },
-  { path: "briefRanLine(pm)", text: briefRanLine("18:30") },
-  { path: "briefButtonLabel", text: briefButtonLabel(FIRST_RUN_BRIEF_TIME) },
-  { path: "greetingLine", text: greetingLine("Sean") },
-  { path: "greetingLine(blank)", text: greetingLine("  ") },
-  { path: "signedOutAgentsLine(one)", text: signedOutAgentsLine(["Claude Code"]) },
-  { path: "signedOutAgentsLine(two)", text: signedOutAgentsLine(["Claude Code", "Codex"]) },
-  { path: "signedOutAgentsLine(none)", text: signedOutAgentsLine([]) },
-  { path: "localModelLine", text: localModelLine("Qwen3.8-27B", "llama.cpp") },
-  { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
-  { path: "localModelLine(none)", text: localModelLine("", "") },
-  { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
-  { path: "botsEyebrowLine(0)", text: botsEyebrowLine(0) },
-  { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
-  { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
-  { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
-];
+const readable = firstRunStoredStrings();
+const assembled = firstRunAssembledStrings();
 
 const everything = [...readable, ...assembled];
 
@@ -268,7 +221,13 @@ describe("first run copy: the things the flow promises", () => {
   // to me" onto an unmarked row still fails. Writing it onto the transcription
   // row still fails, because a row that claims to be transcription may not
   // then promise an answer out loud.
-  const SPEECH = /\b(voice|speaks?|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
+  // `speak up` is carved out, and it is the only carve-out. It is the idiom
+  // for raising a matter ("keep an eye on one thing and speak up when it
+  // changes", on the more-routines card), not a claim that anything is said
+  // out loud. Every other spelling of speech stays banned, and a sentence
+  // that really did promise synthesis alongside it would still be caught by
+  // `out loud`, `aloud`, `voice`, `talk back` or `speak to you`.
+  const SPEECH = /\b(?:voice|speaks?(?!\s+up\b)|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
   /**
    * WHAT A ROW CLAIMING TO BE TRANSCRIPTION IS ENTITLED TO DESCRIBE: the
    * PERSON talking. That is the whole of what the key does, so "say it out

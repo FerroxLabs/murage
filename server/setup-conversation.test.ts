@@ -548,7 +548,7 @@ describe("nothing parked ever reaches a person", () => {
 
 // THE HOLE THAT SHIPPED ONCE, AND THE TEST THAT EXECUTES RATHER THAN SCANS.
 //
-// `plan()` built its block with `...CARD_COPY[variant]`, and spreading
+// `plan()` built its block with `...SETUP_CARD_COPY[variant]`, and spreading
 // `undefined` is a silent no-op in JS. A machine with no agents therefore
 // produced a real card in a real transcript with no title and no subtitle at
 // all. Only the server typecheck saw it, and the server typecheck was not
