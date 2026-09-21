@@ -133,7 +133,15 @@ describe("what the Chief says on a machine with the engine in the box", () => {
       [setupCardKey("hello", "welcome"), setupCardKey("detect", "bare")],
       state({ detect: DETECTED }),
     ).append.find((entry) => entry.variant === "key")!;
-    expect(card.subtitle.indexOf("picks for you")).toBeLessThan(card.subtitle.indexOf("500+ apps"));
+    // BOTH PRESENT FIRST. `indexOf` answers -1 for a phrase that is not
+    // there, and -1 is less than everything, so deleting "picks for you"
+    // outright used to PASS this: the test that exists to keep the answer in
+    // front of the apps was satisfied by there being no answer at all.
+    const answer = card.subtitle.indexOf("picks for you");
+    const apps = card.subtitle.indexOf("500+ apps");
+    expect(answer, "the key card no longer leads with the answer").toBeGreaterThan(-1);
+    expect(apps, "the key card no longer names the apps").toBeGreaterThan(-1);
+    expect(answer).toBeLessThan(apps);
   });
 });
 
@@ -480,69 +488,114 @@ const PARKED_VARIANTS = SETUP_CARD_VARIANTS.filter(
   (variant) => !(LIVE_VARIANTS as readonly string[]).includes(variant),
 );
 
-describe("nothing parked ever reaches a person", () => {
-  it("holds the eight the re-cut orphaned, and no others", () => {
-    expect([...PARKED_VARIANTS]).toEqual([
-      "sample-brief",
-      "apps",
-      "brief",
-      "brief-ran",
-      "more-routines",
-      "next",
-      "phone",
-      "phone-needs-tailscale",
-    ]);
-  });
+/**
+ * Every variant this flow really emits, from every state it can reach.
+ *
+ * Both tests below are about the same walk, so there is one walk. It fails
+ * the moment a card the re-cut orphaned is planned, and it RETURNS what was
+ * planned, so "live" can be a reading of the planner rather than a hand list
+ * compared with another hand list.
+ */
+function plannedVariants(): Set<string> {
+  const BRIEF_RAN = { total: 2, briefId: "r1", briefRan: true };
+  // Named, because `hello` is settled by a saved owner name and an unnamed
+  // machine holds the whole matrix on step one. The one unnamed row is here
+  // so the opening is covered too.
+  const named = (patch: Partial<SetupLiveState> = {}) => live({ ownerName: "Sean", ...patch });
+  const machines: Array<[string, SetupLiveState]> = [
+    ["nobody has said who they are", live()],
+    ["the engine in the box", named()],
+    ["nothing to think with", named({ agents: [], signedOutAgents: [] })],
+    ["signed out and nothing else", named({ agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] })],
+    ["something they installed", named({ agents: [{ ...BUNDLED, installed: true }] })],
+    ["a key in the keychain", named({ flux: FLUX_SAVED })],
+    ["apps already connected", named({ flux: FLUX_SAVED, connectedAppIds: ["gmail", "googlecalendar"], connectedApps: 2 })],
+    ["a brief that has already run", named({ flux: FLUX_SAVED, routines: BRIEF_RAN })],
+    ["a crew already hired", named({ flux: FLUX_SAVED, crewSize: 3, botReplyExists: true, routines: BRIEF_RAN })],
+  ];
+  const checklists: Array<[string, SetupState]> = [
+    ["untouched", state()],
+    ["detection read", state({ detect: DETECTED })],
+    ["key passed over", state({ detect: DETECTED, flux: { skipped: true } })],
+    ["a job chosen", state({ detect: DETECTED, chat: { note: "brief" } })],
+    ["the job finished", state({ detect: DETECTED, chat: { note: "brief" }, flow: { note: "tomorrow morning" } })],
+  ];
 
-  it("plans none of them, from any state this flow can reach", () => {
-    const BRIEF_RAN = { total: 2, briefId: "r1", briefRan: true };
-    // Named, because `hello` is settled by a saved owner name and an unnamed
-    // machine holds the whole matrix on step one. The one unnamed row is here
-    // so the opening is covered too.
-    const named = (patch: Partial<SetupLiveState> = {}) => live({ ownerName: "Sean", ...patch });
-    const machines: Array<[string, SetupLiveState]> = [
-      ["nobody has said who they are", live()],
-      ["the engine in the box", named()],
-      ["nothing to think with", named({ agents: [], signedOutAgents: [] })],
-      ["signed out and nothing else", named({ agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] })],
-      ["something they installed", named({ agents: [{ ...BUNDLED, installed: true }] })],
-      ["a key in the keychain", named({ flux: FLUX_SAVED })],
-      ["apps already connected", named({ flux: FLUX_SAVED, connectedAppIds: ["gmail", "googlecalendar"], connectedApps: 2 })],
-      ["a brief that has already run", named({ flux: FLUX_SAVED, routines: BRIEF_RAN })],
-      ["a crew already hired", named({ flux: FLUX_SAVED, crewSize: 3, botReplyExists: true, routines: BRIEF_RAN })],
-    ];
-    const checklists: Array<[string, SetupState]> = [
-      ["untouched", state()],
-      ["detection read", state({ detect: DETECTED })],
-      ["key passed over", state({ detect: DETECTED, flux: { skipped: true } })],
-      ["a job chosen", state({ detect: DETECTED, chat: { note: "brief" } })],
-      ["the job finished", state({ detect: DETECTED, chat: { note: "brief" }, flow: { note: "tomorrow morning" } })],
-    ];
-
-    const everyVariant = new Set<string>();
-    for (const [machineName, machine] of machines) {
-      for (const [checklistName, recorded] of checklists) {
-        const where = `${machineName}, ${checklistName}`;
-        // Seeded with the opening card so the conversation is live in every
-        // combination: a machine with a key and a crew is not a first run by
-        // `view.firstRun`, and an unseeded run there would plan nothing and
-        // prove nothing.
-        const present = new Set<string>([setupCardKey("hello", "welcome")]);
-        for (let round = 0; round < 8; round++) {
-          const next = setupConversationPlan(view(machine, recorded), present).append;
-          if (!next.length) break;
-          for (const card of next) {
-            expect(PARKED_VARIANTS, `${where} planned the parked card ${card.variant}`)
-              .not.toContain(card.variant);
-            everyVariant.add(card.variant);
-            present.add(card.key);
-          }
+  const everyVariant = new Set<string>();
+  // THE OPENING, UNSEEDED. Every combination below starts with the welcome
+  // card already in the thread, for the reason given there; that would leave
+  // `welcome` looking like a variant nothing plans. A brand new workspace
+  // with an empty thread is walked first, which is where it is planned.
+  {
+    const present = new Set<string>();
+    for (let round = 0; round < 8; round++) {
+      const next = setupConversationPlan(view(live(), state()), present).append;
+      if (!next.length) break;
+      for (const card of next) {
+        expect(PARKED_VARIANTS, `a brand new workspace planned the parked card ${card.variant}`)
+          .not.toContain(card.variant);
+        everyVariant.add(card.variant);
+        present.add(card.key);
+      }
+    }
+  }
+  for (const [machineName, machine] of machines) {
+    for (const [checklistName, recorded] of checklists) {
+      const where = `${machineName}, ${checklistName}`;
+      // Seeded with the opening card so the conversation is live in every
+      // combination: a machine with a key and a crew is not a first run by
+      // `view.firstRun`, and an unseeded run there would plan nothing and
+      // prove nothing.
+      const present = new Set<string>([setupCardKey("hello", "welcome")]);
+      for (let round = 0; round < 8; round++) {
+        const next = setupConversationPlan(view(machine, recorded), present).append;
+        if (!next.length) break;
+        for (const card of next) {
+          expect(PARKED_VARIANTS, `${where} planned the parked card ${card.variant}`)
+            .not.toContain(card.variant);
+          everyVariant.add(card.variant);
+          present.add(card.key);
         }
       }
     }
+  }
+  return everyVariant;
+}
+
+describe("nothing parked ever reaches a person", () => {
+  // THE LIST, CHECKED AGAINST SOMETHING OTHER THAN ITSELF.
+  //
+  // This used to be `expect([...PARKED_VARIANTS]).toEqual([the same eight
+  // names])`, which restates the derivation it just performed: a hand list
+  // subtracted from the union, compared against a hand list of what is left.
+  // It says nothing about the property in the describe's name, and it cannot
+  // fail for the reason it exists.
+  //
+  // What makes a variant PARKED is that nothing plans it. So the live list is
+  // checked against the planner: every variant the state matrix below really
+  // emits must be in LIVE_VARIANTS, and every variant in LIVE_VARIANTS must
+  // be one the planner emits. A variant quietly wired up, or a live one
+  // quietly orphaned, moves that set and fails here.
+  it("calls live exactly the variants the planner actually emits", () => {
+    expect(PARKED_VARIANTS.length, "nothing is parked any more").toBeGreaterThan(0);
+    for (const variant of PARKED_VARIANTS) {
+      // ...and each one still has its copy, so a park is a park and not a
+      // deletion with extra steps.
+      expect(setupCardCopy(variant).title.trim().length, variant).toBeGreaterThan(0);
+    }
+    expect([...LIVE_VARIANTS].sort()).toEqual([...plannedVariants()].sort());
+  });
+
+  it("plans none of them, from any state this flow can reach", () => {
+    // `plannedVariants` walks the whole matrix and asserts, on every card it
+    // plans, that the card is not a parked one. What comes back is the set of
+    // variants that really reached somebody, which is what the test above
+    // holds LIVE_VARIANTS to.
+    const planned = plannedVariants();
     // ...and the matrix really walked the flow, rather than passing because
     // nothing was ever planned at all.
-    expect(everyVariant.size).toBeGreaterThanOrEqual(5);
+    expect(planned.size).toBeGreaterThanOrEqual(5);
+    for (const variant of planned) expect(PARKED_VARIANTS).not.toContain(variant);
   });
 });
 

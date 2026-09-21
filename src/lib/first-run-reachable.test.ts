@@ -9,9 +9,12 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 
+const { FIRST_RUN_BRIEF_TIME, clockLabel } = await import("./first-run-copy");
+
 const {
   briefRoutineRequest,
   businessResult,
+  morningOffer,
   dayResult,
   escapeHatchScreen,
   firstRunInputScreen,
@@ -393,8 +396,23 @@ describe("every result has a body and a way on, whatever was typed", () => {
   });
 
   it("sends one brief request and only one, whatever screen asked for it", () => {
-    expect(briefRoutineRequest()).toEqual(briefRoutineRequest());
-    expect(briefRoutineRequest().template).toBe("brief");
+    // THIS WAS `expect(briefRoutineRequest()).toEqual(briefRoutineRequest())`:
+    // a literal compared with itself, which is true of every function that
+    // returns anything at all, including one that returned nothing useful.
+    //
+    // The property is that ONE value is scheduled and the SAME value is said
+    // back on every screen that offers it. So the request is asserted against
+    // the module's single source for the time, and the screens are asserted
+    // to say that time rather than a time of their own. A picker and a
+    // confirmation that disagreed is the defect this is about.
+    const request = briefRoutineRequest();
+    expect(request).toEqual({ template: "brief", time: FIRST_RUN_BRIEF_TIME, weekdaysOnly: true });
+    const spoken = clockLabel(request.time);
+    expect(briefRoutineOfferHeading()).toBeTruthy();
+    const offer = morningOffer(true);
+    expect(offer.button, "the button schedules one time and offers another").toContain(spoken);
+    expect(offer.body).toContain(spoken);
+    expect(offer.taken).toContain(spoken);
   });
 });
 
