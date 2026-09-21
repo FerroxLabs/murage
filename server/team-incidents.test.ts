@@ -9,13 +9,17 @@ import { describe, expect, it } from "vitest";
 import { turnFailureBuzzes } from "./notify.ts";
 
 import {
+  MAX_WAITING_TEAM_INCIDENTS,
   TEAM_INCIDENT_MUTE_AFTER,
   TeamIncidentLedger,
   chiefForBrokenBot,
+  drainWaitingTeamIncidents,
   routineIncidentMuteKeys,
+  teamIncidentDispatchDeferred,
   teamIncidentTurnOptions,
   teamIncidentChip,
   teamIncidentText,
+  waitForFreeTurn,
   type TeamIncident,
   type TeamIncidentBot,
 } from "./team-incidents.ts";
@@ -263,11 +267,106 @@ describe("a failed routine is where this is wired in", () => {
     // An attended turn here would let the Chief's own tool calls run under
     // whatever grant the person left switched on.
     expect(teamIncidentTurnOptions("t-incidents")).toEqual({ threadId: "t-incidents", unattended: true });
-    const at = index.indexOf("function reportTeamIncident(");
-    expect(at, "reportTeamIncident has been renamed or removed").toBeGreaterThan(-1);
+    const at = index.indexOf("function dispatchTeamIncident(");
+    expect(at, "dispatchTeamIncident has been renamed or removed").toBeGreaterThan(-1);
     const body = index.slice(at, index.indexOf("\n}\n", at));
-    expect(body).toContain("teamIncidentText(incident, count)");
-    expect(body).toContain("teamIncidentTurnOptions(incidents.threadId)");
+    expect(body).toContain("teamIncidentTurnOptions(incident.threadId)");
+    expect(index.slice(index.indexOf("function reportTeamIncident("))).toContain("teamIncidentText(incident, count)");
+  });
+
+  it("re-dispatches what was deferred wherever a settled turn releases queued work", () => {
+    // The drain itself is RUN below. This is the one thing it cannot show
+    // about itself: that every place the harness already releases work queued
+    // behind a settled turn releases a waiting incident too. There are eight
+    // — the turn.completed fold and seven fallbacks for turns that never emit
+    // one (a dispatch failure, a room turn that never started, a killed turn,
+    // the grace timeout). Missing any of them strands the incident until some
+    // other turn happens to finish.
+    const lines = index.split("\n");
+    const settles = lines
+      .map((line, at) => ({ line, at }))
+      .filter(({ line }) => line.includes("drainSecretResumes();"));
+    expect(settles.length, "the settle-drain sites have moved").toBeGreaterThanOrEqual(8);
+    for (const { line, at } of settles) {
+      expect(`${line}\n${lines[at + 1] ?? ""}`, `line ${at + 1} releases queued work but not a waiting incident`)
+        .toContain("drainTeamIncidents();");
+    }
+    // and one of them is the turn.completed fold itself: the drain that runs
+    // when a turn ends the ordinary way, which is when the Chief's incidents
+    // thread actually becomes free.
+    const fold = index
+      .split("bus.subscribe(")
+      .find((block) => block.includes('event.type === "turn.completed"') && block.includes("drainConnectorResumes();"));
+    expect(fold, "the turn.completed drain fold has moved").toBeTruthy();
+    expect(fold!.slice(0, fold!.indexOf("\n});"))).toContain("drainTeamIncidents();");
+  });
+});
+
+// ── a burst of failures ────────────────────────────────────────────────────
+//
+// The report is a TURN, and a turn is admitted on one thread at a time. The
+// second failure inside a minute therefore meets an incidents thread that is
+// already working. That used to write an error chip and give up, so every
+// incident after the first went unprocessed by anybody — which is the case
+// this whole module exists for: a crash loop, or one provider outage taking
+// three 07:00 routines down together.
+
+describe("a report that could not start because the Chief was mid-turn", () => {
+  it("knows both of startTurn's capacity refusals from a real failure", () => {
+    // the two 409s startTurn throws when the bot has no free turn
+    expect(teamIncidentDispatchDeferred(new Error("this thread or its group is already working"))).toBe(true);
+    expect(teamIncidentDispatchDeferred(new Error("this bot is already working on three threads"))).toBe(true);
+    // and everything that retrying cannot fix
+    expect(teamIncidentDispatchDeferred(new Error("no such bot"))).toBe(false);
+    expect(teamIncidentDispatchDeferred(new Error("Engine setup is finishing. Try again shortly."))).toBe(false);
+    expect(teamIncidentDispatchDeferred("this thread or its group is already working")).toBe(true);
+  });
+
+  it("waits for a free turn instead of being dropped", () => {
+    expect(waitForFreeTurn([], { chiefId: "chief" })).toEqual([{ chiefId: "chief" }]);
+    expect(waitForFreeTurn([{ chiefId: "chief" }], { chiefId: "chief" }))
+      .toEqual([{ chiefId: "chief" }, { chiefId: "chief" }]);
+  });
+
+  it("drops the NEWEST when the queue is full, because the first failures explain the storm", () => {
+    let waiting: Array<{ chiefId: string; n: number }> = [];
+    for (let n = 0; n < MAX_WAITING_TEAM_INCIDENTS + 5; n += 1) {
+      waiting = waitForFreeTurn(waiting, { chiefId: "chief", n });
+    }
+    expect(waiting).toHaveLength(MAX_WAITING_TEAM_INCIDENTS);
+    expect(waiting[0]!.n).toBe(0);
+    expect(waiting.at(-1)!.n).toBe(MAX_WAITING_TEAM_INCIDENTS - 1);
+  });
+
+  it("dispatches one per Chief per drain, oldest first, and keeps the rest", () => {
+    const waiting = [
+      { chiefId: "chief", n: 1 },
+      { chiefId: "chief", n: 2 },
+      { chiefId: "sales-lead", n: 3 },
+    ];
+    const plan = drainWaitingTeamIncidents(waiting, () => false);
+    // a second report to the same Chief would be refused by the same rule
+    expect(plan.dispatch).toEqual([{ chiefId: "chief", n: 1 }, { chiefId: "sales-lead", n: 3 }]);
+    expect(plan.waiting).toEqual([{ chiefId: "chief", n: 2 }]);
+  });
+
+  it("leaves a Chief who is still working alone, and does not lose its place", () => {
+    const waiting = [{ chiefId: "chief", n: 1 }, { chiefId: "sales-lead", n: 2 }];
+    const plan = drainWaitingTeamIncidents(waiting, (chiefId) => chiefId === "chief");
+    expect(plan.dispatch).toEqual([{ chiefId: "sales-lead", n: 2 }]);
+    expect(plan.waiting).toEqual([{ chiefId: "chief", n: 1 }]);
+  });
+
+  it("empties over successive drains rather than stalling behind the first", () => {
+    let waiting = [{ chiefId: "chief", n: 1 }, { chiefId: "chief", n: 2 }, { chiefId: "chief", n: 3 }];
+    const order: number[] = [];
+    for (let drain = 0; drain < 3; drain += 1) {
+      const plan = drainWaitingTeamIncidents(waiting, () => false);
+      order.push(...plan.dispatch.map((incident) => incident.n));
+      waiting = plan.waiting;
+    }
+    expect(order).toEqual([1, 2, 3]);
+    expect(waiting).toEqual([]);
   });
 });
 

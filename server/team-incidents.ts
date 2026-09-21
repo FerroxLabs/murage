@@ -236,3 +236,66 @@ export function teamIncidentText(incident: TeamIncident, count: TeamIncidentCoun
   );
   return lines.join("\n");
 }
+
+// ── delivery, when the Chief is mid-turn ───────────────────────────────────
+//
+// The incident report is a TURN, and a turn is admitted on one thread at a
+// time. So the second failure inside one minute — a crash loop, a provider
+// outage taking three routines down together, a morning where four things
+// break at 07:00 — arrives at an incidents thread that is already working,
+// `startTurn` refuses it with 409, and the original code wrote an error chip
+// and gave up. The chip was true ("could not reach Chief — this thread or its
+// group is already working") and useless: the incident it described was never
+// processed by anybody, and the only thing that had happened was the banner
+// the person got before the report was even attempted.
+//
+// A refusal for CAPACITY is not a failure of the report. It waits, and the
+// harness re-dispatches it when the Chief's next turn completes — the same
+// shape server/index.ts already uses for connector and secret resumes.
+
+/** Was this dispatch refused because the Chief is working right now?
+ *
+ * Both of `startTurn`'s capacity refusals say "already working" — the thread
+ * or its group, and the three-thread ceiling. Everything else (no such bot, a
+ * fenced provider bank, a closed automation budget) is a real failure and
+ * belongs on a chip, because retrying it would only produce the same refusal
+ * on every future turn. */
+export function teamIncidentDispatchDeferred(error: unknown): boolean {
+  return /already working/i.test(error instanceof Error ? error.message : String(error));
+}
+
+/** How many incidents may be waiting for a free turn at once.
+ *
+ * Small, because this is a queue of things to SAY about failures, and the
+ * mute (five per key per hour) already stops a single crash loop from filling
+ * it. When it is full the NEWEST is dropped rather than the oldest: the first
+ * failures of a storm are the ones that explain it, and a Chief reading the
+ * twentieth report of the same outage learns nothing the first did not say. */
+export const MAX_WAITING_TEAM_INCIDENTS = 20;
+
+export function waitForFreeTurn<T>(waiting: readonly T[], incident: T): T[] {
+  return waiting.length >= MAX_WAITING_TEAM_INCIDENTS ? [...waiting] : [...waiting, incident];
+}
+
+/** Which waiting incidents this drain may dispatch, and which keep waiting.
+ *
+ * At most one per Chief: they all land in that Chief's one incidents thread,
+ * so a second would be refused by the same rule that deferred it, and order
+ * is preserved for each Chief so the first failure is still reported first. */
+export function drainWaitingTeamIncidents<T extends { chiefId: string }>(
+  waiting: readonly T[],
+  busy: (chiefId: string) => boolean,
+): { dispatch: T[]; waiting: T[] } {
+  const dispatch: T[] = [];
+  const held: T[] = [];
+  const taken = new Set<string>();
+  for (const incident of waiting) {
+    if (taken.has(incident.chiefId) || busy(incident.chiefId)) {
+      held.push(incident);
+      continue;
+    }
+    taken.add(incident.chiefId);
+    dispatch.push(incident);
+  }
+  return { dispatch, waiting: held };
+}

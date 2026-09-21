@@ -383,7 +383,7 @@ import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident } from "./team-incidents.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, drainWaitingTeamIncidents, routineIncidentMuteKeys, teamIncidentChip, teamIncidentDispatchDeferred, teamIncidentText, teamIncidentTurnOptions, waitForFreeTurn, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -3412,6 +3412,7 @@ const watchdog = new TurnWatchdog({
         drainQueuedSends();
         drainConnectorResumes();
         drainSecretResumes();
+        drainTeamIncidents();
       }
     };
     const release = setTimeout(releaseOwnership, 6_000);
@@ -4708,6 +4709,7 @@ const unstartedRoomTurnReleaseDeps = {
     drainQueuedSends();
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
   },
 };
 
@@ -5821,6 +5823,7 @@ async function startTurn(
           drainQueuedSends();
           drainConnectorResumes();
           drainSecretResumes();
+          drainTeamIncidents();
         }
         return;
       }
@@ -5873,6 +5876,7 @@ async function startTurn(
       drainQueuedSends();
       drainConnectorResumes();
       drainSecretResumes();
+      drainTeamIncidents();
     }
   })();
   return userMessage;
@@ -5971,20 +5975,59 @@ function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; mu
     // teamIncidentTurnOptions, not an object literal: the shape of this turn
     // is what keeps it from ringing the person a second time for the failure
     // it is reporting, and that is policy, not wiring.
-    void startTurn(chief.id, teamIncidentText(incident, count), teamIncidentTurnOptions(incidents.threadId))
-      .catch((error) => {
-        // The Chief being busy is the common case and is not worth a banner —
-        // the chip above is already durable in its incidents thread.
-        const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
-        store.appendMessage(incidents.threadId, {
-          role: "bot",
-          kind: "activity",
-          tool: { name: `error: this incident could not reach ${chief.name} — ${why}`, ok: false },
-        });
-      });
+    dispatchTeamIncident({
+      chiefId: chief.id,
+      chiefName: chief.name,
+      threadId: incidents.threadId,
+      text: teamIncidentText(incident, count),
+    });
   } catch {
     // never make the failure we are reporting worse than it already is
   }
+}
+
+interface WaitingTeamIncident {
+  chiefId: string;
+  chiefName: string;
+  /** the Chief's "Team incidents" thread — never the broken one */
+  threadId: string;
+  text: string;
+}
+
+/** Incidents whose report could not start because the Chief was mid-turn.
+ * In memory with the ledger, and for the same reason: a restart is a fresh
+ * start, and each of these already left a durable chip in the thread. */
+let waitingTeamIncidents: WaitingTeamIncident[] = [];
+
+function dispatchTeamIncident(incident: WaitingTeamIncident): void {
+  void startTurn(incident.chiefId, incident.text, teamIncidentTurnOptions(incident.threadId)).catch((error) => {
+    // A refusal for CAPACITY is not a failure of the report. This used to
+    // write a chip and give up, so a burst of failures — a crash loop, one
+    // provider outage taking three routines down at 07:00 — left every
+    // incident after the first unprocessed by anybody. It waits instead, and
+    // the turn.completed fold re-dispatches it.
+    if (teamIncidentDispatchDeferred(error)) {
+      const next = waitForFreeTurn(waitingTeamIncidents, incident);
+      if (next.length > waitingTeamIncidents.length) {
+        waitingTeamIncidents = next;
+        return;
+      }
+      // the queue is full: the storm is already described by what is in it
+    }
+    const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
+    store.appendMessage(incident.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `error: this incident could not reach ${incident.chiefName} — ${why}`, ok: false },
+    });
+  });
+}
+
+function drainTeamIncidents(): void {
+  if (waitingTeamIncidents.length === 0) return;
+  const plan = drainWaitingTeamIncidents(waitingTeamIncidents, (chiefId) => store.bot(chiefId)?.busy === true);
+  waitingTeamIncidents = plan.waiting;
+  for (const incident of plan.dispatch) dispatchTeamIncident(incident);
 }
 
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
@@ -7192,7 +7235,7 @@ async function runGroupMemberTurn(
             store.setActivity(bot.id, "idle");
             retryDelegationsWaitingOn(bot.id);
           }
-          drainQueuedSends();drainConnectorResumes();drainSecretResumes();
+          drainQueuedSends();drainConnectorResumes();drainSecretResumes();drainTeamIncidents();
         },
       });
       pendingRoomStops.get(threadId)?.cancel();
@@ -7425,6 +7468,7 @@ async function runGroupMemberTurn(
     drainQueuedSends();
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
     return false;
   }
   if (outcome === "timed_out") {
@@ -8670,6 +8714,7 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "turn.completed") {
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
   }
 });
 
@@ -8910,6 +8955,7 @@ async function reloadProviders() {
   drainQueuedSends();
   drainConnectorResumes();
   drainSecretResumes();
+  drainTeamIncidents();
 }
 
 // Config writes rebuild the whole provider registry. Keep the read-modify-write
