@@ -7,7 +7,7 @@
 // to it, and put the real decision function in front of real paths. The last
 // one goes further and runs the actual overflow path — the agents proxy's
 // bounded result, the real cache, the real gate — for a channel person.
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -148,19 +148,13 @@ describe("an oversized agents-tool result for a channel person", () => {
   });
 });
 
-// The wiring. server/index.ts starts a listening server on import, so this
-// one cannot be executed here; it is asserted at the source instead, with
-// whole-line comments stripped first so it matches code and never prose.
-describe("server/index.ts wiring", () => {
-  const code = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
-
-  it("asks this module rather than carrying its own copy of the allowlist", () => {
-    expect(code).toContain("internalRouteRefusal({ path, kind: requiredKind, principal: threadHumanPrincipal(internalClaim.threadId) })");
-    expect(code).not.toContain('"/api/internal/wait-delegation"].includes(path)');
-    expect(code).not.toContain("This channel person has no workspace management");
-  });
-});
+// THE WIRING, AND WHAT IS NO LONGER PROVEN ABOUT IT.
+//
+// A test used to sit here reading server/index.ts as text and asserting that
+// one exact call expression appeared in it, plus two strings that must not.
+// It ran nothing: it went green on that call sitting in dead code and red on
+// a reformat of the same call. The route authority itself is executed above,
+// against every principal and every path. That the harness ASKS it, rather
+// than carrying a second copy of the allowlist, is UNPROVEN here; executing
+// it means importing server/index.ts, which starts a listening server on
+// import.

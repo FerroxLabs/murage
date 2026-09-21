@@ -20,7 +20,7 @@
 // so that closing the modal did not bring it back at the next launch. It was
 // a per-machine guess sitting next to an authoritative answer, and a guess
 // that reads empty in a fresh browser is exactly the shape of the bug above.
-// The rail is not a modal and closing it costs nothing, so closing is
+// The phase bar is not a modal and closing it costs nothing, so closing is
 // remembered for this session only. If the install genuinely has not been set
 // up, the list is there again next time, and the conversation it tracks is
 // still in the Chief's thread either way.
@@ -30,25 +30,39 @@ import { useSyncExternalStore } from "react";
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import type { SetupStep, SetupView } from "../../shared/setup";
 
-// ── the words the rail says ────────────────────────────────────────────
-// Four of the six rows are named by the card they track, imported from the
-// one copy module rather than re-typed here, so a row and its card cannot
-// drift apart. Only "hello" and "agents" need a name of their own: their
-// cards open with a sentence rather than a heading.
-const STEP_LABELS: Record<string, string> = {
-  hello: "Say hello",
-  agents: "See what is already here",
-  flux: FIRST_RUN_COPY.flux.key.title,
-  apps: FIRST_RUN_COPY.apps.apps.title,
-  brief: FIRST_RUN_COPY.brief.brief.title,
-  routines: FIRST_RUN_COPY.routines["more-routines"].title,
+// ── the words the phase bar says ───────────────────────────────────────
+// The five phases, named the way the approved simulation names them, in its
+// own lower case: a pill reads `2 · what is here`, so the number is the
+// sentence and the name finishes it. Short verbs, because this is a place in
+// a conversation and not a table of contents.
+//
+// They are literals rather than lookups into FIRST_RUN_COPY. Four rows used
+// to borrow their card's heading so a row and its card could not drift apart,
+// and three of those four cards are now parked; borrowing from a parked card
+// would put a phase on the bar for a step that no longer exists. The rows are
+// built from `view.steps`, which comes off the wire, so an unknown id still
+// draws a pill labelled with the id rather than vanishing from a list of what
+// is left to do.
+const PHASE_NAMES: Record<string, string> = {
+  hello: "who you are",
+  detect: "what is here",
+  flux: "switch it on",
+  chat: "first chat",
+  flow: "do the thing",
 };
 
-export const FIRST_RUN_RAIL = {
+/** The pill's own text. A middle dot, not a dash of any kind: the house rules
+ *  ban em and en dashes outright and `first-run.test.ts` checks every string
+ *  here for one. Not exported: a second caller building this string somewhere
+ *  else is how a separator drifts, and the labels the pills carry are already
+ *  on every row `firstRunPhaseRows` returns. */
+function firstRunPhaseLabel(number: number, name: string): string {
+  return `${number} · ${name}`;
+}
+
+export const FIRST_RUN_PHASES = {
   title: "Getting set up",
   close: "Close this list",
-  /** A count of steps, which is the one number this flow is allowed. */
-  progress: (done: number, total: number) => `${done} of ${total} done`,
   state: {
     now: "Now",
     done: FIRST_RUN_COPY.settled,
@@ -58,8 +72,12 @@ export const FIRST_RUN_RAIL = {
     blocked: "Waiting on something",
     todo: "",
   },
-  /** The quiet line at the bottom. The whole promise of the rail is in it:
-   *  this is a list, not a gate, and the app underneath already works. */
+  /** The promise the rail carried in a line across its foot. The bar is a
+   *  strip of pills above the app rather than a 272px column beside it, so
+   *  there is nowhere sensible to print a sentence; it is read to assistive
+   *  technology as the bar's description instead, and the close button is
+   *  still there for everyone. The words do not change, because they are the
+   *  whole promise: this is a list, not a gate. */
   footer: "Close this whenever you like. Nothing in it stops you using Murage, and all of it stays in your chat.",
 } as const;
 
@@ -68,24 +86,24 @@ export const FIRST_RUN_RAIL = {
 // had one: the composer's "/setup" command and the Settings row both just
 // want the list on screen, and neither should have to own app state to say
 // so. What changed is what opening MEANS. It is not a modal any more, so
-// `openFirstRun` selects the Chief of Staff's thread and shows the rail
-// beside it. The rail itself does the selecting, because only a component
+// `openFirstRun` selects the Chief of Staff's thread and shows the phase bar
+// above it. The bar itself does the selecting, because only a component
 // inside the store can dispatch.
 
-export interface FirstRunRailLatch {
+export interface FirstRunPhaseLatch {
   /** Closed by hand, this session. */
   closed: boolean;
-  /** Bumped by every `openFirstRun()`. The rail acts on a number it has not
+  /** Bumped by every `openFirstRun()`. The bar acts on a number it has not
    *  seen, so two asks in a row are two asks. */
   requests: number;
 }
 
-const CLEAN: FirstRunRailLatch = { closed: false, requests: 0 };
+const CLEAN: FirstRunPhaseLatch = { closed: false, requests: 0 };
 
-let latch: FirstRunRailLatch = CLEAN;
+let latch: FirstRunPhaseLatch = CLEAN;
 const listeners = new Set<() => void>();
 
-function publish(next: FirstRunRailLatch): void {
+function publish(next: FirstRunPhaseLatch): void {
   latch = next;
   for (const listener of [...listeners]) listener();
 }
@@ -97,31 +115,31 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** Show the first run: the Chief's thread, with the progress rail beside it.
+/** Show the first run: the Chief's thread, with the phase bar above it.
  *  `/setup` in the composer and the Settings row are the two callers. */
 export function openFirstRun(): void {
   publish({ closed: false, requests: latch.requests + 1 });
 }
 
-/** They closed the rail. Nothing else changes: every card is still in the
+/** They closed the bar. Nothing else changes: every card is still in the
  *  conversation and every step can still be finished from there. */
 export function closeFirstRun(): void {
   if (latch.closed) return;
   publish({ ...latch, closed: true });
 }
 
-export function readFirstRunRail(): FirstRunRailLatch {
+export function readFirstRunPhases(): FirstRunPhaseLatch {
   return latch;
 }
 
 /** Tests only. The latch is module state and a test that opened it would
  *  otherwise leak into the next one. */
-export function resetFirstRunRail(): void {
+export function resetFirstRunPhases(): void {
   latch = CLEAN;
 }
 
-export function useFirstRunRailLatch(): FirstRunRailLatch {
-  return useSyncExternalStore(subscribe, readFirstRunRail, readFirstRunRail);
+export function useFirstRunPhaseLatch(): FirstRunPhaseLatch {
+  return useSyncExternalStore(subscribe, readFirstRunPhases, readFirstRunPhases);
 }
 
 // ── the one question ───────────────────────────────────────────────────
@@ -139,21 +157,21 @@ export function firstRunActive(view: SetupView | null | undefined): boolean {
 }
 
 /**
- * Should the rail be on screen?
+ * Should the phase bar be on screen?
  *
  * No view means the server has not answered yet, and nothing is the right
- * answer to a question nobody has asked. A closed rail stays closed. An ask
+ * answer to a question nobody has asked. A closed bar stays closed. An ask
  * from `/setup` or from Settings shows it on any install, which is the whole
  * point of those two entry points. Otherwise, and only otherwise, the
  * server's `firstRun` decides.
  */
-export function firstRunRailVisible(
+export function firstRunPhasesVisible(
   view: SetupView | null | undefined,
-  rail: FirstRunRailLatch,
+  bar: FirstRunPhaseLatch,
 ): boolean {
   if (!view) return false;
-  if (rail.closed) return false;
-  if (rail.requests > 0) return true;
+  if (bar.closed) return false;
+  if (bar.requests > 0) return true;
   // The server's own answer, when it has one. It knows the welcome card is in
   // the thread, which is the only honest test of "this flow started here and
   // is still going"; the latch below is a fallback for a view from a build
@@ -183,7 +201,7 @@ export function firstRunRailVisible(
 }
 
 /** Whether the first run has been seen to start in this session. Sticky on
- *  purpose: see `firstRunRailVisible`. */
+ *  purpose: see `firstRunPhasesVisible`. */
 let started = false;
 
 /** Tests own their own world; nothing in the app clears this. */
@@ -191,30 +209,59 @@ export function forgetFirstRunStarted(): void {
   started = false;
 }
 
-// ── the rows ───────────────────────────────────────────────────────────
+// ── the pills ──────────────────────────────────────────────────────────
 
-export type FirstRunRailMark = "done" | "now" | "skipped" | "blocked" | "todo";
+export type FirstRunPhaseMark = "done" | "now" | "skipped" | "blocked" | "todo";
 
-export interface FirstRunRailRow {
+export interface FirstRunPhaseRow {
   id: SetupStep;
+  /** Where this pill sits among the pills ACTUALLY SHOWN, counting from one.
+   *  Not its index in `view.steps`: on a machine with nothing to think with
+   *  the second step is not drawn and everything after it moves up. */
+  number: number;
+  /** The phase's name on its own, without the number. */
+  name: string;
+  /** What the pill reads. */
   label: string;
-  mark: FirstRunRailMark;
-  /** The short word under the label, or "" when the row says enough. */
+  mark: FirstRunPhaseMark;
+  /** The short word the pill carries for assistive technology, or "" when the
+   *  label says enough. */
   state: string;
 }
 
 /**
- * The six rows, built from the view the server sent and from nothing else.
+ * The pills, built from the view the server sent and from nothing else.
  *
  * No local list of steps: the order, the count and every status come off the
  * wire, so a step that changes on the server changes here without anybody
- * remembering to edit a second copy. The labels are looked up by id with the
- * id itself as the fallback, so an unknown step still draws a row rather
+ * remembering to edit a second copy. The names are looked up by id with the
+ * id itself as the fallback, so an unknown step still draws a pill rather
  * than vanishing from a list of what is left to do.
+ *
+ * THE NUMBERS ARE COMPUTED, NOT LITERAL, and that is the whole reason this
+ * returns a `number` at all. On a machine with nothing to think with there is
+ * no "what is here" to report, the server settles `detect` before it is ever
+ * presented, and the approved simulation drops the phase rather than showing
+ * a second pill already crossed off on a machine that never had anything.
+ * Four pills, numbered one to four. `phases()` in the simulation does exactly
+ * this.
+ *
+ * It is dropped only when the server agrees it is SETTLED. `nothingToThinkWith`
+ * and an open `detect` would be a contradiction, and the honest answer to a
+ * contradiction is to draw the step the person is still on rather than hide
+ * the thing they are being asked to do.
  */
-export function firstRunRailRows(view: SetupView): FirstRunRailRow[] {
-  return view.steps.map((step) => {
-    const mark: FirstRunRailMark =
+export function firstRunPhaseRows(view: SetupView): FirstRunPhaseRow[] {
+  const shown = view.steps.filter(
+    (step) =>
+      !(
+        step.id === "detect"
+        && view.nothingToThinkWith === true
+        && (step.status === "done" || step.status === "skipped")
+      ),
+  );
+  return shown.map((step, index) => {
+    const mark: FirstRunPhaseMark =
       step.status === "done"
         ? "done"
         : step.status === "skipped"
@@ -224,11 +271,14 @@ export function firstRunRailRows(view: SetupView): FirstRunRailRow[] {
             : view.next === step.id
               ? "now"
               : "todo";
+    const name = PHASE_NAMES[step.id] ?? step.id;
     return {
       id: step.id,
-      label: STEP_LABELS[step.id] ?? step.id,
+      number: index + 1,
+      name,
+      label: firstRunPhaseLabel(index + 1, name),
       mark,
-      state: FIRST_RUN_RAIL.state[mark],
+      state: FIRST_RUN_PHASES.state[mark],
     };
   });
 }

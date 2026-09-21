@@ -14,7 +14,9 @@
 //   Never name the connected-app broker. It is "500+ apps", named by
 //     example: Gmail, Slack, Notion, GitHub.
 //   Never a model count. "All the latest models" is the claim.
-//   Flux Router leads with routing, then the apps, then pictures and voice.
+//   Flux Router leads with routing, then the apps, then pictures and
+//     transcription. NOT voice: the key transcribes and does not speak, and
+//     the only row allowed to mention speaking is one marked "Coming soon".
 //   Never describe a capability as a limit. Sending email is graduated
 //     trust: you approve, I send, and you can raise how much I do on my own.
 //   Never promise a grant the approval system cannot key. A remembered
@@ -33,11 +35,12 @@
 /** Where a person gets a Flux Router key. Mirrors FLUX_SIGNUP_URL in
  *  src/components/FluxRouterConnection.tsx, imported by the card itself so
  *  there is one URL and not two. */
-// Explicit extension because this file is no longer renderer-only: the server
-// project now reads it too (server/first-run-email-trust.test.ts ties the copy
-// to what approvalKey can actually key), and tsconfig.server.json resolves
-// NodeNext, which requires one. The rest of the repo already writes imports
-// this way; the renderer build is unaffected.
+// Explicit extension because this file is NO LONGER RENDERER-ONLY, and two
+// separate server tests now read it: one ties the email promise to what
+// `approvalKey` can actually key, the other drives the business result against
+// the real starter package. tsconfig.server.json resolves NodeNext, which
+// requires the extension. server/index.ts already writes its shared imports
+// this way, and the renderer build does not care either way.
 import type { SetupCardVariant } from "../../shared/setup-card.ts";
 
 export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
@@ -51,12 +54,66 @@ export interface FirstRunAppRow {
   why: string;
 }
 
+/**
+ * One thing the Flux Router key turns on.
+ *
+ * EVERY ROW IS TRACEABLE TO THE FILE THAT STOPS WORKING WITHOUT THE KEY, and
+ * that is the test for adding a seventh, not "does the key appear in this
+ * file". Smart routing is server/flux-routing.ts. The apps are the hard block
+ * kept as `connectedAppsBlock`. The models are the flux-* catalogue. Pictures
+ * are server/avatar-image.ts. Transcription is server/voice/flux-voice.ts.
+ *
+ * Routines, teams and memory are NOT Flux features and have never been. Memory
+ * is built into Murage: any enabled engine carrying `extractMemory` is
+ * eligible. Routines contain zero Flux references. That mistake has been made
+ * five times and each time it read as a feature list written by somebody who
+ * had not opened the code.
+ */
+export interface FirstRunFluxFeature {
+  id: string;
+  title: string;
+  body: string;
+  /**
+   * Whether this row works TODAY.
+   *
+   * A row that is not live carries the "Coming soon" pill and a dashed tick,
+   * and it is the only kind of row allowed to describe speaking out loud. The
+   * owner's ruling: "voice mode is coming so you can have it as coming soon
+   * and then we flick it over when it's available."
+   */
+  state: "live" | "coming-soon";
+  /**
+   * Set on a live row that mentions speech, naming WHICH half of speech is
+   * true of it. `transcription` is you talking and Murage typing, which the
+   * Flux key really does at POST /v1/audio/transcriptions. There is no
+   * `synthesis` member on purpose: the key has no synthesis endpoint, so a row
+   * that wanted one would have nothing honest to declare.
+   */
+  speech?: "transcription";
+}
+
 /** One thing the closing card can offer to do. `say` is the sentence that
  *  goes into the conversation when it is pressed, in the person's voice,
  *  because the answer to "what would you like to do" is them asking. */
 export interface FirstRunOffer {
   label: string;
   say: string;
+}
+
+/**
+ * One of the Chief's five jobs, as words.
+ *
+ * `id` is a wire identifier and is the join to `FIRST_RUN_JOB_SHAPES` in
+ * src/lib/first-run-jobs.ts, which says what each one needs and what box it
+ * opens. Two lists rather than one because the words belong in this file,
+ * where the house rules are checked over them, and the behaviour does not.
+ * first-run-jobs.test.ts pins the two together so neither can grow a row the
+ * other does not have.
+ */
+export interface FirstRunJobRowCopy {
+  id: "brief" | "day" | "notes" | "research" | "business";
+  title: string;
+  sub: string;
 }
 
 /** One step of the Tailscale walkthrough, which happens in the chat and not
@@ -86,12 +143,25 @@ export interface FirstRunWalkStep {
  * walked through "the flux step".
  */
 export const FIRST_RUN_STEP_HEADINGS: Partial<Record<SetupCardVariant, string>> = {
-  welcome: "Hello",
-  found: "What is already here",
-  bare: "What is already here",
-  "bare-needs-key": "What is already here",
-  "signed-out": "What is already here",
-  key: "One key",
+  // THE APPROVED FLOW'S TOP BARS, WORD FOR WORD.
+  //
+  // The simulation puts a top bar above each step and the build spec quotes
+  // all three: "Welcome", "Looking around", "Flux Router". In this build the
+  // first run is a thread rather than a stack of full screens, so the separator
+  // rule IS the top bar: it is the one thing on the page that says which part
+  // of the conversation you are in. Same words, so a person who saw the
+  // simulation and a person who runs the app are looking at the same flow.
+  //
+  // `bare-needs-key` moved with its step. It used to say "What is already
+  // here", which is the detection step's bar, and it is the FLUX step's second
+  // opening on a machine where detection never ran. A separator naming a step
+  // the person was never shown is a separator that lies about where they are.
+  welcome: "Welcome",
+  found: "Looking around",
+  bare: "Looking around",
+  "bare-needs-key": "Flux Router",
+  "signed-out": "Looking around",
+  key: "Flux Router",
   apps: "Where your work lives",
   "sample-brief": "Your mornings",
   "more-routines": "A couple more",
@@ -103,21 +173,92 @@ export function stepHeadingFor(variant: SetupCardVariant): string | null {
 
 export const FIRST_RUN_COPY = {
   hello: {
+    /**
+     * STEP ONE, AND IT IS ASKED BEFORE DETECTION IS REPORTED.
+     *
+     * Not a UX preference. The owner ruled that this builds the list and is a
+     * business requirement, so it goes first and the look around the machine
+     * happens underneath it while they type. Every word here is the approved
+     * flow's, and the two fields say what each one is FOR: a field with no
+     * stated purpose is a field people skip, and this is the one step that
+     * cannot afford that.
+     *
+     * THE DEFECT: THE STATED PURPOSE OF THE EMAIL WAS FALSE. The lead read
+     * "Your email is how I reach you when you are away from this computer".
+     * Nothing in `server/` consumes an owner email and nothing in the product
+     * ever mails the person: the address is saved on the owner profile, it
+     * identifies them to analytics, and it joins the list this step exists to
+     * build (FirstRunHelloCard.tsx:88-89). The owner has separately ruled the
+     * morning brief must never be emailed, so it was not a promise about
+     * something coming either. What is left is the half of the sentence that
+     * was always true, which is what the field is really for.
+     */
     welcome: {
-      body: "Hello. I am your chief of staff, and I work for you.",
-      second: "Tell me your name and where to reach you, and I will set the rest up around you.",
+      heading: "First, who am I working for?",
+      lead:
+        "I am your chief of staff. Your name is what I call you. Your email is how Murage tells you when "
+        + "there is something new it can do.",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email",
       emailPlaceholder: "you@example.com",
-      submit: "That is me",
+      submit: "Continue",
       working: "Saving",
-      skip: "Skip this",
+      skip: "Skip for now",
       detecting: "While you type, I am having a look around this computer to see what is already here.",
       failure: "That did not save. Try once more, or skip it and carry on.",
     },
   },
   agents: {
+    /**
+     * STEP TWO, THE REPORT, AND IT IS SKIPPED ON A MACHINE WITH NOTHING.
+     *
+     * One row per engine, and the row says three things: what it is, one fact
+     * about it, and whether it can answer right now. The three details below
+     * are the three shapes a row can take, and each one is a fact the setup
+     * view can prove rather than a sentence about how good anything is.
+     *
+     * WHAT IS NOT HERE. The approved flow marks one row "using this", and this
+     * build cannot prove which row that is: the engine the Chief is actually
+     * on lives on `SetupLiveState.chiefInstanceId` and is not carried on the
+     * view. On a machine with two local models that tag would be false on one
+     * of them, and a false tag in the first minute is what the whole release
+     * exists to stop. Every runnable engine gets the claim that is true of all
+     * of them until there is a field that can prove the stronger one.
+     */
+    detect: {
+      heading: "What is already here.",
+      /** An engine pointed at a model on this machine. */
+      localDetail: "Nothing you type leaves this computer.",
+      /** A remote engine the person signed in to themselves. Not named by
+       *  vendor: the reading knows the engine, not whose account it is on. */
+      cloudDetail: "Signed in on your own account.",
+      /** The engine Murage ships. It is not something they did, and claiming
+       *  an account for it would be the Chief taking credit for one that does
+       *  not exist. */
+      bundledDetail: "It came in the box, and it is already running.",
+      /** Installed, nobody signed in. Said without blame: nothing is broken
+       *  and nothing was installed wrong. */
+      offDetail: "Installed, nobody signed in.",
+      readyTag: "ready when you want it",
+      offTag: "one command away",
+      more: (count: number) => `and ${count} more on this computer`,
+      hide: "Hide them",
+      /**
+       * THE HANDOVER TO THE FLUX SCREEN, AND IT IS THE HONEST VERSION.
+       *
+       * Not "you are all set", which is what a machine with a signed-in Claude
+       * Code on it would hear as an ending. What was found can answer
+       * questions; what it cannot do is reach the person's mail, their
+       * calendar or their apps. Saying both halves is what makes the next
+       * screen an offer rather than a pitch.
+       */
+      closing: "That is enough for me to answer you. It is not enough for me to do the interesting part.",
+      action: "Show me the interesting part",
+      /** The one control on this card could not record that the report had
+       *  been read. Said where it happened, and the button stays. */
+      failure: "That did not go through. Press it again whenever you like.",
+    },
     found: {
       second: "They answer to you in here now, and they still work exactly as they did on their own.",
     },
@@ -196,20 +337,114 @@ export const FIRST_RUN_COPY = {
       showLess: "Show less",
     },
     key: {
-      title: "One key worth having",
-      body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
-      second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
       /**
-       * NOT "voice". Flux Router has no synthesis endpoint of any kind:
-       * server/voice/flux-voice.ts says so in its own header, and
-       * src/lib/flux-invite.ts already refused to claim speech for the same
-       * reason. Murage speaks through ElevenLabs on the person's OWN key, or
-       * the free OS voices, never on this one. Transcription IS on this key
-       * (POST /v1/audio/transcriptions), which is the half worth selling:
-       * dictation that works from a phone, where the native macOS helper
-       * cannot reach.
+       * THE SCREEN THE COMPANY MAKES ITS MONEY ON, AND IT GETS TWO OPENINGS.
+       *
+       * The heading is the owner's, exactly: "Get the right answer faster."
+       * Not what it is, not what it costs, what it does for the person reading
+       * it. NO PRICE FIGURE AND NO PLAN COMPARISON ANYWHERE ON THIS SCREEN,
+       * which is a ruling and is also enforced twice over by the money rules
+       * in first-run-copy.test.ts.
        */
-      third: "It brings pictures and transcription too, so you can talk to me from your phone.",
+      heading: "Get the right answer faster.",
+      // Five sentences, on the card the whole release leads with, under a
+      // rule that has said "three is the ceiling" since the file was written.
+      // Nothing was asserting it. The words are unchanged; the two-word
+      // sentences that were doing the work of one clause are now one clause.
+      lead:
+        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask: "
+        + "big job, big model, quick job, quick model. You just get the answer.",
+      /**
+       * THE SECOND OPENING, ON A MACHINE WHERE DETECTION NEVER RAN.
+       *
+       * This screen has to do step two's job as well as its own, because step
+       * two was skipped: there is no honest "here is what I found" for a
+       * machine where nothing was found. So it says what was looked for, says
+       * plainly that nothing turned up, and then asks for the one thing that
+       * fixes it. The owner's framing, exactly.
+       */
+      headingBare: "Your bots need a brain first.",
+      leadBare:
+        "Murage came with an engine. It did not come with anything to think with, and there is nothing on "
+        + "this computer I can use. One connection fixes that, and it is the same one your apps run through.",
+      /** The card's own two corners. */
+      cardTitle: "Flux Router",
+      cardAccount: "Your account",
+      /** The pill on a row that is not live yet. */
+      comingSoon: "Coming soon",
+      features: [
+        {
+          id: "routing",
+          title: "Smart routing",
+          body:
+            "every question goes to the AI that handles it best. The biggest one is not always the best one. "
+            + "Often it is just the slowest",
+          state: "live",
+        },
+        {
+          id: "apps",
+          title: "500+ apps",
+          body: "Gmail, Slack, Notion, GitHub. Connect one once and it follows your key to any computer you sign in on",
+          state: "live",
+        },
+        {
+          id: "models",
+          title: "All the latest models",
+          body: "one key. Not an account each with OpenAI, Anthropic, Google and xAI",
+          state: "live",
+        },
+        {
+          id: "pictures",
+          title: "Pictures",
+          body: "make them right in the chat. Or hand over four and ask for a change",
+          state: "live",
+        },
+        {
+          // TRUE TODAY, AND IT IS THE HALF OF SPEECH THIS KEY ACTUALLY DOES.
+          // You talk, Murage types. POST /v1/audio/transcriptions, and nothing
+          // else. Named "instead of type" rather than "talk to me" for exactly
+          // that reason: the second one promises an answer out loud.
+          id: "dictation",
+          title: "Talk instead of type",
+          body: "say it out loud. Works from your phone too, not just this computer",
+          state: "live",
+          speech: "transcription",
+        },
+        {
+          // NOT TODAY, AND SAYING SO IS THE WHOLE POINT OF THE ROW. Selling
+          // speech on this key is a false claim that has already shipped once
+          // and was then ENFORCED by a test. It arrives marked, or it does not
+          // arrive.
+          id: "voice",
+          title: "Voice mode",
+          body: "a real back and forth, out loud",
+          state: "coming-soon",
+        },
+      ] as readonly FirstRunFluxFeature[],
+      keyCaveat: "Your key stays in this computer's keychain. It never appears in our conversation.",
+      /** The way past, and it is a real answer rather than a postponement.
+       *  Two versions, because a machine with a local model on it has
+       *  somewhere to go and a blank one does not. */
+      dismissLocal: "Not yet, start me on the local model",
+      dismissCaveat: "You can turn it on later from any job that needs it.",
+      /** §3.3, the screen that takes the key. The browser is already open on
+       *  the sign-up page by the time this is read. */
+      connectHeading: "Your browser is open on the sign-up page.",
+      connectLead:
+        "Make the account, copy the key it gives you, and bring it back here. Once, and then never again on "
+        + "this computer.",
+      connectSubmit: "Connect",
+      connectCaveat: "It goes into this computer's keychain. The server never hands it back, and no bot ever sees it.",
+      connectAgain: "Open the page again",
+      connectCancel: "Cancel",
+
+      // The three-sentence version of this card, `title`/`body`/`second`/
+      // `third`, used to sit here, marked SUPERSEDED in the same commit that
+      // stopped rendering it and kept alive by a test that asserted on it.
+      // It is gone. What this card says is `heading`, `lead` and `features`,
+      // and there is no second version of the claims for anybody to read,
+      // edit or accidentally believe is the live one.
+
       /**
        * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
        * SITUATION.
@@ -231,10 +466,22 @@ export const FIRST_RUN_COPY = {
       recommendation: "Recommended, because it is the one key that opens everything else.",
       /** Nothing on this machine can think yet. */
       recommendationBare: "This is the one that matters. I came with the engine and this is what gives it something to think with.",
-      /** They already have a working engine, so this is a genuine extra. */
-      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and voice on top.",
-      fieldLabel: "Paste your key",
-      placeholder: "Paste your Flux Router key here",
+      /**
+       * They already have a working engine, so this is a genuine extra.
+       *
+       * IT SAID "pictures and voice", AND THE SPEECH TEST COULD NOT SEE IT.
+       * That test named four fields by hand and this was not one of them, so
+       * the exact false claim it was written to stop went on shipping one line
+       * below the fields it guarded. Synthesis selects ElevenLabs or the
+       * system voices; the Flux key configures neither. The test now walks
+       * every string in this file instead of a hand-picked four.
+       */
+      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and transcription on top.",
+      /** Visually hidden on the connect screen: the heading above it has
+       *  already said what this is, and a second label would be a second
+       *  reading of the same sentence. */
+      fieldLabel: "Your Flux Router key",
+      placeholder: "Paste your key here",
       /**
        * THE BUTTON SAYS WHAT HAPPENS, NOT WHAT IT DOES MECHANICALLY.
        *
@@ -272,7 +519,447 @@ export const FIRST_RUN_COPY = {
        * flow that does not exist yet.
        */
       bodyBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
-      secondBare: "Any OpenAI-style service you already pay for will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
+      // "Any OpenAI-style service you already PAY for" was the one money
+      // word left in the flow, on the one branch a blank machine reaches by
+      // declining the key. The banned-word regex had every other spelling of
+      // money and not that one. What matters about the service is that they
+      // already have it, not what they hand over for it.
+      secondBare: "Any OpenAI-style service you already use will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
+    },
+  },
+  /**
+   * STEP FOUR. The Chief asks one question and offers five answers.
+   *
+   * The five are jobs, not features. "Brief me every morning" is a thing
+   * somebody wants; "connect your calendar" is a thing software wants, and
+   * the whole re-cut is that the second one is only ever asked for by the
+   * first. Every row carries what it still needs, recomputed live, so
+   * nothing is offered that cannot run and nothing is hidden that could.
+   *
+   * The behaviour behind these words is in src/lib/first-run-jobs.ts, which
+   * holds no readable strings of its own. The two lists are pinned together
+   * by a test rather than by hoping.
+   */
+  chat: {
+    jobs: {
+      question: "What can I take off your plate",
+      lead: "Pick one and I will do it now. I only ask for what that job needs, when it needs it.",
+      /** A machine with nothing to think with. The jobs are still shown,
+       *  because seeing what this would do for you is the reason to connect
+       *  anything, but not one of them is claimed to be ready. */
+      leadNoBrain: "Pick one anyway. I will show you exactly what it needs before anything happens.",
+      status: {
+        connected: "Connected. Smart routing on, and your apps are a click away when a job needs them.",
+        noBrain: "Nothing to think with yet, so every job below is waiting on one connection.",
+        /**
+         * THE ENGINE IS HERE AND NOBODY IS SIGNED IN TO IT.
+         *
+         * This line did not exist, and the machine it describes read as
+         * `local` because `nothingToThinkWith` is false on it: an engine that
+         * is present but signed out is not a blank machine. The Chief
+         * therefore opened with "Running on what is already on this
+         * computer" to somebody with nothing running at all. Two ways out of
+         * it, because this person really has two: sign in to what they
+         * already have, or connect a key.
+         */
+        signedOut: "Nothing on this computer is signed in yet, so every job below is waiting on a sign in or a connection.",
+        /** Wrapped around the engine's real name. The name comes from the
+         *  reading, never from a sample: a status line that named an engine
+         *  this computer does not have would be the first thing the person
+         *  read and the first thing that was wrong. */
+        localPrefix: "Running on",
+        localTail: "here on this computer.",
+        /** A runnable engine whose name came back blank. It is running, so
+         *  this still says so; what it cannot do is name it. A machine with
+         *  NOTHING runnable never reaches here any more: see `signedOut`. */
+        localUnnamed: "Running on what is already on this computer.",
+      },
+      rows: [
+        {
+          id: "brief",
+          title: "Brief me every morning",
+          sub: "What is fixed, what is owed, what will slip.",
+        },
+        {
+          id: "day",
+          title: "Organise my day",
+          sub: "Today's commitments, in an order that survives the first phone call.",
+        },
+        {
+          id: "notes",
+          title: "Make sense of these notes",
+          sub: "Paste anything. Get back what matters and what to do next.",
+        },
+        {
+          id: "research",
+          title: "Look into something for me",
+          sub: "I search the web and read what comes back, then tell you where each thing came from.",
+        },
+        {
+          id: "business",
+          title: "Help me run my business",
+          // A count claimed on a row that renders BEFORE anything is
+          // installed, and with no package in front of it to read. The
+          // crew screen counts because it has the reading; this row cannot,
+          // so it stops claiming a number rather than claiming a stale one.
+          sub: "Your crew and a Monday review, set up in one go.",
+        },
+      ] as readonly FirstRunJobRowCopy[],
+      /** What one missing thing is called out loud. Shared by the tag on a
+       *  job row and the bold on a connect row, so the person reads the same
+       *  name in both places. */
+      needLabels: {
+        flux: "Flux Router",
+        gmail: "Gmail",
+        googlecalendar: "Google Calendar",
+      },
+      tags: {
+        ready: "ready now",
+        flux: "needs Flux Router",
+        /** Followed by one need label. */
+        connectOne: "connect",
+        /** Follows a count, from two upwards. */
+        countTail: "to connect",
+      },
+      /**
+       * SAID ONLY WHEN THERE IS SOMETHING TO SAY.
+       *
+       * Searching on an unconfigured machine goes out anonymously and uses
+       * no account of the person's, which is checked in first-run-jobs.ts
+       * against the route rather than assumed, so the ordinary case has no
+       * line at all. These three are the machines where somebody chose
+       * otherwise before they got here, and a job that searched without
+       * saying whose account it was searching on would be the thing that
+       * check exists to prevent.
+       */
+      searchNotes: {
+        "own-account": "Searching goes out through the search account you connected yourself.",
+        unconfigured: "The search service picked for this computer has no key on it yet, so I will work from what you tell me and say where I am unsure.",
+        off: "Web search is switched off on this computer, so I will answer from what you give me and say plainly what I could not check.",
+      },
+      /** The way out for somebody whose thing is not on the list. Goes
+       *  straight to the notes box, which asks for nothing. */
+      escape: "Or just tell me what you need",
+      /**
+       * BLANK MACHINE, NO KEY, AND THEY TYPED SOMETHING ANYWAY.
+       *
+       * There is nothing here to ask, and Murage does not offer to fetch a
+       * model. So this keeps what they wrote and says so. It promises no
+       * answer and starts no wait, because a box that spins forever tells
+       * somebody something false no matter how carefully the words around it
+       * are chosen.
+       */
+      kept: "I have that, and I am keeping it. The moment there is something here to think with, it is the first thing I pick up.",
+    },
+  },
+  /**
+   * STEP FIVE. The chosen job, from what it needs through to its result.
+   *
+   * `connect` is the front of it, and it is the standalone apps step's
+   * replacement: the same two sign-ins, asked for by a job the person just
+   * picked, with the reason on each row written for THAT job rather than in
+   * general.
+   */
+  flow: {
+    "do-it": {
+      connect: {
+        headingOne: "One thing, and then I can do it.",
+        /** Follows a count, from two upwards. */
+        headingManyTail: "things, and then I can do it.",
+        lead: "Everything this job needs is on this screen. Nothing else gets asked, and you can stop after any of them.",
+        /**
+         * The reason on each row, written for the job in hand.
+         *
+         * "You sign in on Google's own screen, and take it back there" is
+         * the sentence that does the work: the person is about to be sent to
+         * a browser and handed back, and being told that first is the
+         * difference between a step and a surprise.
+         *
+         * THE SIMULATION PUT THAT SAME SENTENCE ON A SLACK ROW, where it is
+         * simply untrue. Slack is not offered in 0.1.58 at all
+         * (`SETUP_JOB_APPS`), so the wrong sentence is not here to be read;
+         * if Slack ever comes back it comes back saying Slack's own screen.
+         */
+        reasons: {
+          flux: "your apps run through it, and it picks the right model for this job",
+          gmail: "so I can see what came in overnight and who is waiting. You sign in on Google's own screen, and take it back there.",
+          googlecalendar: "so I know what is already fixed in your day. You sign in on Google's own screen, and take it back there.",
+        },
+        /** Offered only by a job that has a box, because a job with no box
+         *  has nothing to type instead. */
+        skipToInput: "Skip that and let me type it in instead",
+        elsewhere: "Something else",
+        /**
+         * THE CONNECTOR STORE COULD NOT BE READ, WHICH IS NOT THE SAME AS
+         * NOTHING BEING CONNECTED.
+         *
+         * The rows below stay conservative and ask for everything, because
+         * claiming a connection we cannot see is how a job fails on the
+         * person's first real request. What the SCREEN can do, and the tag on
+         * a row cannot, is say which of the two this is.
+         */
+        unreadable: "I could not read your connected accounts just now, so some of these may already be on.",
+      },
+      /**
+       * THE BOX. Three of them, one per job that asks for something.
+       *
+       * `placeholder` IS A PLACEHOLDER AND MUST STAY ONE. An earlier version
+       * pre-filled the notes box with example text and it was caught in
+       * review: text in the box is the person's, always, and a box that
+       * arrives with words in it is a box somebody sends without noticing.
+       */
+      input: {
+        day: {
+          heading: "What is on today?",
+          lead: "Meetings, deadlines, people you owe something to. Rough is fine, one per line.",
+          placeholder: "9:30 standup\nboard pack due Thursday\ncall Rahul back about the lease",
+          rows: 7,
+        },
+        notes: {
+          heading: "Paste the notes.",
+          lead: "Anything at all. Meeting scrawl, a wall of messages, half a plan.",
+          placeholder: "paste anything here",
+          rows: 7,
+        },
+        topic: {
+          heading: "What should I look into?",
+          lead: "One line is enough. I will tell you what I find and what I could not confirm.",
+          placeholder: "whether we should move our billing to Stripe",
+          rows: 3,
+        },
+        /** Said only when the job's accounts are all connected, so the
+         *  person knows what they do not have to type out again. */
+        calendarConnected: "Your calendar is connected, so add anything that is not already in it.",
+        go: "Go on then",
+        elsewhere: "Something else",
+      },
+      /**
+       * THE THREE LINES WHILE IT WORKS.
+       *
+       * Every number in them is counted from what the person typed. The
+       * fixed sentences are here; the counted ones are assembled in
+       * first-run-flow.ts out of these pieces and the parsed items, and they
+       * are checked against the house rules there.
+       */
+      working: {
+        ready: "Ready.",
+        businessShape: "Picking a shape that fits one person running the whole thing.",
+        /**
+         * THE SIMULATION SAID "THREE BOTS, TWO ROUTINES" AND THAT IS WRONG.
+         *
+         * `library/packages/starter-solo-business.json` holds two agents and
+         * one routine. A first run that announced a third bot would be
+         * describing a crew the person does not then have, on the one screen
+         * whose whole job is showing them what they just got.
+         *
+         * The fix for that was "Two bots and one review", which is the same
+         * mistake with today's number in it: this line is one of three shown
+         * while the package installs, and `workingLines` is handed the job
+         * and what the person typed, never the crew. So it names the crew
+         * rather than counting one it cannot see. The counting happens on
+         * the screen that follows, which does have the reading.
+         */
+        businessBuilt: "Your crew and one review, and no plumbing for you to do.",
+        topicSourced: "Keeping what has a source, flagging what does not.",
+        /** Wrapped around the first words of what they typed, so they can
+         *  see it is their topic and not a generic one. */
+        topicPrefix: "Reading around",
+        noneTimed: "None has a time on it.",
+        timedTail: "a time on it.",
+        thingOne: "thing.",
+        thingMany: "things.",
+        noneDue: "None of them carries a deadline I can see.",
+        dueTail: "a deadline and no slot.",
+        hasOne: "has",
+        hasMany: "have",
+      },
+      /** The day and the brief share a result; only the header, the
+       *  provenance and the morning offer differ. */
+      day: {
+        headerBrief: "Tomorrow morning",
+        headerDay: "Today",
+        fromLines: "From your",
+        linesOne: "line",
+        linesMany: "lines",
+        /**
+         * THE SOURCES THIS SCREEN DID NOT READ, NAMED AS SUCH.
+         *
+         * The provenance line used to read "From your 4 lines, plus your
+         * calendar and your mail" whenever those two were connected, and not
+         * one field on the screen came from either of them: the risk, Fixed
+         * and "Someone is waiting" are all `parseLines` over what the person
+         * typed. Naming a grant the screen never touched, on the release
+         * whose whole rule is that nothing is claimed that was not read, is
+         * the worst possible place to do it.
+         *
+         * Connecting them is also not nothing, so they are still named. They
+         * are named as what they are: connected, and not read for this one.
+         */
+        notRead: "I have not read",
+        plusCalendar: "your calendar",
+        plusMail: "your mail",
+        notReadTail: "for this one. Everything here comes from what you gave me.",
+        riskEyebrow: "The one that will slip",
+        /**
+         * WHY THERE ARE TWO VERSIONS OF THE DEADLINE REASON.
+         *
+         * The approved wording was "It is the only thing you gave me with a
+         * deadline and no time against it", which is a fine sentence right
+         * up to the second such line, and then it is a claim about their day
+         * that is simply untrue. The number is counted, like every other
+         * number on this screen, and the sentence follows the count.
+         */
+        riskDueOnly: "It is the only thing you gave me with a deadline and no time against it.",
+        riskDueFirstPrefix: "It is the first of",
+        riskDueFirstTail: "things you gave me with a deadline and no time against it.",
+        riskOwed: "Somebody is waiting on it and it has no time against it, so it loses to everything that has.",
+        riskAdviceGap: "Put it in the first gap your fixed points leave open.",
+        riskAdviceSlot: "Give it a slot before anything else claims one.",
+        /** IT SAYS NOTHING IS AT RISK RATHER THAN MANUFACTURE ONE. An
+         *  earlier version invented "or it moves to Wednesday" and was
+         *  caught in audit. */
+        calmEyebrow: "Nothing here is at risk",
+        calmBody: "Everything you gave me either has a time on it or nobody waiting for it.",
+        calmSecond: "Put a deadline or a person against any line and I will tell you which one goes first.",
+        fixedHeading: "Fixed",
+        fixedEmpty: "Nothing you gave me has a time against it.",
+        waitingHeading: "Someone is waiting",
+        waitingEmpty: "Nobody is waiting on anything you gave me.",
+      },
+      /**
+       * THE MORNING OFFER, ON THE BRIEF RESULT AND NOWHERE ELSE.
+       *
+       * "It never goes to your inbox" is load-bearing. Murage reads their
+       * mail; mailing them a summary of their mail is circular, and the
+       * owner has ruled on it. The brief is delivered here, in the app.
+       *
+       * One button and one time, deliberately. The shipped card had a time
+       * picker and then reported 07:00 back whatever was chosen, so there is
+       * no second time to get wrong: the offer, the request and the
+       * confirmation are all built from `FIRST_RUN_BRIEF_TIME`, which is the
+       * server template's own default.
+       */
+      morning: {
+        heading: "Want this waiting for you every morning?",
+        bodyPrefix: "Built at",
+        bodyTail: "on weekdays and waiting here when you open this computer. It never goes to your inbox.",
+        /**
+         * THE PART THE BUTTON WAS DOING WITHOUT SAYING SO.
+         *
+         * Pressing this schedules the routine AND runs it once, right then,
+         * on the Chief's engine (server/index.ts, POST /api/setup/routine).
+         * That is the right behaviour: a scheduled routine is a promise and a
+         * routine that has run is proof, and somebody should see the thing
+         * work before they are left alone with it.
+         *
+         * Nothing on the card said so. The heading asked about "every
+         * morning", the body described 7:00 on weekdays, and the
+         * confirmation said "Set." Anybody whose routing is metered pressed a
+         * button labelled as scheduling and got a turn they had not agreed
+         * to. So the card says it before it happens, and the confirmation
+         * says it again while it is happening.
+         *
+         * NO FIGURE AND NO MENTION OF WHAT A TURN COSTS. Telling somebody
+         * what they are about to spend is still selling on price, and the
+         * rule is absolute. What they are owed is the fact.
+         */
+        bodyNow: "I will build the first one now so you can see what arrives.",
+        buttonTail: ", weekdays",
+        takenPrefix: "Set. Weekdays at",
+        takenNow: "The first one is building now.",
+        working: "Setting it up",
+        failure: "That did not go through. Ask me again whenever you like.",
+      },
+      notes: {
+        header: "What is in there",
+        fromPrefix: "From the",
+        fromTailOne: "line you pasted.",
+        fromTailMany: "lines you pasted.",
+        eyebrow: "Next steps, in the order I would take them",
+        tagDue: "has a date",
+        tagOwed: "owed",
+        tagTimed: "timed",
+        tagOpen: "open",
+        empty: "There was nothing in there I could turn into a step. Give me a line with a person or a date in it.",
+        caveat: "I ordered these by what has a date on it and who is waiting. Nothing else was in the notes, so nothing else is in the list.",
+      },
+      research: {
+        /** Said under a real answer on a machine running on its own engine.
+         *  Never on a machine with nothing: that machine never reaches this
+         *  screen, because the job asks for the key first. */
+        onLocal: "Running on the local model. Flux Router would put a bigger one on this, and it reads faster.",
+      },
+      /**
+       * THE CREW, AND IT MATCHES THE PACKAGE OR IT IS WRONG.
+       *
+       * The names, the count, the schedule and the fact that it installs
+       * switched off all come from `starter-solo-business.json` at render
+       * time. Only the one-line descriptions are written here, keyed by the
+       * package's own agent keys, so a renamed bot shows its new name and a
+       * bot that disappears takes its description with it.
+       */
+      business: {
+        header: "Your crew",
+        lead: "Installed and running. Change any of it whenever you like.",
+        /**
+         * THE EYEBROW COUNTS, IT DOES NOT REMEMBER.
+         *
+         * `botsEyebrowMany` was the literal "Two bots", so a package that
+         * grew a third would have put "Two bots" directly above three names,
+         * on the one screen whose entire job is showing somebody what they
+         * just got. The count now comes off the crew reading through
+         * `botsEyebrowLine`; these are the noun it counts.
+         */
+        botsEyebrowOne: "One bot",
+        botsEyebrowMany: "bots",
+        roles: {
+          "business-planner": "priorities, and what finished means",
+          "draft-partner": "writes it, then reviews it",
+        },
+        reviewEyebrow: "One review, paused until you want it",
+        reviewTail: "It arrives switched off so nothing starts behind your back.",
+        minutesTail: "minutes.",
+        offer: "Switch the Monday review on",
+        offerWhy: "It works from what you tell it. Connect your calendar later and it reads that too.",
+        offerTaken: "On. It runs on Monday.",
+      },
+      /** The way back to the Chief, on every result. Clears the job, the
+       *  text and the parsed items; none of them was ever persisted. */
+      again: "Take something else off my plate",
+      /**
+       * NO JOB IS CHOSEN, AND THE CARD IS STILL IN THE TRANSCRIPT.
+       *
+       * "Something else" puts the `chat` step back, which drops the recorded
+       * job id, which is exactly what makes the Chief's question live again.
+       * This card is below that question and has nothing of its own left to
+       * show. It used to render THE EMPTY STRING: the person pressed the only
+       * control on screen and landed on blank space.
+       *
+       * It points up rather than offering a second control, because the five
+       * rows above it are the choice and two places to pick the same thing is
+       * how a thread stops reading as a conversation.
+       */
+      noJob: "Nothing picked yet. The list is just above this one, and I will get on with whatever you choose.",
+      /** The view has not come back yet, on a card that cannot say anything
+       *  true until it has. Never a spinner with no words: a blank body is
+       *  the defect this whole release is about. */
+      waiting: "One moment while I catch up with this computer.",
+      /**
+       * A SCREEN THAT COULD NOT BE DRAWN, SAID OUT LOUD INSTEAD OF SHOWN AS
+       * A BLANK.
+       *
+       * The screen builders return null when there is nothing to assemble,
+       * which is the honest answer: a connect screen with nothing missing
+       * and an input screen for a job with no box are both "there is nothing
+       * here". What the card may not do with that null is draw a lead with
+       * nothing under it, or draw nothing at all. `firstRunStage` makes the
+       * case unreachable; this is what it would say if it ever were, and it
+       * carries the way back like every other screen in the flow.
+       */
+      lost: "I have lost my place on that one. Pick something and I will start again.",
+      /** Something in the step itself did not go through. Said where it
+       *  happened, and whatever they were pressing stays pressable. */
+      failure: "That did not go through. Try it again whenever you are ready.",
     },
   },
   apps: {
@@ -549,6 +1236,24 @@ export function signedOutAgentsLine(names: readonly string[]): string {
   return `You have ${listed} on this computer, and nobody is signed in to ${them} yet.`;
 }
 
+/**
+ * "One bot", "Two bots", "Three bots": the crew eyebrow, counted.
+ *
+ * Spelled out because the whole flow says numbers the way a person says
+ * them, and spelled only as far as a crew plausibly goes; past that the
+ * figure is better than a word nobody reads. Zero is "No bots" rather than
+ * "Zero bots", and it exists because a package with no agents in it must
+ * still leave words on the screen.
+ */
+const SPELLED = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"] as const;
+
+export function botsEyebrowLine(count: number): string {
+  const words = FIRST_RUN_COPY.flow["do-it"].business;
+  const whole = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (whole === 1) return words.botsEyebrowOne;
+  return `${SPELLED[whole] ?? String(whole)} ${words.botsEyebrowMany}`;
+}
+
 /** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */
 export function joinNames(names: readonly string[]): string {
   const clean = names.map((name) => name.trim()).filter(Boolean);
@@ -592,6 +1297,77 @@ export function briefRanLine(time: string): string {
 export function greetingLine(name: string): string {
   const clean = name.trim();
   return clean ? `Good to meet you, ${clean}. Right then.` : "Good to meet you. Right then.";
+}
+
+/**
+ * What the Chief calls somebody who skipped the name field.
+ *
+ * The approved flow says skipping sets the name to "there", and the sentence
+ * it is there for is the Chief's question a step later: "What can I take off
+ * your plate, there?", which reads correctly and warmly.
+ *
+ * IT IS A RENDER FALLBACK AND IT WRITES NOTHING, AND IT HAS TO BE CALLED.
+ * Nothing called it: `FirstRunJobsCard` passed `view.ownerName` straight to
+ * `chiefQuestion`, so a skipped hello produced the bare "What can I take off
+ * your plate?" and the word this function exists for reached no screen at
+ * all. It is called at that one site now.
+ *
+ * The simulation sets its own `S.name`, which is a variable in a mock-up. The
+ * obvious translation of that is to save "there" onto the owner profile when
+ * the step is skipped, and that would be wrong twice over. It would put a word the person never typed into
+ * the profile every other surface in the app reads from, and it would defeat
+ * the greeting rule in the same spec: a skipped name DROPS the clause, so
+ * `greetingLine` says "Good to meet you." and a stored "there" would make it
+ * say "Good to meet you, there." Address and greeting want different things
+ * from the same blank, which is only possible while the blank stays blank.
+ *
+ * So nothing is persisted, `live.ownerName` stays "" and `setupStepDone` keeps
+ * treating the step as skipped rather than answered, and the only thing that
+ * changes is the word on screen in the one sentence that needs one.
+ */
+export function firstRunAddress(name: string | null | undefined): string {
+  return (name ?? "").trim() || "there";
+}
+
+/**
+ * The detection report's opening line.
+ *
+ * It says the looking around happened WHILE THEY TYPED, because it did: the
+ * hello card says so as they are filling it in, and a report that then claimed
+ * to have gone away and looked would be describing a wait that never happened.
+ *
+ * A SKIPPED NAME DROPS THE CLAUSE RATHER THAN FILLING IT. "Good to meet you,
+ * there. I had a look around" is a sentence nobody writes, and the whole
+ * comma clause is what goes, not the greeting. This is the one place where
+ * `firstRunAddress` would be wrong, which is why the two are separate
+ * functions and neither calls the other.
+ */
+export function lookedAroundLine(name: string | null | undefined): string {
+  return `${meetingGreeting(name)} I had a look around this computer while you typed.`;
+}
+
+/**
+ * The same opening on a machine where nothing was found.
+ *
+ * It is the Flux screen's, not detection's, because detection never ran: a
+ * machine with nothing to think with skips step two entirely, so this screen
+ * owes the person the report as well as the offer. Saying what was looked FOR
+ * is what makes the next sentence an explanation rather than a sales pitch.
+ *
+ * "found nothing I can think with" and not "found nothing". A bare machine
+ * usually has plenty on it, including the engine in the box, which reports
+ * itself available with an empty catalogue. What it has none of is something
+ * to think with, and that distinction is the whole release.
+ */
+export function foundNothingLine(name: string | null | undefined): string {
+  return `${meetingGreeting(name)} I looked around this computer while you typed and found nothing I can think with.`;
+}
+
+/** "Good to meet you, Sean." or, when the name was skipped, the greeting with
+ *  the whole comma clause gone rather than "there" poured into it. */
+function meetingGreeting(name: string | null | undefined): string {
+  const clean = (name ?? "").trim();
+  return clean ? `Good to meet you, ${clean}.` : "Good to meet you.";
 }
 
 /** The brief card's button, once a time is chosen. A button that repeats the

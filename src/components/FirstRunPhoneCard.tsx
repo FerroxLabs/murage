@@ -1,3 +1,15 @@
+// PARKED, PENDING THE OWNER'S DECISION (W16, 0.1.58).
+//
+// the phone and Tailscale walkthrough is not a first-run
+// step any more. It is real, tested work and it is NOT deleted.
+//
+// Nothing renders this today: server/setup-conversation.ts never emits its
+// card variant. It stays in the tree, compiling and untouched otherwise, and
+// its step calls point at PARKED_CARD_STEP rather than at a step that no
+// longer exists. Whether it moves to another surface, returns later in the
+// flow, or goes, is the owner's call and it has not been taken. Deleting
+// tested work on a guess is how you lose a week.
+//
 // CARD NINE: put me in your pocket, or the honest version of it.
 //
 // THE HARD RULE THIS CARD EXISTS FOR: pairing runs over Tailscale, and a
@@ -30,6 +42,7 @@ import {
   type CompanionState,
 } from "./PhoneSetupFlow";
 import {
+  PARKED_CARD_STEP,
   FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
   FIRST_RUN_QUIET,
@@ -149,7 +162,7 @@ export function FirstRunPhoneCard({ settled }: { settled: boolean }) {
     if (busy) return;
     setFailure("");
     try {
-      await skipSetupStep("routines");
+      await skipSetupStep(PARKED_CARD_STEP);
       setDone(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));

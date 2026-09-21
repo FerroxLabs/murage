@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { composerFileIntake, composerPasteIntake } from "./composer-intake";
 import { composerSendGate } from "./composer-send-gate";
 import {
   composerUploadsPending,
@@ -189,9 +190,152 @@ describe("the composer's send path", () => {
       expect(source).toContain('gate.kind === "upload-pending"');
     });
 
-    it("wraps every composer intake path, so drop and paste are no safer or worse than the attach button", () => {
-      expect(composer().match(/trackComposerUpload\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-      expect(code("components/ComposerAttachments.tsx")).toContain("trackComposerUpload(");
+  });
+});
+
+// EVERY INTAKE PATH, RUN, WITH A SEND ATTEMPTED WHILE IT IS IN FLIGHT.
+//
+// THE GUARD THIS REPLACES counted how many times the string
+// `trackComposerUpload(` appeared in Composer.tsx and asked for at least two,
+// plus one occurrence in ComposerAttachments.tsx. A reviewer unwrapped the
+// paste path and added a decoy call on the attach path: the count stayed at
+// two and 18 tests stayed green, with a pasted image able to land on the next
+// person's next message. An occurrence is not a wrapped intake, and a count
+// of occurrences cannot tell which path each one belongs to.
+//
+// The wrapping is `src/lib/composer-intake.ts` now, and these run it. Attach
+// and drop are the same call (`composerFileIntake`) because they were already
+// meant to be the same intake; paste has its own because its upload really is
+// different. Each one is executed with the gate consulted mid-flight, which
+// is the property: while this is running, that send is held.
+describe("every way a file gets into a draft holds the send", () => {
+  /** A file as the composer sees one, with the upload under the test's
+   *  control so the gate can be asked while it is still in the air. */
+  const png = (name: string) => ({ name, size: 4, type: "image/png", text: async () => "" });
+
+  const uploaded = (name: string) => ({ kind: "image" as const, id: name, name, url: `blob:${name}` });
+
+  it("holds it for the attach button, until the chips are appended", async () => {
+    let finish = (_: unknown) => {};
+    const added: unknown[] = [];
+    const seenWhileAppending: boolean[] = [];
+    const intake = composerFileIntake({
+      threadId: "thread-a",
+      files: [png("shot.png")],
+      allowImages: true,
+      getPath: (file) => file.name,
+      uploadImage: async (file) => {
+        await new Promise((resolve) => { finish = resolve; });
+        return uploaded(file.name) as never;
+      },
+      onAdd: (attachments) => {
+        // The window the old code lost the image in: upload resolved, chips
+        // not appended yet.
+        seenWhileAppending.push(composerUploadsPending("thread-a"));
+        added.push(...attachments);
+      },
+      onNotice: () => {},
     });
+
+    expect(composerSendGate({ text: "here you go", threadId: "thread-a" }))
+      .toEqual({ kind: "upload-pending" });
+    finish(undefined);
+    await intake;
+    expect(added).toHaveLength(1);
+    expect(seenWhileAppending).toEqual([true]);
+    expect(composerSendGate({ text: "here you go", threadId: "thread-a" })).toEqual({ kind: "compose" });
+  });
+
+  it("holds it for a dropped file, by being the same intake the button uses", async () => {
+    // Not "looks the same": the same function, with the drop target's own
+    // mounted check, which is the only thing that differs.
+    let listening = true;
+    const notices: string[] = [];
+    // An image dropped on a responder that cannot open one: refused out loud,
+    // which is the sentence the drop path exists to deliver.
+    const dropped = () => ({
+      threadId: "thread-a" as const,
+      files: [png("shot.png")],
+      allowImages: false,
+      getPath: (file: { name: string }) => file.name,
+      uploadImage: async () => null,
+      onAdd: () => {},
+      onNotice: (message: string) => notices.push(message),
+      stillListening: () => listening,
+    });
+
+    const intake = composerFileIntake(dropped());
+    expect(composerSendGate({ text: "and this", threadId: "thread-a" }))
+      .toEqual({ kind: "upload-pending" });
+    await intake;
+    expect(composerSendGate({ text: "and this", threadId: "thread-a" })).toEqual({ kind: "compose" });
+    expect(notices, "the refusal never reached the composer").toHaveLength(1);
+
+    listening = false;
+    notices.length = 0;
+    await composerFileIntake(dropped());
+    expect(notices, "a notice was written to a composer that had gone").toHaveLength(0);
+  });
+
+  it("holds it for a pasted image, which is the path that was unwrapped", async () => {
+    let finish = (_: unknown) => {};
+    const added: unknown[] = [];
+    const intake = composerPasteIntake({
+      threadId: "thread-a",
+      files: [png("clip.png")],
+      uploadImage: async (file) => {
+        await new Promise((resolve) => { finish = resolve; });
+        return uploaded(file.name) as never;
+      },
+      onAdd: (attachments) => added.push(...attachments),
+      onError: () => {},
+    });
+
+    expect(composerSendGate({ text: "look at this", threadId: "thread-a" }))
+      .toEqual({ kind: "upload-pending" });
+    finish(undefined);
+    await intake;
+    expect(added).toHaveLength(1);
+    expect(composerSendGate({ text: "look at this", threadId: "thread-a" })).toEqual({ kind: "compose" });
+  });
+
+  it("releases the gate for every path when the upload fails", async () => {
+    // A refused image must never wedge the composer shut, whichever way it
+    // arrived.
+    const errors: string[] = [];
+    await composerPasteIntake({
+      threadId: "thread-a",
+      files: [png("bad.png")],
+      uploadImage: async () => { throw new Error("upload failed"); },
+      onAdd: () => {},
+      onError: (message) => errors.push(message),
+    });
+    expect(errors).toEqual(["upload failed"]);
+    expect(composerUploadsPending("thread-a")).toBe(false);
+
+    await composerFileIntake({
+      threadId: "thread-a",
+      files: [png("bad.png")],
+      allowImages: true,
+      getPath: (file) => file.name,
+      uploadImage: async () => { throw new Error("upload failed"); },
+      onAdd: () => {},
+      onNotice: () => {},
+    });
+    expect(composerUploadsPending("thread-a")).toBe(false);
+  });
+
+  it("keeps one thread's paste out of another thread's send", async () => {
+    let finish = (_: unknown) => {};
+    const intake = composerPasteIntake({
+      threadId: "thread-a",
+      files: [png("clip.png")],
+      uploadImage: async () => { await new Promise((resolve) => { finish = resolve; }); return null; },
+      onAdd: () => {},
+      onError: () => {},
+    });
+    expect(composerSendGate({ text: "unrelated", threadId: "thread-b" })).toEqual({ kind: "compose" });
+    finish(undefined);
+    await intake;
   });
 });

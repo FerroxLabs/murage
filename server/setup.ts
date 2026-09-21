@@ -116,8 +116,10 @@ function signedOut(instance: SetupInstanceReading): boolean {
   // that WAS working stopped being counted, and on a machine with nothing
   // else the card would have offered a sign-in command for it. That is the
   // wrong advice twice over: Fuigo is a CLIENT, its missing credential is a
-  // key rather than a login, and "bare-needs-key" is the card that already
-  // says so correctly.
+  // key rather than a login, and the Flux card's blank-machine opening is
+  // what already says so correctly. (That framing lived on its own card,
+  // "bare-needs-key", until that card turned out to have no controls on it
+  // and was parked; the words moved onto the card that takes the key.)
   //
   // Everything else about the bundled engine is unchanged: it still has to
   // be available with a non-empty catalogue to count as an agent, which is

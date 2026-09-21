@@ -43,7 +43,31 @@ export function listStarterProfiles(libraryRoot = LIBRARY_ROOT) {
     const pkg = manifest.definition.package;
     return { id, name: pkg.name, summary: pkg.summary, outcomes: pkg.outcomes, members: pkg.agents.length,
       agents: pkg.agents.map(agent => ({ key: agent.key, name: agent.name })),
-      routines: (pkg.routines ?? []).map(routine => ({ key: routine.key, name: routine.name })),
+      // THE SCHEDULE TRAVELS WITH THE ROUTINE, because the first run's crew
+      // screen describes what it just installed and must describe the real
+      // thing. The approved simulation said three bots and two routines; the
+      // package holds two agents and one routine that installs SWITCHED OFF,
+      // and "one review, paused until you want it" is only sayable from these
+      // fields. A screen that read them from anywhere else would be a second
+      // copy of the package, written by hand, on the one screen the person can
+      // immediately go and check.
+      routines: (pkg.routines ?? []).map(routine => ({ key: routine.key, name: routine.name,
+        time: routine.schedule.type === "daily" ? routine.schedule.time : "",
+        weekdays: routine.schedule.type === "daily" ? routine.schedule.weekdays ?? [] : [],
+        durationMinutes: routine.durationMinutes ?? 0,
+        enabledAfterInstall: Boolean(routine.enabledAfterInstall) })),
+      // INERT TODAY, AND THE FIRST RUN MUST NOT BUILD ON IT. All three
+      // shipped profiles declare `requirements.apps: []`, so this is `false`
+      // on every profile that exists and its only reader is the starter
+      // profile card, which therefore always prints "no connected accounts
+      // required to begin". That is currently true, so the card is not
+      // lying, and this is left exactly as it is.
+      //
+      // It is recorded here because per-job connect in the 0.1.58 first run
+      // looked like it could read this and cannot: it would answer "nothing
+      // is needed" for every job. The first run derives what a job needs from
+      // the job itself and from `connectedJobApps` on the setup view
+      // (shared/setup.ts), which is new work rather than a reuse of this.
       connectionsRequired: pkg.requirements.apps.length > 0 };
   });
 }

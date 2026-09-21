@@ -771,6 +771,15 @@ export type Action =
       sendId?: string;
       replyToId?: string;
       threadId?: string;
+      /**
+       * Runs once the server has ACCEPTED the message, queued or delivered.
+       *
+       * The only confirmation a caller gets that anything happened. `dispatch`
+       * returns nothing, so without this a caller cannot tell a message that
+       * landed from one the route refused, and the first run settled its last
+       * step on a send it had never heard back from.
+       */
+      onSent?: () => void;
       /** Runs after a failed send. Returning true means the caller has shown
        * the failure where it happened, so the store adds no toast of its own. */
       onError?: (error: unknown) => boolean | void;
@@ -2122,6 +2131,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   text: action.text,
                 });
               }
+              // The route answered, so the message is the server's problem
+              // now. Said last, after the state it implies has been applied.
+              action.onSent?.();
             })
             .catch((error) => {
               if (action.onError?.(error) !== true) showError(error);

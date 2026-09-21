@@ -1,3 +1,16 @@
+// PARKED, PENDING THE OWNER'S DECISION (W16, 0.1.58).
+//
+// the closing card. `flow` now ends on the job's own
+// result, which carries "take something else off my plate", so a separate
+// "what would you like to do next?" would be a second ending to one scene.
+//
+// Nothing renders this today: server/setup-conversation.ts never emits its
+// card variant. It stays in the tree, compiling and untouched otherwise, and
+// its step calls point at PARKED_CARD_STEP rather than at a step that no
+// longer exists. Whether it moves to another surface, returns later in the
+// flow, or goes, is the owner's call and it has not been taken. Deleting
+// tested work on a guess is how you lose a week.
+//
 // CARD EIGHT: what would you like to do.
 //
 // Every button here SAYS something, in the person's own voice, into the

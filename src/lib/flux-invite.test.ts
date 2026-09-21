@@ -278,13 +278,17 @@ describe("nothing in the app is gated on a Flux key", () => {
     expect(card).not.toMatch(/inset-0/);
     expect(card).not.toMatch(/role="dialog"|aria-modal/);
     expect(card).toContain("dismiss");
-    // And the rail beside it is a passenger, not a gate: an <aside>, not a
-    // dialog, with no backdrop and a close button. Comments are stripped
-    // first, because this file's own comments name the thing it forbids.
-    const rail = readFileSync(join(srcRoot, "components/FirstRunRail.tsx"), "utf8")
+    // And the phase bar above it is a passenger, not a gate: a <nav>, not a
+    // dialog, with no backdrop and a close button. It was an <aside> down the
+    // right hand side until W16 replaced the rail with the pill bar the
+    // approved flow shows; the rule is the landmark, not which one. Comments
+    // are stripped first, because this file's own comments name the thing it
+    // forbids.
+    const phases = readFileSync(join(srcRoot, "components/FirstRunPhases.tsx"), "utf8")
       .replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(rail).not.toMatch(/role="dialog"|aria-modal/);
-    expect(rail).not.toMatch(/fixed inset-0/);
-    expect(rail).toContain("<aside");
+    expect(phases).not.toMatch(/role="dialog"|aria-modal/);
+    expect(phases).not.toMatch(/fixed inset-0/);
+    expect(phases).toContain("<nav");
+    expect(phases).toContain("onClick={onClose}");
   });
 });

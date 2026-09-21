@@ -123,7 +123,7 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
-import { subscribe } from "./sendlane.ts";
+import { sendlaneStartupNotice, subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
   cleanupStaleAttachmentPartials,
@@ -318,6 +318,7 @@ import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setu
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
 import { type EngineChoice, pickDefaultEngine } from "./default-engine.ts";
 import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
+import { chiefConfirmation, chiefConfirmationsFor } from "../shared/first-run-chief.ts";
 import {
   type SetupLiveState,
   type SetupRoutineReading,
@@ -1785,14 +1786,24 @@ function seatChiefOfStaff(): void {
 async function setupLiveState(): Promise<SetupLiveState> {
   seatChiefOfStaff();
   const chiefBotId = setup.chiefBotId();
-  const connectedApps = await (async () => {
+  // WHICH apps, not just how many. Per-job connect has to name the one that
+  // is missing, and a count cannot. One call for both: `connectedServices`
+  // goes to the broker, and asking twice on a route documented as needing to
+  // stay cheap would double that for an answer we already have.
+  //
+  // `null` in both fields means the same thing everywhere it appears: the
+  // connector store could not be read, so this is unknown rather than empty.
+  const connected = await (async () => {
     const availability = composio.connectorAvailability(cfg);
-    if (availability === "unconfigured") return 0;
-    if (availability !== "configured") return null;
+    if (availability === "unconfigured") return { count: 0, ids: [] as string[] };
+    if (availability !== "configured") return { count: null, ids: null };
     try {
-      return Object.values(await composio.connectedServices(cfg)).filter((service) => service.connected).length;
+      const services = Object.entries(await composio.connectedServices(cfg))
+        .filter(([, service]) => service.connected)
+        .map(([slug]) => slug);
+      return { count: services.length, ids: services };
     } catch {
-      return null;
+      return { count: null, ids: null };
     }
   })();
   const flux = fluxCredentialStatus(readFluxConnectionState());
@@ -1808,7 +1819,8 @@ async function setupLiveState(): Promise<SetupLiveState> {
     signedOutAgents: setupSignedOutReading(described),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
-    connectedApps,
+    connectedApps: connected.count,
+    connectedAppIds: connected.ids,
     routines: setupRoutinesReading(),
     ...readWorkspace(
       { bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },
@@ -1933,20 +1945,35 @@ function echoSetupAnswer(step: SetupStep, answer: string): void {
  * owed a reply. Idempotent on the exact sentence, because these routes are
  * re-entered on retries.
  */
-const CHIEF_CONFIRMS: Partial<Record<SetupStep, string>> = {
-  flux: "That is saved, and locked away on this computer. It never appears in our conversation, not even to me.",
-};
-
-function chiefConfirms(step: SetupStep): void {
-  const line = CHIEF_CONFIRMS[step];
+/**
+ * WHICH LINE, AND THE ANSWER DECIDES IT.
+ *
+ * This used to be a table of one sentence per step, said the moment the step
+ * was recorded. For the key step that made the Chief confirm something nobody
+ * had checked: the save path tested the SHAPE of the key and wrote it to the
+ * keychain, and then the Chief said "That is saved, and locked away on this
+ * computer" over a key that might be revoked, mistyped or somebody else's.
+ * The person found out on their first question, with nothing joining the two.
+ *
+ * The renderer now proves the key against Flux Router's own catalogue before
+ * it answers the step (src/lib/flux-key-paste.ts, `saveAndProveFluxKey`) and
+ * sends which of those happened as the answer. A key Flux Router REJECTED
+ * never answers the step at all, so no line is owed and none is said.
+ */
+function chiefConfirms(step: SetupStep, answer: string): void {
+  const line = chiefConfirmation(step, answer);
   if (!line) return;
   const chiefBotId = setup.chiefBotId();
   const chief = chiefBotId ? store.bot(chiefBotId) : null;
   if (!chief) return;
   try {
+    // Every line this step could have said, not just this one: a retry that
+    // comes back with the other verdict must not leave two confirmations in
+    // the thread contradicting each other.
+    const spoken = new Set(chiefConfirmationsFor(step));
     const already = store
       .messagesFor(chief.threadId)
-      .some((message) => message.role === "bot" && (message.text ?? "").trim() === line);
+      .some((message) => message.role === "bot" && spoken.has((message.text ?? "").trim()));
     if (already) return;
     store.appendMessage(chief.threadId, { role: "bot", kind: "text", text: line });
   } catch {
@@ -1967,7 +1994,13 @@ function driveSetupConversation(view: SetupView): void {
       if (card && parsed) present.set(parsed.key, { id: message.id, card, setup: parsed });
     }
     const plan = setupConversationPlan(view, new Set(present.keys()));
-    if (plan.append.length === 0 && plan.settle.every((key) => present.get(key)?.setup.settled === true)) return;
+    // A card whose step went BACK has to come back live, which is the half
+    // this early return used to be blind to: "Something else" reopened `chat`
+    // and the plan had nothing to append, so the driver returned here and the
+    // jobs card stayed settled with all five rows disabled.
+    const settling = plan.settle.some((key) => present.get(key)?.setup.settled !== true);
+    const unsettling = plan.unsettle.some((key) => present.get(key)?.setup.settled === true);
+    if (plan.append.length === 0 && !settling && !unsettling) return;
     // THE OTHER QUESTION IN THIS THREAD.
     //
     // A new bot is seeded with a greeting and an intake card asking what the
@@ -1994,6 +2027,14 @@ function driveSetupConversation(view: SetupView): void {
       const existing = present.get(key);
       if (!existing || existing.setup.settled === true) continue;
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: true } } });
+    }
+    // THE WAY BACK, WHICH DID NOT EXIST. Nothing in the tree ever wrote
+    // `settled: false`, so a step that reopened left the card that asks it
+    // greyed out and the person with nothing to press.
+    for (const key of plan.unsettle) {
+      const existing = present.get(key);
+      if (!existing || existing.setup.settled !== true) continue;
+      store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: false } } });
     }
     for (const card of plan.append) {
       store.appendMessage(threadId, {
@@ -2206,7 +2247,7 @@ function setupRoutineCommit(
  * request id derived from them worth having: the same submit twice resolves
  * to the same anchor and so to the same receipt.
  */
-function setupRoutineAnchor(threadId: string, step: "brief" | "routines"): string | null {
+function setupRoutineAnchor(threadId: string, step: SetupStep): string | null {
   const messages = store.messagesFor(threadId);
   for (let index = messages.length - 1; index >= 0; index--) {
     const card = messages[index].card ? readSetupCard(messages[index].card) : null;
@@ -14981,7 +15022,15 @@ const server = createServer(async (req, res) => {
       fluxMediaRequests++;
       try {
         const catalog = await providerConnections.refresh("legacy-flux");
-        return json(res, 200, { modelCount: catalog.models.filter(model => model.enabled && model.chatEligible).length, ...(catalog.error ? { error: catalog.error.message } : {}) });
+        // `code` alongside the message, because the two callers of this route
+        // need to tell two different things apart and a sentence cannot be
+        // parsed. `unauthorized`/`forbidden` is Flux Router refusing THIS
+        // KEY; every other code is a statement about the network, the rate
+        // limiter or the payload, and reporting one of those as a bad key
+        // tells somebody offline that their perfectly good key is wrong. The
+        // enum carries no credential (server/provider-connections.ts,
+        // ProviderCatalogError).
+        return json(res, 200, { modelCount: catalog.models.filter(model => model.enabled && model.chatEligible).length, ...(catalog.error ? { error: catalog.error.message, code: catalog.error.code } : {}) });
       } finally { fluxMediaRequests--; }
     }
     if (path === "/api/flux-connection/replace" && method === "POST") {
@@ -15225,7 +15274,12 @@ const server = createServer(async (req, res) => {
         weekdays: parsed.data.weekdaysOnly === true ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6],
       };
       const operation = { template: parsed.data.template, name, prompt, schedule };
-      const anchor = setupRoutineAnchor(chief.threadId, parsed.data.template === "brief" ? "brief" : "routines");
+      // Both templates anchor on `flow` now. `brief` and `routines` stopped
+      // being steps in W16: a routine is an outcome of a job the person
+      // chose, and the card that offered it is the `flow` card. The fallback
+      // to the thread's opening message is unchanged and still covers the
+      // case where no card is up yet.
+      const anchor = setupRoutineAnchor(chief.threadId, "flow");
       if (!anchor) return json(res, 409, { error: "There is nothing in this conversation to attach that to yet." });
 
       let routine;
@@ -15241,6 +15295,17 @@ const server = createServer(async (req, res) => {
       // A scheduled routine is a promise; a routine that has run is proof.
       // The brief runs ONCE, now, so the person SEES the thing work before
       // they are left alone with it. The other two are offers, not proofs.
+      //
+      // AND THEY ARE TOLD, WHICH FOR A WHOLE RELEASE THEY WERE NOT. This
+      // dispatches a full model turn on the Chief's engine the instant the
+      // button is pressed, and every word on the card talked about mornings
+      // and schedules: anybody on metered routing pressed a button labelled
+      // as scheduling and got a turn they had not agreed to. The offer now
+      // says it before the press and the confirmation says it again
+      // (src/lib/first-run-copy.ts, `morning.bodyNow` and `morning.takenNow`),
+      // and first-run-flow.test.ts holds the copy and this line together so
+      // neither can move without the other.
+      // Only for `brief`. `triage` and `watch` schedule and stay scheduled.
       let runId: string | undefined;
       if (parsed.data.template === "brief") {
         setup.recordBriefRoutine(routine.id);
@@ -15280,7 +15345,7 @@ const server = createServer(async (req, res) => {
         echoSetupAnswer(parsed.data.step, parsed.data.answer);
         const live = await setupLiveState();
         const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
-        chiefConfirms(parsed.data.step);
+        chiefConfirms(parsed.data.step, parsed.data.answer);
         await driveSetup(view);
         return json(res, 200, view);
       }
@@ -16147,6 +16212,14 @@ try { imageOperations.resumePendingPublications(); outputPublisher.resumePending
 catch { console.warn("Pending image publication could not finish. It will retry at the next startup."); }
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
+  //
+  // Without credentials `subscribe()` returns "disabled" and the route below
+  // logs only "upstream", so a build that collects nothing said nothing. This
+  // is the one line that makes that visible, and it names the variables rather
+  // than any value.
+  const sendlaneNotice = sendlaneStartupNotice();
+  if (sendlaneNotice) console.warn(sendlaneNotice);
   // Warm the skill index while nobody is waiting.
   //
   // It is built lazily by whichever request needs it first, and all three of

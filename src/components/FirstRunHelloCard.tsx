@@ -33,6 +33,79 @@ import {
 const copy = FIRST_RUN_COPY.hello.welcome;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/**
+ * Whether Continue may be pressed.
+ *
+ * BOTH, OR NEITHER, and it is its own function so the rule can be executed by
+ * a test rather than inferred from a disabled attribute in a string of markup.
+ *
+ * This used to be the email alone, so Continue lit up with the name box empty
+ * and a person could send a profile carrying an address and nobody's name. The
+ * approved flow is explicit: Continue stays disabled until BOTH validate. That
+ * is not a wall, because the way past is a button rather than a valid form.
+ * "Skip for now" sits beside it and passes the whole step over. What the flow
+ * does not have is a half answer, where the Chief has somewhere to write to
+ * and nothing to call the person it is writing to.
+ */
+export function helloAnswerReady(name: string, email: string): boolean {
+  return name.trim().length > 0 && EMAIL.test(email.trim());
+}
+
+/** What the hello step talks to. The live versions are below; a test hands
+ *  its own and watches what the step actually calls. */
+export interface HelloAnswerDeps {
+  api: (path: string, init?: RequestInit) => Promise<any>;
+  identify: (email: string) => void;
+  markGate: (status: "submitted" | "skipped") => void;
+  answer: (step: "hello", answer: string) => Promise<void>;
+}
+
+const LIVE: HelloAnswerDeps = {
+  api,
+  identify: identifyEmail,
+  markGate: setEmailGateDone,
+  answer: answerSetupStep,
+};
+
+/**
+ * THE WHOLE HELLO ANSWER, OUT OF THE COMPONENT SO IT CAN BE RUN.
+ *
+ * THE DEFECT THIS EXISTS FOR. The signup behind this step is the only thing
+ * on the first run that leaves the machine for a list, and the only guard on
+ * it was a `readFileSync` of this file grepping for the string
+ * `"/api/subscribe"`. A reviewer replaced the real call with a dead constant
+ * and 22 tests stayed green: the list would have collected nothing, from
+ * everybody, and the suite would have been happy about it. A grep cannot tell
+ * a call from a comment, a constant, or dead code.
+ *
+ * So the sequence is a function now, and FirstRunHelloCard.test.ts RUNS it:
+ * the profile is saved, the save is CONFIRMED (a PUT that answered is not a
+ * PUT that saved, which is the check worth keeping deliberately — a profile
+ * that silently did not save has the Chief using a name it does not have, all
+ * week), and only then is the address identified and put on the list. The
+ * subscribe is fire and forget on purpose: entry to the app has never been
+ * allowed to depend on a marketing list being reachable.
+ */
+export async function saveHelloAnswer(
+  typed: { name: string; email: string },
+  deps: HelloAnswerDeps = LIVE,
+): Promise<{ profile: { name: string; email: string }; greeting: string }> {
+  const profile = { name: typed.name.trim(), email: typed.email.trim().toLowerCase() };
+  const result = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+  // The same confirmation Onboarding makes: a PUT that answered is not a PUT
+  // that saved.
+  if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) {
+    throw new Error(copy.failure);
+  }
+  deps.identify(profile.email);
+  void deps.api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
+  try { deps.markGate("submitted"); } catch { /* a blocked store is not a failed signup */ }
+  // Both halves, because both are what they just told the Chief and the
+  // transcript is where a person checks what an assistant heard.
+  await deps.answer("hello", [profile.name, profile.email].filter(Boolean).join(", "));
+  return { profile, greeting: greetingLine(profile.name) };
+}
+
 export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -53,27 +126,16 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [acted, setActed] = useState(false);
   const done = acted || settled;
 
-  const valid = EMAIL.test(email.trim());
+  const valid = helloAnswerReady(name, email);
 
+  // Nothing but the form state lives here: the answer itself is
+  // `saveHelloAnswer` above, which a test runs.
   const save = async () => {
     if (busy || !valid) return;
     setBusy(true);
     setFailure("");
-    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
     try {
-      const result = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
-      // The same confirmation Onboarding makes: a PUT that answered is not a
-      // PUT that saved.
-      if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) {
-        throw new Error(copy.failure);
-      }
-      identifyEmail(profile.email);
-      void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
-      try { setEmailGateDone("submitted"); } catch { /* a blocked store is not a failed signup */ }
-      // Both halves, because both are what they just told the Chief and the
-      // transcript is where a person checks what an assistant heard.
-      await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(", "));
-      setSaved(greetingLine(profile.name));
+      setSaved((await saveHelloAnswer({ name, email })).greeting);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
@@ -99,8 +161,8 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
   return (
     <FirstRunBubble>
-      <FirstRunLine>{copy.body}</FirstRunLine>
-      <FirstRunLine>{copy.second}</FirstRunLine>
+      <div className="text-[15px] font-semibold text-ink">{copy.heading}</div>
+      <FirstRunLine>{copy.lead}</FirstRunLine>
 
       {!done && (
         <div className="mt-3 grid gap-2">
@@ -112,6 +174,16 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               value={name}
               disabled={busy}
               onChange={(event) => setName(event.target.value)}
+              // Enter moves the form on from either field. It used to work
+              // from the email box alone, which is the box a person is in
+              // second; somebody who types a name and presses Enter should
+              // not have to discover that it does nothing here.
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void save();
+                }
+              }}
               className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
             />
           </label>

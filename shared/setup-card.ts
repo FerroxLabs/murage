@@ -31,46 +31,83 @@ import { SETUP_STEPS, setupStepSchema } from "./setup.ts";
 export const SETUP_CARD_VARIANTS = [
   /** hello: name and email, the two fields, with Skip. */
   "welcome",
-  /** agents: engines were found on this machine and connected. */
+  /** detect: engines were found on this machine and connected. */
   "found",
-  /** agents: nothing was found, and the one in the box is doing the work. */
+  /** detect: nothing the person installed was found, and the one in the box
+   *  is doing the work. Reached with a keyed engine in the box, which IS
+   *  usable, so nothing is broken and nothing needs selling. */
   "bare",
-  /** agents: nothing was found AND the one in the box has nothing to think
-   *  with yet. Separate from "bare" because the two say opposite things, and
-   *  "it is what is talking to you now" is false on a machine with no key,
-   *  no sign-in and no local model. */
-  "bare-needs-key",
-  /** agents: an engine IS here, ready, and nobody is signed in to it. Its own
+  /** detect: an engine IS here, ready, and nobody is signed in to it. Its own
    *  variant because all three of the others would be a lie about it: "found"
    *  claims it is connected, "bare" claims there was nothing here, and
    *  "bare-needs-key" claims a key is what is missing when a sign-in is. */
   "signed-out",
-  /** flux: the key card, offered. */
+  /** flux: the key card, offered, on a machine that found something. */
   "key",
-  /** brief: tomorrow morning, rendered, immediately before "shall I do this
-   *  every day?". It rode on the flux step first, which showed a brief made
-   *  of a calendar and a mailbox to somebody who had connected neither. */
-  "sample-brief",
   /** flux: they said not now, and local work carries on. */
   "no-key",
-  /** apps: Gmail, calendar and chat, with a reason on each row. */
+  /** chat: what can I take off your plate, and the five jobs. */
+  "jobs",
+  /** flow: the chosen job, from what it needs through to its result. */
+  "do-it",
+
+  // ── PARKED. Real, tested work that is no longer a first-run step. ──
+  //
+  // Nothing below is deleted, and deleting any of it is not this branch's
+  // call to make. The phone and Tailscale walkthrough works; the brief cards
+  // work; the backups row exists because of a standing rule that setup must
+  // end VERIFIED, and configured is not protected. Whether they move to
+  // another surface, return later in the flow, or go, is the owner's decision
+  // and it is on the morning list.
+  //
+  // They stay in the union so their copy entries stay exhaustive and their
+  // components stay compiling. Nothing emits them: `variantForStep` in
+  // server/setup-conversation.ts never returns one.
+
+  /**
+   * PARKED, AND PARKED BECAUSE IT WAS A DEAD END.
+   *
+   * flux: there is nothing on this computer to think with. It said the true
+   * thing and then stopped: the card it routes to is two sentences and no
+   * control, while the only way to save a key or pass the step over lives on
+   * `FirstRunFluxCard`, which the server showed only when the machine was NOT
+   * blank. So the one person who could not leave the Flux step without a key
+   * was the one person never shown the box that takes one.
+   *
+   * The framing it carried is not lost and never needed its own card: the
+   * Flux card reads `nothingToThinkWith` itself and opens with the report
+   * detection never got to make, above a button. The step plans `key` on
+   * every machine now.
+   *
+   * It stays in the union because it is in transcripts. A 0.1.57 install
+   * carries it on the `agents` step and a mid-flight 0.1.58 one carries it on
+   * `flux`; both keep reading correctly, and both now get the real Flux card
+   * beneath it, because that card has a different key.
+   */
+  "bare-needs-key",
+  /** PARKED. brief: tomorrow morning, rendered, before "shall I do this every
+   *  day?". The offer now lives on the `brief` job's own result. */
+  "sample-brief",
+  /** PARKED. apps: Gmail, calendar and chat, with a reason on each row. The
+   *  rows survive as per-job connect; the standalone step does not. */
   "apps",
-  /** brief: the morning brief, one time field, one button. */
+  /** PARKED. brief: the morning brief, one time field, one button. */
   "brief",
-  /** brief: it has just run, and here is what it said. */
+  /** PARKED. brief: it has just run, and here is what it said. */
   "brief-ran",
-  /** routines: a couple more, proposed from what is connected. */
+  /** PARKED. routines: a couple more, proposed from what is connected. */
   "more-routines",
-  /** the closing card: what would you like to do next. */
+  /** PARKED. the closing card: what would you like to do next. */
   "next",
-  /** phone pairing, with the QR code in the chat. */
+  /** PARKED. phone pairing, with the QR code in the chat. */
   "phone",
-  /** phone pairing is not possible yet, and here is the offer to fix that. */
+  /** PARKED. phone pairing is not possible yet, and here is the offer to fix
+   *  that. */
   "phone-needs-tailscale",
 ] as const;
 export type SetupCardVariant = (typeof SETUP_CARD_VARIANTS)[number];
 
-/** The closing card's step is not one of the six; it belongs to the flow
+/** The closing card's step is not one of the five; it belongs to the flow
  *  rather than to a checklist row, so it rides on the last step. */
 export const setupCardSchema = z.object({
   step: setupStepSchema,

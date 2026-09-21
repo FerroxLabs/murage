@@ -50,25 +50,29 @@ describe("setup links to one Flux key editor", () => {
   // into one conversation with the Chief of Staff. The two rules they carried
   // are not deleted with them, so they are asserted here against the things
   // that took their place: FirstRunFluxCard.tsx, which is where the key is
-  // asked for now, and FirstRunRail.tsx, which is the surface that offers it.
+  // asked for now, and FirstRunPhases.tsx, the chrome around the flow that
+  // offers it (FirstRunRail.tsx, which used to carry this rule, was replaced
+  // by the phase bar).
   it("routes the avatar hint to Models, and keeps the first run's key field on the one road", () => {
     // The invitation used to hold no field and point at Models instead. The
     // card in the chat does hold a field, which is the whole improvement, so
     // the rule it inherits is the one that actually protected the key: one
-    // writer (`saveFluxKey`, the Settings card's own road into the keychain),
-    // masked, dropped from React the moment it is stored, never rendered back.
+    // writer (`saveAndProveFluxKey`, which is `saveFluxKey`, the Settings
+    // card's own road into the keychain, with the live check bolted on after
+    // it), masked, dropped from React the moment it is stored, never
+    // rendered back.
     expect(read("./BotProfileAvatarCard.tsx")).toContain('section: "models"');
     const card = read("./FirstRunFluxCard.tsx");
     expect(card).toContain('type="password"');
-    expect(card).toContain("saveFluxKey(key,");
+    expect(card).toContain("saveAndProveFluxKey(key,");
     expect(card).toContain('setKey("")');
     expect(card).not.toMatch(/\{ flux: \{ apiKey|fluxKeyPatch/);
     expect(card).not.toMatch(/value=\{[^}]*apiKey/);
   });
   it("keeps every other first-run surface out of the key business", () => {
     // FluxInvite's other rule: whatever OFFERS the key does not grow a second
-    // field for it. There is one field in the first run and the rail has none.
-    expect(read("./FirstRunRail.tsx")).not.toMatch(/<input|type="password"|apiKey/);
+    // field for it. There is one field in the first run and the bar has none.
+    expect(read("./FirstRunPhases.tsx")).not.toMatch(/<input|type="password"|apiKey/);
     expect(read("./FirstRunCard.tsx")).not.toMatch(/<input|type="password"|apiKey/);
   });
   it("preserves first-run state while Settings temporarily takes focus", () => {
@@ -77,7 +81,7 @@ describe("setup links to one Flux key editor", () => {
     // is a transcript now, so the rule is kept by there being nothing to lose:
     // no first-run surface is unmounted or reset by a dialog opening, and none
     // of them is conditioned on one.
-    for (const file of ["./FirstRunRail.tsx", "./FirstRunCard.tsx", "./FirstRunFluxCard.tsx", "./FirstRunHelloCard.tsx"]) {
+    for (const file of ["./FirstRunPhases.tsx", "./FirstRunCard.tsx", "./FirstRunFluxCard.tsx", "./FirstRunHelloCard.tsx"]) {
       expect(read(file), file).not.toContain("appSettingsOpen");
     }
     // ...and the screen that needed the guard is gone from the shell for good.

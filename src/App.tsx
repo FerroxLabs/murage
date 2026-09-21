@@ -15,7 +15,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
-import { FirstRunRail } from "@/components/FirstRunRail";
+import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
@@ -248,6 +248,14 @@ function Shell() {
     <div className="flex h-full flex-col">
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
+      {/* The first run's phases, as a band ABOVE whatever is in the main view
+          rather than on top of it or beside it. It owns its own visibility
+          (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
+          `/setup` or the Settings row bring it back on any install. Mounted
+          on a confirmed desktop only. A paired phone coming through the
+          browser door is not a fresh machine and must never be shown a
+          first-run screen. */}
+      {desktop === true && <FirstRunPhases />}
       <div className="relative flex min-h-0 flex-1">
       {!calendarFocus && <button
         type="button"
@@ -307,14 +315,6 @@ function Shell() {
           )}
         </main>
       )}
-      {/* The first run's progress list, as a column BESIDE whatever is in the
-          main view rather than on top of it. It owns its own visibility
-          (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
-          `/setup` or the Settings row bring it back on any install. Mounted
-          on a confirmed desktop only. A paired phone coming through the
-          browser door is not a fresh machine and must never be shown a
-          first-run screen. */}
-      {desktop === true && <FirstRunRail />}
       {state.settingsOpen && bot && <BotSettingsDialog key={bot.id} bot={bot} />}
       {state.computerOpen && bot && (
         <ComputerPanel

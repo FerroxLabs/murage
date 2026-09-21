@@ -2,69 +2,36 @@ import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
-  FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
+  botsEyebrowLine,
   briefButtonLabel,
-  briefRanLine,
   clockLabel,
   foundAgentsLine,
   greetingLine,
-  localModelLine,
-  signedOutAgentsLine,
   joinNames,
 } from "./first-run-copy";
+import { sellsOnPrice } from "./first-run-copy-rules";
+import { firstRunAssembledStrings, firstRunStoredStrings } from "./first-run-surfaces";
 
 /**
  * THE COPY GATE.
  *
- * Every string a person can read during the first run is in one module, so
- * the rules the product owner has rejected work over can be checked over all
- * of it at once rather than argued about per pull request. A rule that lives
- * only in a brief is a rule that comes back.
+ * Every string a person can read during the first run obeys rules the product
+ * owner has rejected work over, so the rules are checked over ALL of it at
+ * once rather than argued about per pull request. A rule that lives only in a
+ * brief is a rule that comes back.
  *
- * The walk is deep and type blind on purpose: a new card added to
- * FIRST_RUN_COPY is covered the moment it exists, without anyone remembering
- * to add it here. Strings produced by the module's formatters are fed in
- * beside it, because a sentence assembled at render time is still a sentence
- * on screen.
+ * IT WALKED ONE FILE AND CALLED IT "EVERY STRING". `FIRST_RUN_COPY` is not
+ * the whole first run: `SETUP_CARD_COPY` in server/setup-conversation.ts is
+ * the title and subtitle of every card the Chief puts in the thread, and no
+ * house rule reached it. "Talk to me and I will answer out loud." on the jobs
+ * card passed 244 tests. The surfaces are registered in
+ * src/lib/first-run-surfaces.ts now, the gate walks the register, and
+ * first-run-surfaces.test.ts fails any module in the area that holds prose
+ * and has not joined it.
  */
-function walk(value: unknown, path: string, into: Array<{ path: string; text: string }>): void {
-  if (typeof value === "string") {
-    into.push({ path, text: value });
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => walk(item, `${path}[${index}]`, into));
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) walk(item, `${path}.${key}`, into);
-  }
-}
-
-const strings: Array<{ path: string; text: string }> = [];
-walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
-// Slugs are wire identifiers, not copy. Everything else on a row is read out.
-const readable = strings.filter((entry) => !entry.path.endsWith(".slug") && !entry.path.endsWith(".template"));
-
-const assembled: Array<{ path: string; text: string }> = [
-  { path: "foundAgentsLine(one)", text: foundAgentsLine(["Claude Code"]) },
-  { path: "foundAgentsLine(two)", text: foundAgentsLine(["Claude Code", "Codex"]) },
-  { path: "foundAgentsLine(three)", text: foundAgentsLine(["Claude Code", "Codex", "Fuigo"]) },
-  { path: "foundAgentsLine(none)", text: foundAgentsLine([]) },
-  { path: "briefRanLine", text: briefRanLine(FIRST_RUN_BRIEF_TIME) },
-  { path: "briefRanLine(pm)", text: briefRanLine("18:30") },
-  { path: "briefButtonLabel", text: briefButtonLabel(FIRST_RUN_BRIEF_TIME) },
-  { path: "greetingLine", text: greetingLine("Sean") },
-  { path: "greetingLine(blank)", text: greetingLine("  ") },
-  { path: "signedOutAgentsLine(one)", text: signedOutAgentsLine(["Claude Code"]) },
-  { path: "signedOutAgentsLine(two)", text: signedOutAgentsLine(["Claude Code", "Codex"]) },
-  { path: "signedOutAgentsLine(none)", text: signedOutAgentsLine([]) },
-  { path: "localModelLine", text: localModelLine("Qwen3.8-27B", "llama.cpp") },
-  { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
-  { path: "localModelLine(none)", text: localModelLine("", "") },
-  { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
-];
+const readable = firstRunStoredStrings();
+const assembled = firstRunAssembledStrings();
 
 const everything = [...readable, ...assembled];
 
@@ -92,15 +59,13 @@ describe("first run copy: the house rules", () => {
   });
 
   it("never sells on price", () => {
-    // Money in any form: the adjectives, the nouns, and the figures. The
-    // first run says what the thing does, never what it costs.
-    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
+    // ONE RULE, IMPORTED. It used to be this pattern hand-copied into three
+    // test files; `pay` was added to this copy after it shipped and to
+    // neither of the others, so the rule was fixed in one place of three.
+    // first-run-copy-rules.ts is the rule now and nothing here holds a copy.
     for (const { path, text } of everything) {
-      const hit = banned.exec(text);
-      expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null).toBeNull();
-    }
-    for (const { path, text } of everything) {
-      expect.soft(`${path}: ${text}`).not.toMatch(/[$£€]\s?\d/);
+      const hit = sellsOnPrice(text);
+      expect.soft(hit ? `${path}: ${hit} in "${text}"` : null).toBeNull();
     }
   });
 
@@ -129,6 +94,30 @@ describe("first run copy: the house rules", () => {
     for (const { path, text } of everything) {
       const hit = banned.exec(text);
       expect.soft(hit ? `${path}: ${hit[0]}` : null).toBeNull();
+    }
+  });
+
+  // THE CEILING THAT WAS STATED AT THE TOP OF THE FILE AND ASSERTED NOWHERE.
+  //
+  // "Three sentences is the ceiling for a card body" has been in the rule
+  // list the whole time with nothing behind it, which is how a rule that
+  // lives only in a comment ends: everything else on the list got a test and
+  // this one got a promise. It applies to every string, not just the fields
+  // named `body`, because the renderer sets `second` and `third` and a row's
+  // `why` as their own lines and a person reads them the same way. Four
+  // sentences on a card is the paragraph this flow was re-cut to get rid of.
+  function sentences(text: string): number {
+    return text
+      // A decimal point, a version and a time are not ends of sentences: an
+      // end is punctuation with whitespace or nothing after it.
+      .split(/[.!?]+(?=\s|$)/)
+      .filter((part) => part.trim().length > 0).length;
+  }
+
+  it("keeps every line to the three sentence ceiling", () => {
+    for (const { path, text } of everything) {
+      const count = sentences(text);
+      expect.soft(count > 3 ? `${path}: ${count} sentences in "${text}"` : null).toBeNull();
     }
   });
 
@@ -165,13 +154,31 @@ describe("first run copy: the house rules", () => {
 });
 
 describe("first run copy: the things the flow promises", () => {
+  // THIS ASSERTED ON STRINGS NOBODY COULD READ, AND THAT IS WHY THEY WERE
+  // STILL THERE.
+  //
+  // It checked `flux.key.body`, `.second` and `.third`: the three-sentence
+  // version of this card, which the approved flow replaced with a heading, a
+  // lead and six rows. The same commit that stopped rendering them marked
+  // them SUPERSEDED and left them in, and this test then held them alive,
+  // house rules and all, for a card no person reaches. Prose pinned to dead
+  // prose. The strings are deleted and the order is now asserted on
+  // `features`, which is what the card actually renders (one after the
+  // other, checked as rendered in FirstRunCard.test.ts).
   it("leads the Flux Router card with routing, then apps, then media", () => {
     const flux = FIRST_RUN_COPY.flux.key;
-    expect(flux.body).toContain("all the latest AI models");
-    expect(flux.body).toContain("smart routing");
-    expect(flux.second).toContain("500+ apps");
-    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(flux.second).toContain(named);
-    expect(flux.third).toMatch(/pictures.*transcription/);
+    const order = flux.features.map((row) => row.id);
+    expect(order[0], "routing does not lead the card").toBe("routing");
+    expect(order[1], "the apps do not follow routing").toBe("apps");
+    // Pictures and dictation are the media rows, and they come after the
+    // models claim rather than in front of it.
+    for (const media of ["pictures", "dictation"]) {
+      expect.soft(order.indexOf(media), media).toBeGreaterThan(order.indexOf("models"));
+    }
+    const apps = flux.features.find((row) => row.id === "apps")!;
+    expect(apps.title).toContain("500+ apps");
+    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(apps.body).toContain(named);
+    expect(flux.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
   });
 
@@ -188,11 +195,118 @@ describe("first run copy: the things the flow promises", () => {
   // the free OS voices. That is a different key and a different card. A
   // person who pays for Flux Router expecting their assistant to talk back
   // has been mis-sold, so the word is banned here rather than merely absent.
-  it("never sells speech on the Flux Router key", () => {
-    const flux = FIRST_RUN_COPY.flux.key;
-    for (const field of [flux.title, flux.body, flux.second, flux.third]) {
-      expect.soft(field, `"${field}" sells speech on a key that cannot synthesise it`)
-        .not.toMatch(/\b(voice|speak|speaks|spoken|read (?:it )?aloud|out loud|text to speech)\b/i);
+  //
+  // IT WAS WRITTEN AGAINST FOUR FIELDS BY HAND, AND THE CLAIM IT EXISTS TO
+  // STOP WAS SHIPPING ONE LINE BELOW THEM. `recommendationBonus` sold
+  // "pictures and voice" on the same card, outside the whitelist, and the
+  // audit found it rather than the test. So the walk is the whole file now:
+  // every string a person can read during the first run, plus every sentence
+  // the module assembles at render time. A hand-picked list of fields is a
+  // list that goes stale the first time somebody adds a field.
+  // AND NARROWED, ONCE, ON A RULING, TO THE ROW THAT ADMITS IT IS NOT READY.
+  //
+  // The owner: "voice mode is coming so you can have it as coming soon and
+  // then we flick it over when it's available." Deleting the test to make room
+  // for that row is the move this branch has regretted four times, so it is
+  // not deleted and it is not loosened by hand. The exemption is DERIVED from
+  // the data: a row is allowed to mention speech only when it declares, in the
+  // copy itself, either that it is not live yet or that it is transcription.
+  //
+  // The property this now asserts is the stronger one: a row that mentions
+  // speech is either marked coming-soon, or it is transcription. Writing "talk
+  // to me" onto an unmarked row still fails. Writing it onto the transcription
+  // row still fails, because a row that claims to be transcription may not
+  // then promise an answer out loud.
+  // `speak up` is carved out, and it is the only carve-out. It is the idiom
+  // for raising a matter ("keep an eye on one thing and speak up when it
+  // changes", on the more-routines card), not a claim that anything is said
+  // out loud. Every other spelling of speech stays banned, and a sentence
+  // that really did promise synthesis alongside it would still be caught by
+  // `out loud`, `aloud`, `voice`, `talk back` or `speak to you`.
+  const SPEECH = /\b(?:voice|speaks?(?!\s+up\b)|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
+  /**
+   * WHAT A ROW CLAIMING TO BE TRANSCRIPTION IS ENTITLED TO DESCRIBE: the
+   * PERSON talking. That is the whole of what the key does, so "say it out
+   * loud" and "talk instead of type" are true and have to stay sayable.
+   *
+   * THE SECOND REGEX WAS THE FIRST ONE WITH `out loud` DELETED, which is how
+   * a rule dies. It meant the one phrase the row is allowed to use bought the
+   * row a blanket exemption from the phrase, and "say it out loud, and it
+   * answers you out loud as well" went straight through it: a synthesis claim
+   * on a key with no synthesis endpoint, which is the exact false claim that
+   * has already shipped once and been enforced backwards by a test once.
+   *
+   * So there is ONE speech regex now, and the exemption is a narrow strip
+   * rather than a hole in the pattern: the user-speaking clauses below are
+   * removed from the row and the FULL regex is run over what is left. The row
+   * may say the person talks; every other mention of speech on it, wherever
+   * in the sentence it sits and whoever it is about, still fails.
+   */
+  const YOU_SPEAKING =
+    /\b(?:say|says|saying|said|talk|talks|talking|speak|speaks|speaking|dictate|dictates|dictating)\b(?:\s+(?:it|this|that|them))?\s+(?:out loud|aloud|instead of typ\w+|into\b[^.,;]*)/gi;
+
+  const features = FIRST_RUN_COPY.flux.key.features;
+  const declared = new Set(
+    features.flatMap((row, index) =>
+      row.state === "coming-soon" || row.speech === "transcription"
+        ? [`FIRST_RUN_COPY.flux.key.features[${index}].title`, `FIRST_RUN_COPY.flux.key.features[${index}].body`]
+        : [],
+    ),
+  );
+
+  it("never sells speech anywhere in the first run", () => {
+    for (const { path, text } of everything) {
+      if (declared.has(path)) continue;
+      const hit = SPEECH.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "sells speech on a key that cannot synthesise it",
+      ).toBeNull();
+    }
+  });
+
+  it("lets a row mention speech only by declaring which kind it is", () => {
+    // The exemption is not a list anybody edits. It is the `state` and
+    // `speech` fields on the row, which the card RENDERS: a coming-soon row
+    // carries the pill, so a row cannot buy itself the exemption without also
+    // telling the person it is not ready.
+    const speaking = features.filter((row) => SPEECH.test(`${row.title} ${row.body}`));
+    expect(speaking.length).toBeGreaterThan(0);
+    for (const row of speaking) {
+      expect.soft(
+        row.state === "coming-soon" || row.speech === "transcription",
+        `"${row.title}" mentions speech without saying whether it is transcription or not built yet`,
+      ).toBe(true);
+    }
+  });
+
+  it("will not let a transcription row promise an answer out loud", () => {
+    // Flux Router transcribes at POST /v1/audio/transcriptions and has no
+    // synthesis endpoint at all. "You talk, it types" is the whole claim, and
+    // a row that quietly grew into "talk to me" would be the shipped false
+    // claim arriving through the exemption door.
+    for (const row of features.filter((one) => one.speech === "transcription")) {
+      // What the person does is struck out; what is left is what the row says
+      // about anything else, and a transcription row may say nothing else
+      // about speech at all.
+      const rest = `${row.title} ${row.body}`.replace(YOU_SPEAKING, " ");
+      const hit = SPEECH.exec(rest);
+      expect.soft(
+        hit ? `"${row.title}": "${hit[0]}" in "${row.title} ${row.body}"` : null,
+        `"${row.title}" promises speech back on a key that cannot synthesise it`,
+      ).toBeNull();
+      expect.soft(row.state, `"${row.title}" is transcription, which works today`).toBe("live");
+    }
+  });
+
+  it("keeps every Flux claim to something that stops working without the key", () => {
+    // Routines, teams and memory are NOT Flux features. Memory is built into
+    // Murage, any enabled engine with `extractMemory` is eligible, and
+    // routines contain zero Flux references. That mistake has been made five
+    // times. The test is "does this stop working without the key".
+    for (const row of features) {
+      expect.soft(`${row.title} ${row.body}`, `"${row.title}" claims something Flux does not do`)
+        .not.toMatch(/\b(routine|routines|memory|remembers?|team|teammate|crew)\b/i);
     }
   });
 
@@ -306,6 +420,40 @@ describe("first run copy: the things the flow promises", () => {
     }
   });
 
+  // A CROWD IS COUNTED, NOT REMEMBERED.
+  //
+  // "Two bots" was written as a literal twice: on the job row offered before
+  // anything is installed, and as `botsEyebrowMany` on the crew screen. Both
+  // were claims about `starter-solo-business.json` rather than readings of
+  // it, and the second one rendered directly above the names, so a package
+  // that grew a third bot would have said "Two bots" over three of them.
+  //
+  // The eyebrow now counts what `businessResult` was handed. Nothing else in
+  // the flow states a number of bots at all, because nothing else in the
+  // flow has the package in front of it when it renders.
+  it("never states a crew size the screen has not counted", () => {
+    const counting = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+bots?\b/i;
+    // The two eyebrow pieces are the counter's own words and are excluded by
+    // path, not by a list of sentences: "One bot" is chosen only when the
+    // reading says one.
+    for (const { path, text } of readable.filter((entry) => !/\.botsEyebrow\w*$/.test(entry.path))) {
+      const hit = counting.exec(text);
+      expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null, "claims a crew size").toBeNull();
+    }
+  });
+
+  it("counts the crew it is given, however big the package turns out to be", () => {
+    expect(botsEyebrowLine(1)).toBe("One bot");
+    expect(botsEyebrowLine(2)).toBe("Two bots");
+    // The one that mattered: a third bot changes the eyebrow rather than
+    // leaving it saying two.
+    expect(botsEyebrowLine(3)).toBe("Three bots");
+    // A package with nothing in it still leaves words on the screen, and a
+    // count past spelling out is a figure rather than a wrong word.
+    expect(botsEyebrowLine(0)).toBe("No bots");
+    expect(botsEyebrowLine(12)).toBe("12 bots");
+  });
+
   it("never claims found engines on a bare machine", () => {
     expect(FIRST_RUN_COPY.agents.bare.body).not.toMatch(/found|connected them/i);
     expect(foundAgentsLine(["Claude Code", "Codex"])).toContain("Claude Code and Codex");
@@ -341,12 +489,20 @@ describe("what the key card claims, to whom", () => {
   });
 
   it("leads on routing in every version, and never counts models", () => {
-    for (const line of [key.body, key.recommendation, key.recommendationBare, key.recommendationBonus]) {
+    // `key.body` was three of these four, and `key.body` was not rendered.
+    // The versions a person really reads are the two leads, the three
+    // recommendations and the rows.
+    const rendered = [
+      key.lead, key.leadBare, key.recommendation, key.recommendationBare, key.recommendationBonus,
+      ...key.features.flatMap((row) => [row.title, row.body]),
+    ];
+    for (const line of rendered) {
       expect.soft(line, line).not.toMatch(/\d+\s*\+?\s*models/i);
       expect.soft(line, line).not.toMatch(/composio/i);
     }
-    expect(key.body).toMatch(/all the latest/i);
-    expect(key.body).toMatch(/routing/i);
+    expect(key.features[0].title).toMatch(/routing/i);
+    expect(key.lead).toMatch(/picks for you/i);
+    expect(key.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
   });
 });
 

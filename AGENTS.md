@@ -5,7 +5,7 @@ type: software
 primary_type: software
 secondary_types: []
 confidence: 0.906
-detected_at: 2026-09-21T12:23:54.930Z
+detected_at: 2026-09-21T19:44:04.943Z
 signals:
   - kind: manifest
     weight: 0.9
@@ -19,8 +19,8 @@ signals:
   - kind: file_extension_ratio
     weight: 0.7
     domain: software
-    ratio: 0.985
-    count: 2736
+    ratio: 0.982
+    count: 2351
   - kind: filename_pattern
     weight: 0.2
     domain: content
