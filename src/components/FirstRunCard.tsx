@@ -22,7 +22,6 @@ import { renderBriefHtml } from "../../shared/brief-html";
 import { sampleBrief } from "../../shared/brief-sample";
 import { readSetupCard } from "../../shared/setup-card";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
-import { artifactPreviewHtml } from "./Files";
 import { FirstRunBriefCard, FirstRunBriefRanCard, FirstRunMoreRoutinesCard } from "./FirstRunBriefCard";
 import {
   FIRST_RUN_CHIP,
@@ -139,8 +138,22 @@ function FirstRunSampleBriefCard() {
   const { view } = useSetupView();
   const [whole, setWhole] = useState(false);
   const copy = FIRST_RUN_COPY.flux["sample-brief"];
+  // HANDED TO THE FRAME VERBATIM, not through `artifactPreviewHtml`.
+  //
+  // That scrubber exists to defang HTML somebody else wrote, and part of
+  // defanging is stripping every <meta>. On a display at 2x scaling that
+  // removed the page's viewport tag, so the document laid itself out at a
+  // width that was not the frame's, rendered centred on the wrong width, and
+  // had its right-hand side clipped with a dead gutter on the left. It cannot
+  // be reproduced at 1x, which is why the first attempt to fix it missed.
+  //
+  // This page is ours: generated here, escaped at one seam, and pinned by
+  // shared/brief-html.test.ts to contain no script, no link, no frame and no
+  // network reference of any kind. It carries its own strict CSP. And the
+  // frame is still `sandbox=""` with no allow-* at all, which is what
+  // actually stops script rather than the scrubbing did.
   const html = useMemo(
-    () => artifactPreviewHtml(renderBriefHtml(sampleBrief(view?.ownerName ?? ""))),
+    () => renderBriefHtml(sampleBrief(view?.ownerName ?? "")),
     [view?.ownerName],
   );
   if (!view) return null;

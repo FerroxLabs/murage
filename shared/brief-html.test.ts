@@ -48,9 +48,16 @@ describe("the brief as a page", () => {
     expect(anonymous).not.toContain("Good morning, <");
   });
 
+  // Matched on the rendered heading markup, not on the words anywhere in the
+  // document. A first version searched the whole string and found "Today" in
+  // a CSS comment explaining the timeline, which made a correctly ordered
+  // page look out of order. The heading is what is on screen; a comment is
+  // not.
+  const headingAt = (html: string, heading: string) => html.indexOf(`<span>${heading}</span>`);
+
   it("leads with the decision, because that is the only part that needs them", () => {
     const html = renderBriefHtml(sampleBrief("Sean"));
-    const order = BRIEF_SECTIONS.map((section) => html.indexOf(section.heading));
+    const order = BRIEF_SECTIONS.map((section) => headingAt(html, section.heading));
     expect(order.every((at) => at > -1), "a section heading is missing from the sample").toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -65,9 +72,9 @@ describe("the brief as a page", () => {
 
   it("omits a section it has nothing to put in", () => {
     const html = renderBriefHtml(empty({ today: [{ title: "One thing" }] }));
-    expect(html).toContain("Today");
+    expect(headingAt(html, "Today")).toBeGreaterThan(-1);
     for (const heading of ["Needs you", "Overnight", "Handled for you", "Worth knowing"]) {
-      expect.soft(html, heading).not.toContain(heading);
+      expect.soft(headingAt(html, heading), heading).toBe(-1);
     }
   });
 
@@ -76,7 +83,9 @@ describe("the brief as a page", () => {
     expect(briefIsQuiet(quiet)).toBe(true);
     const html = renderBriefHtml(quiet);
     expect(html).toContain("Nothing needs you today.");
-    for (const section of BRIEF_SECTIONS) expect.soft(html, section.heading).not.toContain(section.heading);
+    for (const section of BRIEF_SECTIONS) {
+      expect.soft(headingAt(html, section.heading), section.heading).toBe(-1);
+    }
   });
 
   it("has a sentence even when a quiet day forgot to bring one", () => {
