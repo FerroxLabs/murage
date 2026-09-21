@@ -212,8 +212,37 @@ describe("what a broker request carries", () => {
   it("names both ways out when nothing can serve connected apps", async () => {
     shell({ legacy: false });
     await expect(connectedServices(cfg())).rejects.toThrow(BROKER_UNAVAILABLE);
-    expect(BROKER_UNAVAILABLE).toContain("FluxRouter");
-    expect(BROKER_UNAVAILABLE).toContain("Composio key");
+    expect(BROKER_UNAVAILABLE).toContain("Flux Router");
+    // Still honest about the other door. Somebody running their own
+    // connected-apps key is a real and supported case; what changed is that
+    // the sentence no longer names whose key it is.
+    expect(BROKER_UNAVAILABLE).toMatch(/your own connected-apps key/i);
+  });
+
+  // THESE STRINGS REACH A PERSON, so they obey the rules the first run obeys.
+  //
+  // This one used to assert the opposite. It pinned `toContain("Composio key")`,
+  // which made a banned word a requirement, and the sentence it protected also
+  // sent somebody to Settings mid-flow and wrote the product's name a way
+  // nothing else on screen writes it. Reported live, pressing an app row during
+  // the first run.
+  it("obeys the house copy rules, like every other sentence a person reads", () => {
+    const readable = {
+      BROKER_UNAVAILABLE,
+      LEGACY_BROKER_RETIRED,
+      LEGACY_BROKER_RETIRED_FLUX_READY,
+      LEGACY_DAILY_LIMIT,
+    };
+    for (const [name, text] of Object.entries(readable)) {
+      // The catalogue is "500+ apps", named by example. Never the vendor.
+      expect.soft(text, `${name} names the broker`).not.toMatch(/composio/i);
+      // The flow never hands somebody a settings pane on the way through.
+      expect.soft(text, `${name} sends them to Settings`).not.toMatch(/settings/i);
+      // One spelling of the product, the one on every other surface.
+      expect.soft(text, `${name} writes the product name its own way`).not.toMatch(/FluxRouter/);
+      expect.soft(text, `${name} uses an em dash`).not.toContain("\u2014");
+      expect.soft(text, `${name} uses an arrow`).not.toContain("\u2192");
+    }
   });
 
   it("tells the model the same thing it tells the user", () => {
@@ -565,7 +594,7 @@ describe("when the Murage Worker retires or hits its daily cap", () => {
     expect(body).toMatchObject({ jsonrpc: "2.0", id: 7, result: { isError: true } });
     const text = body.result.content[0].text as string;
     expect(text).toBe(LEGACY_BROKER_RETIRED);
-    expect(text).toContain("FluxRouter");
+    expect(text).toContain("Flux Router");
     expect(text).not.toMatch(/410|legacy_broker_retired|service ended/);
     // And the harness learned it: no broker is left, and the panel says why.
     expect(connectionBroker(cfg())).toBeNull();

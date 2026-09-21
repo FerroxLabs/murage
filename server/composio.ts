@@ -484,21 +484,33 @@ async function responseCode(response: Response): Promise<string | undefined> {
   }
 }
 
-/** What a data call says when no broker holds this workspace's connected
- * apps. It names the two ways out, in the order they are worth taking. */
+/**
+ * What a data call says when no broker holds this workspace's connected apps.
+ *
+ * REACHES A PERSON, so it obeys the house copy rules the first run obeys, and
+ * it used to break three of them in one sentence: it named the broker vendor,
+ * it sent somebody to Settings while they were in the middle of something, and
+ * it wrote the product's name a way nothing else on screen writes it. Reported
+ * live, pressing an app row during the first run.
+ *
+ * It also has to stay honest about the OTHER way in. Somebody running their
+ * own connected-apps key is a real and supported case, so the sentence still
+ * says a key of their own will do, without naming whose key it is: the
+ * catalogue is "500+ apps", named by example, everywhere a person can read it.
+ */
 export const BROKER_UNAVAILABLE =
-  "Connected apps need FluxRouter. Connect FluxRouter in Settings → Models, or add your own Composio key.";
+  "Connected apps need Flux Router. Connect Flux Router and 500+ apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
 
 /** What a connector call says when the Murage Worker has retired. The model
  * reads it as the tool's answer, so it names the way out rather than a code. */
 export const LEGACY_BROKER_RETIRED =
-  "Murage's original connected-apps service has retired, so this request did not run. Connect FluxRouter in Settings → Models, then reconnect the app under Connected apps.";
-/** The same, once a working FluxRouter broker has taken over. */
+  "Murage's original connected-apps service has retired, so this request did not run. Connect Flux Router, then reconnect the app under Connected apps.";
+/** The same, once a working Flux Router broker has taken over. */
 export const LEGACY_BROKER_RETIRED_FLUX_READY =
-  "Murage's original connected-apps service has retired, and connected apps now run through FluxRouter. Try the request again; if the app is missing, reconnect it under Connected apps.";
+  "Murage's original connected-apps service has retired, and connected apps now run through Flux Router. Try the request again; if the app is missing, reconnect it under Connected apps.";
 /** The Worker's per-install daily cap (it resets at 00:00 UTC). */
 export const LEGACY_DAILY_LIMIT =
-  "Connected apps have reached today's limit on Murage's original service, so this request did not run. The limit resets at 00:00 UTC and does not apply once your apps run through FluxRouter (Settings → Models).";
+  "Connected apps have reached today's limit on Murage's original service, so this request did not run. The limit resets at 00:00 UTC and does not apply once your apps run through Flux Router.";
 
 /** React to what a broker's answer says about the broker itself. */
 async function observeBrokerResponse(broker: BrokerAccess, response: Response): Promise<void> {
