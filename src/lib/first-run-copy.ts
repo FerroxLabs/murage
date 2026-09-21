@@ -26,7 +26,10 @@
 /** Where a person gets a Flux Router key. Mirrors FLUX_SIGNUP_URL in
  *  src/components/FluxRouterConnection.tsx, imported by the card itself so
  *  there is one URL and not two. */
-import type { SetupCardVariant } from "../../shared/setup-card";
+// The extension is explicit because this file is now also read through
+// tsconfig.server.json, which resolves as NodeNext: a server test drives the
+// business result with the real starter package and needs these words.
+import type { SetupCardVariant } from "../../shared/setup-card.ts";
 
 export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
 
@@ -423,6 +426,178 @@ export const FIRST_RUN_COPY = {
         skipToInput: "Skip that and let me type it in instead",
         elsewhere: "Something else",
       },
+      /**
+       * THE BOX. Three of them, one per job that asks for something.
+       *
+       * `placeholder` IS A PLACEHOLDER AND MUST STAY ONE. An earlier version
+       * pre-filled the notes box with example text and it was caught in
+       * review: text in the box is the person's, always, and a box that
+       * arrives with words in it is a box somebody sends without noticing.
+       */
+      input: {
+        day: {
+          heading: "What is on today?",
+          lead: "Meetings, deadlines, people you owe something to. Rough is fine, one per line.",
+          placeholder: "9:30 standup\nboard pack due Thursday\ncall Rahul back about the lease",
+          rows: 7,
+        },
+        notes: {
+          heading: "Paste the notes.",
+          lead: "Anything at all. Meeting scrawl, a wall of messages, half a plan.",
+          placeholder: "paste anything here",
+          rows: 7,
+        },
+        topic: {
+          heading: "What should I look into?",
+          lead: "One line is enough. I will tell you what I find and what I could not confirm.",
+          placeholder: "whether we should move our billing to Stripe",
+          rows: 3,
+        },
+        /** Said only when the job's accounts are all connected, so the
+         *  person knows what they do not have to type out again. */
+        calendarConnected: "Your calendar is connected, so add anything that is not already in it.",
+        go: "Go on then",
+        elsewhere: "Something else",
+      },
+      /**
+       * THE THREE LINES WHILE IT WORKS.
+       *
+       * Every number in them is counted from what the person typed. The
+       * fixed sentences are here; the counted ones are assembled in
+       * first-run-flow.ts out of these pieces and the parsed items, and they
+       * are checked against the house rules there.
+       */
+      working: {
+        ready: "Ready.",
+        businessShape: "Picking a shape that fits one person running the whole thing.",
+        /**
+         * THE SIMULATION SAID "THREE BOTS, TWO ROUTINES" AND THAT IS WRONG.
+         *
+         * `library/packages/starter-solo-business.json` holds two agents and
+         * one routine. A first run that announced a third bot would be
+         * describing a crew the person does not then have, on the one screen
+         * whose whole job is showing them what they just got.
+         */
+        businessBuilt: "Two bots and one review, and no plumbing for you to do.",
+        topicSourced: "Keeping what has a source, flagging what does not.",
+        /** Wrapped around the first words of what they typed, so they can
+         *  see it is their topic and not a generic one. */
+        topicPrefix: "Reading around",
+        noneTimed: "None has a time on it.",
+        timedTail: "a time on it.",
+        thingOne: "thing.",
+        thingMany: "things.",
+        noneDue: "None of them carries a deadline I can see.",
+        dueTail: "a deadline and no slot.",
+        hasOne: "has",
+        hasMany: "have",
+      },
+      /** The day and the brief share a result; only the header, the
+       *  provenance and the morning offer differ. */
+      day: {
+        headerBrief: "Tomorrow morning",
+        headerDay: "Today",
+        fromLines: "From your",
+        linesOne: "line",
+        linesMany: "lines",
+        plusCalendar: "your calendar",
+        plusMail: "your mail",
+        riskEyebrow: "The one that will slip",
+        /**
+         * WHY THERE ARE TWO VERSIONS OF THE DEADLINE REASON.
+         *
+         * The approved wording was "It is the only thing you gave me with a
+         * deadline and no time against it", which is a fine sentence right
+         * up to the second such line, and then it is a claim about their day
+         * that is simply untrue. The number is counted, like every other
+         * number on this screen, and the sentence follows the count.
+         */
+        riskDueOnly: "It is the only thing you gave me with a deadline and no time against it.",
+        riskDueFirstPrefix: "It is the first of",
+        riskDueFirstTail: "things you gave me with a deadline and no time against it.",
+        riskOwed: "Somebody is waiting on it and it has no time against it, so it loses to everything that has.",
+        riskAdviceGap: "Put it in the first gap your fixed points leave open.",
+        riskAdviceSlot: "Give it a slot before anything else claims one.",
+        /** IT SAYS NOTHING IS AT RISK RATHER THAN MANUFACTURE ONE. An
+         *  earlier version invented "or it moves to Wednesday" and was
+         *  caught in audit. */
+        calmEyebrow: "Nothing here is at risk",
+        calmBody: "Everything you gave me either has a time on it or nobody waiting for it.",
+        calmSecond: "Put a deadline or a person against any line and I will tell you which one goes first.",
+        fixedHeading: "Fixed",
+        fixedEmpty: "Nothing you gave me has a time against it.",
+        waitingHeading: "Someone is waiting",
+        waitingEmpty: "Nobody is waiting on anything you gave me.",
+      },
+      /**
+       * THE MORNING OFFER, ON THE BRIEF RESULT AND NOWHERE ELSE.
+       *
+       * "It never goes to your inbox" is load-bearing. Murage reads their
+       * mail; mailing them a summary of their mail is circular, and the
+       * owner has ruled on it. The brief is delivered here, in the app.
+       *
+       * One button and one time, deliberately. The shipped card had a time
+       * picker and then reported 07:00 back whatever was chosen, so there is
+       * no second time to get wrong: the offer, the request and the
+       * confirmation are all built from `FIRST_RUN_BRIEF_TIME`, which is the
+       * server template's own default.
+       */
+      morning: {
+        heading: "Want this waiting for you every morning?",
+        bodyPrefix: "Built at",
+        bodyTail: "on weekdays and waiting here when you open this computer. It never goes to your inbox.",
+        buttonTail: ", weekdays",
+        takenPrefix: "Set. Weekdays at",
+        working: "Setting it up",
+        failure: "That did not go through. Ask me again whenever you like.",
+      },
+      notes: {
+        header: "What is in there",
+        fromPrefix: "From the",
+        fromTailOne: "line you pasted.",
+        fromTailMany: "lines you pasted.",
+        eyebrow: "Next steps, in the order I would take them",
+        tagDue: "has a date",
+        tagOwed: "owed",
+        tagTimed: "timed",
+        tagOpen: "open",
+        empty: "There was nothing in there I could turn into a step. Give me a line with a person or a date in it.",
+        caveat: "I ordered these by what has a date on it and who is waiting. Nothing else was in the notes, so nothing else is in the list.",
+      },
+      research: {
+        /** Said under a real answer on a machine running on its own engine.
+         *  Never on a machine with nothing: that machine never reaches this
+         *  screen, because the job asks for the key first. */
+        onLocal: "Running on the local model. Flux Router would put a bigger one on this, and it reads faster.",
+      },
+      /**
+       * THE CREW, AND IT MATCHES THE PACKAGE OR IT IS WRONG.
+       *
+       * The names, the count, the schedule and the fact that it installs
+       * switched off all come from `starter-solo-business.json` at render
+       * time. Only the one-line descriptions are written here, keyed by the
+       * package's own agent keys, so a renamed bot shows its new name and a
+       * bot that disappears takes its description with it.
+       */
+      business: {
+        header: "Your crew",
+        lead: "Installed and running. Change any of it whenever you like.",
+        botsEyebrowOne: "One bot",
+        botsEyebrowMany: "Two bots",
+        roles: {
+          "business-planner": "priorities, and what finished means",
+          "draft-partner": "writes it, then reviews it",
+        },
+        reviewEyebrow: "One review, paused until you want it",
+        reviewTail: "It arrives switched off so nothing starts behind your back.",
+        minutesTail: "minutes.",
+        offer: "Switch the Monday review on",
+        offerWhy: "It works from what you tell it. Connect your calendar later and it reads that too.",
+        offerTaken: "On. It runs on Monday.",
+      },
+      /** The way back to the Chief, on every result. Clears the job, the
+       *  text and the parsed items; none of them was ever persisted. */
+      again: "Take something else off my plate",
     },
   },
   apps: {

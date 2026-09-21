@@ -24,8 +24,8 @@
 // anybody remembering. This file joins those words to behaviour and holds
 // nothing readable of its own.
 
-import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
-import { SETUP_JOB_APPS, type SetupJobApp, type SetupView } from "../../shared/setup";
+import { FIRST_RUN_COPY } from "./first-run-copy.ts";
+import { SETUP_JOB_APPS, type SetupJobApp, type SetupView } from "../../shared/setup.ts";
 
 /** The five, in the order they are offered. The first is visually led. */
 export const FIRST_RUN_JOB_IDS = ["brief", "day", "notes", "research", "business"] as const;
