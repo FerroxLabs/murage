@@ -378,6 +378,20 @@ describe("every result has a body and a way on, whatever was typed", () => {
     }
   });
 
+  // The one screen in step five that has nothing of its own to say yet. It
+  // must not draw the crew before the install has answered, and it must not
+  // leave somebody stranded if the install refused.
+  it("gives the crew's waiting screen words and a way off it, refusal or not", async () => {
+    const { FirstRunCrewWaitingView } = await import("@/components/FirstRunJobsCard");
+    for (const failure of ["", "That crew is not available on this computer."]) {
+      const markup = screenOf(createElement(FirstRunCrewWaitingView, { failure, onAgain: noop }), `crew waiting "${failure}"`);
+      expect(markup, "no way off the waiting screen").toMatch(/<button/);
+      if (failure) expect(markup).toContain(asHtml(failure));
+      // Nothing about a crew that may not exist yet.
+      expect(markup).not.toContain("Business Planner");
+    }
+  });
+
   it("sends one brief request and only one, whatever screen asked for it", () => {
     expect(briefRoutineRequest()).toEqual(briefRoutineRequest());
     expect(briefRoutineRequest().template).toBe("brief");

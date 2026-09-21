@@ -551,6 +551,31 @@ export function FirstRunResearchResultView({ result, onAgain }: { result: FirstR
   );
 }
 
+/**
+ * THE CREW IS STILL INSTALLING, OR IT REFUSED.
+ *
+ * The result screen names two bots and a review, and it must not draw any of
+ * that before the install has answered: a screen describing a crew the person
+ * did not get is the worst thing to be wrong about, because it is the first
+ * claim in the whole first run they can go and check.
+ *
+ * So this says the one thing that is true either way, and it carries the way
+ * back. A refusal that left the three working lines on screen with nothing
+ * under them would be the blank body this release is about, wearing a
+ * sentence.
+ */
+export function FirstRunCrewWaitingView({ failure, onAgain }: { failure: string; onAgain: () => void }) {
+  return (
+    <FirstRunBubble>
+      <FirstRunLine>{flowCopy.working.businessShape}</FirstRunLine>
+      <FirstRunFailure message={failure} />
+      <button type="button" onClick={onAgain} className={`mt-3 ${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+        {flowCopy.again}
+      </button>
+    </FirstRunBubble>
+  );
+}
+
 export function FirstRunBusinessResultView({
   result,
   busy,
@@ -874,8 +899,9 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     return <FirstRunResearchResultView result={researchResult(world)} onAgain={() => void elsewhere()} />;
   }
   // The crew, described from the package rather than from memory. Until the
-  // install answers there is nothing true to say about what they got.
-  if (!crew) return <FirstRunWorkingView lines={workingLines(id, items, typed)} shown={3} />;
+  // install answers there is nothing true to say about what they got, and if
+  // it refused there has to be a way off this screen.
+  if (!crew) return <FirstRunCrewWaitingView failure={failure} onAgain={() => void elsewhere()} />;
   return (
     <FirstRunBusinessResultView
       result={businessResult(crew)}
