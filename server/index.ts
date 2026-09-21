@@ -707,6 +707,7 @@ bus.attach(registry.instances());
 
 // ── peer-agent comms wiring ────────────────────────────────────────────
 import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
+import { internalRouteRefusal } from "./internal-route-authority.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
 import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
 const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
@@ -9970,7 +9971,8 @@ const server = createServer(async (req, res) => {
       const internalOwner = internalTurnOwners.get(internalClaim.threadId);
       if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401, { error: "internal turn owner is unavailable" });
       requireActiveInternal();
-      if(!isWorkspaceOwner(threadHumanPrincipal(internalClaim.threadId)) && requiredKind!=="memory" && !["/api/internal/agents","/api/internal/ask-bot","/api/internal/delegate-bot","/api/internal/check-delegation","/api/internal/wait-delegation"].includes(path) && !/^\/api\/internal\/delegations\/[\w-]{4,64}$/.test(path))return json(res,403,{error:"This channel person has no workspace management, connector, or computer grant."});
+      const routeRefusal = internalRouteRefusal({ path, kind: requiredKind, principal: threadHumanPrincipal(internalClaim.threadId) });
+      if (routeRefusal) return json(res, 403, { error: routeRefusal });
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
@@ -10185,13 +10187,13 @@ const server = createServer(async (req, res) => {
       // pages it back on request. Owner is the live capability's (bot, thread),
       // never anything in the body, so one turn cannot read another's id.
       //
-      // KNOWN GAP: a channel person's turn is refused above, before it gets
-      // here, because this path is not on that allowlist. The limiter still
-      // holds for those turns — the proxy falls back to the preview and says
-      // the tail could not be saved — but they cannot page back to it. Adding
-      // the path is safe on its own terms (it grants none of the three things
-      // that refusal names), and it was left out only because nothing in this
-      // suite can yet drive a channel principal through an internal route.
+      // A channel person's turn reaches this too (internal-route-authority.ts):
+      // the ownership above is the whole of the access it grants, so paging
+      // back one's own parked output is none of the workspace management,
+      // connector or computer grants the channel refusal withholds. It was
+      // off that allowlist until internal-route-authority.test.ts could drive
+      // a real channel principal through the decision, and until then those
+      // people lost every character past the preview.
       if (method === "POST" && path === "/api/internal/tool-result") {
         const body = await readInternalBody();
         if (typeof body.text !== "string" || !body.text || body.text.length > TOOL_RESULT_MAX_CHARS
