@@ -25,6 +25,7 @@ import {
   openFirstRun,
   readFirstRunRail,
   resetFirstRunRail,
+  forgetFirstRunStarted,
 } from "./first-run";
 import { SETUP_STEPS, type SetupStep, type SetupStepStatus, type SetupView } from "../../shared/setup";
 
@@ -225,5 +226,54 @@ describe("what the rail says", () => {
     for (const line of strings) {
       expect(line.toLowerCase(), line).not.toMatch(/i can never|cannot send|can't send/);
     }
+  });
+});
+
+// THE CHECKLIST DISAPPEARED AFTER THE FIRST STEP.
+//
+// `firstRun` means "this install has never been set up", and one of the
+// traces it reads is a saved owner name. The first thing the flow does is ask
+// for that name. So the flag goes false at step one, by design, and the rail
+// went with it: the person watched a checklist appear, tick one row, and
+// vanish for the whole rest of the run. Reported as the sidebar not updating
+// and there being no path forward, which is exactly what that looks like.
+//
+// server/setup-conversation.ts hit the same trap first and documented it in
+// `conversationLive`. Starting and continuing are different questions.
+describe("how long the checklist stays on screen", () => {
+  const open = { closed: false, requests: 0 };
+  const view = (over: Record<string, unknown>) =>
+    ({ firstRun: false, next: "flux", steps: [], progress: { done: 1, total: 6 } , ...over }) as unknown as SetupView;
+
+  it("appears on an install that has never been set up", () => {
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
+  });
+
+  it("stays once the flow has started, even though firstRun goes false", () => {
+    forgetFirstRunStarted();
+    // Step one: the name is saved, so the server stops calling this a first
+    // run. The flow is very much still going.
+    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
+    expect(firstRunRailVisible(view({ firstRun: false, next: "flux" }), open)).toBe(true);
+    expect(firstRunRailVisible(view({ firstRun: false, next: "apps" }), open)).toBe(true);
+  });
+
+  it("goes when there is nothing left to do", () => {
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
+    expect(firstRunRailVisible(view({ firstRun: false, next: null }), open)).toBe(false);
+  });
+
+  it("never appears on an established install that simply has a step open", () => {
+    // Somebody who never set a morning brief has `next` forever. They are not
+    // in a first run and must not be handed one.
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ firstRun: false, next: "brief" }), open)).toBe(false);
+  });
+
+  it("still obeys a rail closed by hand", () => {
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ firstRun: true }), { closed: true, requests: 0 })).toBe(false);
   });
 });

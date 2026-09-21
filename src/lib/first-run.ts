@@ -154,7 +154,33 @@ export function firstRunRailVisible(
   if (!view) return false;
   if (rail.closed) return false;
   if (rail.requests > 0) return true;
-  return firstRunActive(view);
+  if (firstRunActive(view)) {
+    started = true;
+    return true;
+  }
+  // STARTING AND CONTINUING ARE DIFFERENT QUESTIONS, and this used to answer
+  // both with `firstRun`.
+  //
+  // `firstRun` is "this install has never been set up", and one of the traces
+  // it reads is a saved owner name. The first thing the flow does is ask for
+  // that name. So the flag goes false at step one, BY DESIGN, and the rail
+  // vanished for the whole rest of the run: the person watched a checklist
+  // appear, tick one row, and disappear. Reported as the sidebar not updating
+  // and there being no path forward, which is exactly what it looks like.
+  //
+  // server/setup-conversation.ts hit this first and says so in `conversationLive`.
+  // This is the same rule on the client: once the flow has been seen to start,
+  // it stays on screen until there is nothing left to do.
+  return started && view.next !== null;
+}
+
+/** Whether the first run has been seen to start in this session. Sticky on
+ *  purpose: see `firstRunRailVisible`. */
+let started = false;
+
+/** Tests own their own world; nothing in the app clears this. */
+export function forgetFirstRunStarted(): void {
+  started = false;
 }
 
 // ── the rows ───────────────────────────────────────────────────────────

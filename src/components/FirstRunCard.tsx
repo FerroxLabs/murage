@@ -14,13 +14,13 @@
 // is still there tomorrow, every action happens where the person is
 // standing, and nothing sends anybody to Settings.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
-import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, signedOutAgentsLine } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, signedOutAgentsLine, stepHeadingFor } from "@/lib/first-run-copy";
 import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
 import { sampleBrief } from "../../shared/brief-sample";
-import { readSetupCard } from "../../shared/setup-card";
+import { readSetupCard, type SetupCardVariant } from "../../shared/setup-card";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
 import { FirstRunBriefCard, FirstRunBriefRanCard, FirstRunMoreRoutinesCard } from "./FirstRunBriefCard";
 import {
@@ -40,8 +40,37 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   const card = readSetupCard(message.card);
   if (!card) return null;
   const settled = Boolean(card.settled);
+  const heading = stepHeadingFor(card.variant);
+  const body = firstRunCardBody(bot, message, card.variant, settled);
+  if (!body) return null;
+  if (!heading) return body;
+  return (
+    <div className="w-full min-w-0">
+      <FirstRunStepHeading>{heading}</FirstRunStepHeading>
+      {body}
+    </div>
+  );
+}
 
-  switch (card.variant) {
+/**
+ * A rule across the page with the step's name on it.
+ *
+ * Deliberately quiet: this is punctuation, not a headline. It exists so the
+ * eye has somewhere to stop on a thread that scrolls, and so somebody
+ * returning tomorrow can see which part they are in.
+ */
+function FirstRunStepHeading({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2 mt-4 flex items-center gap-3 first:mt-0" role="separator" aria-label={String(children)}>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-secondary">{children}</span>
+      <span className="h-px flex-1 bg-hairline/50" aria-hidden="true" />
+    </div>
+  );
+}
+
+function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant, settled: boolean) {
+  void message;
+  switch (variant) {
     case "welcome":
       return <FirstRunHelloCard settled={settled} />;
     case "found":

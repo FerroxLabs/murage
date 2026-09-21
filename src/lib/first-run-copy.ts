@@ -26,6 +26,8 @@
 /** Where a person gets a Flux Router key. Mirrors FLUX_SIGNUP_URL in
  *  src/components/FluxRouterConnection.tsx, imported by the card itself so
  *  there is one URL and not two. */
+import type { SetupCardVariant } from "../../shared/setup-card";
+
 export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
 
 /** One connectable account, with the reason it is worth connecting said in a
@@ -51,6 +53,40 @@ export interface FirstRunWalkStep {
   label: string;
   detail: string;
   action: string;
+}
+
+/**
+ * A line across the page with the step's name on it.
+ *
+ * The first run is one long thread and it read as one: card, card, card, with
+ * nothing to say where one thing ended and the next began. The owner asked
+ * for "almost like a title to act as a separator", which is the right
+ * instinct twice over. It gives the eye somewhere to stop on a page that
+ * scrolls, and it tells somebody who has come back to the thread tomorrow
+ * what part of it they are looking at.
+ *
+ * Only the card that OPENS a step carries one, so a step with a report and an
+ * ask in it gets one heading rather than two. Keyed by variant rather than by
+ * step for exactly that reason: the opener is a specific card, not just the
+ * first one that happens to arrive.
+ *
+ * Named for what happens, not what it is called internally. Nobody is being
+ * walked through "the flux step".
+ */
+export const FIRST_RUN_STEP_HEADINGS: Partial<Record<SetupCardVariant, string>> = {
+  welcome: "Hello",
+  found: "What is already here",
+  bare: "What is already here",
+  "bare-needs-key": "What is already here",
+  "signed-out": "What is already here",
+  key: "One key",
+  apps: "Where your work lives",
+  "sample-brief": "Your mornings",
+  "more-routines": "A couple more",
+};
+
+export function stepHeadingFor(variant: SetupCardVariant): string | null {
+  return FIRST_RUN_STEP_HEADINGS[variant] ?? null;
 }
 
 export const FIRST_RUN_COPY = {
