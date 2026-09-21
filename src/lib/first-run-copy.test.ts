@@ -271,6 +271,41 @@ describe("first run copy: the things the flow promises", () => {
     }
   });
 
+  // WHAT THE BACKUP TAKES IS THE CEILING ON WHAT THE CARD MAY OFFER.
+  //
+  // The offer read "a private copy of everything on this computer, taken
+  // fresh every day". The capture is Murage's own installation data and
+  // nothing else: server/installation-fidelity-snapshot.ts walks the data
+  // directory, keeps a named set of application roots and EXCLUDES the rest
+  // by name, credentials and native custody and models and logs and browser
+  // profiles among them. Documents, applications and working folders are not
+  // in it. The card was parked and unreachable when the audit found this,
+  // which is not a defence: the words were in the tree, the copy test walked
+  // them, and an unreachable card is one render away from being reachable.
+  //
+  // The property is what the offer may CLAIM, not which sentence it uses: no
+  // string in the flow may offer a copy of the machine, and the offer has to
+  // name what it really takes rather than going vague to slip past the ban.
+  it("never offers a backup wider than the installation it takes", () => {
+    const WHOLE_MACHINE =
+      /\b(?:everything|every file|all (?:your |the )?(?:files|data)|anything) (?:on|from) (?:this|your) (?:computer|machine|laptop|mac|pc|drive)\b|\byour (?:whole|entire) (?:computer|machine|laptop|drive)\b|\byour documents\b|\bhard drive\b/i;
+    const backups = readable.filter((entry) => entry.path.startsWith("FIRST_RUN_COPY.backups."));
+    expect(backups.length, "the backups group vanished").toBeGreaterThan(0);
+    for (const { path, text } of backups) {
+      const hit = WHOLE_MACHINE.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "offers a copy of the computer; the capture is the Murage installation",
+      ).toBeNull();
+    }
+    // And it says what it does take, so "a private copy, taken fresh every
+    // day" cannot pass the ban by naming nothing at all.
+    const offer = FIRST_RUN_COPY.backups.offer;
+    for (const named of [/\bbots\b/i, /\broutines\b/i]) {
+      expect.soft(offer, "the offer does not name what is in the backup").toMatch(named);
+    }
+  });
+
   it("never claims found engines on a bare machine", () => {
     expect(FIRST_RUN_COPY.agents.bare.body).not.toMatch(/found|connected them/i);
     expect(foundAgentsLine(["Claude Code", "Codex"])).toContain("Claude Code and Codex");
