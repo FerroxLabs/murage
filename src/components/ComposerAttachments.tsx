@@ -14,6 +14,7 @@ import {
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
+import { trackComposerUpload } from "@/lib/composer-uploads";
 import { insideFileDropZone } from "@/lib/file-drop-zone";
 import { AttachmentPreviewDialog, previewImage, type PreviewImage } from "./AttachmentPreview";
 
@@ -82,18 +83,22 @@ export function ComposerAttachments({
       if (insideFileDropZone(e.target)) return;
       const files = Array.from(e.dataTransfer?.files ?? []);
       // Same intake the attach button uses: a dropped file and a picked one
-      // must not appear in a different order.
-      const { attachments, notice: message } = await intakeFiles(files, {
-        allowImages,
-        getPath: pathForFile,
-        uploadImage: file => imageAttachmentFromFile(file, threadId),
-        queueAudio: onAudioFile,
+      // must not appear in a different order — and the same upload tracking,
+      // so an Enter during the drop's upload is held rather than sending the
+      // message without the dropped image (see lib/composer-uploads).
+      await trackComposerUpload(threadId, async () => {
+        const { attachments, notice: message } = await intakeFiles(files, {
+          allowImages,
+          getPath: pathForFile,
+          uploadImage: file => imageAttachmentFromFile(file, threadId),
+          queueAudio: onAudioFile,
+        });
+        if (attachments.length) onAdd(attachments);
+        if (!active) return;
+        // Only a failure changes the notice. This keeps a concurrent successful
+        // intake from clearing an error before the user can read it.
+        if (message) onNotice(message);
       });
-      if (attachments.length) onAdd(attachments);
-      if (!active) return;
-      // Only a failure changes the notice. This keeps a concurrent successful
-      // intake from clearing an error before the user can read it.
-      if (message) onNotice(message);
     };
 
     window.addEventListener("dragenter", onEnter);

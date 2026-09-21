@@ -591,6 +591,7 @@
   "artifactCard.smaller": "Smaller",
   "composer.tooLarge": "Not sent: this message is {size}, and one message can be up to {limit}. Shorten it or split it into smaller messages. Your text is still here.",
   "composer.refusedTooLarge": "Not sent: Murage refused this message because it is too large ({size}). Shorten it or split it into smaller messages. Your text is still here.",
+  "composer.uploadPending": "Held: an image is still uploading. Sending now would attach it to your next message instead. Press Enter again once the attachment appears.",
   "composer.dismissNotice": "Dismiss",
   "hostStop.label": "Stopped — {reason}",
   "hostStop.description": "Murage stopped this turn. Send another message to continue.",
