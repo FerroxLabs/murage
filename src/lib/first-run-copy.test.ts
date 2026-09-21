@@ -269,9 +269,26 @@ describe("first run copy: the things the flow promises", () => {
   // row still fails, because a row that claims to be transcription may not
   // then promise an answer out loud.
   const SPEECH = /\b(voice|speaks?|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
-  /** What a row claiming to be TRANSCRIPTION may never say. You talk, it
-   *  types; the key has no synthesis endpoint of any kind. */
-  const SYNTHESIS = /\b(voice|speaks?|spoken|read (?:it )?aloud|text to speech|talk to me|talk back|speak to you)\b/i;
+  /**
+   * WHAT A ROW CLAIMING TO BE TRANSCRIPTION IS ENTITLED TO DESCRIBE: the
+   * PERSON talking. That is the whole of what the key does, so "say it out
+   * loud" and "talk instead of type" are true and have to stay sayable.
+   *
+   * THE SECOND REGEX WAS THE FIRST ONE WITH `out loud` DELETED, which is how
+   * a rule dies. It meant the one phrase the row is allowed to use bought the
+   * row a blanket exemption from the phrase, and "say it out loud, and it
+   * answers you out loud as well" went straight through it: a synthesis claim
+   * on a key with no synthesis endpoint, which is the exact false claim that
+   * has already shipped once and been enforced backwards by a test once.
+   *
+   * So there is ONE speech regex now, and the exemption is a narrow strip
+   * rather than a hole in the pattern: the user-speaking clauses below are
+   * removed from the row and the FULL regex is run over what is left. The row
+   * may say the person talks; every other mention of speech on it, wherever
+   * in the sentence it sits and whoever it is about, still fails.
+   */
+  const YOU_SPEAKING =
+    /\b(?:say|says|saying|said|talk|talks|talking|speak|speaks|speaking|dictate|dictates|dictating)\b(?:\s+(?:it|this|that|them))?\s+(?:out loud|aloud|instead of typ\w+|into\b[^.,;]*)/gi;
 
   const features = FIRST_RUN_COPY.flux.key.features;
   const declared = new Set(
@@ -314,7 +331,15 @@ describe("first run copy: the things the flow promises", () => {
     // a row that quietly grew into "talk to me" would be the shipped false
     // claim arriving through the exemption door.
     for (const row of features.filter((one) => one.speech === "transcription")) {
-      expect.soft(`${row.title} ${row.body}`, `"${row.title}" promises speech back`).not.toMatch(SYNTHESIS);
+      // What the person does is struck out; what is left is what the row says
+      // about anything else, and a transcription row may say nothing else
+      // about speech at all.
+      const rest = `${row.title} ${row.body}`.replace(YOU_SPEAKING, " ");
+      const hit = SPEECH.exec(rest);
+      expect.soft(
+        hit ? `"${row.title}": "${hit[0]}" in "${row.title} ${row.body}"` : null,
+        `"${row.title}" promises speech back on a key that cannot synthesise it`,
+      ).toBeNull();
       expect.soft(row.state, `"${row.title}" is transcription, which works today`).toBe("live");
     }
   });
