@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import { FIRST_RUN_CREW_PROFILE, crewReading, installFirstRunCrew } from "./first-run-crew";
+import { FIRST_RUN_CREW_PROFILE, crewReading, enableFirstRunReview, installFirstRunCrew } from "./first-run-crew";
 
 /**
  * "HELP ME RUN MY BUSINESS" HAS TO ACTUALLY INSTALL SOMETHING.
@@ -108,5 +111,86 @@ describe("the crew the business job installs", () => {
   it("says there is no review rather than inventing one", () => {
     const reading = crewReading({ id: FIRST_RUN_CREW_PROFILE, agents: [], routines: [] });
     expect(reading.routine).toBeNull();
+  });
+});
+
+/**
+ * THE DEFECT: "SWITCH THE MONDAY REVIEW ON" WAS A NO-OP THAT REPORTED SUCCESS.
+ *
+ * The handler was `onSwitchOn={() => setReviewTaken(true)}` and there was no
+ * request anywhere behind it. The routine installs `enabled: false`, so the
+ * person pressed a switch, read "On. It runs on Monday." and had a paused
+ * routine. Everything below drives the real calls the button now makes.
+ */
+const REVIEW = "Weekly business review (suggested)";
+
+function routines(rows: readonly { id: string; name: string; enabled: boolean }[], patched?: (body: any) => unknown) {
+  const calls: { path: string; method: string; body: any }[] = [];
+  const request = async (path: string, init?: { method?: string; body?: string }) => {
+    const body = init?.body ? JSON.parse(init.body) : null;
+    calls.push({ path, method: init?.method ?? "GET", body });
+    if (path === "/api/routines" && !init?.method) return { routines: rows };
+    const answer = patched?.(body);
+    if (answer instanceof Error) throw answer;
+    if (answer !== undefined) return answer;
+    return { routine: { ...rows.find((row) => `/api/routines/${row.id}` === path)!, ...body } };
+  };
+  return { calls, request };
+}
+
+describe("switching the Monday review on", () => {
+  it("really enables the installed routine and confirms the answer", async () => {
+    const { calls, request } = routines([
+      { id: "other", name: "Something else", enabled: false },
+      { id: "review-1", name: REVIEW, enabled: false },
+    ]);
+    await expect(enableFirstRunReview(request, REVIEW)).resolves.toBeUndefined();
+    expect(calls.map((call) => `${call.method} ${call.path}`))
+      .toEqual(["GET /api/routines", "PATCH /api/routines/review-1"]);
+    expect(calls[1].body).toEqual({ enabled: true });
+  });
+
+  it("refuses to report success when the switch did not take", async () => {
+    // A 404 from the desktop gate, or an id the store does not hold, both
+    // come back without an enabled routine. Saying "On" there is the bug.
+    const { request } = routines([{ id: "review-1", name: REVIEW, enabled: false }], () => ({ routine: { enabled: false } }));
+    await expect(enableFirstRunReview(request, REVIEW)).rejects.toThrow(/did not switch on/i);
+  });
+
+  it("does not swallow a refusal from the route", async () => {
+    const { request } = routines([{ id: "review-1", name: REVIEW, enabled: false }], () => Object.assign(new Error("no such route"), { status: 404 }));
+    await expect(enableFirstRunReview(request, REVIEW)).rejects.toThrow(/no such route/);
+  });
+
+  it("says so rather than switching nothing on when the review is not here", async () => {
+    const { calls, request } = routines([{ id: "other", name: "Something else", enabled: false }]);
+    await expect(enableFirstRunReview(request, REVIEW)).rejects.toThrow(/nothing to switch on/i);
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("leaves an already running review alone", async () => {
+    const { calls, request } = routines([{ id: "review-1", name: REVIEW, enabled: true }]);
+    await expect(enableFirstRunReview(request, REVIEW)).resolves.toBeUndefined();
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("switches on the row that was just written when two carry the name", async () => {
+    const { calls, request } = routines([
+      { id: "review-old", name: REVIEW, enabled: false },
+      { id: "review-new", name: REVIEW, enabled: false },
+    ]);
+    await enableFirstRunReview(request, REVIEW);
+    expect(calls[1].path).toBe("/api/routines/review-new");
+  });
+
+  // THE WIRING ITSELF. The handler lives inside a component and this suite
+  // has no DOM to click it with, so the one thing a test can still hold is
+  // that the button is not wired straight back to the flag that draws "On".
+  it("is what the button is wired to, and the flag is not set by the click alone", () => {
+    const card = readFileSync(fileURLToPath(new URL("../components/FirstRunJobsCard.tsx", import.meta.url)), "utf8");
+    expect(card, "the switch went back to setting a flag with nothing behind it")
+      .not.toContain("onSwitchOn={() => setReviewTaken(true)}");
+    expect(card).toContain("onSwitchOn={() => void switchOnReview()}");
+    expect(card).toContain("await enableFirstRunReview(api, name)");
   });
 });

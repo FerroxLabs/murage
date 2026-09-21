@@ -106,3 +106,51 @@ export async function installFirstRunCrew(request: CrewRequest): Promise<FirstRu
   }
   return reading;
 }
+
+/** One row of `GET /api/routines`, narrowed to the three fields this needs. */
+interface FirstRunRoutineRow {
+  id: string;
+  name: string;
+  enabled: boolean;
+}
+
+/**
+ * "SWITCH THE MONDAY REVIEW ON", AND IT REALLY SWITCHES IT ON.
+ *
+ * THE DEFECT THIS EXISTS FOR. The button's handler was
+ * `onSwitchOn={() => setReviewTaken(true)}`: a state flag and nothing else.
+ * No request left the machine, the routine stayed exactly as the importer
+ * wrote it (`enabled: false`, and the package schema pins
+ * `enabledAfterInstall` to the literal false), and the screen then printed
+ * "On. It runs on Monday." The business job is the one job with no
+ * prerequisites, so it is the likeliest thing a new person presses, and this
+ * was the first claim in the flow that the person could go and check and find
+ * wrong.
+ *
+ * WHY IT LOOKS THE ROUTINE UP BY NAME. The import answers with what it made,
+ * but the repeat install answers 409 and `installFirstRunCrew` treats that as
+ * the success it is, so there is a real path to this screen with no import
+ * result at all. The routines list is true on both paths. The LAST match
+ * wins: a workspace that somehow carries two rows of that name is looking at
+ * the one that was just written.
+ *
+ * WHY IT VERIFIES THE ANSWER. `PATCH /api/routines/:id` is desktop-gated and
+ * answers 404 to anything else, and `routines.update` returns null for an id
+ * it does not hold. Reading `enabled` back off the answer is what separates
+ * "the switch is on" from "a request was sent", which is the whole bug.
+ */
+export async function enableFirstRunReview(request: CrewRequest, routineName: string): Promise<void> {
+  const wanted = routineName.trim();
+  if (!wanted) throw new Error("There is no review on this computer to switch on.");
+  const listed = await request("/api/routines");
+  const rows = (listed?.routines ?? []) as readonly FirstRunRoutineRow[];
+  let found: FirstRunRoutineRow | undefined;
+  for (const row of rows) if (row?.name === wanted) found = row;
+  if (!found) throw new Error("That review is not on this computer, so there was nothing to switch on.");
+  if (found.enabled === true) return;
+  const answer = await request(`/api/routines/${found.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled: true }),
+  });
+  if (answer?.routine?.enabled !== true) throw new Error("That review did not switch on. Try it again whenever you are ready.");
+}

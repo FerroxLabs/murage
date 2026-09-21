@@ -28,7 +28,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { connectApp } from "@/lib/connect-app";
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
-import { installFirstRunCrew } from "@/lib/first-run-crew";
+import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
 import {
   briefRoutineRequest,
@@ -804,6 +804,29 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     }
   };
 
+  /**
+   * THE MONDAY REVIEW, SWITCHED ON FOR REAL.
+   *
+   * `reviewTaken` is what draws "On. It runs on Monday.", so it is set ONLY
+   * after the routine has answered `enabled: true`. It used to be set by the
+   * click alone, with no request behind it at all, which told the person a
+   * paused routine was running.
+   */
+  const switchOnReview = async () => {
+    const name = crew?.routine?.name;
+    if (busy || !name) return;
+    setBusy(true);
+    setFailure("");
+    try {
+      await enableFirstRunReview(api, name);
+      if (!gone.current) setReviewTaken(true);
+    } catch (cause) {
+      if (!gone.current) setFailure(failureText(cause, flowCopy.failure));
+    } finally {
+      if (!gone.current) setBusy(false);
+    }
+  };
+
   // A job that has not been chosen yet is not this card's to guess at. It is
   // never the normal case: the server only plans this card once `chat` is
   // settled, and `chat` is settled by a recorded job id.
@@ -908,7 +931,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       busy={busy}
       taken={reviewTaken}
       failure={failure}
-      onSwitchOn={() => setReviewTaken(true)}
+      onSwitchOn={() => void switchOnReview()}
       onAgain={() => void elsewhere()}
     />
   );
