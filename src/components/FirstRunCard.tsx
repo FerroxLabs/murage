@@ -101,21 +101,40 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
       return <FirstRunJobsCard settled={settled} />;
     case "do-it":
       return <FirstRunDoItCard bot={bot} settled={settled} />;
+    // ── PARKED, AND THEREFORE HISTORY. ───────────────────────────────────
+    //
+    // WHAT AN UPGRADING 0.1.57 INSTALL SEES, DECIDED. W16 re-cut six steps to
+    // five, so `SETUP_STATE_VERSION` went 2 to 3 and the checklist resets:
+    // `loadState` does not recognise a file naming `agents`, `apps`, `brief`
+    // and `routines`, and starts fresh. But the OLD CARDS ARE STILL IN THAT
+    // PERSON'S TRANSCRIPT, and they were built against steps that no longer
+    // exist. Their controls write through `PARKED_CARD_STEP`, which is `flow`
+    // — so pressing "Not now" on a Gmail card from last week would settle the
+    // new flow's final step, and a brief card would attach a routine to a
+    // step about something else entirely.
+    //
+    // So a parked card renders SETTLED, always. It is a record of what was
+    // said then, it reads correctly, and nothing on it can be pressed into a
+    // step it was never about. Nothing is deleted and nothing is hidden: the
+    // words stay exactly as they were, which is the point of a transcript.
     case "apps":
-      return <FirstRunAppsCard settled={settled} />;
+      return <FirstRunAppsCard settled />;
     case "brief":
-      return <FirstRunBriefCard settled={settled} />;
+      return <FirstRunBriefCard settled />;
     case "brief-ran":
       return <FirstRunBriefRanCard />;
     case "more-routines":
-      return <FirstRunMoreRoutinesCard settled={settled} />;
+      return <FirstRunMoreRoutinesCard settled />;
     case "next":
+      // The only parked card with no step to write. Its offers are ordinary
+      // sends into the thread, which is a thing a person may still want to
+      // do, and which cannot settle anything.
       return <FirstRunNextCard bot={bot} />;
     case "phone":
     case "phone-needs-tailscale":
       // Both land on one component on purpose: which of the two is honest is
       // decided by probing this machine, not by what the server guessed.
-      return <FirstRunPhoneCard settled={settled} />;
+      return <FirstRunPhoneCard settled />;
     default:
       return null;
   }

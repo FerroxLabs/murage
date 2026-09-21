@@ -483,8 +483,12 @@ describe("card four: the accounts", () => {
 
 describe("cards five and six: the brief", () => {
   const copy = FIRST_RUN_COPY.brief.brief;
-  it("asks for one time and says it back on the button", () => {
-    const markup = render(PARKED, "brief");
+  it("asks for one time and says it back on the button", async () => {
+    // Rendered directly, because through the dispatch this card is PARKED and
+    // arrives settled. The form is still real, tested work: it is held for
+    // the owner's decision about where the morning brief goes, not deleted.
+    const { FirstRunBriefCard } = await import("./FirstRunBriefCard");
+    const markup = renderToStaticMarkup(createElement(FirstRunBriefCard, { settled: false }));
     expect(markup).toContain('type="time"');
     expect(markup).toContain('value="07:00"');
     expect(markup).toContain("Set my brief for 7:00 am");
@@ -525,6 +529,53 @@ describe("card eight: what shall we do", () => {
     const markup = render(PARKED, "next");
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.on);
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.turnOn);
+  });
+});
+
+// WHAT A 0.1.57 INSTALL CAUGHT MID-FIRST-RUN SEES.
+//
+// THE DEFECT: W16 cut six steps to five, so `SETUP_STATE_VERSION` went 2 to 3
+// and the checklist resets. The OLD CARDS ARE STILL IN THAT PERSON'S
+// TRANSCRIPT, and every one of them was built against a step that no longer
+// exists. Their controls write through `PARKED_CARD_STEP`, which is `flow`:
+// pressing "Not now" on last week's Gmail card would have settled the new
+// flow's final step, and the brief card would have attached a routine to a
+// step about something else entirely.
+//
+// The decision is that a parked card is HISTORY. The words stay exactly as
+// they were, because that is what a transcript is for, and nothing on one can
+// be pressed into a step it was never about.
+describe("an upgrade that arrives mid-flow, with the old cards still in the thread", () => {
+  /** Every control on these cards that writes to the checklist. */
+  const WRITERS: Array<[string, string[]]> = [
+    ["apps", [FIRST_RUN_COPY.apps.apps.connect, FIRST_RUN_COPY.apps.apps.dismiss]],
+    ["brief", ["Set my brief for 7:00 am", FIRST_RUN_COPY.brief.brief.dismiss]],
+    ["more-routines", [FIRST_RUN_COPY.routines["more-routines"].add, FIRST_RUN_COPY.routines["more-routines"].dismiss]],
+    ["phone", [FIRST_RUN_COPY.phone.phone.dismiss]],
+    ["phone-needs-tailscale", [FIRST_RUN_COPY.phone.phone.dismiss]],
+  ];
+
+  it("keeps every word and offers nothing that would settle a step", () => {
+    for (const [variant, controls] of WRITERS) {
+      const markup = render(PARKED, variant);
+      expect(markup, `${variant} vanished instead of becoming history`).not.toBe("");
+      for (const control of controls) {
+        // Present but disabled is fine; a live button is not. The attribute,
+        // not the word: every one of these carries `disabled:opacity-60` in
+        // its class list, and a check that matched THAT would pass on a fully
+        // live button and prove nothing.
+        const live = new RegExp(`<button(?![^>]*\\sdisabled="")[^>]*>(?:<[^>]*>)*${control.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+        expect.soft(markup, `${variant} still offers "${control}"`).not.toMatch(live);
+      }
+    }
+  });
+
+  it("still says what it said at the time", () => {
+    // The apps card's reasons, and the brief's own explanation, are the
+    // record of what the person was told. Settling a card must not blank it.
+    const apps = render(PARKED, "apps");
+    for (const row of FIRST_RUN_COPY.apps.apps.rows) expect.soft(apps).toContain(row.why);
+    expect(render(PARKED, "brief")).toContain(FIRST_RUN_COPY.brief.brief.body);
   });
 });
 
