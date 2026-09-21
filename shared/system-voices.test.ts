@@ -11,10 +11,13 @@
 // of "offer the built-in engine" must be the SAME set of platforms, and the
 // UI must ask the shared rule rather than name one platform itself.
 //
-// The UI half is a gate inside a React component that this node-environment
-// suite cannot render, so it is read out of the SOURCE with comments stripped
-// first — a check that matched prose could be satisfied by a paragraph like
-// this one instead of by the code.
+// The UI half used to be a gate AND four strings inline in a React component
+// this node-environment suite cannot render, so the only check available was
+// a scan of the component's source: green for any spelling the regex missed,
+// and never once running the branch. The decision now lives in
+// shared/system-voices.ts as `systemVoiceOffer`, and the component renders
+// what it returns — so the test below RUNS the thing a Windows owner sees.
+// One source check survives, and only to prove the component still asks.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +25,7 @@ import { describe, expect, it } from "vitest";
 
 import { systemVoicesAvailable } from "../server/tts/system-voices.ts";
 import { windowsVoicesAvailable } from "../server/tts/windows-voices.ts";
-import { SYSTEM_VOICE_PLATFORMS, platformHasSystemVoices } from "./system-voices.ts";
+import { SYSTEM_VOICE_PLATFORMS, platformHasSystemVoices, systemVoiceOffer } from "./system-voices.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,24 +62,66 @@ describe("which platforms have a built-in voice", () => {
   });
 });
 
-describe("the voice settings gate", () => {
-  it("asks the shared rule instead of naming a platform of its own", () => {
+describe("what the voice settings card offers, run for each platform", () => {
+  it("offers a Windows owner the built-in engine, named for their machine", () => {
+    const offer = systemVoiceOffer("win32", "system");
+    expect(offer.available).toBe(true);
+    expect(offer.label).toBe("Built-in Windows voices");
+    // the two pieces of Mac-only wording a Windows owner used to be shown
+    expect(offer.label).not.toContain("Mac");
+    expect(offer.sentence).toContain("this PC");
+    expect(offer.sentence).not.toContain("this Mac");
+  });
+
+  it("still names the Mac for a Mac owner", () => {
+    const offer = systemVoiceOffer("darwin", "system");
+    expect(offer.available).toBe(true);
+    expect(offer.label).toBe("Built-in Mac voices");
+    expect(offer.sentence).toContain("this Mac");
+  });
+
+  it("offers nobody an engine their machine does not have, and says what to do instead", () => {
+    for (const platform of ["linux", "other", "freebsd", "", undefined]) {
+      const offer = systemVoiceOffer(platform, "system");
+      expect(offer.available).toBe(false);
+      expect(offer.sentence).toContain("built-in voices are unavailable here");
+      expect(offer.sentence).toContain("Switch to ElevenLabs");
+    }
+  });
+
+  it("tells nobody that built-in voices are macOS-only, on any platform or provider", () => {
+    for (const platform of PLATFORMS) {
+      for (const provider of ["elevenlabs", "system"] as const) {
+        const offer = systemVoiceOffer(platform, provider);
+        expect(offer.sentence).not.toMatch(/only on macOS/);
+        expect(offer.unavailableHint).toBe("Built-in voices are available on macOS and Windows");
+      }
+    }
+  });
+
+  it("agrees with the platform rule it is built on, everywhere", () => {
+    for (const platform of PLATFORMS) {
+      expect(systemVoiceOffer(platform, "system").available).toBe(platformHasSystemVoices(platform));
+    }
+  });
+
+  it("says the ElevenLabs sentence when ElevenLabs is the chosen engine, even where built-ins exist", () => {
+    expect(systemVoiceOffer("win32", "elevenlabs").sentence).toContain("ElevenLabs key is shared");
+    expect(systemVoiceOffer("linux", "elevenlabs").sentence).toContain("ElevenLabs key is shared");
+  });
+});
+
+// The one thing the function cannot prove about itself: that the component
+// asks it. Read from the source with comments stripped, because server- and
+// browser-side React cannot be rendered here.
+describe("the voice settings card asks that function rather than deciding again", () => {
+  it("takes its gate and its words from the shared offer", () => {
     const source = voiceSettings();
-    expect(source).toContain("platformHasSystemVoices(hostPlatform)");
-    // The old gate. Its return is a Windows owner locked out again.
+    expect(source).toContain("systemVoiceOffer(hostPlatform, provider)");
+    // The old gate, and the two strings it used to spell out inline. Their
+    // return is a Windows owner locked out, or shown Mac wording, again.
     expect(source).not.toMatch(/host\.platform === "darwin"/);
-  });
-
-  it("does not offer a Windows owner Mac voices", () => {
-    const source = voiceSettings();
-    expect(source).toContain("Built-in Windows voices");
-    // The engine button's label and the sentence above it both used to be
-    // Mac-only wording that no longer matches who can see them.
-    expect(source).not.toMatch(/label: "Built-in Mac voices"/);
+    expect(source).not.toMatch(/"Built-in Mac voices"/);
     expect(source).not.toMatch(/installed on this Mac/);
-  });
-
-  it("stops telling anyone built-in voices are macOS-only", () => {
-    expect(voiceSettings()).not.toMatch(/available only on macOS/);
   });
 });

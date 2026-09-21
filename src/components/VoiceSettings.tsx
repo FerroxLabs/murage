@@ -12,7 +12,7 @@ import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
-import { platformHasSystemVoices } from "../../shared/system-voices";
+import { systemVoiceOffer } from "../../shared/system-voices";
 
 const SAMPLE = "Morning. Overnight the tests went green, and I left two notes for you in the thread.";
 
@@ -41,12 +41,13 @@ export function VoiceSettings({
   // the harness had been driving Windows' System.Speech for releases, so a
   // Windows owner could not switch on an engine that already worked.
   const hostPlatform = capabilities.host.platform;
-  const systemVoicesAvailable = platformHasSystemVoices(hostPlatform);
-  // A Windows owner is not offered "Mac voices", and neither is told the
-  // voices come from the machine they are not using.
-  const systemVoiceLabel = hostPlatform === "win32" ? "Built-in Windows voices" : "Built-in Mac voices";
-  const systemVoiceSource = hostPlatform === "win32" ? "this PC" : "this Mac";
   const provider = tts?.provider ?? "elevenlabs";
+  // Gate AND wording come from the shared module, which is where they can be
+  // executed by a test: a node-environment suite cannot render this component,
+  // so a rule written inline here could only ever be checked by grepping the
+  // file for a string. shared/system-voices.test.ts runs this instead.
+  const offer = systemVoiceOffer(hostPlatform, provider);
+  const systemVoicesAvailable = offer.available;
   const configured = Boolean(tts?.configured);
 
   useEffect(() => {
@@ -108,11 +109,7 @@ export function VoiceSettings({
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent;
-        {provider === "system"
-          ? systemVoicesAvailable
-            ? ` the voices are the ones already installed on ${systemVoiceSource}.`
-            : " built-in voices are unavailable here. Switch to ElevenLabs to keep using voice."
-          : " the ElevenLabs key is shared by the workspace."}
+        {offer.sentence}
       </div>
 
       {(systemVoicesAvailable || provider === "system") && (
@@ -121,7 +118,7 @@ export function VoiceSettings({
           <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
             {([
               { value: "elevenlabs", label: "ElevenLabs", available: true },
-              { value: "system", label: systemVoiceLabel, available: systemVoicesAvailable },
+              { value: "system", label: offer.label, available: offer.available },
             ] as const).map((option) => (
               <button
                 key={option.value}
@@ -129,7 +126,7 @@ export function VoiceSettings({
                 role="radio"
                 aria-checked={provider === option.value}
                 disabled={switching || !option.available}
-                title={!option.available ? "Built-in voices are available on macOS and Windows" : undefined}
+                title={!option.available ? offer.unavailableHint : undefined}
                 onClick={() => setProvider(option.value)}
                 className={cn(
                   "rounded-lg px-3.5 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
