@@ -189,7 +189,7 @@ describe("where pressing a job goes", () => {
 
   it("goes straight to the work for the one job with nothing to type", () => {
     expect(FIRST_RUN_JOB_SHAPES.business.input).toBeNull();
-    expect(firstRunJobRows(READY).find((row) => row.id === "business")!.press).toBe("work");
+    expect(firstRunJobRows(READY).find((row) => row.id === "business")!.press).toBe("working");
   });
 });
 
@@ -242,7 +242,7 @@ describe("per-job connect", () => {
     const halfway = machine({ fluxReady: true, connected: ["gmail"] });
     expect(afterConnect(FIRST_RUN_JOB_SHAPES.brief, halfway)).toBe("connect");
     expect(afterConnect(FIRST_RUN_JOB_SHAPES.brief, READY)).toBe("input");
-    expect(afterConnect(FIRST_RUN_JOB_SHAPES.business, READY)).toBe("work");
+    expect(afterConnect(FIRST_RUN_JOB_SHAPES.business, READY)).toBe("working");
   });
 });
 

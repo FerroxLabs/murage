@@ -245,7 +245,7 @@ export interface FirstRunJobRow {
   /** Where pressing it goes: the connect screen when anything is missing,
    *  the job's own input when not, and straight to the work for the one job
    *  that has no input. */
-  press: "connect" | "input" | "work";
+  press: "connect" | "input" | "working";
   /** Said under the row, or null. Only `research` ever has one. */
   note: string | null;
 }
@@ -261,7 +261,7 @@ export function firstRunJobRows(world: FirstRunJobWorld): readonly FirstRunJobRo
       lead: index === 0,
       missing,
       tag: jobTag(missing),
-      press: missing.length > 0 ? "connect" : shape.input === null ? "work" : "input",
+      press: missing.length > 0 ? "connect" : shape.input === null ? "working" : "input",
       note: row.id === "research" ? researchNote(world.search) : null,
     };
   });
@@ -320,9 +320,9 @@ export function firstRunConnectScreen(
  * work they already asked for is a form. Anything else re-renders the same
  * screen with that row satisfied.
  */
-export function afterConnect(job: FirstRunJobShape, world: FirstRunJobWorld): "connect" | "input" | "work" {
+export function afterConnect(job: FirstRunJobShape, world: FirstRunJobWorld): "connect" | "input" | "working" {
   if (missingForJob(job, world).length > 0) return "connect";
-  return job.input === null ? "work" : "input";
+  return job.input === null ? "working" : "input";
 }
 
 // ── the status line the Chief opens with ───────────────────────────────

@@ -432,4 +432,25 @@ export function flowStageFor(job: FirstRunJobShape, world: FirstRunJobWorld): Fi
   return job.input === null ? "working" : "input";
 }
 
-void FIRST_RUN_JOB_SHAPES;
+/**
+ * "OR JUST TELL ME WHAT YOU NEED."
+ *
+ * The way out for somebody whose thing is not on the list. It goes STRAIGHT
+ * to the notes box, past the connect screen, which is the one place in this
+ * flow that deliberately skips a gate: the notes job reaches for no account,
+ * so there is nothing to connect, and asking for a key before letting
+ * somebody type a sentence would be the form this release exists to delete.
+ *
+ * On a machine with nothing to think with that leaves a box with nothing
+ * behind it, which is the case the owner was asked about and the reason
+ * `typedOutcome` exists. The box still opens, what they write is still kept,
+ * and nothing spins. See first-run-jobs.ts.
+ */
+export function escapeHatchScreen(world: FirstRunJobWorld): FirstRunInputScreen {
+  const screen = firstRunInputScreen(FIRST_RUN_JOB_SHAPES.notes, world);
+  // `notes` always has a box, so this is a type narrowing rather than a
+  // fallback. If it ever stops having one, the escape hatch has nowhere to
+  // go and that should be loud rather than quietly rendering nothing.
+  if (!screen) throw new Error("The notes job lost its input, so there is nowhere for the escape hatch to go.");
+  return screen;
+}
