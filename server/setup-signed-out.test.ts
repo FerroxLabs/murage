@@ -152,3 +152,49 @@ describe("the engine that is here and signed out", () => {
     expect(setupSignedOutReading([bare])[0]).not.toHaveProperty("signInCommand");
   });
 });
+
+// THE ENGINE ID THAT ENDED UP IN THE CHIEF'S MOUTH.
+//
+// Reported by the owner: running a local Qwen through llama.cpp, the opening
+// line was "You already had OpenAI-compatible (OpenRouter / Groq) on this
+// computer." Three things wrong with one sentence. It is an engine id, not a
+// product anybody has heard of. It names two cloud vendors at somebody whose
+// model is on their own hard disk. And it is the connection type, which is
+// Murage's business and not theirs.
+//
+// Nothing new had to be detected. A local pick is already `host::model`, so
+// the model's own name was sitting right there in the field being ignored.
+describe("the model already running on this computer", () => {
+  const ollama = instance({
+    instanceId: "openai-compat",
+    // The exact string from drivers/openai-compat.ts that used to be read out.
+    displayName: "OpenAI-compatible (OpenRouter / Groq)",
+    driverKind: "openaiCompat",
+    models: { default: "ollama::qwen3:8b" },
+  });
+
+  it("is named by its model and its server, never by the connection", () => {
+    const [agent] = setupAgentsReading([ollama]);
+    expect(agent.localModel).toEqual({ model: "qwen3:8b", host: "Ollama" });
+  });
+
+  it("leaves a cloud connection alone", () => {
+    // Same driver, same display name, a plain model id: this really IS a
+    // remote OpenAI-style endpoint and calling it local would be the same
+    // class of lie in the other direction.
+    const remote = instance({
+      instanceId: "openai-compat",
+      displayName: "OpenAI-compatible (OpenRouter / Groq)",
+      driverKind: "openaiCompat",
+      models: { default: "meta-llama/llama-4-70b" },
+    });
+    expect(setupAgentsReading([remote])[0]).not.toHaveProperty("localModel");
+  });
+
+  it("says nothing when the host is not one Murage knows", () => {
+    // `decodeInjectId` validates the host against the real list, so a model
+    // id that merely CONTAINS "::" cannot invent a local server.
+    const imposter = instance({ instanceId: "codex", driverKind: "codex", models: { default: "flux::flux-auto" } });
+    expect(setupAgentsReading([imposter])[0]).not.toHaveProperty("localModel");
+  });
+});

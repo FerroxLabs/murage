@@ -27,6 +27,7 @@ import {
 } from "../shared/setup.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { decodeInjectId, localHost } from "./drivers/local-inject.ts";
 import { resolveFuigoCli } from "./env-path.ts";
 
 export const SETUP_FILE = join(DATA_DIR, "setup.json");
@@ -116,6 +117,43 @@ function runnable(instance: SetupInstanceReading): boolean {
 }
 
 /**
+ * The model on this person's own hard disk, named the way they name it.
+ *
+ * WHAT THIS REPLACES. A person running llama.cpp or Ollama was told "you
+ * already had OpenAI-compatible (OpenRouter / Groq) on this computer". That
+ * is the generic connection's `displayName` (drivers/openai-compat.ts) put
+ * into the Chief's mouth: an engine id, and two cloud vendors named at
+ * somebody whose model is three feet away. It was the opening line.
+ *
+ * Nothing new had to be detected to fix it. A local pick is already encoded
+ * as `host::model` and `decodeInjectId` already validates that the host is a
+ * real one, so an engine whose default model decodes IS pointed at a local
+ * server, and the decode hands over the model's name at the same time.
+ * `localHost().label` then names the server the way its own UI does, which
+ * is "Ollama" or "LM Studio" rather than a port number.
+ *
+ * Anyone who installed a local model will recognise it instantly, which is
+ * the whole reason to say the model rather than the engine.
+ */
+function localModelOf(instance: SetupInstanceReading): { model: string; host: string } | undefined {
+  const decoded = decodeInjectId((instance.models?.default ?? "").trim());
+  if (!decoded) return undefined;
+  const host = localHost(decoded.host);
+  return host ? { model: decoded.model, host: host.label } : undefined;
+}
+
+/** One engine, as a card may describe it. */
+function reading(instance: SetupInstanceReading): SetupAgentReading {
+  const local = localModelOf(instance);
+  return {
+    id: instance.instanceId,
+    name: instance.displayName?.trim() || instance.instanceId,
+    installed: instance.driverKind !== "fuigoAgent",
+    ...(local ? { localModel: local } : {}),
+  };
+}
+
+/**
  * The engines the agents card may honestly claim.
  *
  * Available AND enabled AND able to think, because a card that says "I
@@ -144,11 +182,7 @@ function runnable(instance: SetupInstanceReading): boolean {
 export function setupAgentsReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
   return instances
     .filter((instance) => runnable(instance) && !signedOut(instance))
-    .map((instance) => ({
-      id: instance.instanceId,
-      name: instance.displayName?.trim() || instance.instanceId,
-      installed: instance.driverKind !== "fuigoAgent",
-    }));
+    .map(reading);
 }
 
 /**
@@ -179,9 +213,7 @@ export function setupSignedOutReading(instances: readonly SetupInstanceReading[]
   return instances
     .filter((instance) => runnable(instance) && signedOut(instance))
     .map((instance) => ({
-      id: instance.instanceId,
-      name: instance.displayName?.trim() || instance.instanceId,
-      installed: instance.driverKind !== "fuigoAgent",
+      ...reading(instance),
       ...(instance.install?.signInCommand ? { signInCommand: instance.install.signInCommand } : {}),
     }));
 }

@@ -125,6 +125,18 @@ export interface SetupAgentReading {
    *  Only ever set on a signed-out reading, and only so the card can name the
    *  command rather than hardcode one per engine. */
   signInCommand?: string;
+  /**
+   * The local model this engine is actually pointed at, named the way its
+   * owner names it, and the server it is running on.
+   *
+   * WHY THE CARD CANNOT JUST USE `name`. The generic connection's display
+   * name is "OpenAI-compatible (OpenRouter / Groq)", which is an engine id
+   * and two cloud vendors. Said to somebody whose model is on their own hard
+   * disk it is wrong twice over, and it was the Chief's opening line. Anyone
+   * who installed a local model will recognise the model, so the model is
+   * what gets said.
+   */
+  localModel?: { model: string; host: string };
 }
 
 /**

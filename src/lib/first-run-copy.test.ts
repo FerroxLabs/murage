@@ -9,6 +9,7 @@ import {
   clockLabel,
   foundAgentsLine,
   greetingLine,
+  localModelLine,
   signedOutAgentsLine,
   joinNames,
 } from "./first-run-copy";
@@ -59,6 +60,9 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "signedOutAgentsLine(one)", text: signedOutAgentsLine(["Claude Code"]) },
   { path: "signedOutAgentsLine(two)", text: signedOutAgentsLine(["Claude Code", "Codex"]) },
   { path: "signedOutAgentsLine(none)", text: signedOutAgentsLine([]) },
+  { path: "localModelLine", text: localModelLine("Qwen3.8-27B", "llama.cpp") },
+  { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
+  { path: "localModelLine(none)", text: localModelLine("", "") },
   { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
 ];
 

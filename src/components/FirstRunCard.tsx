@@ -16,7 +16,7 @@
 
 import { useState } from "react";
 
-import { FIRST_RUN_COPY, foundAgentsLine, signedOutAgentsLine } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, signedOutAgentsLine } from "@/lib/first-run-copy";
 import type { Bot, Message } from "@/state/store";
 import { readSetupCard } from "../../shared/setup-card";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
@@ -87,11 +87,21 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
 function FirstRunAgentsCard() {
   const { view } = useSetupView();
   if (!view) return null;
-  const names = view.agents.filter((agent) => agent.installed).map((agent) => agent.name);
-  if (names.length === 0) return <FirstRunBareAgentsCard needsKey />;
+  const found = view.agents.filter((agent) => agent.installed);
+  if (found.length === 0) return <FirstRunBareAgentsCard needsKey />;
+
+  // A local model is named by its MODEL, never by the connection Murage
+  // reaches it through. "You already had OpenAI-compatible (OpenRouter /
+  // Groq)" was the Chief's opening line to somebody whose model was on their
+  // own hard disk, and it was wrong twice: an engine id, and two cloud
+  // vendors that had nothing to do with them.
+  const local = found.find((agent) => agent.localModel)?.localModel;
+  const rest = found.filter((agent) => !agent.localModel).map((agent) => agent.name);
+
   return (
     <FirstRunBubble>
-      <FirstRunLine>{foundAgentsLine(names)}</FirstRunLine>
+      {local && <FirstRunLine>{localModelLine(local.model, local.host)}</FirstRunLine>}
+      {rest.length > 0 && <FirstRunLine>{foundAgentsLine(rest)}</FirstRunLine>}
       <FirstRunLine>{FIRST_RUN_COPY.agents.found.second}</FirstRunLine>
     </FirstRunBubble>
   );

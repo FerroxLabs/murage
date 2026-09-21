@@ -353,6 +353,31 @@ export function foundAgentsLine(names: readonly string[]): string {
 }
 
 /**
+ * The machine with a model already running on it.
+ *
+ * WHAT THIS REPLACES. The person running llama.cpp or Ollama was told they
+ * "already had OpenAI-compatible (OpenRouter / Groq)". That is an engine id
+ * and two cloud vendors, said to somebody whose model is on their own hard
+ * disk. It named the wrong thing and it named it wrongly.
+ *
+ * So the model is what gets said. Somebody who went and installed a local
+ * model will recognise its name at a glance and will not recognise, or care
+ * about, the connection type Murage reaches it through. Naming the server
+ * too ("on Ollama") is what makes it checkable: they can go and look.
+ *
+ * `joinNames` is not reused here because these are not a list of peers, they
+ * are one model in one place, and "Qwen3 and Ollama" would read as two
+ * models.
+ */
+export function localModelLine(model: string, host: string): string {
+  const named = model.trim();
+  const where = host.trim();
+  if (!named) return "You already have a local model running on this computer, so I have connected it.";
+  if (!where) return `You already have ${named} running on this computer, so I have connected it.`;
+  return `You already have ${named} running here on ${where}, so I have connected it.`;
+}
+
+/**
  * The agents card on a machine where an engine is installed and signed out.
  *
  * Names it, for the same reason `foundAgentsLine` names things: a sentence
