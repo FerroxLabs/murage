@@ -167,3 +167,26 @@ it("keeps malformed saved watch runs out of ordinary provider dispatch", async (
   f.restart(); await f.manager.tick(); expect(f.startTurn).not.toHaveBeenCalled(); expect(f.read).not.toHaveBeenCalled();
   expect(f.manager.listRuns()[0].status).toBe("failed");
 });
+
+// The duplicate-proposal guard compares instructions and schedule. Two file
+// watches deliberately share both: what makes them different work is the file
+// they watch, so the guard must compare the source as well or a second watch
+// over a different file would be refused as a copy of the first.
+it("treats two file watches as duplicates only when they watch the same source", async () => {
+  const f = fixture(); writeFileSync(join(f.folder, "notes.txt"), "first");
+  const watchProposal = (relativePath: string) => f.service().propose({ botId: "chief", threadId: "chief-thread", proposal: {
+    action: "create" as const, forBot: { botId: "worker", name: "Worker" },
+    routine: { name: "File status", instructions: "Report changes", schedule: { type: "interval" as const, everyMinutes: 5 },
+      watch: { relativePath, expiresAt: "2026-09-11T00:00:00Z", maxChecks: 5 } },
+  } });
+  const first = await watchProposal("status.txt");
+  expect(f.confirm(first.requestId).state).toBe("applied");
+
+  const other = await watchProposal("notes.txt");
+  expect(f.confirm(other.requestId).state).toBe("applied");
+  expect(f.manager.listRoutines().map(routine => routine.watch?.state.definition.source.sourceId).sort())
+    .toEqual(["notes.txt", "status.txt"]);
+
+  await expect(watchProposal("status.txt")).rejects.toThrow(/already exists/);
+  expect(f.manager.listRoutines()).toHaveLength(2);
+});
