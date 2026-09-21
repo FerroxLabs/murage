@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
@@ -708,7 +709,66 @@ function requestCommit(payload: RoutineRequestCardData, messageId: string): Rout
   };
 }
 
+/** Two file watches over different files are different work, however alike
+ * their instructions and interval are. The source is the only thing that
+ * tells them apart, so it must match exactly, in both directions. */
+function sameWatchSource(current?: RoutineWatchSource, proposed?: RoutineWatchSource): boolean {
+  if (!current || !proposed) return !current && !proposed;
+  return current.adapterId === proposed.adapterId
+    && current.sourceId === proposed.sourceId
+    && current.scopeId === proposed.scopeId;
+}
+
+/** The model cannot see that it already scheduled this. A retried tool call,
+ * or a second reading of the same request, otherwise leaves the owner with
+ * two enabled routines running identical instructions on the same schedule,
+ * neither aware of the other, both reporting for ever.
+ *
+ * Only an exact match counts. The name is deliberately not compared: renaming
+ * the same work does not make it new. */
+function duplicateRoutine(
+  definition: RoutineRequestDefinition,
+  owner: string,
+  manager: RoutineManager,
+  now: number,
+): Routine | undefined {
+  const proposed = asSchedule(definition.schedule, now);
+  return manager.listRoutines().find((routine) => {
+    if (
+      !routine.enabled
+      || routine.target !== "bot"
+      || routine.botId !== owner
+      || routine.runOn !== definition.runOn
+      || routine.prompt !== definition.instructions
+      || routine.durationMinutes !== definition.durationMinutes
+      || routine.timeoutMinutes !== definition.timeoutMinutes
+      || (routine.attachments?.length ?? 0) > 0
+      || !sameWatchSource(routine.watch?.state.definition.source, definition.watch?.source)
+    ) return false;
+    // An omitted start means "every N minutes", not a fresh phase each time
+    // the model retries. An explicit start, and every other field, stays exact.
+    const candidate = proposed.type === "interval"
+      && routine.schedule.type === "interval"
+      && definition.schedule.type === "interval"
+      && definition.schedule.anchorAt === undefined
+      ? { ...proposed, anchorAt: routine.schedule.anchorAt }
+      : proposed;
+    return isDeepStrictEqual(candidate, routine.schedule);
+  });
+}
+
 function revalidateOperation(operation: RoutineRequestOperation, manager: RoutineManager, botId: string, now: number): void {
+  if (operation.action === "create") {
+    const duplicate = duplicateRoutine(operation.routine, operation.forBot?.botId ?? botId, manager, now);
+    // Name the existing routine so the model can act on it. It cannot choose
+    // where results go, so creating a second copy is never the right recovery.
+    if (duplicate) {
+      throw new RoutineRequestError(
+        `An enabled routine with the same instructions and settings already exists (${duplicate.id}). Use list_routines to review it, then update or run that routine instead.`,
+        409,
+      );
+    }
+  }
   const current = operation.action === "create"
     ? null
     : verifyManageSnapshot(operation, manager, botId);

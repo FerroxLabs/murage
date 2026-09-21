@@ -1307,9 +1307,12 @@ export class RoutineManager {
         const scheduledFor = routine.schedule.type === "interval" && late <= CATCH_UP_MS
           ? latestIntervalOccurrence(routine.schedule, now) ?? pendingAt
           : pendingAt;
-        // One slow interval run must not build an unbounded queue of stale
-        // copies behind it. The series still advances on its original phase.
-        const overlapping = routine.schedule.type === "interval" && this.runs.some(
+        // One slow run must not build an unbounded queue of stale copies
+        // behind it. The series still advances on its original phase. Every
+        // recurring schedule needs this, not intervals alone: a daily routine
+        // whose run is still running or waiting when tomorrow comes round
+        // stacked another copy every day, and nothing ever cleared them.
+        const overlapping = routine.schedule.type !== "once" && this.runs.some(
           (run) => run.routineId === routine.id && ["queued", "running", "waiting"].includes(run.status),
         );
         if (!overlapping) {

@@ -725,6 +725,39 @@ describe("RoutineManager", () => {
     expect(h.started).toHaveLength(2);
   });
 
+  // The overlap guard only covered intervals, so a daily routine whose run
+  // was still working (a long delegation, an approval nobody answered) piled
+  // up one more copy every single day, forever.
+  it("skips daily occurrences while the previous run is still active", async () => {
+    const h = harness();
+    const monday = new Date(2026, 7, 17, 9, 0, 0).getTime();
+    const tuesday = new Date(2026, 7, 18, 9, 0, 0).getTime();
+    const wednesday = new Date(2026, 7, 19, 9, 0, 0).getTime();
+    h.manager.create({
+      name: "Daily brief",
+      prompt: "Summarize the queue",
+      botId: "ember-daily",
+      schedule: { type: "daily", time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      durationMinutes: 30,
+    });
+
+    h.setNow(monday);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", scheduledFor: monday });
+
+    h.setNow(tuesday);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    expect(h.manager.listRoutines()[0]?.nextRunAt).toBe(wednesday);
+
+    h.manager.failThread("thread-1", "Finished test run");
+    h.setNow(wednesday);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(2);
+    expect(h.started).toHaveLength(2);
+  });
+
   // #988 subset (adapted from OpenMausBot 1e6737b0): an edit that leaves the
   // schedule and the enabled state alone keeps the routine's cursor.
   // Recomputing it from "now" silently skipped an occurrence that had become

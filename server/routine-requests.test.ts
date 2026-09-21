@@ -520,6 +520,44 @@ describe("RoutineRequestService", () => {
     })).toEqual({ claimed: false, state: "not_found" });
   });
 
+  // Nothing stopped an agent scheduling the same work twice. A retried tool
+  // call, or a second reading of one request, left two enabled routines with
+  // identical instructions and schedule, both reporting for ever, and neither
+  // aware of the other.
+  it("refuses a second identical routine instead of scheduling the same work twice", async () => {
+    const { service, routines, store } = harness();
+    const args = { botId: "bot-a", threadId: "thread-a" } as const;
+    const first = await service.propose({ ...args, proposal: createProposal() });
+    // Both cards are written before either is confirmed: the duplicate has to
+    // be caught at confirmation too, not only when the card is proposed.
+    const second = await service.propose({ ...args, proposal: createProposal({ name: "Renamed brief" }) });
+
+    expect(service.resolve({ ...args, requestId: first.requestId, behavior: "allow" }))
+      .toMatchObject({ state: "applied" });
+    const existing = routines.listRoutines()[0]!;
+    expect(service.resolve({ ...args, requestId: second.requestId, behavior: "allow" }))
+      .toMatchObject({ state: "invalid", status: 409, error: expect.stringContaining(existing.id) });
+    expect(routines.listRoutines()).toHaveLength(1);
+
+    // The model is told before a third card is ever written.
+    await expect(service.propose({ ...args, proposal: createProposal() })).rejects.toThrow(/already exists/);
+    expect(store.messagesFor("thread-a")).toHaveLength(2);
+
+    // Different instructions are different work, and so is the same work once
+    // the existing routine is paused.
+    const other = await service.propose({
+      ...args,
+      proposal: createProposal({ instructions: "Summarize the overnight incident log." }),
+    });
+    expect(service.resolve({ ...args, requestId: other.requestId, behavior: "allow" }))
+      .toMatchObject({ state: "applied" });
+    routines.update(existing.id, { enabled: false });
+    const revived = await service.propose({ ...args, proposal: createProposal() });
+    expect(service.resolve({ ...args, requestId: revived.requestId, behavior: "allow" }))
+      .toMatchObject({ state: "applied" });
+    expect(routines.listRoutines()).toHaveLength(3);
+  });
+
   it("refuses a confirmation whose operation changed after the card was shown", async () => {
     // The receipt fingerprint is a COMMIT-RECOVERY check: on a first approval
     // no receipt exists, so nothing in that path attests to what the person
