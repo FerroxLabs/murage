@@ -273,6 +273,11 @@ const TOOLS = [
   {
     name: "tool_result_read",
     description: "Read a missing portion of an oversized agents-tool result, using the saved id and next offset printed in that result's overflow notice. Returns at most 16,000 characters, only from this bot in this conversation. Use it only when the part you were shown is insufficient; do not page through a result by default. Saved results expire after one hour, on app restart, or under cache pressure. This never reruns the original action.",
+    // A HINT to the driver, and only that: nothing in server/ reads
+    // readOnlyHint, so it enforces nothing and is not a stand-in for a
+    // read-only tool policy. What actually keeps this tool read-only is that
+    // its handler only ever GETs the overflow cache. Ownership — the one
+    // check that matters — is enforced in server/tool-results.ts.
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object", additionalProperties: false,
