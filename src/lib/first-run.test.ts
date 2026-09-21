@@ -17,14 +17,14 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  FIRST_RUN_RAIL,
+  FIRST_RUN_PHASES,
   closeFirstRun,
   firstRunActive,
-  firstRunRailRows,
-  firstRunRailVisible,
+  firstRunPhaseRows,
+  firstRunPhasesVisible,
   openFirstRun,
-  readFirstRunRail,
-  resetFirstRunRail,
+  readFirstRunPhases,
+  resetFirstRunPhases,
   forgetFirstRunStarted,
 } from "./first-run";
 import { SETUP_STEPS, type SetupStep, type SetupStepStatus, type SetupView } from "../../shared/setup";
@@ -86,13 +86,13 @@ const RESTORED = () =>
   );
 
 beforeEach(() => {
-  resetFirstRunRail();
+  resetFirstRunPhases();
 });
 
 describe("a restored or established install never sees the first run", () => {
   it("shows nothing when the server says this is not a first run", () => {
     expect(firstRunActive(RESTORED())).toBe(false);
-    expect(firstRunRailVisible(RESTORED(), readFirstRunRail())).toBe(false);
+    expect(firstRunPhasesVisible(RESTORED(), readFirstRunPhases())).toBe(false);
   });
 
   it("stays away even on a half-finished workspace that has clearly been used", () => {
@@ -100,14 +100,14 @@ describe("a restored or established install never sees the first run", () => {
     // a name, a key and a crew. Counting unfinished steps would call this a
     // first run. The server's answer does not.
     const used = view({ firstRun: false, ownerName: "Sean", crewSize: 2 }, { hello: "done", detect: "done" });
-    expect(firstRunRailVisible(used, readFirstRunRail())).toBe(false);
+    expect(firstRunPhasesVisible(used, readFirstRunPhases())).toBe(false);
   });
 
   it("shows nothing before the server has answered at all", () => {
     // Not asked yet is not a yes. A frame of the welcome list while the
     // first read is in flight is the same bug in a smaller window.
-    expect(firstRunRailVisible(null, readFirstRunRail())).toBe(false);
-    expect(firstRunRailVisible(undefined, readFirstRunRail())).toBe(false);
+    expect(firstRunPhasesVisible(null, readFirstRunPhases())).toBe(false);
+    expect(firstRunPhasesVisible(undefined, readFirstRunPhases())).toBe(false);
     expect(firstRunActive(null)).toBe(false);
   });
 
@@ -115,58 +115,95 @@ describe("a restored or established install never sees the first run", () => {
     // No storage, no counting of finished steps, no locally derived
     // "untouched". `view.firstRun` and nothing else.
     expect(code).not.toMatch(/localStorage|sessionStorage/);
-    expect(code).not.toMatch(/progress\.done|steps\.every|steps\.filter/);
     expect(code).toContain("view?.firstRun === true");
+    // SCOPED TO THE DECISION, because the rest of the module now legitimately
+    // walks `view.steps` to draw pills. The rule was never "never touch the
+    // steps"; it is that the answer to "is this a first run, and is it still
+    // going" is the server's and is not recomputed here from what the list
+    // looks like. So the ban applies to exactly the two functions that answer
+    // it, and drawing a pill per step is not one of them.
+    const decision = code.slice(code.indexOf("export function firstRunActive"), code.indexOf("export function forgetFirstRunStarted"));
+    expect(decision.length).toBeGreaterThan(200);
+    expect(decision).not.toMatch(/progress\.done|steps\.every|steps\.filter|steps\.length/);
   });
 });
 
 describe("a genuinely fresh install does see it", () => {
   it("offers the rail unasked", () => {
     expect(firstRunActive(view())).toBe(true);
-    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(true);
+    expect(firstRunPhasesVisible(view(), readFirstRunPhases())).toBe(true);
   });
 
   it("goes away when they close it, and does not come back by itself", () => {
     closeFirstRun();
-    expect(readFirstRunRail().closed).toBe(true);
-    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(false);
+    expect(readFirstRunPhases().closed).toBe(true);
+    expect(firstRunPhasesVisible(view(), readFirstRunPhases())).toBe(false);
   });
 });
 
 describe("/setup and the Settings row reach it on any install", () => {
   it("opens on a workspace the server calls established", () => {
     openFirstRun();
-    expect(firstRunRailVisible(RESTORED(), readFirstRunRail())).toBe(true);
+    expect(firstRunPhasesVisible(RESTORED(), readFirstRunPhases())).toBe(true);
   });
 
   it("reopens one that was closed", () => {
     closeFirstRun();
     openFirstRun();
-    expect(readFirstRunRail().closed).toBe(false);
-    expect(firstRunRailVisible(view(), readFirstRunRail())).toBe(true);
+    expect(readFirstRunPhases().closed).toBe(false);
+    expect(firstRunPhasesVisible(view(), readFirstRunPhases())).toBe(true);
   });
 
   it("counts every ask, so a second one is a second trip to the Chief", () => {
     openFirstRun();
     openFirstRun();
-    expect(readFirstRunRail().requests).toBe(2);
+    expect(readFirstRunPhases().requests).toBe(2);
   });
 
   it("still shows nothing when the server has not answered", () => {
     openFirstRun();
-    expect(firstRunRailVisible(null, readFirstRunRail())).toBe(false);
+    expect(firstRunPhasesVisible(null, readFirstRunPhases())).toBe(false);
   });
 });
 
-describe("the rows are the server's list", () => {
-  it("renders one row per step the view carries, in the view's order", () => {
-    const rows = firstRunRailRows(view());
+describe("the pills are the server's list", () => {
+  it("renders one pill per step the view carries, in the view's order", () => {
+    const rows = firstRunPhaseRows(view());
     expect(rows.map((row) => row.id)).toEqual([...SETUP_STEPS]);
     expect(rows.every((row) => row.label.length > 0)).toBe(true);
+    expect(rows.map((row) => row.number)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  // THE NUMBERS ARE COMPUTED, WHICH IS WHY THEY ARE WORTH A TEST.
+  //
+  // A machine with nothing to think with is never shown "what is here": the
+  // server settles that step before presenting it, and the approved flow
+  // drops the phase rather than showing a crossed-off report that was never
+  // written. Everything after it moves up one.
+  it("drops the phase a blank machine never sees, and renumbers the rest", () => {
+    const blank = view({ nothingToThinkWith: true, next: "flux" }, { detect: "done" });
+    const rows = firstRunPhaseRows(blank);
+    expect(rows.map((row) => row.id)).toEqual(["hello", "flux", "chat", "flow"]);
+    expect(rows.map((row) => row.number)).toEqual([1, 2, 3, 4]);
+    expect(rows.map((row) => row.label)).toEqual([
+      "1 · who you are",
+      "2 · switch it on",
+      "3 · first chat",
+      "4 · do the thing",
+    ]);
+  });
+
+  it("keeps it when the server says that phase is still open", () => {
+    // `nothingToThinkWith` and an unsettled `detect` contradict each other.
+    // Drawing the step the person is on is the honest answer to that; hiding
+    // what they are being asked to do is not.
+    const rows = firstRunPhaseRows(view({ nothingToThinkWith: true, next: "detect" }));
+    expect(rows.map((row) => row.id)).toEqual([...SETUP_STEPS]);
+    expect(rows.find((row) => row.id === "detect")?.mark).toBe("now");
   });
 
   it("marks done, passed over, waiting and the one they are on", () => {
-    const rows = firstRunRailRows(view({}, { hello: "done", detect: "skipped", flux: "blocked" }));
+    const rows = firstRunPhaseRows(view({}, { hello: "done", detect: "skipped", flux: "blocked" }));
     const mark = Object.fromEntries(rows.map((row) => [row.id, row.mark]));
     expect(mark.hello).toBe("done");
     expect(mark.detect).toBe("skipped");
@@ -176,11 +213,11 @@ describe("the rows are the server's list", () => {
     // plain open row is chat and it is not "now".
     expect(mark.chat).toBe("todo");
     expect(mark.flow).toBe("todo");
-    const fresh = firstRunRailRows(view());
+    const fresh = firstRunPhaseRows(view());
     expect(fresh.find((row) => row.id === "hello")?.mark).toBe("now");
   });
 
-  it("draws a row for a step it has never heard of rather than dropping it", () => {
+  it("draws a pill for a step it has never heard of rather than dropping it", () => {
     // A newer server sending a sixth step must not make a step quietly
     // disappear from the list of what is left to do.
     const known = view();
@@ -188,25 +225,25 @@ describe("the rows are the server's list", () => {
       ...known,
       steps: [...known.steps, { id: "somethingnew" as SetupStep, done: false, status: "open" as SetupStepStatus }],
     };
-    const rows = firstRunRailRows(extended);
+    const rows = firstRunPhaseRows(extended);
     expect(rows).toHaveLength(known.steps.length + 1);
-    expect(rows[rows.length - 1].label).toBe("somethingnew");
+    expect(rows[rows.length - 1].name).toBe("somethingnew");
+    expect(rows[rows.length - 1].label).toBe("6 · somethingnew");
   });
 });
 
-describe("what the rail says", () => {
+describe("what the phase bar says", () => {
   const strings = [
-    FIRST_RUN_RAIL.title,
-    FIRST_RUN_RAIL.close,
-    FIRST_RUN_RAIL.footer,
-    FIRST_RUN_RAIL.progress(2, 6),
-    ...Object.values(FIRST_RUN_RAIL.state),
-    ...firstRunRailRows(view()).map((row) => row.label),
+    FIRST_RUN_PHASES.title,
+    FIRST_RUN_PHASES.close,
+    FIRST_RUN_PHASES.footer,
+    ...Object.values(FIRST_RUN_PHASES.state),
+    ...firstRunPhaseRows(view()).map((row) => row.label),
   ];
 
   it("promises in so many words that closing it stops nothing", () => {
-    expect(FIRST_RUN_RAIL.footer).toContain("Close this whenever you like");
-    expect(FIRST_RUN_RAIL.footer).toContain("stops you using Murage");
+    expect(FIRST_RUN_PHASES.footer).toContain("Close this whenever you like");
+    expect(FIRST_RUN_PHASES.footer).toContain("stops you using Murage");
   });
 
   it("keeps every copy rule the first run is held to", () => {
@@ -221,7 +258,14 @@ describe("what the rail says", () => {
   });
 
   it("counts steps and nothing else", () => {
-    expect(FIRST_RUN_RAIL.progress(2, 6)).toBe("2 of 6 done");
+    // The only number in this flow is a phase number. The rail printed
+    // "2 of 5 done" beside its rows; the bar does not, because a pill already
+    // carries its position and the two could disagree the moment a phase is
+    // dropped. Whatever numbers a pill does carry must be its own position
+    // and nothing else: no prices, no model counts, no minutes.
+    for (const row of firstRunPhaseRows(view())) {
+      expect(row.label.match(/\d+/g), row.label).toEqual([String(row.number)]);
+    }
   });
 
   it("never states a limit where the product has a capability", () => {
@@ -249,34 +293,34 @@ describe("how long the checklist stays on screen", () => {
 
   it("appears on an install that has never been set up", () => {
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ firstRun: true }), open)).toBe(true);
   });
 
   it("stays once the flow has started, even though firstRun goes false", () => {
     forgetFirstRunStarted();
     // Step one: the name is saved, so the server stops calling this a first
     // run. The flow is very much still going.
-    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
-    expect(firstRunRailVisible(view({ firstRun: false, next: "flux" }), open)).toBe(true);
-    expect(firstRunRailVisible(view({ firstRun: false, next: "apps" }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ firstRun: true }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ firstRun: false, next: "flux" }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ firstRun: false, next: "apps" }), open)).toBe(true);
   });
 
   it("goes when there is nothing left to do", () => {
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ firstRun: true }), open)).toBe(true);
-    expect(firstRunRailVisible(view({ firstRun: false, next: null }), open)).toBe(false);
+    expect(firstRunPhasesVisible(view({ firstRun: true }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ firstRun: false, next: null }), open)).toBe(false);
   });
 
   it("never appears on an established install that simply has a step open", () => {
     // Somebody who never set a morning brief has `next` forever. They are not
     // in a first run and must not be handed one.
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ firstRun: false, next: "brief" }), open)).toBe(false);
+    expect(firstRunPhasesVisible(view({ firstRun: false, next: "brief" }), open)).toBe(false);
   });
 
   it("still obeys a rail closed by hand", () => {
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ firstRun: true }), { closed: true, requests: 0 })).toBe(false);
+    expect(firstRunPhasesVisible(view({ firstRun: true }), { closed: true, requests: 0 })).toBe(false);
   });
 });
 
@@ -300,16 +344,16 @@ describe("the server's word on whether the flow is still going", () => {
     // The app was restarted part way through setup, so the very first read
     // already said firstRun:false. The latch alone would never have fired.
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ conversationLive: true }), open)).toBe(true);
+    expect(firstRunPhasesVisible(view({ conversationLive: true }), open)).toBe(true);
   });
 
   it("takes it down when the conversation has nothing left to do", () => {
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({ conversationLive: true, next: null }), open)).toBe(false);
+    expect(firstRunPhasesVisible(view({ conversationLive: true, next: null }), open)).toBe(false);
   });
 
   it("does not mistake an old build's view for a live conversation", () => {
     forgetFirstRunStarted();
-    expect(firstRunRailVisible(view({}), open)).toBe(false);
+    expect(firstRunPhasesVisible(view({}), open)).toBe(false);
   });
 });
