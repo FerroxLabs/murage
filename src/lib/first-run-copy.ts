@@ -423,33 +423,13 @@ export const FIRST_RUN_COPY = {
       connectAgain: "Open the page again",
       connectCancel: "Cancel",
 
-      // ── SUPERSEDED BY THE SIX ROWS ABOVE, AND PARKED RATHER THAN CUT. ──
-      //
-      // `title`, `body`, `second`, `third` and `signup` are the three-sentence
-      // version of this card. The approved flow replaced them with a heading,
-      // a lead and six rows, and nothing renders these any more.
-      //
-      // They stay because they are still held to the house rules by the copy
-      // walk, and because the claims in them are the ones that were argued
-      // over: routing first, the apps named by example, no model count, and
-      // transcription rather than voice. Anybody tempted to rewrite a row
-      // above can read what the same promise looked like when it was fought
-      // over. They are NOT a second source of truth: the card reads `features`
-      // and only `features`.
-      title: "One key worth having",
-      body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
-      second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
-      /**
-       * NOT "voice". Flux Router has no synthesis endpoint of any kind:
-       * server/voice/flux-voice.ts says so in its own header, and
-       * src/lib/flux-invite.ts already refused to claim speech for the same
-       * reason. Murage speaks through ElevenLabs on the person's OWN key, or
-       * the free OS voices, never on this one. Transcription IS on this key
-       * (POST /v1/audio/transcriptions), which is the half worth selling:
-       * dictation that works from a phone, where the native macOS helper
-       * cannot reach.
-       */
-      third: "It brings pictures, and transcription so you can talk instead of type from your phone.",
+      // The three-sentence version of this card, `title`/`body`/`second`/
+      // `third`, used to sit here, marked SUPERSEDED in the same commit that
+      // stopped rendering it and kept alive by a test that asserted on it.
+      // It is gone. What this card says is `heading`, `lead` and `features`,
+      // and there is no second version of the claims for anybody to read,
+      // edit or accidentally believe is the live one.
+
       /**
        * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
        * SITUATION.

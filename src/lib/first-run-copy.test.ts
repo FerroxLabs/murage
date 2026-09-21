@@ -205,13 +205,31 @@ describe("first run copy: the house rules", () => {
 });
 
 describe("first run copy: the things the flow promises", () => {
+  // THIS ASSERTED ON STRINGS NOBODY COULD READ, AND THAT IS WHY THEY WERE
+  // STILL THERE.
+  //
+  // It checked `flux.key.body`, `.second` and `.third`: the three-sentence
+  // version of this card, which the approved flow replaced with a heading, a
+  // lead and six rows. The same commit that stopped rendering them marked
+  // them SUPERSEDED and left them in, and this test then held them alive,
+  // house rules and all, for a card no person reaches. Prose pinned to dead
+  // prose. The strings are deleted and the order is now asserted on
+  // `features`, which is what the card actually renders (one after the
+  // other, checked as rendered in FirstRunCard.test.ts).
   it("leads the Flux Router card with routing, then apps, then media", () => {
     const flux = FIRST_RUN_COPY.flux.key;
-    expect(flux.body).toContain("all the latest AI models");
-    expect(flux.body).toContain("smart routing");
-    expect(flux.second).toContain("500+ apps");
-    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(flux.second).toContain(named);
-    expect(flux.third).toMatch(/pictures.*transcription/);
+    const order = flux.features.map((row) => row.id);
+    expect(order[0], "routing does not lead the card").toBe("routing");
+    expect(order[1], "the apps do not follow routing").toBe("apps");
+    // Pictures and dictation are the media rows, and they come after the
+    // models claim rather than in front of it.
+    for (const media of ["pictures", "dictation"]) {
+      expect.soft(order.indexOf(media), media).toBeGreaterThan(order.indexOf("models"));
+    }
+    const apps = flux.features.find((row) => row.id === "apps")!;
+    expect(apps.title).toContain("500+ apps");
+    for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(apps.body).toContain(named);
+    expect(flux.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
   });
 
@@ -491,12 +509,20 @@ describe("what the key card claims, to whom", () => {
   });
 
   it("leads on routing in every version, and never counts models", () => {
-    for (const line of [key.body, key.recommendation, key.recommendationBare, key.recommendationBonus]) {
+    // `key.body` was three of these four, and `key.body` was not rendered.
+    // The versions a person really reads are the two leads, the three
+    // recommendations and the rows.
+    const rendered = [
+      key.lead, key.leadBare, key.recommendation, key.recommendationBare, key.recommendationBonus,
+      ...key.features.flatMap((row) => [row.title, row.body]),
+    ];
+    for (const line of rendered) {
       expect.soft(line, line).not.toMatch(/\d+\s*\+?\s*models/i);
       expect.soft(line, line).not.toMatch(/composio/i);
     }
-    expect(key.body).toMatch(/all the latest/i);
-    expect(key.body).toMatch(/routing/i);
+    expect(key.features[0].title).toMatch(/routing/i);
+    expect(key.lead).toMatch(/picks for you/i);
+    expect(key.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
   });
 });
 
