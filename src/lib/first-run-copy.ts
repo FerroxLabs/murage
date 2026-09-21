@@ -236,6 +236,9 @@ export const FIRST_RUN_COPY = {
        */
       closing: "That is enough for me to answer you. It is not enough for me to do the interesting part.",
       action: "Show me the interesting part",
+      /** The one control on this card could not record that the report had
+       *  been read. Said where it happened, and the button stays. */
+      failure: "That did not go through. Press it again whenever you like.",
     },
     found: {
       second: "They answer to you in here now, and they still work exactly as they did on their own.",
@@ -659,6 +662,16 @@ export const FIRST_RUN_COPY = {
          *  has nothing to type instead. */
         skipToInput: "Skip that and let me type it in instead",
         elsewhere: "Something else",
+        /**
+         * THE CONNECTOR STORE COULD NOT BE READ, WHICH IS NOT THE SAME AS
+         * NOTHING BEING CONNECTED.
+         *
+         * The rows below stay conservative and ask for everything, because
+         * claiming a connection we cannot see is how a job fails on the
+         * person's first real request. What the SCREEN can do, and the tag on
+         * a row cannot, is say which of the two this is.
+         */
+        unreadable: "I could not read your connected accounts just now, so some of these may already be on.",
       },
       /**
        * THE BOX. Three of them, one per job that asks for something.
@@ -832,6 +845,9 @@ export const FIRST_RUN_COPY = {
       /** The way back to the Chief, on every result. Clears the job, the
        *  text and the parsed items; none of them was ever persisted. */
       again: "Take something else off my plate",
+      /** Something in the step itself did not go through. Said where it
+       *  happened, and whatever they were pressing stays pressable. */
+      failure: "That did not go through. Try it again whenever you are ready.",
     },
   },
   apps: {

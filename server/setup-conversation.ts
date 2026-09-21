@@ -287,8 +287,21 @@ export function setupConversationPlan(
   // rather than a question, and it is owed the moment the flow gets past
   // hello; when it is genuinely outstanding, `view.next` IS `detect` and the
   // same key covers both.
+  //
+  // AND IT READS THE LATCH, NOT ONLY THE LIVE PREDICATE. `nothingToThinkWith`
+  // is a fact about the machine RIGHT NOW, and it goes false the moment a
+  // Flux key fills the shipped engine's catalogue. A blank machine that has
+  // been past this step and then bought a key would otherwise arrive here
+  // with the predicate false and the step latched done, and be handed a
+  // detection card for the first time, after the flow had moved on. A step
+  // the flow has been past is never re-opened, and it is never re-reported.
   const hello = stepView(view, "hello");
-  if ((hello?.done === true || hello?.skipped === true) && !view.nothingToThinkWith) {
+  const detect = stepView(view, "detect");
+  if (
+    (hello?.done === true || hello?.skipped === true)
+    && !view.nothingToThinkWith
+    && detect?.latched !== true
+  ) {
     wanted.push(plan("detect", variantForCurrentStep("detect", view)));
   }
 

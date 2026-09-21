@@ -4,6 +4,7 @@ import { SETUP_CARD_VARIANTS, setupCardKey } from "../shared/setup-card.ts";
 import {
   type SetupLiveState,
   type SetupState,
+  SETUP_DETECT_ANSWER,
   type SetupStep,
   deriveSetupState,
   emptySetupState,
@@ -52,9 +53,44 @@ function state(patch: Partial<Record<SetupStep, { skipped?: boolean; note?: stri
   return { ...base, steps };
 }
 
-/** Detection is settled by being SHOWN, so most of these fixtures have to say
- *  it was. One place, so the reason is stated once. */
-const DETECTED = { note: "Fuigo" };
+/**
+ * Detection is settled by being SHOWN, so most of these fixtures have to say
+ * it was. One place, so the reason is stated once.
+ *
+ * AND IT IS THE NOTE THE CARD'S OWN BUTTON POSTS. It used to be a hand-picked
+ * string, which is a state no renderer path could produce: at the time
+ * nothing in the app recorded an answer for this step at all, so every
+ * fixture carrying it was manufacturing its own prerequisite and every walk
+ * built on it proved the flow worked past a point where it stopped dead.
+ */
+const DETECTED = { note: SETUP_DETECT_ANSWER };
+
+/**
+ * THE WALK, WITH THE MEMORY THE SERVER HAS.
+ *
+ * `SetupChecklist.read` persists what it derived, so the state each read sees
+ * is the state the last read left. A walk that built a fresh checklist per
+ * row could not see a step regress, which is exactly the defect the blank
+ * machine's walk exists to catch. Each row says what CHANGED: the machine as
+ * it now is, and whatever the person just answered.
+ */
+function walk(rows: Array<[SetupLiveState, Partial<Record<SetupStep, { skipped?: boolean; note?: string }>>]>): string[] {
+  let recorded = emptySetupState(1_000);
+  const seen: string[] = [];
+  const present = new Set<string>();
+  for (const [machine, answered] of rows) {
+    const steps = { ...recorded.steps };
+    for (const [step, patch] of Object.entries(answered)) {
+      steps[step as SetupStep] = { ...steps[step as SetupStep], ...patch };
+    }
+    recorded = deriveSetupState({ ...recorded, steps }, machine, 2_000);
+    for (const card of setupConversationPlan(setupView(recorded, machine), present).append) {
+      seen.push(card.key);
+      present.add(card.key);
+    }
+  }
+  return seen;
+}
 
 // The server hands `setupView` the DERIVED state (`SetupChecklist.read`), so
 // the test does the same. A raw checklist would report every step outstanding
@@ -124,6 +160,28 @@ describe("what the Chief says on a machine with nothing to think with", () => {
     // "you are ready without installing anything" is false on this machine,
     // and it is what the `bare` card says.
     expect(card.subtitle).not.toMatch(/you are ready/i);
+  });
+
+  // THE SECOND HALF OF THE SAME DEFECT.
+  //
+  // The detection report does not ride on `view.next`; it is pushed whenever
+  // the greeting is behind us and the machine is not blank. Both of those go
+  // true on a blank machine the instant a key fills the shipped engine's
+  // catalogue, so a person who had detection skipped FOR them would be handed
+  // the detection card for the first time after the flow had moved past it.
+  it("never hands the blank machine a detection card after the key lands", () => {
+    const present = new Set([setupCardKey("hello", "welcome")]);
+    // Read once while blank, exactly as the server does, and keep what that
+    // read recorded. `SetupChecklist.read` persists what it derived.
+    const settled = deriveSetupState(state(), blank, 2_000);
+    expect(settled.steps.detect.done).toBe(true);
+
+    const keyed = live({ ownerName: "Sean", flux: FLUX_SAVED });
+    const after = setupConversationPlan(view(keyed, settled), present);
+    for (const variant of ["found", "bare", "signed-out"] as const) {
+      expect(keys(after.append), variant).not.toContain(setupCardKey("detect", variant));
+    }
+    expect(keys(after.append)).toEqual([setupCardKey("chat", "jobs")]);
   });
 
   it("goes back to the ordinary offer the moment something can think", () => {
@@ -297,25 +355,22 @@ describe("called on every read, so it must be idempotent", () => {
   });
 
   it("walks the whole flow without ever repeating a card", () => {
-    const seen: string[] = [];
-    const present = new Set<string>();
-    const steps: Array<[SetupLiveState, SetupState]> = [
-      [live(), state()],
-      [live({ ownerName: "Sean" }), state()],
-      [live({ ownerName: "Sean" }), state({ detect: DETECTED })],
-      [live({ ownerName: "Sean", flux: FLUX_SAVED }), state({ detect: DETECTED })],
-      [live({ ownerName: "Sean", flux: FLUX_SAVED }), state({ detect: DETECTED, chat: { note: "brief" } })],
+    // Each row is what the person did, not a state handed to the walk. The
+    // detection row records the note the DETECTION CARD'S OWN BUTTON posts,
+    // so the walk goes through a state the shipped app can actually produce:
+    // hand-feeding `detect` was how this test used to pass while the flow
+    // stopped dead on screen two for everybody with an engine.
+    const seen = walk([
+      [live(), {}],
+      [live({ ownerName: "Sean" }), {}],
+      [live({ ownerName: "Sean" }), { detect: DETECTED }],
+      [live({ ownerName: "Sean", flux: FLUX_SAVED }), {}],
+      [live({ ownerName: "Sean", flux: FLUX_SAVED }), { chat: { note: "brief" } }],
       [
         live({ ownerName: "Sean", flux: FLUX_SAVED, connectedAppIds: ["gmail", "googlecalendar"], connectedApps: 2 }),
-        state({ detect: DETECTED, chat: { note: "brief" }, flow: { note: "tomorrow morning" } }),
+        { flow: { note: "tomorrow morning" } },
       ],
-    ];
-    for (const [machine, recorded] of steps) {
-      for (const card of setupConversationPlan(view(machine, recorded), present).append) {
-        seen.push(card.key);
-        present.add(card.key);
-      }
-    }
+    ]);
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen).toEqual([
       setupCardKey("hello", "welcome"),
@@ -327,21 +382,23 @@ describe("called on every read, so it must be idempotent", () => {
   });
 
   it("walks the blank machine's four cards, with no detection card among them", () => {
-    const seen: string[] = [];
-    const present = new Set<string>();
+    // THE MACHINE STOPS BEING BLANK WHEN THE KEY LANDS, AND THIS WALK SAYS SO.
+    //
+    // It used to hold `agents: []` for the whole walk, which kept the machine
+    // artificially blank and hid the defect underneath: saving the key FILLS
+    // the shipped engine's catalogue, so `nothingToThinkWith` goes false, and
+    // the only thing holding `detect` settled went with it. The step reopened
+    // and the detection card arrived, after the flow had moved past it, the
+    // moment the person paid.
     const blank = (patch: Partial<SetupLiveState> = {}) => live({ agents: [], signedOutAgents: [], ...patch });
-    const steps: Array<[SetupLiveState, SetupState]> = [
-      [blank(), state()],
-      [blank({ ownerName: "Sean" }), state()],
-      [blank({ ownerName: "Sean", flux: FLUX_SAVED }), state()],
-      [blank({ ownerName: "Sean", flux: FLUX_SAVED }), state({ chat: { note: "notes" } })],
-    ];
-    for (const [machine, recorded] of steps) {
-      for (const card of setupConversationPlan(view(machine, recorded), present).append) {
-        seen.push(card.key);
-        present.add(card.key);
-      }
-    }
+    const seen = walk([
+      [blank(), {}],
+      [blank({ ownerName: "Sean" }), {}],
+      // The key is saved. The engine in the box has something to think with
+      // now, which is the whole point of having bought one.
+      [live({ ownerName: "Sean", flux: FLUX_SAVED }), {}],
+      [live({ ownerName: "Sean", flux: FLUX_SAVED }), { chat: { note: "notes" } }],
+    ]);
     expect(seen).toEqual([
       setupCardKey("hello", "welcome"),
       setupCardKey("flux", "bare-needs-key"),

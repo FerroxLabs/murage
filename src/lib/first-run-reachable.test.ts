@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { createElement, type ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 
-import {
+// The screens import the chrome, which talks to the harness. Neither exists
+// in a node test and neither is what this file is about.
+vi.mock("@/state/store", () => ({
+  api: async () => ({}),
+  useStore: () => ({ state: {}, dispatch: () => {} }),
+}));
+
+const {
   briefRoutineRequest,
   businessResult,
   dayResult,
@@ -11,8 +20,8 @@ import {
   parseLines,
   researchResult,
   workingLines,
-} from "./first-run-flow";
-import {
+} = await import("./first-run-flow");
+const {
   FIRST_RUN_JOB_IDS,
   FIRST_RUN_JOB_SHAPES,
   afterConnect,
@@ -23,10 +32,20 @@ import {
   firstRunJobRows,
   typedMayShowWorking,
   typedReply,
-  type FirstRunJobWorld,
-  type FirstRunSearchRouting,
-} from "./first-run-jobs";
-import { SETUP_JOB_APPS, type SetupJobApp } from "../../shared/setup";
+} = await import("./first-run-jobs");
+type FirstRunJobWorld = import("./first-run-jobs").FirstRunJobWorld;
+type FirstRunSearchRouting = import("./first-run-jobs").FirstRunSearchRouting;
+const {
+  FirstRunBusinessResultView,
+  FirstRunConnectView,
+  FirstRunDayResultView,
+  FirstRunInputView,
+  FirstRunNotesResultView,
+  FirstRunResearchResultView,
+  FirstRunWorkingView,
+} = await import("@/components/FirstRunJobsCard");
+const { SETUP_JOB_APPS } = await import("../../shared/setup");
+type SetupJobApp = import("../../shared/setup").SetupJobApp;
 
 /**
  * NO SCREEN IN THIS FLOW CAN ARRIVE EMPTY, AND EVERY JOB REACHES ITS END.
@@ -37,11 +56,17 @@ import { SETUP_JOB_APPS, type SetupJobApp } from "../../shared/setup";
  * looking at a heading with nothing under it. The instruction was that
  * whatever replaced them must not have that shape.
  *
- * This sweeps every job across every machine the flow can be opened on and
+ * THIS FILE USED TO PROVE THAT ABOUT THE MODULES ONLY, AND THE MODULES WERE
+ * RENDERED BY NOTHING. `firstRunCardBody` had no case for `jobs` or `do-it`,
+ * so the last two steps drew literally nothing while every assertion in here
+ * passed. The header was false in the only place it mattered. So the walk
+ * still goes through the real rules, and at every stop it now RENDERS the
+ * component that stop is made of and reads the words back out of the markup.
+ * A screen that stops being drawn fails here.
+ *
+ * It sweeps every job across every machine the flow can be opened on and
  * asserts two things at each step: the screen the person is on has words on
- * it, and there is a way forward from it. It does not read source. It walks
- * the flow the way a person would and fails if any stop on the walk is
- * blank or is a dead end.
+ * it, and there is a way forward from it. It does not read source.
  */
 const ROUTINGS: readonly FirstRunSearchRouting[] = ["anonymous", "own-account", "unconfigured", "off"];
 const APP_SETS: readonly (readonly SetupJobApp[])[] = [
@@ -85,6 +110,35 @@ const TYPED = [
 function said(value: string | null | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
+
+/** A sentence as it looks once React has put it in the document. */
+const asHtml = (text: string) =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+
+/**
+ * Render a screen and hand back its markup, having first insisted there is
+ * something on it.
+ *
+ * "Something on it" is the words a person can read, not the elements: the
+ * defect this file exists for drew a step heading with an empty body under
+ * it, and an empty body is still a div.
+ */
+function screenOf(node: ReactElement, label: string): string {
+  const markup = renderToStaticMarkup(node);
+  const words = markup.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  expect(words.length, `${label} rendered nothing a person can read`).toBeGreaterThan(20);
+  return markup;
+}
+
+/** Every sentence the module decided on really reached the screen. */
+function saysAll(markup: string, label: string, lines: readonly (string | null | undefined)[]): void {
+  for (const line of lines) {
+    if (!said(line)) continue;
+    expect.soft(markup, `${label} did not render "${line}"`).toContain(asHtml(line!));
+  }
+}
+
+const noop = () => {};
 
 describe("the Chief's own screen, on every machine", () => {
   it("has a question, a lead, a status line and five tagged jobs, always", () => {
@@ -138,6 +192,22 @@ describe("every job walks from the Chief to a result", () => {
           // go back and pick something else. Never neither.
           expect(said(screen!.elsewhere) || said(screen!.skipToInput), label).toBe(true);
 
+          // ...and it is really on the screen, on a desktop and on a surface
+          // that cannot open a browser window for a sign-in.
+          for (const desktop of [true, false] as const) {
+            const markup = screenOf(
+              createElement(FirstRunConnectView, {
+                screen: screen!, busy: "" as const, failure: "", desktop,
+                onConnect: noop, onSkipToInput: noop, onElsewhere: noop,
+              }),
+              `${label} connect desktop=${desktop}`,
+            );
+            saysAll(markup, `${label} connect`, [
+              screen!.heading, screen!.lead, screen!.elsewhere, screen!.skipToInput,
+              ...screen!.rows.flatMap((row) => [row.bold, row.small]),
+            ]);
+          }
+
           // Connecting everything it asked for advances, and the screen it
           // advances to is one this walk knows how to render.
           const done: FirstRunJobWorld = {
@@ -159,6 +229,18 @@ describe("every job walks from the Chief to a result", () => {
           expect(said(box!.go), label).toBe(true);
           expect(said(box!.elsewhere), label).toBe(true);
           expect(box!.rows, label).toBeGreaterThan(0);
+
+          const markup = screenOf(
+            createElement(FirstRunInputView, {
+              screen: box!, value: "", busy: false, onChange: noop, onGo: noop, onElsewhere: noop,
+            }),
+            `${label} input`,
+          );
+          saysAll(markup, `${label} input`, [box!.heading, box!.lead, box!.go, box!.elsewhere, box!.connectedLine]);
+          // THE PLACEHOLDER STAYS A PLACEHOLDER. Text in the box is the
+          // person's, always, and an earlier version pre-filled the notes box.
+          expect(markup, `${label} input`).toContain(`placeholder="${asHtml(box!.placeholder)}"`);
+          expect(markup, `${label} put words in the person's box`).not.toMatch(/<textarea[^>]*>[^<]/);
         }
 
         for (const typed of TYPED) {
@@ -166,6 +248,10 @@ describe("every job walks from the Chief to a result", () => {
           const working = workingLines(id, items, typed);
           expect(working, `${label} working`).toHaveLength(3);
           for (const line of working) expect(said(line), `${label} working`).toBe(true);
+          // The first line is on screen from the first frame, so the working
+          // screen is never a blank pause.
+          saysAll(screenOf(createElement(FirstRunWorkingView, { lines: working, shown: 1 }), `${label} working`),
+            `${label} working`, [working[0]]);
         }
       }
     }
@@ -206,6 +292,24 @@ describe("every result has a body and a way on, whatever was typed", () => {
           } else {
             expect(result.morning, label).toBeNull();
           }
+
+          const markup = screenOf(
+            createElement(FirstRunDayResultView, {
+              result, busy: false, failure: "", onMorning: noop, onAgain: noop,
+            }),
+            label,
+          );
+          saysAll(markup, label, [
+            result.header, result.provenance, result.riskEyebrow, result.again,
+            result.risk?.line, result.risk?.reason, result.risk?.advice,
+            result.calm?.body, result.calm?.second,
+            result.fixed.heading, result.waiting.heading,
+            ...result.fixed.items, ...result.waiting.items,
+            result.morning?.heading, result.morning?.body, result.morning?.button,
+          ]);
+          // The morning offer is on the brief and on nothing else, on screen
+          // as well as in the answer.
+          expect(markup.includes(asHtml(briefRoutineOfferHeading())), label).toBe(id === "brief");
         }
       }
     }
@@ -220,6 +324,12 @@ describe("every result has a body and a way on, whatever was typed", () => {
       expect(said(result.caveat)).toBe(true);
       expect(said(result.again)).toBe(true);
       expect(result.steps.length > 0 || said(result.empty)).toBe(true);
+
+      const markup = screenOf(createElement(FirstRunNotesResultView, { result, onAgain: noop }), `notes "${typed}"`);
+      saysAll(markup, `notes "${typed}"`, [
+        result.header, result.provenance, result.eyebrow, result.caveat, result.again, result.empty,
+        ...result.steps.flatMap((step) => [step.text, step.tag]),
+      ]);
     }
   });
 
@@ -230,6 +340,8 @@ describe("every result has a body and a way on, whatever was typed", () => {
       // The local-model line is an addition, never the whole body, so null
       // here is correct rather than empty.
       expect(result.onLocal === null || said(result.onLocal)).toBe(true);
+      const markup = renderToStaticMarkup(createElement(FirstRunResearchResultView, { result, onAgain: noop }));
+      saysAll(markup, "research", [result.again, result.onLocal]);
     }
   });
 
@@ -247,6 +359,36 @@ describe("every result has a body and a way on, whatever was typed", () => {
       // The review section is all present or all absent, never half of it.
       expect([result.reviewEyebrow === null, result.reviewLine === null])
         .toEqual([result.reviewLine === null, result.reviewEyebrow === null]);
+
+      const markup = screenOf(
+        createElement(FirstRunBusinessResultView, {
+          result, busy: false, taken: false, failure: "", onSwitchOn: noop, onAgain: noop,
+        }),
+        "crew",
+      );
+      saysAll(markup, "crew", [
+        result.header, result.lead, result.botsEyebrow, result.again,
+        result.reviewEyebrow, result.reviewLine,
+        result.offer?.label, result.offer?.why,
+        ...result.bots.flatMap((bot) => [bot.name, bot.role]),
+      ]);
+      // A crew with no bots in it must not draw an empty list and call it
+      // "your crew"; it still says what it is and how to get back.
+      expect(markup).toContain(asHtml(result.again));
+    }
+  });
+
+  // The one screen in step five that has nothing of its own to say yet. It
+  // must not draw the crew before the install has answered, and it must not
+  // leave somebody stranded if the install refused.
+  it("gives the crew's waiting screen words and a way off it, refusal or not", async () => {
+    const { FirstRunCrewWaitingView } = await import("@/components/FirstRunJobsCard");
+    for (const failure of ["", "That crew is not available on this computer."]) {
+      const markup = screenOf(createElement(FirstRunCrewWaitingView, { failure, onAgain: noop }), `crew waiting "${failure}"`);
+      expect(markup, "no way off the waiting screen").toMatch(/<button/);
+      if (failure) expect(markup).toContain(asHtml(failure));
+      // Nothing about a crew that may not exist yet.
+      expect(markup).not.toContain("Business Planner");
     }
   });
 
@@ -256,6 +398,13 @@ describe("every result has a body and a way on, whatever was typed", () => {
   });
 });
 
+/** The morning offer's heading, as the only screen that carries it words it. */
+function briefRoutineOfferHeading(): string {
+  return dayResult(FIRST_RUN_JOB_SHAPES.brief, [], {
+    fluxReady: true, nothingToThinkWith: false, connected: [], appsUnreadable: false, search: "anonymous",
+  }).morning!.heading;
+}
+
 describe("the escape hatch for somebody whose thing is not on the list", () => {
   it("opens the notes box on every machine, including one with nothing", () => {
     for (const world of MACHINES) {
@@ -263,6 +412,13 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
       expect(box.kind, JSON.stringify(world)).toBe("notes");
       expect(said(box.heading), JSON.stringify(world)).toBe(true);
       expect(said(box.placeholder), JSON.stringify(world)).toBe(true);
+      const markup = screenOf(
+        createElement(FirstRunInputView, {
+          screen: box, value: "", busy: false, onChange: noop, onGo: noop, onElsewhere: noop,
+        }),
+        "escape hatch",
+      );
+      saysAll(markup, "escape hatch", [box.heading, box.lead, box.go, box.elsewhere]);
     }
   });
 

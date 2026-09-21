@@ -82,6 +82,27 @@ export const setupStepStateSchema = z.object({
   /** Passed over deliberately. Skipped is NOT done — the checklist moves on
    *  and says plainly that the step is still outstanding. */
   skipped: z.boolean().optional(),
+  /**
+   * THE FLOW HAS BEEN PAST THIS STEP, AND THAT IS A FACT ABOUT WHAT
+   * HAPPENED RATHER THAN A RE-DERIVATION FROM WHAT IS TRUE NOW.
+   *
+   * Every other field on this record is re-decided on every read, which is
+   * the right rule for a step that measures the machine: a Flux key deleted
+   * from the keychain puts `flux` back, and it should. It is the WRONG rule
+   * for a step whose only support was "there was nothing here to show you".
+   *
+   * The blank machine is the case. `detect` is settled on a machine with
+   * nothing to think with, because there is no honest "here is what I
+   * found" to write for it. Then the person pays, the key fills the shipped
+   * engine's catalogue, `live.agents` stops being empty,
+   * `nothingToThinkWith` flips false, and the ONLY thing holding `detect`
+   * done goes with it. `nextSetupStep` then sends them BACK to a step that
+   * cannot be settled, immediately after they paid. Reported as the flow
+   * going backwards; it was the predicate going backwards underneath it.
+   *
+   * So passing is latched. See `LATCHED_STEPS` and `deriveSetupState`.
+   */
+  latched: z.boolean().optional(),
   /** What the person answered. Recorded, never trusted as proof of `done`. */
   note: z.string().max(SETUP_NOTE_MAX).optional(),
 }).strict();
@@ -419,6 +440,18 @@ export function fluxKeyLooksValid(key: string | null | undefined): boolean {
   return !FOREIGN_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
+/**
+ * What the renderer records when the person has read the detection report
+ * and pressed on.
+ *
+ * A constant rather than a sentence typed at the call site, because a test
+ * that hand-feeds its own note is a test that proves a state the app cannot
+ * reach. `detect` is settled by an EVENT — the report was read — and this is
+ * the only thing in the product that produces it, so a fixture built from it
+ * is a fixture the button really writes.
+ */
+export const SETUP_DETECT_ANSWER = "detection read";
+
 /** A step counts as answered when a non-empty note was recorded for it and
  *  it was not subsequently passed over. */
 export function setupStepAnswered(recorded: SetupStepState): boolean {
@@ -460,7 +493,13 @@ export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: S
       // stand in for it, and on nearly every machine that is true before
       // anybody has typed anything, so the step ticked itself before the
       // report it exists to deliver had been written.
-      return nothingToThinkWith(live) || setupStepAnswered(recorded);
+      //
+      // THE LATCH IS READ FIRST, AND IT IS WHAT STOPS THE FLOW REVERSING.
+      // Saving the Flux key fills the shipped engine's catalogue, so
+      // `nothingToThinkWith` goes false on the very machine it skipped this
+      // step for. Without the latch that flips `done` back and the person is
+      // sent to a step they have already been past, the moment they paid.
+      return recorded.latched === true || nothingToThinkWith(live) || setupStepAnswered(recorded);
     case "flux":
       // A saved, well-shaped key is not the same as a key that can buy a
       // token. When Flux Router itself has refused a turn on payment, this
@@ -482,18 +521,49 @@ export function setupStepDone(step: SetupStep, recorded: SetupStepState, live: S
   }
 }
 
-/** Re-derive every step. `at` marks when a step last became done; it is
- *  dropped again the moment the live state behind it goes away, so a stale
- *  timestamp can never make a step look finished. */
+/**
+ * The steps whose passing is an EVENT, not a measurement.
+ *
+ * Only `detect`, and the shortness of this list is the point. Every other
+ * step is re-decided from live state on every read and should be: a key
+ * removed from the keychain puts `flux` back, a cleared profile name puts
+ * `hello` back, and both of those are the checklist telling the truth. The
+ * detection step is the one whose skip rests on a predicate that goes FALSE
+ * as a direct result of the person moving forward, so it is the one that has
+ * to remember rather than re-measure.
+ *
+ * `chat` and `flow` are not here because they never needed to be: their
+ * `done` already reads a recorded note, which nothing about the machine can
+ * take away.
+ */
+const LATCHED_STEPS: readonly SetupStep[] = ["detect"];
+
+/**
+ * Re-derive every step. `at` marks when a step last became done; it is
+ * dropped again the moment the live state behind it goes away, so a stale
+ * timestamp can never make a step look finished.
+ *
+ * AND IT LATCHES WHAT THE FLOW HAS BEEN PAST. A latched step is one the flow
+ * has actually REACHED and settled, which is why `reached` is tracked: a
+ * machine whose engine probe comes back momentarily empty on the very first
+ * read, before the person has even said their name, must not have detection
+ * stamped as delivered on the strength of it. The flow has to have got there.
+ */
 export function deriveSetupState(state: SetupState, live: SetupLiveState, now: number): SetupState {
   const steps = { ...state.steps };
+  /** Every step before this one is settled, so the flow is really here. */
+  let reached = true;
   for (const step of SETUP_STEPS) {
     const recorded = steps[step];
     const done = setupStepDone(step, recorded, live);
-    if (done === recorded.done) continue;
-    steps[step] = done
-      ? { ...recorded, done: true, at: recorded.at ?? now }
-      : { ...recorded, done: false, at: recorded.skipped ? recorded.at : undefined };
+    const latch = reached && done && recorded.latched !== true && LATCHED_STEPS.includes(step);
+    if (done !== recorded.done || latch) {
+      const base = latch ? { ...recorded, latched: true } : recorded;
+      steps[step] = done
+        ? { ...base, done: true, at: base.at ?? now }
+        : { ...base, done: false, at: base.skipped ? base.at : undefined };
+    }
+    reached = reached && (done || steps[step].skipped === true);
   }
   return { ...state, steps };
 }

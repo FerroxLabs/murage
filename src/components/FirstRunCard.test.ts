@@ -194,6 +194,55 @@ describe("card two: what is already here", () => {
     expect(markup).not.toContain("more on this computer");
   });
 
+  // THE FLOW STOPPED HERE FOR EVERYBODY WITH AN ENGINE, WHICH IS MOST OF THEM.
+  //
+  // `detect` is settled by `nothingToThinkWith(live) || setupStepAnswered`.
+  // On any machine that has something, the first half is false, so the only
+  // road out is a recorded answer, and nothing in the renderer ever recorded
+  // one: `nextSetupStep` returned `detect` for ever and the Flux screen, the
+  // one the company makes its money on, was never shown to anybody. The words
+  // for the button existed and were sitting unused in the copy file.
+  //
+  // All three detection variants, because all three are the same step and any
+  // of them can be the last card a person is looking at.
+  it("gives every detection card a way on to the next step", async () => {
+    await machine({
+      ownerName: "Sean",
+      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      signedOutAgents: [],
+    });
+    expect(render("detect", "found"), "found").toContain(copy.action);
+
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [] });
+    expect(render("detect", "bare"), "bare").toContain(copy.action);
+
+    await machine({
+      ownerName: "Sean",
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    expect(render("detect", "signed-out"), "signed-out").toContain(copy.action);
+
+    // ...including the one where they went and signed in, which empties the
+    // list and settles nothing on its own.
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [] });
+    expect(render("detect", "signed-out"), "signed in already").toContain(copy.action);
+  });
+
+  // The Flux step borrows this card's words on a blank machine. It is not
+  // detection's report there, `detect` is already settled, and a second
+  // "show me the interesting part" above the key card would be a button that
+  // answers a step the person is not on.
+  it("puts no detection control on the Flux step's own opening", async () => {
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true });
+    expect(render("flux", "bare-needs-key")).not.toContain(copy.action);
+  });
+
+  it("stops offering it once the step has been settled", async () => {
+    await machine({ ownerName: "Sean", agents: [{ id: "claude", name: "Claude Code", installed: true }] });
+    expect(render("detect", "found", { settled: true })).not.toContain(copy.action);
+  });
+
   it("says nothing about a machine it cannot see", async () => {
     // No view is not an empty machine, and a report built from a guess is a
     // report that is wrong on half the machines it ships to.
@@ -315,6 +364,100 @@ describe("card three: the key", () => {
   });
 });
 
+// STEPS FOUR AND FIVE, THROUGH THE DISPATCH THAT SHIPS.
+//
+// THE DEFECT: `firstRunCardBody` had no case for `jobs` or `do-it`. Both fell
+// to `default: return null`, and `FirstRunCard` returns null on a null body,
+// so the server planned both cards, appended both to the transcript, and the
+// last two steps of the first run drew LITERALLY NOTHING. Not a blank card:
+// nothing. The behaviour was all there, built and tested, in
+// src/lib/first-run-jobs.ts and src/lib/first-run-flow.ts, and nothing
+// rendered a line of it.
+//
+// These go through `render`, which is the real dispatch on the real variant,
+// so the case coming back out of the switch is what is being checked.
+describe("step four: what can I take off your plate", () => {
+  const copy = FIRST_RUN_COPY.chat.jobs;
+
+  it("draws the question and all five jobs rather than nothing at all", async () => {
+    await machine({ ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    const markup = render("chat", "jobs");
+    expect(markup, "the jobs card rendered nothing").not.toBe("");
+    expect(markup).toContain(asHtml(`${copy.question}, Sean?`));
+    for (const row of copy.rows) {
+      expect.soft(markup, row.id).toContain(asHtml(row.title));
+      expect.soft(markup, row.id).toContain(asHtml(row.sub));
+    }
+    expect(markup).toContain(copy.escape);
+  });
+
+  it("tags each job with what it is still waiting on, live", async () => {
+    await machine({ ownerName: "Sean", fluxReady: false, nothingToThinkWith: false, connectedJobApps: [] });
+    const missing = render("chat", "jobs");
+    // Nothing connected and no key: the brief wants both accounts and the
+    // key, and the jobs that reach for nothing are ready on this machine.
+    expect(missing).toContain(copy.tags.ready);
+    expect(missing).toContain("3 " + copy.tags.countTail);
+
+    await machine({ ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    expect(render("chat", "jobs")).toContain(copy.status.connected);
+  });
+
+  // A machine nobody has looked at yet must not be told anything is ready.
+  it("offers no tag and nothing to press while the machine is unknown", async () => {
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    const markup = render("chat", "jobs");
+    expect(markup).toContain(asHtml(copy.rows[0].title));
+    expect(markup, "claimed a job was ready on a machine it cannot see").not.toContain(copy.tags.ready);
+  });
+});
+
+describe("step five: the job, done", () => {
+  it("draws the job's own screen rather than nothing at all", async () => {
+    // Nothing connected and no key, so the brief opens on what it needs.
+    await machine({
+      ownerName: "Sean",
+      fluxReady: false,
+      nothingToThinkWith: false,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: true, note: "brief", status: "done" }],
+    });
+    const markup = render("flow", "do-it");
+    expect(markup, "the do-it card rendered nothing").not.toBe("");
+    const connect = FIRST_RUN_COPY.flow["do-it"].connect;
+    expect(markup).toContain(asHtml(connect.lead));
+    expect(markup).toContain(asHtml(connect.reasons.flux));
+    expect(markup).toContain(asHtml(connect.reasons.gmail));
+    expect(markup).toContain(connect.elsewhere);
+  });
+
+  it("opens the box straight away when the job needs nothing", async () => {
+    await machine({
+      ownerName: "Sean",
+      fluxReady: true,
+      nothingToThinkWith: false,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: true, note: "notes", status: "done" }],
+    });
+    const box = FIRST_RUN_COPY.flow["do-it"].input.notes;
+    const markup = render("flow", "do-it");
+    expect(markup).toContain(asHtml(box.heading));
+    expect(markup).toContain(`placeholder="${asHtml(box.placeholder)}"`);
+    // The box is the person's. An earlier version pre-filled it.
+    expect(markup).not.toMatch(/<textarea[^>]*>[^<]/);
+  });
+
+  it("says nothing at all about a job nobody chose", async () => {
+    await machine({ ownerName: "Sean", steps: [{ id: "chat", done: false, status: "open" }] });
+    expect(render("flow", "do-it")).toBe("");
+    // ...including a note from a build that had other jobs in it.
+    await machine({ ownerName: "Sean", steps: [{ id: "chat", done: true, note: "phone", status: "done" }] });
+    expect(render("flow", "do-it")).toBe("");
+  });
+});
+
 describe("card four: the accounts", () => {
   const copy = FIRST_RUN_COPY.apps.apps;
   it("says why on every row", () => {
@@ -340,8 +483,12 @@ describe("card four: the accounts", () => {
 
 describe("cards five and six: the brief", () => {
   const copy = FIRST_RUN_COPY.brief.brief;
-  it("asks for one time and says it back on the button", () => {
-    const markup = render(PARKED, "brief");
+  it("asks for one time and says it back on the button", async () => {
+    // Rendered directly, because through the dispatch this card is PARKED and
+    // arrives settled. The form is still real, tested work: it is held for
+    // the owner's decision about where the morning brief goes, not deleted.
+    const { FirstRunBriefCard } = await import("./FirstRunBriefCard");
+    const markup = renderToStaticMarkup(createElement(FirstRunBriefCard, { settled: false }));
     expect(markup).toContain('type="time"');
     expect(markup).toContain('value="07:00"');
     expect(markup).toContain("Set my brief for 7:00 am");
@@ -382,6 +529,53 @@ describe("card eight: what shall we do", () => {
     const markup = render(PARKED, "next");
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.on);
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.turnOn);
+  });
+});
+
+// WHAT A 0.1.57 INSTALL CAUGHT MID-FIRST-RUN SEES.
+//
+// THE DEFECT: W16 cut six steps to five, so `SETUP_STATE_VERSION` went 2 to 3
+// and the checklist resets. The OLD CARDS ARE STILL IN THAT PERSON'S
+// TRANSCRIPT, and every one of them was built against a step that no longer
+// exists. Their controls write through `PARKED_CARD_STEP`, which is `flow`:
+// pressing "Not now" on last week's Gmail card would have settled the new
+// flow's final step, and the brief card would have attached a routine to a
+// step about something else entirely.
+//
+// The decision is that a parked card is HISTORY. The words stay exactly as
+// they were, because that is what a transcript is for, and nothing on one can
+// be pressed into a step it was never about.
+describe("an upgrade that arrives mid-flow, with the old cards still in the thread", () => {
+  /** Every control on these cards that writes to the checklist. */
+  const WRITERS: Array<[string, string[]]> = [
+    ["apps", [FIRST_RUN_COPY.apps.apps.connect, FIRST_RUN_COPY.apps.apps.dismiss]],
+    ["brief", ["Set my brief for 7:00 am", FIRST_RUN_COPY.brief.brief.dismiss]],
+    ["more-routines", [FIRST_RUN_COPY.routines["more-routines"].add, FIRST_RUN_COPY.routines["more-routines"].dismiss]],
+    ["phone", [FIRST_RUN_COPY.phone.phone.dismiss]],
+    ["phone-needs-tailscale", [FIRST_RUN_COPY.phone.phone.dismiss]],
+  ];
+
+  it("keeps every word and offers nothing that would settle a step", () => {
+    for (const [variant, controls] of WRITERS) {
+      const markup = render(PARKED, variant);
+      expect(markup, `${variant} vanished instead of becoming history`).not.toBe("");
+      for (const control of controls) {
+        // Present but disabled is fine; a live button is not. The attribute,
+        // not the word: every one of these carries `disabled:opacity-60` in
+        // its class list, and a check that matched THAT would pass on a fully
+        // live button and prove nothing.
+        const live = new RegExp(`<button(?![^>]*\\sdisabled="")[^>]*>(?:<[^>]*>)*${control.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+        expect.soft(markup, `${variant} still offers "${control}"`).not.toMatch(live);
+      }
+    }
+  });
+
+  it("still says what it said at the time", () => {
+    // The apps card's reasons, and the brief's own explanation, are the
+    // record of what the person was told. Settling a card must not blank it.
+    const apps = render(PARKED, "apps");
+    for (const row of FIRST_RUN_COPY.apps.apps.rows) expect.soft(apps).toContain(row.why);
+    expect(render(PARKED, "brief")).toContain(FIRST_RUN_COPY.brief.brief.body);
   });
 });
 

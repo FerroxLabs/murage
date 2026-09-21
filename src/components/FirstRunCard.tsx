@@ -22,6 +22,7 @@ import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
 import { sampleBrief } from "../../shared/brief-sample";
 import { readSetupCard, type SetupCardVariant } from "../../shared/setup-card";
+import { SETUP_DETECT_ANSWER } from "../../shared/setup";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
 import { FirstRunBriefCard, FirstRunBriefRanCard, FirstRunMoreRoutinesCard } from "./FirstRunBriefCard";
 import {
@@ -30,11 +31,15 @@ import {
   FIRST_RUN_PRIMARY,
   FIRST_RUN_QUIET,
   FirstRunBubble,
+  FirstRunFailure,
   FirstRunLine,
+  answerSetupStep,
+  failureText,
   useSetupView,
 } from "./FirstRunChrome";
 import { FirstRunFluxCard, FirstRunNoKeyCard } from "./FirstRunFluxCard";
 import { FirstRunHelloCard } from "./FirstRunHelloCard";
+import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { FirstRunPhoneCard } from "./FirstRunPhoneCard";
 
@@ -76,11 +81,14 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     case "welcome":
       return <FirstRunHelloCard settled={settled} />;
     case "found":
-      return <FirstRunAgentsCard />;
+      return <FirstRunAgentsCard settled={settled} />;
     case "bare":
-      return <FirstRunBareAgentsCard />;
+      return <FirstRunBareAgentsCard settled={settled} onward />;
     case "bare-needs-key":
-      return <FirstRunBareAgentsCard needsKey />;
+      // THE FLUX STEP'S SECOND OPENING, NOT A DETECTION CARD. It carries no
+      // onward control because the card below it on that step is the one
+      // that takes the key, and `detect` is already settled on this machine.
+      return <FirstRunBareAgentsCard needsKey settled={settled} />;
     case "signed-out":
       return <FirstRunSignedOutAgentsCard settled={settled} />;
     case "sample-brief":
@@ -89,28 +97,44 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
       return <FirstRunFluxCard settled={settled} />;
     case "no-key":
       return <FirstRunNoKeyCard />;
-    // `jobs` and `do-it` ARE NOT WIRED YET, AND THE SERVER ALREADY EMITS
-    // THEM. W16 landed the contract half of the five-step flow: `chat` and
-    // `flow` are real steps, `setupConversationPlan` plans their cards, and
-    // the two components that render them are the renderer half of this
-    // release. Until they exist these fall to `default` and draw the step
-    // heading with nothing under it. This is the next piece of work on this
-    // branch, not an oversight.
+    case "jobs":
+      return <FirstRunJobsCard settled={settled} />;
+    case "do-it":
+      return <FirstRunDoItCard bot={bot} settled={settled} />;
+    // ── PARKED, AND THEREFORE HISTORY. ───────────────────────────────────
+    //
+    // WHAT AN UPGRADING 0.1.57 INSTALL SEES, DECIDED. W16 re-cut six steps to
+    // five, so `SETUP_STATE_VERSION` went 2 to 3 and the checklist resets:
+    // `loadState` does not recognise a file naming `agents`, `apps`, `brief`
+    // and `routines`, and starts fresh. But the OLD CARDS ARE STILL IN THAT
+    // PERSON'S TRANSCRIPT, and they were built against steps that no longer
+    // exist. Their controls write through `PARKED_CARD_STEP`, which is `flow`
+    // — so pressing "Not now" on a Gmail card from last week would settle the
+    // new flow's final step, and a brief card would attach a routine to a
+    // step about something else entirely.
+    //
+    // So a parked card renders SETTLED, always. It is a record of what was
+    // said then, it reads correctly, and nothing on it can be pressed into a
+    // step it was never about. Nothing is deleted and nothing is hidden: the
+    // words stay exactly as they were, which is the point of a transcript.
     case "apps":
-      return <FirstRunAppsCard settled={settled} />;
+      return <FirstRunAppsCard settled />;
     case "brief":
-      return <FirstRunBriefCard settled={settled} />;
+      return <FirstRunBriefCard settled />;
     case "brief-ran":
       return <FirstRunBriefRanCard />;
     case "more-routines":
-      return <FirstRunMoreRoutinesCard settled={settled} />;
+      return <FirstRunMoreRoutinesCard settled />;
     case "next":
+      // The only parked card with no step to write. Its offers are ordinary
+      // sends into the thread, which is a thing a person may still want to
+      // do, and which cannot settle anything.
       return <FirstRunNextCard bot={bot} />;
     case "phone":
     case "phone-needs-tailscale":
       // Both land on one component on purpose: which of the two is honest is
       // decided by probing this machine, not by what the server guessed.
-      return <FirstRunPhoneCard settled={settled} />;
+      return <FirstRunPhoneCard settled />;
     default:
       return null;
   }
@@ -126,14 +150,14 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
  * machine's sentence instead. "I found your agents" on a machine with none
  * is the exact small lie this variant exists to avoid.
  */
-function FirstRunAgentsCard() {
+function FirstRunAgentsCard({ settled }: { settled: boolean }) {
   const { view } = useSetupView();
   const [expanded, setExpanded] = useState(false);
   const detect = FIRST_RUN_COPY.agents.detect;
   const detection = firstRunDetection(view);
   if (!view) return null;
   const found = view.agents.filter((agent) => agent.installed);
-  if (found.length === 0) return <FirstRunBareAgentsCard needsKey />;
+  if (found.length === 0) return <FirstRunBareAgentsCard needsKey settled={settled} onward />;
 
   // A local model is named by its MODEL, never by the connection Murage
   // reaches it through. "You already had OpenAI-compatible (OpenRouter /
@@ -182,7 +206,59 @@ function FirstRunAgentsCard() {
       )}
 
       <FirstRunLine quiet>{detect.closing}</FirstRunLine>
+      <FirstRunDetectOnward settled={settled} />
     </FirstRunBubble>
+  );
+}
+
+/**
+ * THE WAY OUT OF THE DETECTION REPORT, AND WITHOUT IT THE FLOW STOPS HERE.
+ *
+ * `detect` is settled by `nothingToThinkWith(live) || setupStepAnswered`. On
+ * a machine that has anything at all the first half is false, so the only
+ * road out is a recorded answer — and until this control existed, nothing in
+ * `src/` ever recorded one. `nextSetupStep` therefore returned `detect` for
+ * ever and THE FLUX SCREEN WAS NEVER SHOWN to anybody with an engine, which
+ * is most installs. The copy for this button had been written and was sitting
+ * unused in `FIRST_RUN_COPY.agents.detect.action`.
+ *
+ * It rides on all three detection variants, because all three are the same
+ * step and any of them can be the last card a person is looking at: what was
+ * found, what came in the box, and the one nobody is signed in to.
+ *
+ * `settled` hides it rather than disabling it. A report that has been read is
+ * history, and history does not carry a live button.
+ */
+function FirstRunDetectOnward({ settled }: { settled: boolean }) {
+  const [acted, setActed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+  const detect = FIRST_RUN_COPY.agents.detect;
+
+  const onward = async () => {
+    if (busy) return;
+    setBusy(true);
+    setFailure("");
+    try {
+      await answerSetupStep("detect", SETUP_DETECT_ANSWER);
+      setActed(true);
+    } catch (cause) {
+      // Said where it happened, and the button stays. A step that could not
+      // be recorded is a step to press again, not a dead end with a toast.
+      setFailure(failureText(cause, detect.failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (acted || settled) return null;
+  return (
+    <div className="mt-3">
+      <button type="button" disabled={busy} onClick={() => void onward()} className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
+        {detect.action}
+      </button>
+      <FirstRunFailure message={failure} />
+    </div>
   );
 }
 
@@ -330,12 +406,20 @@ function FirstRunSampleBriefCard() {
  * be the first sentence the Chief ever spoke and it would be false, so it
  * says what is actually true and points at the card that fixes it.
  */
-function FirstRunBareAgentsCard({ needsKey = false }: { needsKey?: boolean }) {
+function FirstRunBareAgentsCard({
+  needsKey = false,
+  onward = false,
+  settled = false,
+}: { needsKey?: boolean; onward?: boolean; settled?: boolean }) {
   const copy = needsKey ? FIRST_RUN_COPY.agents["bare-needs-key"] : FIRST_RUN_COPY.agents.bare;
   return (
     <FirstRunBubble>
       <FirstRunLine>{copy.body}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
+      {/* This card answers the DETECTION step when it is detection's own
+          report, and the Flux step when it is that step's opening. Only the
+          first is a question with a way on. */}
+      {onward && <FirstRunDetectOnward settled={settled} />}
     </FirstRunBubble>
   );
 }
@@ -376,6 +460,11 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
     return (
       <FirstRunBubble>
         <FirstRunLine>{copy.done}</FirstRunLine>
+        {/* Signing in elsewhere empties this list, and it does not settle the
+            step: `detect` is settled by the report being read, and a person
+            looking at this sentence has read it. Without the control here,
+            doing the thing the card asked for is the one path that dead ends. */}
+        <FirstRunDetectOnward settled={settled} />
       </FirstRunBubble>
     );
   }
@@ -433,6 +522,8 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
           </button>
         </div>
       )}
+      {/* "Or leave it" is a real answer, and it needs somewhere to go. */}
+      <FirstRunDetectOnward settled={settled} />
     </FirstRunBubble>
   );
 }

@@ -123,19 +123,95 @@ const listeners = new Set<(view: SetupView) => void>();
 const POLL_MS = 3_000;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * HOW MANY READS IN A ROW MAY REPORT NOTHING NEW BEFORE THE POLL GIVES UP.
+ *
+ * `view.next === null` was the only stop, and it is not one. `chat` and
+ * `flow` are settled by the person doing something in this renderer, so a
+ * person who leaves the app sitting on the jobs screen — or on any screen
+ * they never finish — has a `view.next` that is never null, and the app
+ * re-read `GET /api/setup` every three seconds for the life of the process.
+ * That read calls `registry.describe()` over the whole engine fleet and,
+ * once a key exists, reaches the connected-apps broker. Forever, on every
+ * install, including one left open overnight.
+ *
+ * So the poll is bounded by its own usefulness. It exists to notice a step
+ * finishing OFF screen (connected apps travel with the Flux key, a sign-in
+ * happens in another window), and a run of identical answers is the proof
+ * that nothing is finishing. Twenty of them is a minute of asking, which
+ * covers coming back from a browser tab; past that, nothing is happening and
+ * the app stops asking.
+ *
+ * Anything the person does restarts it, because every mutation in this file
+ * goes through `forgetSetupView`, and so does `refresh`.
+ */
+export const SETUP_POLL_IDLE_LIMIT = 20;
+
+/** A read that failed, and how many times in a row. A failure is retried
+ *  rather than swallowed: with nothing cached, several cards render nothing
+ *  at all, and only a SUCCESSFUL read used to schedule another one. */
+const RETRY_MS = 2_000;
+export const SETUP_READ_RETRY_LIMIT = 5;
+
+let idleReads = 0;
+let lastSeen = "";
+let failedReads = 0;
+
+/** Whether a poll is still worth making. Pure, and exported, so the rule can
+ *  be read and tested without a timer. */
+export function setupPollWanted(view: SetupView, idle: number): boolean {
+  if (view.conversationLive !== true) return false;
+  if (view.next === null) return false;
+  return idle < SETUP_POLL_IDLE_LIMIT;
+}
+
+function clearPoll(): void {
+  if (!pollTimer) return;
+  clearTimeout(pollTimer);
+  pollTimer = null;
+}
+
 function schedulePoll(view: SetupView): void {
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-  if (view.conversationLive !== true || view.next === null) return;
+  clearPoll();
+  if (!setupPollWanted(view, idleReads)) return;
   pollTimer = setTimeout(() => {
     pollTimer = null;
     void readSetupView(true);
   }, POLL_MS);
 }
 
+/**
+ * The read did not answer, so ask again instead of ending the flow.
+ *
+ * `.catch(() => null)` alone is what made one bad response permanent: the
+ * cards that report on the machine return null with no view, and only a
+ * successful publish scheduled the next read, so a single failure left a
+ * heading with nothing under it and nothing that would ever ask again.
+ *
+ * Bounded, and backing off, because a server that is genuinely gone should
+ * not be hammered. A cached view is left exactly as it was: the last true
+ * answer beats no answer.
+ */
+function scheduleRetry(): void {
+  if (pollTimer || failedReads >= SETUP_READ_RETRY_LIMIT) return;
+  failedReads += 1;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void readSetupView(true);
+  }, RETRY_MS * failedReads);
+}
+
 function publish(view: SetupView): void {
+  // A poll that keeps hearing the same answer is a poll that is not earning
+  // its request. `JSON.stringify` rather than a hand-picked set of fields:
+  // a signature that named the fields it cared about would stop noticing the
+  // next field somebody adds.
+  const seen = JSON.stringify(view);
+  if (seen === lastSeen) idleReads += 1;
+  else {
+    lastSeen = seen;
+    idleReads = 0;
+  }
   for (const listener of [...listeners]) listener(view);
   schedulePoll(view);
 }
@@ -147,12 +223,19 @@ export function readSetupView(force = false): Promise<SetupView | null> {
   const request = api("/api/setup")
     .then((view: SetupView) => {
       if (view && Array.isArray(view.steps)) {
+        failedReads = 0;
         cached = { view, at: Date.now() };
         publish(view);
+      } else {
+        // An answer that is not a setup view is a failure wearing a 200.
+        scheduleRetry();
       }
       return cached?.view ?? null;
     })
-    .catch(() => null)
+    .catch(() => {
+      scheduleRetry();
+      return null;
+    })
     .finally(() => {
       if (inFlight === request) inFlight = null;
     });
@@ -166,10 +249,17 @@ export function readSetupView(force = false): Promise<SetupView | null> {
  * It used to only drop. The re-read is what closes the loop, and it is here
  * rather than at each call site because every caller of this function has
  * just done something that moves the checklist, without exception.
+ *
+ * It also wakes the poll. Something just happened, so the run of identical
+ * answers that stopped it is over by definition.
  */
 export function forgetSetupView(): void {
   cached = null;
   inFlight = null;
+  idleReads = 0;
+  lastSeen = "";
+  failedReads = 0;
+  clearPoll();
   void readSetupView(true);
 }
 
@@ -189,7 +279,10 @@ export function useSetupView(): { view: SetupView | null; refresh: () => void } 
       listeners.delete(listener);
     };
   }, []);
-  return { view, refresh: () => void readSetupView(true) };
+  // `refresh` is somebody pressing "I have done it", so it wakes the poll for
+  // the same reason `forgetSetupView` does: the run of identical answers that
+  // stopped it is over.
+  return { view, refresh: () => forgetSetupView() };
 }
 
 /**
@@ -223,6 +316,21 @@ export async function answerSetupStep(step: SetupStep, answer: string): Promise<
  *  bring it up again unasked. */
 export async function skipSetupStep(step: SetupStep): Promise<void> {
   await api("/api/setup/skip", { method: "POST", body: JSON.stringify({ step }) });
+  forgetSetupView();
+}
+
+/**
+ * Put a step back on the list.
+ *
+ * "Something else" and "take something else off my plate" both mean the same
+ * thing: the job they chose is not the job any more. `chat` is settled by the
+ * recorded job id, so putting it back is how the Chief's question becomes the
+ * live one again. Reopening drops the answer and re-derives, so a step still
+ * backed by live state comes straight back done; it asks again, it does not
+ * undo anything.
+ */
+export async function reopenSetupStep(step: SetupStep): Promise<void> {
+  await api("/api/setup/reopen", { method: "POST", body: JSON.stringify({ step }) });
   forgetSetupView();
 }
 

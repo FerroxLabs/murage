@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { crewReading } from "../src/lib/first-run-crew.ts";
 import { businessResult, type FirstRunCrewReading } from "../src/lib/first-run-flow.ts";
-import { starterProfileContents } from "./starter-profiles.ts";
+import { listStarterProfiles, starterProfileContents } from "./starter-profiles.ts";
 
 /**
  * THE CREW SCREEN AGAINST THE REAL PACKAGE.
@@ -74,6 +75,19 @@ describe("what the business job actually installs", () => {
   it("says Monday because the package says Monday", () => {
     expect(crew.routine!.weekdays).toEqual([1]);
     expect(crew.routine!.time).toBe("09:00");
+  });
+
+  // THE RENDERER READS THE CATALOGUE, NOT THE PACKAGE FILE.
+  //
+  // `businessResult` needs the review's time, its days, how long it runs and
+  // whether it installs switched off, and the only thing the first run can
+  // read in a browser is what `/api/starter-profiles` publishes. If the two
+  // ever come apart, the crew screen describes a review that is not the one
+  // the person got.
+  it("publishes the schedule the crew screen describes", () => {
+    const row = listStarterProfiles().find((profile) => profile.id === "starter-solo-business")!;
+    expect(crewReading(row)).toEqual(crew);
+    expect(businessResult(crewReading(row)).reviewLine).toBe(businessResult(crew).reviewLine);
   });
 
   it("claims no third bot, no Friday wrap and no second brief anywhere", () => {

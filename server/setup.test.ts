@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  SETUP_DETECT_ANSWER,
   SETUP_STEPS,
   type SetupLiveState,
   connectedAppsBlock,
@@ -242,6 +243,30 @@ describe("the setup checklist the server owns", () => {
 //
 // So these tests go through `setupAgentsReading`, which is where `runnable()`
 // lives, on real instance readings rather than on a hand-written agent list.
+// THE OTHER HALF OF THE DETECTION CONTROL, CHECKED WHERE IT LANDS.
+//
+// The card can only settle this step by recording an answer, and this is the
+// exact note it records. If the two ever come apart, the flow stops on screen
+// two for everybody with an engine on their machine, which is most installs.
+describe("what the detection card's one button does to the checklist", () => {
+  it("settles detection and moves the flow on to the Flux step", () => {
+    const found = live({ ownerName: "Sean", agents: [BUNDLED, { id: "claude", name: "Claude Code", installed: true }] });
+    const list = checklist();
+    expect(nextSetupStep(list.read(found)), "detection was already settled before it was read").toBe("detect");
+
+    const after = list.answer("detect", SETUP_DETECT_ANSWER, found);
+    expect(after.steps.detect.done).toBe(true);
+    expect(nextSetupStep(after)).toBe("flux");
+  });
+
+  it("is a real note, because an empty one settles nothing", () => {
+    // `setupStepAnswered` wants a non-empty note that was not then skipped.
+    // A blank constant would compile, render and record, and leave the flow
+    // exactly where it was.
+    expect(SETUP_DETECT_ANSWER.trim().length).toBeGreaterThan(0);
+  });
+});
+
 describe("a machine with nothing to think with", () => {
   const instance = (over: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
     snapshot: { state: "available" },
@@ -274,6 +299,56 @@ describe("a machine with nothing to think with", () => {
     expect(view.nothingToThinkWith).toBe(true);
     // Four rows, not five, is what the person is counting.
     expect(view.progress).toEqual({ done: 2, total: 5 });
+  });
+
+  // THE FLOW MUST NOT GO BACKWARDS THE MOMENT THEY PAY.
+  //
+  // `detect` is settled on a blank machine because there is no honest report
+  // to write for it. The only thing holding it settled was
+  // `nothingToThinkWith`, and that predicate is undone BY the purchase:
+  // saving the Flux key fills the shipped engine's catalogue, `runnable()`
+  // starts answering true, `live.agents` stops being empty. Re-derived, the
+  // step flips back to outstanding and `nextSetupStep` sends the person to a
+  // step that cannot be settled, one read after they handed over a key.
+  //
+  // Read twice through the real file-backed checklist, because the latch has
+  // to survive being written and read back, not merely computed.
+  it("keeps detection settled once the key fills the shipped engine's catalogue", () => {
+    const list = checklist();
+    const bare = bareMachine();
+    const before = list.read(bare);
+    expect(before.steps.detect.done).toBe(true);
+    expect(before.steps.detect.latched, "passing was not recorded as having happened").toBe(true);
+    expect(nextSetupStep(before)).toBe("flux");
+
+    // The same shipped engine, same instance, with a model behind it now.
+    const filled = instance({ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent", models: { default: "flux/auto" } });
+    const keyed = live({
+      ownerName: "Sean",
+      flux: FLUX_SAVED,
+      agents: setupAgentsReading([filled]),
+      signedOutAgents: setupSignedOutReading([filled]),
+    });
+    expect(nothingToThinkWith(keyed), "the predicate the skip rested on is gone, which is the whole point").toBe(false);
+
+    const after = list.read(keyed);
+    expect(after.steps.detect.done, "the flow reversed onto a step nothing can settle").toBe(true);
+    expect(nextSetupStep(after), "the person was sent back to detection after paying").toBe("chat");
+
+    // ...and a fresh checklist over the same file agrees, because the latch
+    // is persisted rather than held in this process.
+    expect(new SetupChecklist(file).read(keyed).steps.detect.done).toBe(true);
+  });
+
+  // The other direction, and it is why the latch waits for the flow to
+  // arrive. An engine probe that comes back empty for one read on a machine
+  // nobody has even said hello on must not stamp detection as delivered.
+  it("does not record detection as passed before the flow has reached it", () => {
+    const anonymous = live({ agents: [], signedOutAgents: [] });
+    const state = checklist().read(anonymous);
+    expect(state.steps.hello.done).toBe(false);
+    expect(state.steps.detect.latched).toBeUndefined();
+    expect(nextSetupStep(state)).toBe("hello");
   });
 
   it("is not blank when a signed-out engine is sitting there", () => {
