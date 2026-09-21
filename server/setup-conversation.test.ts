@@ -75,10 +75,6 @@ describe("what the Chief says next on a bare machine", () => {
     );
     expect(keys(answered.append)).toEqual([
       setupCardKey("agents", "bare"),
-      // Shown BEFORE the ask, and in the same read: the person sees what a
-      // morning brief is and then gets asked for the key that turns the rest
-      // on. Show, then ask.
-      setupCardKey("flux", "sample-brief"),
       setupCardKey("flux", "key"),
     ]);
     // The card that asked for the name is answered, so it stops being live.
@@ -282,12 +278,12 @@ describe("called on every read, so it must be idempotent", () => {
     expect(seen).toEqual([
       setupCardKey("hello", "welcome"),
       setupCardKey("agents", "bare"),
-      // Shown BEFORE the ask, and in the same read: the person sees what a
-      // morning brief is and then gets asked for the key that turns the rest
-      // on. Show, then ask.
-      setupCardKey("flux", "sample-brief"),
       setupCardKey("flux", "key"),
       setupCardKey("apps", "apps"),
+      // The rendered brief lands immediately before the ask it motivates,
+      // and AFTER the connections it would be built from. On the flux step it
+      // was four cards from that ask and one ahead of a request for a key.
+      setupCardKey("brief", "sample-brief"),
       setupCardKey("brief", "brief"),
       setupCardKey("brief", "brief-ran"),
       setupCardKey("routines", "more-routines"),

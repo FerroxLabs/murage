@@ -82,13 +82,39 @@ let inFlight: Promise<SetupView | null> | null = null;
 let cached: { view: SetupView; at: number } | null = null;
 const FRESH_MS = 4_000;
 
+/**
+ * EVERY CARD AND THE CHECKLIST MOVE TOGETHER, OR THE FLOW LOOKS BROKEN.
+ *
+ * This was a plain module cache with `useState` in each consumer, and the two
+ * do not add up. A card that changed something cleared the cache and
+ * re-rendered ITSELF; every other mounted consumer kept the view it read when
+ * it mounted, forever, because nothing told it otherwise.
+ *
+ * The checklist in the sidebar is a consumer. So a person pasted their key,
+ * watched the key card settle, and watched the rail go on saying that step
+ * was still outstanding. Reported exactly that way: the key is in and "One
+ * key worth having" is not ticked. Nothing was wrong with the server, which
+ * had the step done; the sidebar had simply never asked again.
+ *
+ * A subscription instead. One fetch still serves everyone, and when it
+ * lands everyone hears about it.
+ */
+const listeners = new Set<(view: SetupView) => void>();
+
+function publish(view: SetupView): void {
+  for (const listener of [...listeners]) listener(view);
+}
+
 export function readSetupView(force = false): Promise<SetupView | null> {
   const now = Date.now();
   if (!force && cached && now - cached.at < FRESH_MS) return Promise.resolve(cached.view);
   if (!force && inFlight) return inFlight;
   const request = api("/api/setup")
     .then((view: SetupView) => {
-      if (view && Array.isArray(view.steps)) cached = { view, at: Date.now() };
+      if (view && Array.isArray(view.steps)) {
+        cached = { view, at: Date.now() };
+        publish(view);
+      }
       return cached?.view ?? null;
     })
     .catch(() => null)
@@ -99,25 +125,36 @@ export function readSetupView(force = false): Promise<SetupView | null> {
   return request;
 }
 
-/** For tests and for a card that has just changed something. */
+/**
+ * Something changed: drop what we knew and tell everybody the new answer.
+ *
+ * It used to only drop. The re-read is what closes the loop, and it is here
+ * rather than at each call site because every caller of this function has
+ * just done something that moves the checklist, without exception.
+ */
 export function forgetSetupView(): void {
   cached = null;
   inFlight = null;
+  void readSetupView(true);
 }
 
 export function useSetupView(): { view: SetupView | null; refresh: () => void } {
   const [view, setView] = useState<SetupView | null>(cached?.view ?? null);
-  const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
-    void readSetupView(tick > 0).then((next) => {
+    const listener = (next: SetupView) => {
+      if (live) setView(next);
+    };
+    listeners.add(listener);
+    void readSetupView().then((next) => {
       if (live && next) setView(next);
     });
     return () => {
       live = false;
+      listeners.delete(listener);
     };
-  }, [tick]);
-  return { view, refresh: () => setTick((value) => value + 1) };
+  }, []);
+  return { view, refresh: () => void readSetupView(true) };
 }
 
 /** Record what they said against a step. The server owns what that means

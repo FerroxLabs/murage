@@ -60,7 +60,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
       try { setEmailGateDone("submitted"); } catch { /* a blocked store is not a failed signup */ }
       // Both halves, because both are what they just told the Chief and the
       // transcript is where a person checks what an assistant heard.
-      await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(" \u00b7 "));
+      await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(", "));
       setSaved(greetingLine(profile.name));
       setDone(true);
     } catch (cause) {

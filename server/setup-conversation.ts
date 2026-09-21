@@ -92,8 +92,8 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
     subtitle: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
   },
   "sample-brief": {
-    title: "This is what tomorrow morning looks like",
-    subtitle: "A made up day, so you can see the shape of it. The real one is yours, every morning, at a time you pick.",
+    title: "This is what tomorrow morning could look like",
+    subtitle: "A made up day, so you can see the shape of it. Yours would be built from what you have just connected.",
   },
   key: {
     title: "One key turns the rest on",
@@ -247,7 +247,7 @@ export function setupConversationPlan(
   // completed, so this card can only appear after the person saw it work.
   if (stepView(view, "brief")?.done === true) wanted.push(plan("brief", "brief-ran"));
 
-  // SHOW BEFORE ASKING.
+  // SHOW BEFORE ASKING, AND SHOW IT NEXT TO THE THING IT IS ASKING FOR.
   //
   // Both cross-research models, independently, proposed the same thing: put a
   // real brief in front of the person BEFORE the key card, rendered from
@@ -255,14 +255,22 @@ export function setupConversationPlan(
   // itself rather than a sentence about it, and it turns the next card from a
   // request into an offer they can already see the point of.
   //
-  // It can sit here, ahead of the ask, precisely because it costs nothing to
+  // It sat on the FLUX step first, which put a rendered brief four cards away
+  // from the ask it motivates and one card ahead of a request for a key. The
+  // owner's objection is the right one: a brief is made of a calendar and a
+  // mailbox, so showing one to somebody who has not connected either is
+  // showing them a thing they cannot have, and it argues for the wrong
+  // purchase. It belongs immediately before "shall I do this every morning?",
+  // after the connections that make it real.
+  //
+  // It can sit ahead of that ask precisely because it costs nothing to
   // produce: no model call, no network, no key. There is no free allowance to
   // abuse because nothing is spent.
   //
   // A report rather than a question, like the agents card and the brief that
   // ran, so it is deliberately NOT in ASK_VARIANTS and never settles. It stays
   // in the transcript afterwards, which is the point: it is their template.
-  if (view.next === "flux") wanted.push(plan("flux", "sample-brief"));
+  if (view.next === "brief") wanted.push(plan("brief", "sample-brief"));
 
   if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
   else wanted.push(plan(CLOSING_STEP, "next"));

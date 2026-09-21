@@ -137,9 +137,9 @@ export const FIRST_RUN_COPY = {
      * not recoverable.
      */
     "sample-brief": {
-      body: "Before I ask you for anything, here is what tomorrow morning looks like.",
-      second: "The day in it is made up. The shape of it is real, and so is the one you would get.",
-      third: "Yours arrives at a time you pick, and it learns what matters to you as we go.",
+      body: "Here is what tomorrow morning could look like.",
+      second: "The day in it is made up. The shape of it is real, and yours would be built from what you have just connected.",
+      third: "Would you like one of these every morning?",
       frameTitle: "An example morning brief",
       /** The sheet is labelled so it reads as a thing that was handed over
        *  rather than as more of the same conversation. */

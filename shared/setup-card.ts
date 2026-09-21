@@ -47,9 +47,9 @@ export const SETUP_CARD_VARIANTS = [
   "signed-out",
   /** flux: the key card, offered. */
   "key",
-  /** flux: tomorrow morning, rendered, before anything is asked for. An
-   *  offer and an invitation rather than a pitch, and it costs nothing to
-   *  produce, which is what lets it exist at all. */
+  /** brief: tomorrow morning, rendered, immediately before "shall I do this
+   *  every day?". It rode on the flux step first, which showed a brief made
+   *  of a calendar and a mailbox to somebody who had connected neither. */
   "sample-brief",
   /** flux: they said not now, and local work carries on. */
   "no-key",
