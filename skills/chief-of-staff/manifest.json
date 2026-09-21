@@ -1,0 +1,33 @@
+{
+  "id": "chief-of-staff",
+  "name": "Chief of Staff",
+  "version": "0.1.0",
+  "description": "How to do the five jobs the Chief of Staff offers on the first run: the morning brief, organising the day, making sense of notes, researching a topic, and helping run the business. Covers what to check before saying it, when to ask instead of assuming, and what this computer can actually promise.",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "chief of staff",
+    "off my plate",
+    "off your plate",
+    "morning brief",
+    "write me a brief",
+    "needs a decision from me",
+    "changed overnight",
+    "handled for me",
+    "my calendar",
+    "my inbox",
+    "sort the inbox",
+    "triage my inbox",
+    "inbox triage",
+    "keep an eye on",
+    "organise my day",
+    "organize my day",
+    "what is on today",
+    "what's on today",
+    "catch me up",
+    "run my business",
+    "running my business",
+    "look into something for me",
+    "make sense of"
+  ],
+  "requiredCapabilities": []
+}
