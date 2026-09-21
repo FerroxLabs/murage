@@ -59,14 +59,26 @@ const NOTHING: SetupConversationPlan = { append: [], settle: [] };
  * Only these are settled when their step finishes. `brief-ran` is a report of
  * something that already happened and `next` is the closing offer; neither is
  * an outstanding question, so neither is ever "settled".
+ *
+ * EXPORTED BECAUSE A CARD THAT ASKS MUST BE ANSWERABLE ON SCREEN, and that is
+ * a claim about the renderer rather than about this file.
+ * `FirstRunCard.test.ts` renders every variant in here and fails on one with
+ * no live control, which is the exact shape of the block this list was edited
+ * to close: the Flux step opened on `bare-needs-key`, a card of two sentences
+ * and no button, and the only key box in the flow was on the card that
+ * machine was never shown. The two halves meet here, so moving the dead end
+ * back into a step fails one side or the other.
  */
-const ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> = {
+export const SETUP_ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> = {
   hello: ["welcome"],
   // Detection is a REPORT, not a question, and it settles when it has been
   // read rather than when something was chosen. It is here all the same so
   // that a read card is shown settled instead of sitting open forever.
   detect: ["found", "bare", "signed-out"],
-  flux: ["key", "bare-needs-key"],
+  // `bare-needs-key` is NOT here, and its absence is the park rather than an
+  // omission: nothing emits it, so nothing can be waiting on it, and a parked
+  // card in an upgrading person's transcript renders settled on sight.
+  flux: ["key"],
   chat: ["jobs"],
   flow: ["do-it"],
 };
@@ -102,10 +114,12 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
    * `Record<SetupCardVariant, …>`, and `setupCardCopy` below THROWS rather than
    * spreading a hole. A test executes it for every variant.
    *
-   * It is the Flux step's card now, not detection's, and the words say why a
-   * key is the next thing rather than claiming anything was found. It must
-   * not say what `bare` says, because on this machine "you are ready" is
-   * false.
+   * IT IS PARKED NOW, and the copy stays because the card stays readable in
+   * the transcript of anybody who was handed one. Nothing plans it: the Flux
+   * step opens on `key` on every machine, and the card says this same thing
+   * itself on a blank one, above a button that can act on it. A variant whose
+   * card has no controls must never be what a step opens with, which is
+   * exactly the hole it left here.
    */
   "bare-needs-key": {
     title: "Your bots need a brain first",
@@ -218,17 +232,35 @@ function variantForCurrentStep(step: SetupStep, view: SetupView): SetupCardVaria
       // engine nobody signed into is noise, and the first run has no room for
       // noise.
       //
-      // `bare-needs-key` IS NOT REACHABLE HERE, and that is the re-cut rather
-      // than an omission: a machine with nothing to think with has
+      // `bare-needs-key` IS NOT REACHABLE HERE, and it is no longer reachable
+      // anywhere: a machine with nothing to think with has
       // `nothingToThinkWith` true, so `detect` is already settled and the
-      // flow never stops on it. That card is the Flux step's second opening.
+      // flow never stops on it, and the Flux step now opens on the one card
+      // that can actually take a key. The variant is PARKED.
       return view.signedOutAgents.length > 0 ? "signed-out" : "bare";
     case "flux":
-      // TWO OPENINGS, ONE CARD. On a machine that found something this is an
-      // offer; on a machine with nothing to think with it is also the report
-      // that detection never got to make, which is why it carries the "what I
-      // looked for and did not find" framing.
-      return view.nothingToThinkWith ? "bare-needs-key" : "key";
+      // ONE CARD, AND IT FRAMES ITSELF.
+      //
+      // THE DEAD END THIS REPLACES. This used to hand the blank machine
+      // `bare-needs-key`, which routes to a card with two sentences on it and
+      // NO CONTROL OF ANY KIND. The only `saveFluxKey` and the only
+      // `skipSetupStep("flux")` in the flow live on `FirstRunFluxCard`, and
+      // that card was shown only when `nothingToThinkWith` was FALSE, so the
+      // one machine that cannot leave this step without a key was the one
+      // machine never offered a way to enter one. `setupStepDone("flux")`
+      // wants a real saved key (shared/setup.ts), so the flow stopped there
+      // for ever, reading "One key sorts that, and it is the next thing I
+      // will ask you for" with nothing following it. It is the original
+      // audit's release block #1, which moved from `agents` to `flux` with
+      // the re-cut and did not get fixed on the way.
+      //
+      // The blank machine's framing was never the missing thing: the card
+      // already reads `view.nothingToThinkWith` itself and swaps its heading,
+      // its lead, its status line and its dismiss wording (`noBrain` in
+      // FirstRunFluxCard.tsx). Choosing a DIFFERENT CARD to say the same
+      // thing was what cost the person the controls. So the step opens on one
+      // card on every machine and the card decides how it speaks.
+      return "key";
     case "chat":
       return "jobs";
     case "flow":
@@ -324,7 +356,7 @@ export function setupConversationPlan(
   for (const step of SETUP_STEPS) {
     const entry = stepView(view, step);
     if (!entry || (!entry.done && !entry.skipped)) continue;
-    for (const variant of ASK_VARIANTS[step]) {
+    for (const variant of SETUP_ASK_VARIANTS[step]) {
       const key = setupCardKey(step, variant);
       if (present.has(key)) settle.push(key);
     }

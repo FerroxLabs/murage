@@ -37,22 +37,6 @@ export const SETUP_CARD_VARIANTS = [
    *  is doing the work. Reached with a keyed engine in the box, which IS
    *  usable, so nothing is broken and nothing needs selling. */
   "bare",
-  /**
-   * flux: there is nothing on this computer to think with.
-   *
-   * IT MOVED FROM `detect` TO `flux`, AND THAT IS THE WHOLE RE-CUT IN ONE
-   * VARIANT. It used to be the detection card for a machine with no runnable
-   * engine. But a machine with no runnable engine is exactly the machine that
-   * SKIPS detection: there is no honest "here is what I found" to write. So
-   * this is now the Flux screen's second opening, which does detection's job
-   * of saying what was looked for and then asks for the one thing that fixes
-   * it.
-   *
-   * It stays separate from "bare" because the two say opposite things, and
-   * "it is what is talking to you now" is false on a machine with no key, no
-   * sign-in and no local model.
-   */
-  "bare-needs-key",
   /** detect: an engine IS here, ready, and nobody is signed in to it. Its own
    *  variant because all three of the others would be a lie about it: "found"
    *  claims it is connected, "bare" claims there was nothing here, and
@@ -80,6 +64,27 @@ export const SETUP_CARD_VARIANTS = [
   // components stay compiling. Nothing emits them: `variantForStep` in
   // server/setup-conversation.ts never returns one.
 
+  /**
+   * PARKED, AND PARKED BECAUSE IT WAS A DEAD END.
+   *
+   * flux: there is nothing on this computer to think with. It said the true
+   * thing and then stopped: the card it routes to is two sentences and no
+   * control, while the only way to save a key or pass the step over lives on
+   * `FirstRunFluxCard`, which the server showed only when the machine was NOT
+   * blank. So the one person who could not leave the Flux step without a key
+   * was the one person never shown the box that takes one.
+   *
+   * The framing it carried is not lost and never needed its own card: the
+   * Flux card reads `nothingToThinkWith` itself and opens with the report
+   * detection never got to make, above a button. The step plans `key` on
+   * every machine now.
+   *
+   * It stays in the union because it is in transcripts. A 0.1.57 install
+   * carries it on the `agents` step and a mid-flight 0.1.58 one carries it on
+   * `flux`; both keep reading correctly, and both now get the real Flux card
+   * beneath it, because that card has a different key.
+   */
+  "bare-needs-key",
   /** PARKED. brief: tomorrow morning, rendered, before "shall I do this every
    *  day?". The offer now lives on the `brief` job's own result. */
   "sample-brief",
