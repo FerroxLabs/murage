@@ -13,7 +13,7 @@
 // and the numbers are COMPUTED, because a machine with nothing to think with
 // never sees "what is here" and its four phases are numbered one to four. A
 // horizontal strip carries a numbered sequence the way a vertical checklist
-// carries a to-do list, and the flow is a sequence.
+// carries a list of things still outstanding, and the flow is a sequence.
 //
 // THREE RULES IT KEEPS FROM THE RAIL.
 //
