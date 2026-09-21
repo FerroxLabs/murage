@@ -163,13 +163,19 @@ function FirstRunSampleBriefCard() {
     //
     // The Chief still SPEAKS in a bubble, because that is speech. What it
     // hands over is a document, and a document gets the width of the page.
-    <div className="w-full">
+    // `min-w-0` is not decoration. A flex item defaults to `min-width: auto`,
+    // which refuses to shrink below its content, so a wide child can push the
+    // item past its container: the transcript scroller is `overflow-x-hidden`,
+    // and the result on a real machine was the brief rendering wider than the
+    // column with its right-hand side clipped off. Every level from here down
+    // to the frame has to be allowed to shrink, or the widest one wins.
+    <div className="w-full min-w-0">
       <FirstRunBubble>
         <FirstRunLine>{copy.body}</FirstRunLine>
         <FirstRunLine>{copy.second}</FirstRunLine>
       </FirstRunBubble>
 
-      <figure className="mt-3 w-full overflow-hidden rounded-2xl border border-hairline/50 bg-card">
+      <figure className="mt-3 w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-hairline/50 bg-card">
         <figcaption className="flex items-center justify-between gap-3 border-b border-hairline/40 px-4 py-2.5">
           <span className="text-[12.5px] font-semibold uppercase tracking-[0.12em] text-ink-secondary">
             {copy.sheetLabel}
@@ -191,7 +197,7 @@ function FirstRunSampleBriefCard() {
           // Tall enough that the first decision is never cut in half, and an
           // expanded height that clears the whole example rather than a
           // guess at it.
-          className={`w-full bg-white ${whole ? "h-[82rem]" : "h-[40rem]"}`}
+          className={`block w-full min-w-0 max-w-full bg-white ${whole ? "h-[82rem]" : "h-[40rem]"}`}
         />
       </figure>
 
