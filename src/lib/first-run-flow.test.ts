@@ -624,7 +624,12 @@ describe("the flow copy stays where the flow can find it", () => {
     // A string that drifts out of here is a string the walk in
     // first-run-copy.test.ts stops covering.
     expect(Object.keys(FIRST_RUN_COPY.flow["do-it"]).sort()).toEqual([
-      "again", "business", "connect", "day", "failure", "input", "morning", "notes", "research", "working",
+      // `noJob` and `waiting` are the two sentences this card says when it
+      // has no job to show: the step was handed back, or the view has not
+      // landed yet. It used to say nothing in both cases, which is a card
+      // that renders the empty string in the middle of a transcript.
+      "again", "business", "connect", "day", "failure", "input", "morning",
+      "noJob", "notes", "research", "waiting", "working",
     ]);
   });
 });

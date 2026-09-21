@@ -10,7 +10,7 @@ import {
   emptySetupState,
   setupView,
 } from "../shared/setup.ts";
-import { setupCardCopy, setupConversationPlan } from "./setup-conversation.ts";
+import { SETUP_ASK_VARIANTS, setupCardCopy, setupConversationPlan } from "./setup-conversation.ts";
 
 // Shape only, never a credential: the connection card's own gate is what a
 // real key passes, and this fixture only has to be key-shaped.
@@ -147,18 +147,35 @@ describe("what the Chief says on a machine with nothing to think with", () => {
 
   it("shows no detection card at all and goes straight to the key", () => {
     const cards = plan(blank, [setupCardKey("hello", "welcome")]);
-    expect(keys(cards.append)).toEqual([setupCardKey("flux", "bare-needs-key")]);
+    expect(keys(cards.append)).toEqual([setupCardKey("flux", "key")]);
     for (const variant of ["found", "bare", "signed-out"] as const) {
       expect(keys(cards.append), variant).not.toContain(setupCardKey("detect", variant));
     }
   });
 
-  it("uses the brain framing rather than the ordinary offer", () => {
+  // RELEASE BLOCK #1, AS THE TEST THAT WOULD HAVE CAUGHT IT.
+  //
+  // This step opened on `bare-needs-key` for exactly this machine, and that
+  // card is two sentences with no control on it at all: no key box, no "Not
+  // now", nothing. `setupStepDone("flux")` wants a real saved key, and the
+  // only `saveFluxKey` and the only `skipSetupStep("flux")` in the flow are
+  // on `FirstRunFluxCard`, which was shown only when the machine was NOT
+  // blank. So the one person who could not leave this step without a key was
+  // the one person never offered the box that takes one, for ever.
+  //
+  // The framing was never the reason to send a different card. The Flux card
+  // reads `nothingToThinkWith` itself and opens with the report detection
+  // never got to make, and `FirstRunCard.test.ts` renders that. What is
+  // checked here is the only half this file can see: the step opens on the
+  // card that ASKS it, which is the card that can answer it.
+  it("opens on the card that can actually take a key", () => {
     const card = plan(blank, [setupCardKey("hello", "welcome")]).append[0]!;
-    expect(card.variant).toBe("bare-needs-key");
-    expect(card.title).toBe("Your bots need a brain first");
-    // "you are ready without installing anything" is false on this machine,
-    // and it is what the `bare` card says.
+    expect(card.step).toBe("flux");
+    expect(SETUP_ASK_VARIANTS.flux, "the blank machine was sent a card that cannot answer its step")
+      .toContain(card.variant);
+    // ...and the sentence a transcript keeps must still be true here. "you
+    // are ready without installing anything" is the `bare` card's claim and
+    // it is false on this machine.
     expect(card.subtitle).not.toMatch(/you are ready/i);
   });
 
@@ -182,6 +199,19 @@ describe("what the Chief says on a machine with nothing to think with", () => {
       expect(keys(after.append), variant).not.toContain(setupCardKey("detect", variant));
     }
     expect(keys(after.append)).toEqual([setupCardKey("chat", "jobs")]);
+  });
+
+  // THE PEOPLE WHO ARE ALREADY STUCK IN IT.
+  //
+  // A card is never emitted twice, so the fix has to reach a thread that
+  // already carries the dead end. It does, and by accident of the same rule
+  // that makes cards idempotent: `flux:bare-needs-key` and `flux:key` are
+  // different keys, so the parked card stays exactly where it is, as the
+  // record of what was said, and the card with the key box on it arrives
+  // underneath it on the next read of `/api/setup`.
+  it("hands the real Flux card to a thread already holding the dead end", () => {
+    const cards = plan(blank, [setupCardKey("hello", "welcome"), setupCardKey("flux", "bare-needs-key")]);
+    expect(keys(cards.append)).toEqual([setupCardKey("flux", "key")]);
   });
 
   it("goes back to the ordinary offer the moment something can think", () => {
@@ -221,10 +251,13 @@ describe("what the Chief says when an engine is here and nobody is signed in", (
     expect(keys(cards)).toContain(setupCardKey("detect", "signed-out"));
     // "found" is the lie this whole card exists to stop.
     expect(keys(cards)).not.toContain(setupCardKey("detect", "found"));
-    // ...and the brain card would send somebody to buy a key when what is
+    // ...and the brain framing would send somebody to buy a key when what is
     // actually missing is a sign-in they can do for nothing. A signed-out
-    // engine is exactly why `nothingToThinkWith` reads both lists.
-    expect(keys(cards)).not.toContain(setupCardKey("flux", "bare-needs-key"));
+    // engine is exactly why `nothingToThinkWith` reads both lists, and that
+    // flag is what the Flux card frames itself from, so it is the thing worth
+    // asserting rather than the absence of a card nothing emits any more.
+    expect(view(live({ ownerName: "Sean", agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] })).nothingToThinkWith)
+      .toBe(false);
   });
 
   // THE ECONOMIC ONE, and the reason this variant outranks plain `bare`.
@@ -390,21 +423,83 @@ describe("called on every read, so it must be idempotent", () => {
     // the only thing holding `detect` settled went with it. The step reopened
     // and the detection card arrived, after the flow had moved past it, the
     // moment the person paid.
+    //
+    // AND THE FILLING IS NOW WRITTEN DOWN RATHER THAN IMPLIED. The rows after
+    // the key used to fall back to `live()`, whose default quietly hands the
+    // machine a bundled agent, while the comment credited the key. Two facts
+    // arriving as one is how a walk proves a flow that does not exist: the
+    // key is what makes the shipped engine runnable, so the row that saves it
+    // is the row that puts the engine in `agents`, and it says both.
     const blank = (patch: Partial<SetupLiveState> = {}) => live({ agents: [], signedOutAgents: [], ...patch });
+    const keyed = (patch: Partial<SetupLiveState> = {}) =>
+      blank({ ownerName: "Sean", flux: FLUX_SAVED, agents: [BUNDLED], ...patch });
     const seen = walk([
       [blank(), {}],
       [blank({ ownerName: "Sean" }), {}],
       // The key is saved. The engine in the box has something to think with
       // now, which is the whole point of having bought one.
-      [live({ ownerName: "Sean", flux: FLUX_SAVED }), {}],
-      [live({ ownerName: "Sean", flux: FLUX_SAVED }), { chat: { note: "notes" } }],
+      [keyed(), {}],
+      [keyed(), { chat: { note: "notes" } }],
     ]);
     expect(seen).toEqual([
       setupCardKey("hello", "welcome"),
-      setupCardKey("flux", "bare-needs-key"),
+      // THE CARD WITH THE KEY BOX ON IT, not the one that only describes the
+      // problem. This walk asserted `bare-needs-key` here, which is a card
+      // with no control of any kind, and then let the next row hand itself a
+      // saved key that nothing on screen could have produced. Two tests
+      // agreeing about a flow neither of them could walk.
+      setupCardKey("flux", "key"),
       setupCardKey("chat", "jobs"),
       setupCardKey("flow", "do-it"),
     ]);
+  });
+});
+
+// RELEASE BLOCK #2, FIRST HALF: A STEP CAN GO BACK AND ITS CARD COULD NOT.
+//
+// Both back affordances on the do-it card call `reopenSetupStep("chat")`, and
+// `SetupChecklist.reopen` replaces the step with `{ done: false }`. The
+// checklist said the question was open again and the transcript did not: the
+// driver wrote `settled: true` and NOTHING in the tree ever wrote it back, so
+// the jobs card above stayed settled, which is five disabled rows and no
+// escape hatch. The server would not append a replacement either, because
+// `chat:jobs` is already in the thread and one card per key is the rule that
+// makes this whole plan idempotent. So the person pressed the only control
+// they had, asked for another job, and got a greyed out list.
+describe("a step that goes back takes its card with it", () => {
+  const keyed = live({ ownerName: "Sean", flux: FLUX_SAVED });
+  const present = [
+    setupCardKey("hello", "welcome"),
+    setupCardKey("detect", "bare"),
+    setupCardKey("flux", "key"),
+    setupCardKey("chat", "jobs"),
+    setupCardKey("flow", "do-it"),
+  ];
+
+  it("settles the jobs card while the job is chosen", () => {
+    const chosen = plan(keyed, present, state({ detect: DETECTED, chat: { note: "brief" } }));
+    expect(chosen.settle).toContain(setupCardKey("chat", "jobs"));
+    expect(chosen.unsettle).not.toContain(setupCardKey("chat", "jobs"));
+  });
+
+  it("puts it back live the moment the step is reopened", () => {
+    // Exactly what `reopen` leaves behind: `{ done: false }`, with the
+    // recorded job id dropped, which is what makes the question live again.
+    const back = plan(keyed, present, state({ detect: DETECTED }));
+    expect(back.unsettle, "the card that asks the reopened question stayed settled")
+      .toContain(setupCardKey("chat", "jobs"));
+    expect(back.settle).not.toContain(setupCardKey("chat", "jobs"));
+    // And no replacement is coming, which is why the card in the thread had
+    // to be the thing that came back.
+    expect(keys(back.append)).not.toContain(setupCardKey("chat", "jobs"));
+  });
+
+  it("leaves a card whose step is still finished alone", () => {
+    const back = plan(keyed, present, state({ detect: DETECTED }));
+    for (const settled of [setupCardKey("hello", "welcome"), setupCardKey("detect", "bare"), setupCardKey("flux", "key")]) {
+      expect(back.settle, settled).toContain(settled);
+      expect(back.unsettle, settled).not.toContain(settled);
+    }
   });
 });
 
@@ -424,7 +519,7 @@ describe("an install that has already been used", () => {
 
   it("is shown nothing at all", () => {
     expect(view(restored).firstRun).toBe(false);
-    expect(setupConversationPlan(view(restored), new Set())).toEqual({ append: [], settle: [] });
+    expect(setupConversationPlan(view(restored), new Set())).toEqual({ append: [], settle: [], unsettle: [] });
   });
 
   it("is still shown nothing when the checklist has open steps", () => {
@@ -446,12 +541,16 @@ describe("an install that has already been used", () => {
 
 // A PARK NOBODY CHECKS IS A DELETION WITH EXTRA STEPS.
 //
-// Eight variants are held in the union with their copy intact and their
-// components compiling, because the owner has not ruled on where the work
-// behind them goes: the morning brief cards, the standalone apps step, the
-// closing card, and the phone and Tailscale walkthrough. The backups row
-// rides on the closing card, and it is the one that matters most, because
-// there is a standing rule that setup must end VERIFIED.
+// Nine variants are held in the union with their copy intact and their
+// components compiling. Eight are there because the owner has not ruled on
+// where the work behind them goes: the morning brief cards, the standalone
+// apps step, the closing card, and the phone and Tailscale walkthrough. The
+// backups row rides on the closing card, and it is the one that matters most,
+// because there is a standing rule that setup must end VERIFIED.
+//
+// The ninth, `bare-needs-key`, is held for a different reason: it is in
+// transcripts. It stopped being planned because it was a dead end, and a
+// person who was handed one still has it above the real Flux card.
 //
 // The two walks above pin the exact card sequence for a machine that found
 // something and for a blank one. Neither would notice a parked card reaching
@@ -468,7 +567,6 @@ const LIVE_VARIANTS = [
   "welcome",
   "found",
   "bare",
-  "bare-needs-key",
   "signed-out",
   "key",
   "no-key",
@@ -481,8 +579,14 @@ const PARKED_VARIANTS = SETUP_CARD_VARIANTS.filter(
 );
 
 describe("nothing parked ever reaches a person", () => {
-  it("holds the eight the re-cut orphaned, and no others", () => {
+  it("holds the nine the re-cut orphaned, and no others", () => {
     expect([...PARKED_VARIANTS]).toEqual([
+      // PARKED FOR BEING A DEAD END rather than for belonging to a deleted
+      // step, and the only one in this list that ever stopped a person: it
+      // was the Flux step's opening on a blank machine, two sentences with no
+      // control, on the one machine that cannot leave that step without a
+      // key. Nothing plans it now.
+      "bare-needs-key",
       "sample-brief",
       "apps",
       "brief",

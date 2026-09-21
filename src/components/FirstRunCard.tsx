@@ -84,11 +84,6 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
       return <FirstRunAgentsCard settled={settled} />;
     case "bare":
       return <FirstRunBareAgentsCard settled={settled} onward />;
-    case "bare-needs-key":
-      // THE FLUX STEP'S SECOND OPENING, NOT A DETECTION CARD. It carries no
-      // onward control because the card below it on that step is the one
-      // that takes the key, and `detect` is already settled on this machine.
-      return <FirstRunBareAgentsCard needsKey settled={settled} />;
     case "signed-out":
       return <FirstRunSignedOutAgentsCard settled={settled} />;
     case "sample-brief":
@@ -117,6 +112,18 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     // said then, it reads correctly, and nothing on it can be pressed into a
     // step it was never about. Nothing is deleted and nothing is hidden: the
     // words stay exactly as they were, which is the point of a transcript.
+    case "bare-needs-key":
+      // PARKED, AND THE ONE PARKED FOR BEING A DEAD END RATHER THAN FOR
+      // BELONGING TO A DELETED STEP. It was the Flux step's opening on a
+      // blank machine: two sentences, no control, and the only box that takes
+      // a key on a card the server showed only to machines that did not need
+      // one. The Flux step opens on `key` on every machine now, and the Flux
+      // card carries this card's words itself when the machine is blank.
+      //
+      // Settled, like the rest of the park: it is a record of what was said,
+      // it reads correctly, and the real Flux card arrives beneath it because
+      // that card has a different key.
+      return <FirstRunBareAgentsCard needsKey settled />;
     case "apps":
       return <FirstRunAppsCard settled />;
     case "brief":

@@ -22,7 +22,11 @@ const { helloAnswerReady } = await import("./FirstRunHelloCard");
 const { FirstRunFluxConnect } = await import("./FirstRunFluxCard");
 const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
 const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
-const { setupCardKey } = await import("../../shared/setup-card");
+const { SETUP_CARD_VARIANTS, setupCardKey } = await import("../../shared/setup-card");
+// The server's own list of which card asked for which step. Imported rather
+// than copied: a hand-kept twin of it is how the Flux step came to open on a
+// card with no controls while every list in the tree agreed with itself.
+const { SETUP_ASK_VARIANTS } = await import("../../server/setup-conversation");
 
 /** Put a machine behind the cards. `renderToStaticMarkup` runs no effects, so
  *  the view has to be in the shared cache before the render, not after it. */
@@ -85,6 +89,75 @@ describe("the first run card dispatch", () => {
     // transcript must never throw its way into the message list.
     expect(render("hello", "sparkles")).toBe("");
     expect(render("not-a-step", "welcome")).toBe("");
+  });
+});
+
+// A CARD THAT ASKS FOR A STEP MUST BE ANSWERABLE ON SCREEN.
+//
+// RELEASE BLOCK #1 IN ONE SENTENCE: the Flux step opened on `bare-needs-key`,
+// which renders two paragraphs and no control, and `setupStepDone("flux")`
+// wants a real saved key. The only `saveFluxKey` and the only
+// `skipSetupStep("flux")` in the whole flow are on `FirstRunFluxCard`, and
+// the server showed that card only when the machine was NOT blank. So a blank
+// machine read "One key sorts that, and it is the next thing I will ask you
+// for" and nothing ever followed. Every individual test passed.
+//
+// The list is not written here. `SETUP_ASK_VARIANTS` is the server's own
+// answer to "which card asked for this step", and it is what the server
+// settles cards by, so the two halves cannot drift apart: put a card with no
+// button back into a step and this fails, and take it out of the list to
+// quieten this and the server's own park test fails instead.
+describe("every card that asks for a step can be answered on it", () => {
+  /** The machine each ask is the LIVE question on. A card is only owed a
+   *  control in the state where it is the outstanding one. */
+  const WHERE: Record<string, Record<string, unknown>> = {
+    welcome: { ownerName: "" },
+    found: { ownerName: "Sean", agents: [{ id: "claude", name: "Claude Code", installed: true }] },
+    bare: { ownerName: "Sean", agents: [], signedOutAgents: [] },
+    "signed-out": {
+      ownerName: "Sean",
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    },
+    // THE ONE THAT WAS BROKEN, ON THE MACHINE IT WAS BROKEN FOR.
+    key: { ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true },
+    jobs: { ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] },
+    "do-it": {
+      ownerName: "Sean",
+      fluxReady: true,
+      nothingToThinkWith: false,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: true, note: "notes", status: "done" }],
+    },
+  };
+
+  it("puts a live control on every one of them", async () => {
+    for (const [step, variants] of Object.entries(SETUP_ASK_VARIANTS)) {
+      for (const variant of variants) {
+        const where = WHERE[variant];
+        expect(where, `no machine written for the ${step} step's ${variant} card`).toBeDefined();
+        await machine(where!);
+        const markup = render(step, variant);
+        expect(markup, `${step}:${variant} rendered nothing`).not.toBe("");
+        // A button that is present and disabled is not a way out, which is
+        // why this reads the attribute rather than counting `<button`.
+        expect.soft(markup, `${step}:${variant} asks a question nobody can answer`)
+          .toMatch(/<button(?![^>]*\sdisabled="")/);
+      }
+    }
+  });
+
+  // The words on the blank machine's Flux card, which is the report detection
+  // never got to make. They were the reason a second card existed; the card
+  // says them itself, above the box that takes the key.
+  it("says on the blank machine's key card what the dead end used to say", async () => {
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true });
+    const flux = FIRST_RUN_COPY.flux.key;
+    const markup = render("flux", "key");
+    expect(markup).toContain(flux.headingBare);
+    expect(markup).toContain("found nothing I can think with");
+    expect(markup, "no way to enter the key the step cannot end without").toContain(flux.submit);
+    expect(markup, "no way past it either").toContain(flux.dismiss);
   });
 });
 
@@ -229,13 +302,26 @@ describe("card two: what is already here", () => {
     expect(render("detect", "signed-out"), "signed in already").toContain(copy.action);
   });
 
-  // The Flux step borrows this card's words on a blank machine. It is not
-  // detection's report there, `detect` is already settled, and a second
-  // "show me the interesting part" above the key card would be a button that
-  // answers a step the person is not on.
-  it("puts no detection control on the Flux step's own opening", async () => {
+  // THE CARD THAT USED TO BE THE FLUX STEP'S OPENING ON A BLANK MACHINE.
+  //
+  // This test used to say "puts no detection control on the Flux step's own
+  // opening" and pass, and it was enshrining release block #1: the card has
+  // no control of ANY kind, and it was what the server sent the one machine
+  // that cannot leave the Flux step without a key. The comment claimed "the
+  // key card is below it". No key card was below it. `variantForCurrentStep`
+  // returned one variant per step, and on that machine it returned this one.
+  //
+  // It is parked now, and what is checked is what makes parking safe: it is
+  // still readable, and there is nothing on it to press.
+  it("keeps the parked brain card readable, with nothing on it to press", async () => {
     await machine({ ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true });
-    expect(render("flux", "bare-needs-key")).not.toContain(copy.action);
+    const markup = render("flux", "bare-needs-key");
+    expect(markup, "the parked card vanished instead of becoming history")
+      .toContain(asHtml(FIRST_RUN_COPY.agents["bare-needs-key"].body));
+    expect(markup).not.toContain(copy.action);
+    // AND THIS IS THE BLOCK. A card with no button is a card nobody can leave,
+    // which is exactly why this variant stopped being what a step opens with.
+    expect(markup, "a parked card grew a control").not.toMatch(/<button/);
   });
 
   it("stops offering it once the step has been settled", async () => {
@@ -449,12 +535,83 @@ describe("step five: the job, done", () => {
     expect(markup).not.toMatch(/<textarea[^>]*>[^<]/);
   });
 
-  it("says nothing at all about a job nobody chose", async () => {
+  // RELEASE BLOCK #2, SECOND HALF, AND THE TEST THAT USED TO SAY IT WAS FINE.
+  //
+  // This read `expect(render("flow", "do-it")).toBe("")` and passed, and what
+  // it was describing is the card rendering THE EMPTY STRING. That was
+  // defensible while a job nobody chose was impossible: the server only plans
+  // this card once `chat` is settled, and `chat` is settled by a recorded job
+  // id. Then "Something else" made it the normal case. It calls
+  // `reopenSetupStep("chat")`, `SetupChecklist.reopen` replaces the step with
+  // `{ done: false }` and DROPS the note, so `chosenJob` returns null and
+  // everybody who finished their first job and pressed the only control on
+  // the screen landed on blank space.
+  //
+  // A card with no body is not a smaller card, it is a hole in a transcript.
+  it("says where the question went rather than rendering nothing", async () => {
+    const copy = FIRST_RUN_COPY.flow["do-it"];
     await machine({ ownerName: "Sean", steps: [{ id: "chat", done: false, status: "open" }] });
-    expect(render("flow", "do-it")).toBe("");
-    // ...including a note from a build that had other jobs in it.
+    const reopened = render("flow", "do-it");
+    expect(reopened, "the do-it card rendered nothing after the step reopened").not.toBe("");
+    expect(reopened).toContain(asHtml(copy.noJob));
+
+    // ...including a note from a build that had other jobs in it, which is
+    // the same fact arriving down a different road.
     await machine({ ownerName: "Sean", steps: [{ id: "chat", done: true, note: "phone", status: "done" }] });
-    expect(render("flow", "do-it")).toBe("");
+    expect(render("flow", "do-it")).toContain(asHtml(copy.noJob));
+
+    // And a machine nobody has read yet is a different sentence, because it
+    // is a different fact: nothing has been chosen is not nothing is known.
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    const unknown = render("flow", "do-it");
+    expect(unknown, "the do-it card rendered nothing while the view was in flight").not.toBe("");
+    expect(unknown).toContain(asHtml(copy.waiting));
+  });
+});
+
+// NOT ONE CARD IN THE FLOW MAY RENDER NOTHING.
+//
+// Two shipped that did. `jobs` and `do-it` had no case in `firstRunCardBody`
+// at all and drew literally nothing, and then `do-it` drew nothing again for
+// everybody who pressed "Something else". Both were single cards found one at
+// a time, after they shipped, which is what a sweep is for: the states below
+// are the ones a card can actually be in, and every variant is put through
+// all of them.
+describe("no card in this flow can be reached and render nothing", () => {
+  const STATES: Array<[string, Record<string, unknown>]> = [
+    ["nothing known about the machine", {}],
+    ["a blank machine, mid flow", { ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true }],
+    ["an engine, a key and two apps", {
+      ownerName: "Sean",
+      fluxReady: true,
+      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      connectedJobApps: ["gmail", "googlecalendar"],
+      steps: [{ id: "chat", done: true, note: "brief", status: "done" }],
+    }],
+    ["the job chosen, then handed back", {
+      ownerName: "Sean",
+      fluxReady: true,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: false, status: "open" }],
+    }],
+  ];
+
+  it("gives every variant a body in every state a person can be in", async () => {
+    for (const [label, where] of STATES) {
+      await machine(where);
+      for (const variant of SETUP_CARD_VARIANTS) {
+        for (const settled of [false, true]) {
+          const markup = render(PARKED, variant, settled ? { settled: true } : {});
+          // The words, not the elements: an empty body is still a div, and
+          // that is exactly the shape the audit found.
+          const words = markup.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+          expect.soft(words.length, `${variant} rendered nothing a person can read: ${label}, settled=${settled}`)
+            .toBeGreaterThan(20);
+        }
+      }
+    }
   });
 });
 

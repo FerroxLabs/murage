@@ -632,6 +632,55 @@ const WORKING_STEP_MS = 400;
 const WORKING_TOTAL_MS = 2_300;
 
 /**
+ * THE ONE ROAD INTO THE RESULT, SO THE STEP FINISHES ON ALL OF THEM.
+ *
+ * RELEASE BLOCK #2, THIRD PART. Step five used to be answered inside
+ * `finish()`, which only ever runs off the working screen's 2.3 second timer.
+ * On the "keep what you typed" path `typedMayShowWorking` is false, so the
+ * person goes straight from the box to the result, `finish()` never runs, and
+ * `flow` never settles: the last step of the first run stays outstanding for
+ * ever, on the one machine that cannot do the work in the first place.
+ *
+ * A step that completes because a timer somewhere ran out is not a step
+ * anybody controls. It completes when the person has the result they pressed
+ * for, and the timer is left doing the only thing it is any good for, which
+ * is pacing three lines of copy.
+ *
+ * BOTH TAKE THEIR TWO EFFECTS AS ARGUMENTS, and that is what makes the rule
+ * checkable: this suite renders static markup and cannot press a button, so a
+ * rule that lives only inside a component's closure is a rule no test in this
+ * repo can read. These two are the whole of it, and they are tested directly.
+ */
+export async function firstRunReachResult(
+  id: FirstRunJobId | null,
+  go: (stage: FirstRunFlowStage) => void,
+  answer: (id: FirstRunJobId) => Promise<void>,
+): Promise<void> {
+  go("result");
+  // No job recorded is the reopened card, which has nothing to answer with
+  // and nothing to answer for.
+  if (id) await answer(id);
+}
+
+/** Pressing Go on the box. */
+export async function firstRunGo(
+  world: FirstRunJobWorld,
+  id: FirstRunJobId | null,
+  go: (stage: FirstRunFlowStage) => void,
+  answer: (id: FirstRunJobId) => Promise<void>,
+): Promise<void> {
+  // NOTHING SPINS WHEN THERE IS NOTHING BEHIND IT. On a machine with nothing
+  // to think with and no key the box keeps what they wrote and says so; a
+  // working state there is a wait that never ends. The timer then carries it
+  // to the result and `finish` comes back through the road above.
+  if (typedMayShowWorking(world)) {
+    go("working");
+    return;
+  }
+  await firstRunReachResult(id, go, answer);
+}
+
+/**
  * THE CHOSEN JOB, FROM WHAT IT NEEDS THROUGH TO ITS RESULT.
  *
  * One card and four stages, because the whole of step five is one scene: they
@@ -689,6 +738,20 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const stage: FirstRunFlowStage | null = moved
     ?? (job && world ? (tookEscapeHatch() ? "input" : flowStageFor(job, world)) : null);
 
+  /** The two effects the rules above are handed. A stage set after the card
+   *  has gone is a React warning and a lie about where the person is. */
+  const goTo = (next: FirstRunFlowStage) => {
+    if (!gone.current) setStage(next);
+  };
+  const answerFlow = (chosen: FirstRunJobId) => answerSetupStep("flow", chosen);
+  const reachResult = async (): Promise<void> => {
+    try {
+      await firstRunReachResult(id, goTo, answerFlow);
+    } catch (cause) {
+      if (!gone.current) setFailure(failureText(cause, flowCopy.failure));
+    }
+  };
+
   const finish = async () => {
     if (!job) return;
     try {
@@ -699,13 +762,14 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         // Chief answers it below in its own voice.
         dispatch({ type: "send", botId: bot.id, text: typed.trim(), threadId: bot.threadId });
       }
-      if (gone.current) return;
-      setStage("result");
-      await answerSetupStep("flow", job.id);
+      await reachResult();
     } catch (cause) {
       if (gone.current) return;
       setFailure(failureText(cause, flowCopy.failure));
-      setStage("result");
+      // The job did not go through, and the step is still over: they are on a
+      // result screen with the reason on it and the way back underneath. A
+      // step left open here is the Chief asking the same question twice.
+      await reachResult();
     }
   };
 
@@ -814,10 +878,33 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     }
   };
 
-  // A job that has not been chosen yet is not this card's to guess at. It is
-  // never the normal case: the server only plans this card once `chat` is
-  // settled, and `chat` is settled by a recorded job id.
-  if (!job || !id || !world) return null;
+  // NOTHING IS NOT A CARD, AND THIS RETURNED NOTHING.
+  //
+  // RELEASE BLOCK #2, SECOND HALF. A job that has not been chosen is not this
+  // card's to guess at, and that much was right. Returning `null` was not:
+  // `FirstRunCard` renders a null body as nothing at all, so the card drew
+  // THE EMPTY STRING. It was never the normal case, and then "Something else"
+  // made it the normal case for everybody who finished their first job.
+  // `reopenSetupStep("chat")` drops the recorded job id, which is what puts
+  // the Chief's question back, so `chosenJob` goes null and this card, which
+  // is still sitting in the transcript, went blank.
+  //
+  // Two different facts, said as two different sentences. A view that has not
+  // arrived is not a person who has not chosen.
+  if (!world) {
+    return (
+      <FirstRunBubble>
+        <FirstRunLine quiet>{flowCopy.waiting}</FirstRunLine>
+      </FirstRunBubble>
+    );
+  }
+  if (!job || !id) {
+    return (
+      <FirstRunBubble>
+        <FirstRunLine>{flowCopy.noJob}</FirstRunLine>
+      </FirstRunBubble>
+    );
+  }
 
   if (pasting) {
     return (
@@ -865,10 +952,13 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         onGo={() => {
           setItems(parseLines(typed));
           setShown(1);
-          // NOTHING SPINS WHEN THERE IS NOTHING BEHIND IT. On a machine with
-          // nothing to think with and no key the box keeps what they wrote and
-          // says so; a working state there is a wait that never ends.
-          setStage(typedMayShowWorking(world) ? "working" : "result");
+          // Where this goes, and whether it ends the step, is `firstRunGo`.
+          // It used to be `setStage(typedMayShowWorking(world) ? "working" :
+          // "result")` written out here, and the second half of that ternary
+          // is a result screen nothing ever answered for.
+          void firstRunGo(world, id, goTo, answerFlow).catch((cause) => {
+            if (!gone.current) setFailure(failureText(cause, flowCopy.failure));
+          });
         }}
         onElsewhere={() => void elsewhere()}
       />

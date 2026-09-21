@@ -883,6 +883,24 @@ export const FIRST_RUN_COPY = {
       /** The way back to the Chief, on every result. Clears the job, the
        *  text and the parsed items; none of them was ever persisted. */
       again: "Take something else off my plate",
+      /**
+       * NO JOB IS CHOSEN, AND THE CARD IS STILL IN THE TRANSCRIPT.
+       *
+       * "Something else" puts the `chat` step back, which drops the recorded
+       * job id, which is exactly what makes the Chief's question live again.
+       * This card is below that question and has nothing of its own left to
+       * show. It used to render THE EMPTY STRING: the person pressed the only
+       * control on screen and landed on blank space.
+       *
+       * It points up rather than offering a second control, because the five
+       * rows above it are the choice and two places to pick the same thing is
+       * how a thread stops reading as a conversation.
+       */
+      noJob: "Nothing picked yet. The list is just above this one, and I will get on with whatever you choose.",
+      /** The view has not come back yet, on a card that cannot say anything
+       *  true until it has. Never a spinner with no words: a blank body is
+       *  the defect this whole release is about. */
+      waiting: "One moment while I catch up with this computer.",
       /** Something in the step itself did not go through. Said where it
        *  happened, and whatever they were pressing stays pressable. */
       failure: "That did not go through. Try it again whenever you are ready.",

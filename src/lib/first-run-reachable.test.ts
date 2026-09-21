@@ -43,6 +43,8 @@ const {
   FirstRunNotesResultView,
   FirstRunResearchResultView,
   FirstRunWorkingView,
+  firstRunGo,
+  firstRunReachResult,
 } = await import("@/components/FirstRunJobsCard");
 const { SETUP_JOB_APPS } = await import("../../shared/setup");
 type SetupJobApp = import("../../shared/setup").SetupJobApp;
@@ -404,6 +406,66 @@ function briefRoutineOfferHeading(): string {
     fluxReady: true, nothingToThinkWith: false, connected: [], appsUnreadable: false, search: "anonymous",
   }).morning!.heading;
 }
+
+// RELEASE BLOCK #2, THIRD PART: A STEP THAT FINISHED ON A TIMER, OR NEVER.
+//
+// Step five used to be answered inside `finish()`, which runs off the working
+// screen's 2.3 second timer and nowhere else. On the "keep what you typed"
+// path `typedMayShowWorking` is false, so the person goes from the box
+// straight to the result, `finish()` never runs, and `flow` is never
+// answered: the last step of the first run stays outstanding for ever, on the
+// one machine that cannot do the work in the first place.
+//
+// These two functions are the whole of the rule and they take their effects
+// as arguments, because this suite renders static markup and cannot press a
+// button. A rule that lives only inside a component's closure is a rule
+// nothing here can read, which is how a step came to finish on a timer with
+// nobody noticing.
+describe("step five finishes on every road into the result", () => {
+  it("answers the step from the box, on a machine that can work and on one that cannot", async () => {
+    for (const world of MACHINES) {
+      for (const id of FIRST_RUN_JOB_IDS) {
+        const label = `${id} on ${JSON.stringify(world)}`;
+        const stages: string[] = [];
+        const answered: string[] = [];
+        await firstRunGo(world, id, (stage) => stages.push(stage), async (job) => {
+          answered.push(job);
+        });
+
+        if (typedMayShowWorking(world)) {
+          // Something is behind the box, so the three counted lines run and
+          // the timer hands over to the road below.
+          expect(stages, label).toEqual(["working"]);
+          expect(answered, `${label} finished the step before doing the work`).toEqual([]);
+        } else {
+          // THE PATH THAT NEVER SETTLED. Nothing to think with and no key:
+          // the box keeps what they wrote, there is no working state to show,
+          // and the result is the end of the step.
+          expect(stages, label).toEqual(["result"]);
+          expect(answered, `${label} reached a result that nothing answered for`).toEqual([id]);
+        }
+      }
+    }
+  });
+
+  it("answers it when the timer hands over too, and when there is no job to answer with", async () => {
+    const stages: string[] = [];
+    const answered: string[] = [];
+    await firstRunReachResult("business", (stage) => stages.push(stage), async (job) => {
+      answered.push(job);
+    });
+    expect(stages).toEqual(["result"]);
+    expect(answered, "the working screen handed over without finishing the step").toEqual(["business"]);
+
+    // The reopened card: no job recorded, so there is nothing to answer with
+    // and nothing to answer for. It must still not claim a step.
+    const none: string[] = [];
+    await firstRunReachResult(null, () => {}, async (job) => {
+      none.push(job);
+    });
+    expect(none).toEqual([]);
+  });
+});
 
 describe("the escape hatch for somebody whose thing is not on the list", () => {
   it("opens the notes box on every machine, including one with nothing", () => {
