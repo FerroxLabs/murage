@@ -192,6 +192,26 @@ export function useSetupView(): { view: SetupView | null; refresh: () => void } 
   return { view, refresh: () => void readSetupView(true) };
 }
 
+/**
+ * The step a PARKED first-run card answers.
+ *
+ * W16 cut six steps to five, and `apps`, `brief` and `routines` stopped
+ * existing. Three cards were built against them and all three are real,
+ * tested work: the apps rows, the morning brief and its "a couple more"
+ * offer, and the phone and Tailscale walkthrough. Whether they move to
+ * another surface, come back later in the flow, or go, is the owner's
+ * decision and it has not been taken. NONE OF THEM IS DELETED HERE.
+ *
+ * So they keep compiling, and they point at the step they would now live
+ * inside: `flow` is where a job asks for what it needs and where its result
+ * arrives, which is where every one of them belongs if it comes back.
+ * NOTHING RENDERS THEM TODAY — `variantForCurrentStep` in
+ * server/setup-conversation.ts never emits their variants — so this constant
+ * changes no behaviour. It exists so the park is one named decision in one
+ * place instead of three quiet string edits.
+ */
+export const PARKED_CARD_STEP: SetupStep = "flow";
+
 /** Record what they said against a step. The server owns what that means
  *  for the checklist; this only reports it. */
 export async function answerSetupStep(step: SetupStep, answer: string): Promise<void> {

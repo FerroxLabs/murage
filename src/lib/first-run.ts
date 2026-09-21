@@ -31,17 +31,22 @@ import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import type { SetupStep, SetupView } from "../../shared/setup";
 
 // ── the words the rail says ────────────────────────────────────────────
-// Four of the six rows are named by the card they track, imported from the
-// one copy module rather than re-typed here, so a row and its card cannot
-// drift apart. Only "hello" and "agents" need a name of their own: their
-// cards open with a sentence rather than a heading.
+// The five rows, named the way the approved flow names them. Short verbs,
+// because the rail is a place in a conversation and not a table of contents.
+//
+// They are literals again rather than lookups into FIRST_RUN_COPY. Four rows
+// used to borrow their card's heading so a row and its card could not drift
+// apart, and three of those four cards are now parked; borrowing from a
+// parked card would put a row on the rail for a step that no longer exists.
+// The rows are built from `view.steps`, which comes off the wire, so an
+// unknown id still draws a row labelled with the id rather than vanishing
+// from a list of what is left to do.
 const STEP_LABELS: Record<string, string> = {
-  hello: "Say hello",
-  agents: "See what is already here",
-  flux: FIRST_RUN_COPY.flux.key.title,
-  apps: FIRST_RUN_COPY.apps.apps.title,
-  brief: FIRST_RUN_COPY.brief.brief.title,
-  routines: FIRST_RUN_COPY.routines["more-routines"].title,
+  hello: "Who you are",
+  detect: "What is here",
+  flux: "Switch it on",
+  chat: "First chat",
+  flow: "Do the thing",
 };
 
 export const FIRST_RUN_RAIL = {
