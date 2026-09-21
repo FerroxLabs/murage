@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browserBundlePaths, browserBundleSpec, CHROME_VERSION, SUPPORTED_BROWSER_TARGETS } from "../server/browser-bundle-release.ts";
@@ -63,17 +63,45 @@ describe("pinned desktop browser preparation", () => {
     expect(browserExtractionCommand("a.zip", "out", { platform: "darwin" })).toEqual({ file: "unzip", args: ["-q", "a.zip", "-d", "out"] });
   });
 
-  it("rechecks cached bytes and fails closed on same-size tampering", async () => {
+  it("treats a tampered cache entry as a miss and repairs it, still failing closed on a bad download", async () => {
     const root = fixture();
     const bytes = Buffer.from("reviewed fixture");
     const asset = { asset: "fixture.zip", url: "https://invalid.example/fixture", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
     writeFileSync(join(root, asset.asset), bytes);
-    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const fetch = vi.fn(async () => new Response(bytes)); vi.stubGlobal("fetch", fetch);
+    // A cache entry that verifies is still served from disk, never refetched.
     await expect(releaseBytes(asset, root)).resolves.toEqual(bytes);
-    writeFileSync(join(root, asset.asset), Buffer.alloc(bytes.length));
-    await expect(releaseBytes(asset, root)).rejects.toThrow(/SHA-256/);
     expect(fetch).not.toHaveBeenCalled();
+    // Same-size tampering used to throw straight out of releaseBytes, which
+    // wedged every later build until somebody deleted the file by hand. It is
+    // a cache miss: the pinned download repairs the entry.
+    writeFileSync(join(root, asset.asset), Buffer.alloc(bytes.length));
+    await expect(releaseBytes(asset, root)).resolves.toEqual(bytes);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(root, asset.asset))).toEqual(bytes);
+    // Self-healing is not leniency: a download that also fails the pin throws.
+    writeFileSync(join(root, asset.asset), Buffer.alloc(bytes.length));
+    fetch.mockResolvedValueOnce(new Response(Buffer.alloc(bytes.length)));
+    await expect(releaseBytes(asset, root)).rejects.toThrow(/SHA-256/);
     expect(() => verifyAssetBytes(bytes.subarray(1), asset)).toThrow(/size/);
+  });
+
+  it.skipIf(process.platform === "win32")("publishes the cache entry by rename, so nothing partial or redirected wears the pinned name", async () => {
+    const root = fixture();
+    const cache = join(root, "cache"); mkdirSync(cache);
+    const bytes = Buffer.from("reviewed fixture");
+    const asset = { asset: "fixture.zip", url: "https://invalid.example/fixture", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "untouched");
+    // A symlink planted under the pinned name is what a direct write follows.
+    symlinkSync(outside, join(cache, asset.asset));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(bytes)));
+    await expect(releaseBytes(asset, cache)).resolves.toEqual(bytes);
+    expect(readFileSync(outside, "utf8")).toBe("untouched");
+    expect(lstatSync(join(cache, asset.asset)).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(cache, asset.asset))).toEqual(bytes);
+    // No half-written temporary is left wearing a name a later build reads.
+    expect(readdirSync(cache)).toEqual([asset.asset]);
   });
 
   it("detects modified, missing and unexpected resource files", () => {
@@ -117,6 +145,9 @@ describe("pinned desktop browser preparation", () => {
     const spec = browserBundleSpec("linux-x64");
     writeFileSync(join(cache, spec.engine.asset), "bad");
     writeFileSync(join(cache, spec.chrome.asset), "bad");
+    // An invalid cache entry is re-downloaded now; a download that also fails
+    // verification keeps the failure local to this run.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("bad")));
     await expect(stageBrowserTarget(root, "linux-x64", { cacheDirectory: cache })).rejects.toThrow(/verification/);
     expect(readFileSync(join(destination, "existing"), "utf8")).toBe("previous complete bundle");
   });

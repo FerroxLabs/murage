@@ -6,6 +6,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -19,6 +20,7 @@ import {
   REQUIRED_LINUX_TOOLS,
   decodeLinuxDescriptor,
   readCuaConnection,
+  validateLegacyDescriptorRuntime,
   validateLinuxDescriptorRuntime,
 } from "./local-computer.ts";
 
@@ -283,5 +285,66 @@ describe("local computer descriptor", () => {
       JSON.stringify({ mode: "embedded", mcpCommand: "cua-driver", mcpArgs: "mcp" }),
     );
     expect(readCuaConnection({ platform: "win32", userData })).toBeNull();
+  });
+});
+
+// darwin is the primary platform and it takes the LEGACY branch, where the
+// descriptor is a free-text command line with nothing binding it to a driver
+// we shipped. The shape check alone therefore proves nothing: whoever could
+// write that file chose what the harness executes. These hold the runtime
+// check that the Linux branch has always had.
+describe("legacy descriptor runtime custody", () => {
+  const legacy = { mode: "embedded", mcpCommand: "/usr/local/bin/cua-driver", mcpArgs: ["mcp"], mcpEnv: {} };
+  const expected = {
+    command: "/usr/local/bin/cua-driver",
+    args: ["mcp"],
+    env: {},
+    platform: "darwin",
+    scope: "local-computer",
+  };
+
+  it.skipIf(process.platform === "win32")("accepts a descriptor only this user could have written", () => {
+    const userData = privateUserData("darwin-user-data");
+    writeFileSync(join(userData, "cua-connection.json"), JSON.stringify(legacy), { mode: 0o600 });
+    expect(readCuaConnection({ platform: "darwin", userData })).toEqual(expected);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a descriptor anyone on the machine could rewrite", () => {
+    const userData = privateUserData("darwin-group-writable");
+    const file = join(userData, "cua-connection.json");
+    writeFileSync(file, JSON.stringify(legacy), { mode: 0o600 });
+    expect(readCuaConnection({ platform: "darwin", userData })).toEqual(expected);
+    chmodSync(file, 0o666);
+    expect(readCuaConnection({ platform: "darwin", userData })).toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a descriptor sitting in a directory anyone may write", () => {
+    const userData = privateUserData("darwin-open-directory");
+    writeFileSync(join(userData, "cua-connection.json"), JSON.stringify(legacy), { mode: 0o600 });
+    chmodSync(userData, 0o777);
+    expect(readCuaConnection({ platform: "darwin", userData })).toBeNull();
+    chmodSync(userData, 0o700);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a symlink pointing at a descriptor elsewhere", () => {
+    const userData = privateUserData("darwin-symlink");
+    const real = privateUserData("darwin-symlink-target");
+    const target = join(real, "planted.json");
+    writeFileSync(target, JSON.stringify(legacy), { mode: 0o600 });
+    symlinkSync(target, join(userData, "cua-connection.json"));
+    expect(readCuaConnection({ platform: "darwin", userData })).toBeNull();
+  });
+
+  it("keeps the ownership and permission bits out of the Windows judgement", () => {
+    // libuv reports every writable Windows file as uid 0 mode 0o666, so
+    // those bits cannot mean anything there; the symlink refusal still does.
+    expect(
+      validateLegacyDescriptorRuntime(join(privateUserData("win-bits"), "missing.json"), "win32"),
+    ).toBe(false);
+    const userData = privateUserData("win-bits-present");
+    const file = join(userData, "cua-connection.json");
+    writeFileSync(file, JSON.stringify(legacy), { mode: 0o666 });
+    expect(validateLegacyDescriptorRuntime(file, "win32", { uid: -12345 })).toBe(true);
+    expect(validateLegacyDescriptorRuntime(file, "darwin", { uid: -12345 })).toBe(false);
   });
 });
