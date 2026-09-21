@@ -201,7 +201,7 @@ describe("card two: what is already here", () => {
 
 describe("card three: the key", () => {
   const copy = FIRST_RUN_COPY.flux.key;
-  it("leads with routing, then the apps, then pictures and voice", () => {
+  it("leads with routing, then the apps, then pictures and transcription", () => {
     const markup = render("flux", "key");
     const routing = markup.indexOf(copy.body);
     const apps = markup.indexOf(copy.second);

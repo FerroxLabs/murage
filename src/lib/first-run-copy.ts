@@ -14,7 +14,9 @@
 //   Never name the connected-app broker. It is "500+ apps", named by
 //     example: Gmail, Slack, Notion, GitHub.
 //   Never a model count. "All the latest models" is the claim.
-//   Flux Router leads with routing, then the apps, then pictures and voice.
+//   Flux Router leads with routing, then the apps, then pictures and
+//     transcription. NOT voice: the key transcribes and does not speak, and
+//     the only row allowed to mention speaking is one marked "Coming soon".
 //   Never describe a capability as a limit. Sending email is graduated
 //     trust: you approve, I send, and then I can send that kind myself.
 //   No school framing. Nobody is being taught a lesson.
@@ -269,7 +271,7 @@ export const FIRST_RUN_COPY = {
        * dictation that works from a phone, where the native macOS helper
        * cannot reach.
        */
-      third: "It brings pictures and transcription too, so you can talk to me from your phone.",
+      third: "It brings pictures, and transcription so you can talk instead of type from your phone.",
       /**
        * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
        * SITUATION.
@@ -291,8 +293,17 @@ export const FIRST_RUN_COPY = {
       recommendation: "Recommended, because it is the one key that opens everything else.",
       /** Nothing on this machine can think yet. */
       recommendationBare: "This is the one that matters. I came with the engine and this is what gives it something to think with.",
-      /** They already have a working engine, so this is a genuine extra. */
-      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and voice on top.",
+      /**
+       * They already have a working engine, so this is a genuine extra.
+       *
+       * IT SAID "pictures and voice", AND THE SPEECH TEST COULD NOT SEE IT.
+       * That test named four fields by hand and this was not one of them, so
+       * the exact false claim it was written to stop went on shipping one line
+       * below the fields it guarded. Synthesis selects ElevenLabs or the
+       * system voices; the Flux key configures neither. The test now walks
+       * every string in this file instead of a hand-picked four.
+       */
+      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and transcription on top.",
       fieldLabel: "Paste your key",
       placeholder: "Paste your Flux Router key here",
       /**

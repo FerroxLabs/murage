@@ -188,11 +188,23 @@ describe("first run copy: the things the flow promises", () => {
   // the free OS voices. That is a different key and a different card. A
   // person who pays for Flux Router expecting their assistant to talk back
   // has been mis-sold, so the word is banned here rather than merely absent.
-  it("never sells speech on the Flux Router key", () => {
-    const flux = FIRST_RUN_COPY.flux.key;
-    for (const field of [flux.title, flux.body, flux.second, flux.third]) {
-      expect.soft(field, `"${field}" sells speech on a key that cannot synthesise it`)
-        .not.toMatch(/\b(voice|speak|speaks|spoken|read (?:it )?aloud|out loud|text to speech)\b/i);
+  //
+  // IT WAS WRITTEN AGAINST FOUR FIELDS BY HAND, AND THE CLAIM IT EXISTS TO
+  // STOP WAS SHIPPING ONE LINE BELOW THEM. `recommendationBonus` sold
+  // "pictures and voice" on the same card, outside the whitelist, and the
+  // audit found it rather than the test. So the walk is the whole file now:
+  // every string a person can read during the first run, plus every sentence
+  // the module assembles at render time. A hand-picked list of fields is a
+  // list that goes stale the first time somebody adds a field.
+  const SPEECH = /\b(voice|speaks?|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
+
+  it("never sells speech anywhere in the first run", () => {
+    for (const { path, text } of everything) {
+      const hit = SPEECH.exec(text);
+      expect.soft(
+        hit ? `${path}: "${hit[0]}" in "${text}"` : null,
+        "sells speech on a key that cannot synthesise it",
+      ).toBeNull();
     }
   });
 
