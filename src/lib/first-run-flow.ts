@@ -26,6 +26,7 @@ import {
 } from "./first-run-copy.ts";
 import {
   FIRST_RUN_JOB_SHAPES,
+  firstRunConnectScreen,
   missingForJob,
   type FirstRunJobId,
   type FirstRunJobShape,
@@ -465,6 +466,59 @@ export function flowStageFor(job: FirstRunJobShape, world: FirstRunJobWorld): Fi
   return job.input === null ? "working" : "input";
 }
 
+/** Whether this stage has a screen behind it on this machine, for this job.
+ *  `working` and `result` draw from the job and from what was typed, so they
+ *  always do; the other two are assembled by builders that return null when
+ *  there is nothing to assemble, which is the honest answer and a body the
+ *  card may not draw. */
+function drawableStage(
+  job: FirstRunJobShape,
+  world: FirstRunJobWorld,
+  stage: FirstRunFlowStage,
+  escaped: boolean,
+): boolean {
+  if (stage === "connect") return firstRunConnectScreen(job, world) !== null;
+  // The escape hatch is the notes box, which always has one.
+  if (stage === "input") return escaped || firstRunInputScreen(job, world) !== null;
+  return true;
+}
+
+/**
+ * WHERE THE CARD IS, GIVEN WHERE THE PERSON MOVED TO AND WHAT THE MACHINE IS
+ * SAYING NOW.
+ *
+ * `moved` wins, and has to: once the person has moved they are driving, and a
+ * re-render because a poll landed must not throw them back to a screen they
+ * have already come through.
+ *
+ * A PIN MUST NOT OUTLIVE THE STATE IT WAS PINNED AGAINST, WHICH IS THE DEFECT.
+ * `connect` is the one stage that is a statement about the MACHINE rather than
+ * about the person: it means "there are things still missing". Pinned, it won
+ * for ever. Connect one of a job's two accounts, have polling then discover
+ * the other was completed somewhere else, and the pinned `connect` still beat
+ * the live state, `firstRunConnectScreen` returned null because nothing was
+ * missing, and the card rendered its lead and nothing else. No advance, no
+ * input, no control. That is the same failure class as the blank cards this
+ * release has already shipped twice.
+ *
+ * So a pin is kept only while it can still be drawn, and otherwise the stage
+ * is derived again from the machine, which is exactly what `afterConnect`
+ * would have said had it been asked a second time. Stated as a property
+ * rather than as a special case for `connect`: what comes back can ALWAYS be
+ * drawn, because `flowStageFor` only ever names a stage whose screen exists.
+ */
+export function firstRunStage(
+  job: FirstRunJobShape | null,
+  world: FirstRunJobWorld | null,
+  moved: FirstRunFlowStage | null,
+  escaped: boolean,
+): FirstRunFlowStage | null {
+  if (!job || !world) return moved;
+  const derived: FirstRunFlowStage = escaped ? "input" : flowStageFor(job, world);
+  if (!moved) return derived;
+  return drawableStage(job, world, moved, escaped) ? moved : derived;
+}
+
 /**
  * "OR JUST TELL ME WHAT YOU NEED."
  *
@@ -479,6 +533,51 @@ export function flowStageFor(job: FirstRunJobShape, world: FirstRunJobWorld): Fi
  * `typedOutcome` exists. The box still opens, what they write is still kept,
  * and nothing spins. See first-run-jobs.ts.
  */
+// ── settling step five, AFTER the work rather than in front of it ──────
+
+/**
+ * WHAT THE LAST STEP OF THE FIRST RUN HAS TO DO BEFORE IT IS RECORDED DONE.
+ *
+ * THE DEFECT THIS EXISTS TO STOP. The research job's question was handed to
+ * `dispatch` and forgotten. A dispatch returns nothing, so the card could not
+ * tell a delivered question from one the route refused, and the very next
+ * statement recorded `flow` complete. A rejected send, an authentication
+ * failure, an unanswered approval card and a dead provider all ended the same
+ * way: "Ready." on screen and the first run marked finished over a question
+ * nobody had received. Worse, the whole thing ran from the timer that had
+ * ALREADY played the three working lines, so the theatre came first and the
+ * work, such as it was, ran into the void behind it.
+ *
+ * Settlement now follows the work. `send` resolves only when the server has
+ * accepted the message and rejects when it has not, and `settle` is on the
+ * resolving path alone. Anything that throws in here leaves the step open,
+ * which is the honest state: it did not happen. The caller says so where it
+ * happened, which is what the card's failure line is for.
+ *
+ * INJECTED RATHER THAN IMPORTED, so the rule is decidable without a server,
+ * a clock or a DOM, exactly like every other rule in this module.
+ */
+export interface FirstRunJobWork {
+  /** The person's question, as a promise that settles on the server's own
+   *  answer. Called for `research` and for nothing else. */
+  send: () => Promise<void>;
+  /** The business package. Called for `business` and for nothing else. */
+  install: () => Promise<void>;
+  /** Records `flow` answered. Reached only once the work above has. */
+  settle: () => Promise<void>;
+  /** The card has gone. Nothing it owns should still be written to, and a
+   *  step settled under a card nobody is looking at is a step settled on
+   *  nothing. */
+  gone?: () => boolean;
+}
+
+export async function finishFirstRunJob(job: FirstRunJobShape, work: FirstRunJobWork): Promise<void> {
+  if (job.id === "business") await work.install();
+  if (job.id === "research") await work.send();
+  if (work.gone?.()) return;
+  await work.settle();
+}
+
 export function escapeHatchScreen(world: FirstRunJobWorld): FirstRunInputScreen {
   const screen = firstRunInputScreen(FIRST_RUN_JOB_SHAPES.notes, world);
   // `notes` always has a box, so this is a type narrowing rather than a

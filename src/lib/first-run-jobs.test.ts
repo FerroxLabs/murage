@@ -33,24 +33,23 @@ import { SETUP_JOB_APPS, type SetupJobApp } from "../../shared/setup";
  * there is the opposite of the obvious one: `notes` and `business` need
  * nothing on an ordinary computer and need Flux on that one.
  */
-/** One runnable engine, as `/api/setup` reports one. */
-const ENGINE = { id: "codex", name: "Codex", installed: true };
-
 function machine(over: Partial<FirstRunJobWorld> = {}): FirstRunJobWorld {
   const world: FirstRunJobWorld = {
     fluxReady: false,
     nothingToThinkWith: false,
-    nothingRunnable: false,
+    nothingCanAnswer: false,
     connected: [],
     appsUnreadable: false,
     search: "anonymous",
     ...over,
   };
   // A machine with nothing to think with has nothing runnable on it by
-  // definition. The reverse does NOT hold, and that gap is the signed-out
-  // machine: an engine is here, nobody is signed in to it, so it is not
-  // blank and nothing on it will answer.
-  return world.nothingToThinkWith ? { ...world, nothingRunnable: true } : world;
+  // definition: both readings have an empty `agents` list, so stating the
+  // first without the second would build a machine that cannot exist. The
+  // reverse does NOT hold, and that gap is the signed-out machine: an engine
+  // is here, nobody is signed in to it, so it is not blank and nothing on it
+  // will answer. That is why these are two fields and not one.
+  return world.nothingToThinkWith ? { ...world, nothingCanAnswer: true } : world;
 }
 
 /** A computer with an engine on it, a key, and both accounts connected:
@@ -153,6 +152,48 @@ describe("what a job still needs, on a real machine", () => {
     expect(rows.find((row) => row.id === "business")!.tag.text).toBe("needs Flux Router");
   });
 
+  // THE MACHINE BETWEEN THE TWO, WHICH IS WHERE THE DEFECT LIVED.
+  //
+  // Claude Code or Codex installed and never signed in. It is NOT blank, so
+  // `nothingToThinkWith` is false and detection correctly runs and offers the
+  // sign-in. Nothing on it can answer, because `agents` is empty. Job
+  // readiness was reading the first of those, so notes, research and business
+  // all said "ready now" and research could be dispatched into a machine with
+  // no runnable engine at all.
+  const SIGNED_OUT_ONLY = machine({ nothingToThinkWith: false, nothingCanAnswer: true });
+
+  it("needs Flux for every job when the only engine here is signed out", () => {
+    for (const row of firstRunJobRows(SIGNED_OUT_ONLY)) {
+      expect(row.missing[0], row.id).toBe("flux");
+      expect(row.tag.text, row.id).not.toBe("ready now");
+    }
+    for (const id of ["notes", "research", "business"] as const) {
+      expect(missingForJob(FIRST_RUN_JOB_SHAPES[id], SIGNED_OUT_ONLY), id).toEqual(["flux"]);
+    }
+  });
+
+  it("never lets a job be pressed straight into work on that machine", () => {
+    for (const row of firstRunJobRows(SIGNED_OUT_ONLY)) {
+      expect(row.press, row.id).toBe("connect");
+    }
+  });
+
+  it("keeps what they typed rather than spinning at a signed-out engine", () => {
+    // The box may only show a working state when something is behind it. A
+    // signed-out engine is not something behind it.
+    expect(typedOutcome(SIGNED_OUT_ONLY)).toBe("keep");
+    expect(typedMayShowWorking(SIGNED_OUT_ONLY)).toBe(false);
+    expect(typedReply(SIGNED_OUT_ONLY)).toBe(FIRST_RUN_COPY.chat.jobs.kept);
+  });
+
+  it("lets that same machine straight through once a key is saved", () => {
+    const keyed = machine({ nothingToThinkWith: false, nothingCanAnswer: true, fluxReady: true });
+    for (const id of ["notes", "research", "business"] as const) {
+      expect(missingForJob(FIRST_RUN_JOB_SHAPES[id], keyed), id).toEqual([]);
+    }
+    expect(typedOutcome(keyed)).toBe("answer");
+  });
+
   it("drops the blank-machine rule the moment a key is saved", () => {
     const rows = firstRunJobRows(machine({ nothingToThinkWith: true, fluxReady: true }));
     expect(rows.find((row) => row.id === "notes")!.missing).toEqual([]);
@@ -163,7 +204,7 @@ describe("what a job still needs, on a real machine", () => {
     // Claiming a connection nobody can see fails on the person's first real
     // job. Conservative here; the screen says which of the two it is.
     const world = firstRunJobWorld(
-      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: null, agents: [ENGINE] },
+      { fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, connectedJobApps: null },
       "anonymous",
     );
     expect(world.appsUnreadable).toBe(true);
@@ -172,13 +213,13 @@ describe("what a job still needs, on a real machine", () => {
 
   it("reads a real view without re-deriving anything from it", () => {
     const world = firstRunJobWorld(
-      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: ["gmail"], agents: [ENGINE] },
+      { fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, connectedJobApps: ["gmail"] },
       "anonymous",
     );
     expect(world).toEqual({
       fluxReady: true,
       nothingToThinkWith: false,
-      nothingRunnable: false,
+      nothingCanAnswer: false,
       connected: ["gmail"],
       appsUnreadable: false,
       search: "anonymous",
@@ -353,7 +394,7 @@ describe("the status line the Chief opens with", () => {
    * variant exists for.
    */
   it("does not say anything is running on a machine whose engine is signed out", () => {
-    const signedOut = machine({ nothingRunnable: true });
+    const signedOut = machine({ nothingCanAnswer: true });
     expect(signedOut.nothingToThinkWith, "this is not the blank machine").toBe(false);
     expect(chiefState(signedOut)).toBe("signed-out");
     expect(chiefStatusLine(signedOut, ""))
@@ -366,11 +407,19 @@ describe("the status line the Chief opens with", () => {
     expect(chiefLead(signedOut)).not.toMatch(/I will do it now/);
   });
 
-  it("reads nothing runnable off the engines the view really has", () => {
-    expect(firstRunJobWorld({ fluxReady: false, nothingToThinkWith: false, connectedJobApps: [], agents: [] }, "anonymous")
-      .nothingRunnable).toBe(true);
-    expect(firstRunJobWorld({ fluxReady: false, nothingToThinkWith: false, connectedJobApps: [], agents: [ENGINE] }, "anonymous")
-      .nothingRunnable).toBe(false);
+  it("takes the readiness reading off the view rather than working it out again", () => {
+    // BOTH AUDITS LANDED ON THIS PREDICATE AND ONE OF THEM RE-DERIVED IT HERE
+    // from `view.agents`. The server already computes it over `runnable()`
+    // and publishes it on the view, so the second derivation was a copy of a
+    // rule that could drift from the one the rest of setup is decided by. The
+    // property this file now holds is the narrower one: whatever the view
+    // says, the world says, unchanged, on a machine that is NOT blank.
+    const view = { fluxReady: false, nothingToThinkWith: false, connectedJobApps: [] } as const;
+    expect(firstRunJobWorld({ ...view, nothingCanAnswer: true }, "anonymous").nothingCanAnswer).toBe(true);
+    expect(firstRunJobWorld({ ...view, nothingCanAnswer: false }, "anonymous").nothingCanAnswer).toBe(false);
+    // And that is the signed-out machine, which is not the blank one.
+    expect(chiefState(firstRunJobWorld({ ...view, nothingCanAnswer: true }, "anonymous"))).toBe("signed-out");
+    expect(chiefState(firstRunJobWorld({ ...view, nothingCanAnswer: false }, "anonymous"))).toBe("local");
   });
 
   it("asks the question by name, and reads correctly after a skipped hello", () => {

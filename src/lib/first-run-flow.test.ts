@@ -8,6 +8,7 @@ import {
   briefRoutineRequest,
   businessResult,
   dayResult,
+  finishFirstRunJob,
   firstRunInputScreen,
   flowStageFor,
   morningOffer,
@@ -34,13 +35,18 @@ function machine(over: Partial<FirstRunJobWorld> = {}): FirstRunJobWorld {
   const world: FirstRunJobWorld = {
     fluxReady: false,
     nothingToThinkWith: false,
-    nothingRunnable: false,
+    nothingCanAnswer: false,
     connected: [],
     appsUnreadable: false,
     search: "anonymous",
     ...over,
   };
-  return world.nothingToThinkWith ? { ...world, nothingRunnable: true } : world;
+  // A machine with NOTHING on it has nothing that can answer either: both
+  // readings have an empty `agents` list. Stating the first without the
+  // second would build a machine that cannot exist, and the two are separate
+  // fields precisely because the middle case, an engine here that nobody is
+  // signed in to, is neither.
+  return world.nothingToThinkWith ? { ...world, nothingCanAnswer: true } : world;
 }
 
 const READY = machine({ fluxReady: true, connected: [...SETUP_JOB_APPS] });
@@ -653,8 +659,104 @@ describe("the flow copy stays where the flow can find it", () => {
       // has no job to show: the step was handed back, or the view has not
       // landed yet. It used to say nothing in both cases, which is a card
       // that renders the empty string in the middle of a transcript.
-      "again", "business", "connect", "day", "failure", "input", "morning",
-      "noJob", "notes", "research", "waiting", "working",
+      // `lost` is the third of the same kind: a screen the builders could
+      // not assemble, said out loud rather than drawn as a blank.
+      "again", "business", "connect", "day", "failure", "input", "lost",
+      "morning", "noJob", "notes", "research", "waiting", "working",
     ]);
+  });
+});
+
+/**
+ * THE LAST STEP OF THE FIRST RUN MAY NOT BE RECORDED OVER NOTHING.
+ *
+ * The research job's send was fired and forgotten, and the statement straight
+ * after it recorded `flow` complete. Every one of these walks the real
+ * `finishFirstRunJob` with the work made to behave the way a real machine can
+ * behave, and asserts on ORDER and on whether `settle` was reached at all.
+ * Nothing here reads source.
+ */
+describe("settling step five follows the work", () => {
+  function recorder() {
+    const log: string[] = [];
+    const never = (name: string) => async () => {
+      log.push(name);
+      throw new Error(`${name} should not have been called`);
+    };
+    return { log, never };
+  }
+
+  it("sends the question BEFORE it records the step, and records it once", async () => {
+    const { log, never } = recorder();
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { log.push("send"); },
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    });
+    expect(log).toEqual(["send", "settle"]);
+  });
+
+  it("does not record the step when the send is refused", async () => {
+    const { log, never } = recorder();
+    const refused = new Error("That did not go through.");
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { throw refused; },
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    })).rejects.toBe(refused);
+    expect(log, "the first run settled on a question nobody received").toEqual([]);
+  });
+
+  it("does not record the step when the send never comes back in time", async () => {
+    // A send that hangs is the other way to be wrong here: the caller bounds
+    // the wait and rejects, and a rejection must not settle anything.
+    const { log, never } = recorder();
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: () => new Promise<void>((_, reject) => setTimeout(() => reject(new Error("no answer")), 1)),
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    })).rejects.toThrow("no answer");
+    expect(log).toEqual([]);
+  });
+
+  it("installs the crew before it records the step, and not after a refusal", async () => {
+    const { log, never } = recorder();
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.business, {
+      send: never("send"),
+      install: async () => { log.push("install"); },
+      settle: async () => { log.push("settle"); },
+    });
+    expect(log).toEqual(["install", "settle"]);
+
+    const after: string[] = [];
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.business, {
+      send: never("send"),
+      install: async () => { throw new Error("that crew is not available"); },
+      settle: async () => { after.push("settle"); },
+    })).rejects.toThrow("that crew is not available");
+    expect(after).toEqual([]);
+  });
+
+  it("sends nothing at all for the jobs that have nothing to send", async () => {
+    for (const id of ["brief", "day", "notes"] as const) {
+      const { log, never } = recorder();
+      await finishFirstRunJob(FIRST_RUN_JOB_SHAPES[id], {
+        send: never("send"),
+        install: never("install"),
+        settle: async () => { log.push("settle"); },
+      });
+      expect(log, id).toEqual(["settle"]);
+    }
+  });
+
+  it("settles nothing under a card the person has already left", async () => {
+    const log: string[] = [];
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { log.push("send"); },
+      install: async () => { log.push("install"); },
+      settle: async () => { log.push("settle"); },
+      gone: () => true,
+    });
+    expect(log).toEqual(["send"]);
   });
 });

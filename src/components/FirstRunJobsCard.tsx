@@ -35,8 +35,9 @@ import {
   businessResult,
   dayResult,
   escapeHatchScreen,
+  finishFirstRunJob,
   firstRunInputScreen,
-  flowStageFor,
+  firstRunStage,
   notesResult,
   parseLines,
   researchResult,
@@ -552,13 +553,48 @@ export function FirstRunNotesResultView({ result, onAgain }: { result: FirstRunN
  * card has no model behind it and must not draw a box that looks like one.
  * What it does own is the one thing the module decided, which is whether to
  * say that a bigger model would read this faster.
+ *
+ * AND WHETHER THE QUESTION GOT THERE AT ALL. This screen took no failure, so
+ * the card's own `setFailure` had nowhere to appear on the one job whose
+ * whole result lives somewhere else: a send the server refused drew this
+ * screen unchanged, with its quiet return button, saying nothing. That is the
+ * one thing the person cannot check for themselves, because the answer they
+ * are waiting for is in a thread that will never get one.
  */
-export function FirstRunResearchResultView({ result, onAgain }: { result: FirstRunResearchResult; onAgain: () => void }) {
+export function FirstRunResearchResultView(
+  { result, failure = "", onAgain }: { result: FirstRunResearchResult; failure?: string; onAgain: () => void },
+) {
   return (
     <FirstRunBubble>
       {result.onLocal && <FirstRunLine quiet>{result.onLocal}</FirstRunLine>}
+      <FirstRunFailure message={failure} />
       <button type="button" onClick={onAgain} className={`mt-2 ${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
         {result.again}
+      </button>
+    </FirstRunBubble>
+  );
+}
+
+/**
+ * THE SCREEN THAT COULD NOT BE ASSEMBLED, WHICH IS STILL A SCREEN.
+ *
+ * Every screen builder in the two modules can return null on purpose: a
+ * connect screen with nothing left missing and an input screen for a job with
+ * no box are both "there is nothing here to draw", and null is the honest
+ * answer to give the card. What the CARD may not do with that null is render
+ * a lead with nothing under it, or render nothing at all. Both shapes have
+ * shipped in this release already.
+ *
+ * `firstRunStage` now makes both cases unreachable by dropping a pin the
+ * moment it stops being drawable. This is what would be drawn if one ever
+ * were, and like every other screen in the flow it carries the way back.
+ */
+export function FirstRunLostView({ onAgain }: { onAgain: () => void }) {
+  return (
+    <FirstRunBubble>
+      <FirstRunLine>{flowCopy.lost}</FirstRunLine>
+      <button type="button" onClick={onAgain} className={`mt-3 ${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+        {flowCopy.again}
       </button>
     </FirstRunBubble>
   );
@@ -643,6 +679,11 @@ export function FirstRunBusinessResultView({
 
 const WORKING_STEP_MS = 400;
 const WORKING_TOTAL_MS = 2_300;
+/** How long the card waits for the server to acknowledge the research send
+ *  before calling it not gone through. Generous enough to cover a slow write
+ *  and a queued turn, short enough that nobody is left watching a spinner
+ *  over a route that is never going to answer. */
+const SEND_WAIT_MS = 20_000;
 
 /**
  * THE ONE ROAD INTO THE RESULT, SO THE STEP FINISHES ON ALL OF THEM.
@@ -727,6 +768,10 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const [briefTaken, setBriefTaken] = useState(false);
   const [reviewTaken, setReviewTaken] = useState(false);
   const gone = useRef(false);
+  /** The research send, in flight since they pressed go. Held here rather
+   *  than in state because it is not something a render reads: it is the one
+   *  thing `finish` has to wait for before the step may be settled. */
+  const sending = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     gone.current = false;
@@ -744,12 +789,51 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   //
   // `moved` wins once the person has moved, because after that they are
   // driving and a re-render because a poll landed must not throw them back to
-  // the connect screen they have just come through. The escape hatch is the
-  // one path that skips the gate: the notes job reaches for no account, and
-  // asking for a key before letting somebody type a sentence is the form this
-  // release exists to delete.
-  const stage: FirstRunFlowStage | null = moved
-    ?? (job && world ? (tookEscapeHatch() ? "input" : flowStageFor(job, world)) : null);
+  // the connect screen they have just come through. BUT A PIN MUST NOT
+  // OUTLIVE THE STATE IT WAS PINNED AGAINST, which is why this is a rule in
+  // the module rather than a `??` here: a `connect` pinned against "two
+  // things are missing" used to win for ever, so a second account completed
+  // in a browser tab left the card with a lead and nothing else. The escape
+  // hatch is the one path that skips the gate: the notes job reaches for no
+  // account, and asking for a key before letting somebody type a sentence is
+  // the form this release exists to delete.
+  const stage: FirstRunFlowStage | null = firstRunStage(job, world, moved, tookEscapeHatch());
+
+  /**
+   * The ordinary send, exactly as the composer sends, AND HEARD BACK FROM.
+   *
+   * The question is theirs, so it belongs in the transcript as their message
+   * and the Chief answers it below in its own voice. What changed is that the
+   * card now waits for the server's own answer: a bare dispatch reports
+   * nothing at all, so a refused write, a signed-out engine or a dead provider
+   * were indistinguishable from a delivered question, and the step was
+   * recorded complete over every one of them.
+   *
+   * Bounded, because the other way to be wrong here is a spinner that never
+   * ends. A send the server has not acknowledged inside the wait is reported
+   * as not gone through, which is the honest reading of it.
+   */
+  const sendResearch = (text: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const late = setTimeout(() => reject(new Error(flowCopy.failure)), SEND_WAIT_MS);
+      dispatch({
+        type: "send",
+        botId: bot.id,
+        text,
+        threadId: bot.threadId,
+        onSent: () => {
+          clearTimeout(late);
+          resolve();
+        },
+        // True: the failure is shown on this card, where it happened, so the
+        // store adds no toast over the top of it.
+        onError: (cause) => {
+          clearTimeout(late);
+          reject(cause);
+          return true;
+        },
+      });
+    });
 
   /** The two effects the rules above are handed. A stage set after the card
    *  has gone is a React warning and a lie about where the person is. */
@@ -768,14 +852,23 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const finish = async () => {
     if (!job) return;
     try {
-      if (job.id === "business") setCrew(await installFirstRunCrew(api));
-      if (job.id === "research") {
-        // The ordinary send, exactly as the composer sends: the question is
-        // theirs, so it belongs in the transcript as their message and the
-        // Chief answers it below in its own voice.
-        dispatch({ type: "send", botId: bot.id, text: typed.trim(), threadId: bot.threadId });
-      }
-      await reachResult();
+      await finishFirstRunJob(job, {
+        install: async () => {
+          const installed = await installFirstRunCrew(api);
+          if (!gone.current) setCrew(installed);
+        },
+        // Started when they pressed go, so the three counted lines are the
+        // send's own latency rather than a cover for nothing having happened.
+        // Only dispatched here if something reached this stage another way.
+        send: () => sending.current ?? sendResearch(typed.trim()),
+        // THE ONE ROAD INTO THE RESULT, reached only once the work above has.
+        // `firstRunReachResult` is the same road the "keep what you typed"
+        // path takes, so `flow` is settled in exactly one place no matter
+        // which way the person got here, and settling still happens only
+        // after a send the server has actually acknowledged.
+        settle: () => firstRunReachResult(id, goTo, answerFlow),
+        gone: () => gone.current,
+      });
     } catch (cause) {
       if (gone.current) return;
       setFailure(failureText(cause, flowCopy.failure));
@@ -809,6 +902,9 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     setItems([]);
     setStage(null);
     setFailure("");
+    // A send that belonged to the job they have just left must not be what
+    // the NEXT job waits for.
+    sending.current = null;
     forgetEscapeHatch();
     try {
       await reopenSetupStep("chat");
@@ -961,8 +1057,14 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
 
   if (stage === "connect") {
     const screen = firstRunConnectScreen(job, world);
-    // Nothing missing any more, which a poll can do underneath this screen.
-    if (!screen) return <FirstRunBubble><FirstRunLine>{flowCopy.connect.lead}</FirstRunLine></FirstRunBubble>;
+    // UNREACHABLE, AND DRAWN ANYWAY. `firstRunStage` drops a pin the moment
+    // it stops being drawable, so a connect stage with nothing missing no
+    // longer arrives here. It used to, and what it rendered was the generic
+    // lead on its own: no advance, no input, no control. A card that renders
+    // a lead and nothing else is the same failure class as the blank cards
+    // this release has already shipped twice, so the null case gets a screen
+    // with words and a way off it rather than a body that is not there.
+    if (!screen) return <FirstRunLostView onAgain={() => void elsewhere()} />;
     return (
       <FirstRunConnectView
         screen={screen}
@@ -978,7 +1080,9 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
 
   if (stage === "input") {
     const screen = tookEscapeHatch() ? escapeHatchScreen(world) : firstRunInputScreen(job, world);
-    if (!screen) return null;
+    // The same rule, and this one used to return null outright: a job with no
+    // box, pinned to the input stage, drew literally nothing.
+    if (!screen) return <FirstRunLostView onAgain={() => void elsewhere()} />;
     return (
       <FirstRunInputView
         screen={screen}
@@ -988,10 +1092,26 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         onGo={() => {
           setItems(parseLines(typed));
           setShown(1);
+          // THE WORK STARTS HERE, NOT AFTER THE THEATRE. The three counted
+          // lines used to play out in full and the send fired afterwards, from
+          // the same timer that then recorded the step done. Sending now means
+          // those lines cover a real wait, and `finish` has something to have
+          // heard back from by the time it settles anything. Only on the
+          // working path: the `keep` path has nothing behind it to send to.
+          if (id === "research" && typedMayShowWorking(world)) {
+            const started = sendResearch(typed.trim());
+            // The real handling is in `finish`, which awaits this. The empty
+            // catch is only so a send that fails during the counted lines is
+            // not reported as an unhandled rejection before anyone asks.
+            started.catch(() => {});
+            sending.current = started;
+          }
           // Where this goes, and whether it ends the step, is `firstRunGo`.
           // It used to be `setStage(typedMayShowWorking(world) ? "working" :
           // "result")` written out here, and the second half of that ternary
-          // is a result screen nothing ever answered for.
+          // is a result screen nothing ever answered for. NOTHING SPINS WHEN
+          // THERE IS NOTHING BEHIND IT is still the rule; it is stated once,
+          // in `firstRunGo`, where a test can read it.
           void firstRunGo(world, id, goTo, answerFlow).catch((cause) => {
             if (!gone.current) setFailure(failureText(cause, flowCopy.failure));
           });
@@ -1032,7 +1152,13 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   }
   if (id === "notes") return <FirstRunNotesResultView result={notesResult(items)} onAgain={() => void elsewhere()} />;
   if (id === "research") {
-    return <FirstRunResearchResultView result={researchResult(world)} onAgain={() => void elsewhere()} />;
+    return (
+      <FirstRunResearchResultView
+        result={researchResult(world)}
+        failure={failure}
+        onAgain={() => void elsewhere()}
+      />
+    );
   }
   // The crew, described from the package rather than from memory. Until the
   // install answers there is nothing true to say about what they got, and if

@@ -15,6 +15,7 @@ const {
   dayResult,
   escapeHatchScreen,
   firstRunInputScreen,
+  firstRunStage,
   flowStageFor,
   notesResult,
   parseLines,
@@ -47,6 +48,7 @@ const {
   firstRunReachResult,
 } = await import("@/components/FirstRunJobsCard");
 const { SETUP_JOB_APPS } = await import("../../shared/setup");
+const { FIRST_RUN_COPY } = await import("./first-run-copy");
 type SetupJobApp = import("../../shared/setup").SetupJobApp;
 
 /**
@@ -78,27 +80,38 @@ const APP_SETS: readonly (readonly SetupJobApp[])[] = [
   [...SETUP_JOB_APPS],
 ];
 
+/**
+ * THE THREE ENGINE STATES A MACHINE CAN REALLY BE IN, as the pair of
+ * predicates the flow reads: [nothingToThinkWith, nothingCanAnswer].
+ *
+ * The sweep used to run only the first of the two, which is exactly how the
+ * middle row got shipped unchecked. A machine whose only engine is Claude
+ * Code or Codex installed and never signed in has SOMETHING on it, so
+ * detection runs and `nothingToThinkWith` is false, and NOTHING that can
+ * answer, so every job on it still has to ask for a key first.
+ *
+ * The fourth combination does not exist: an empty machine that can answer is
+ * a contradiction, and `nothingToThinkWith` implies `nothingCanAnswer`
+ * because `agents` is empty in both.
+ */
+const ENGINE_STATES: readonly (readonly [boolean, boolean])[] = [
+  [true, true],   // nothing on it at all
+  [false, true],  // an engine is here and nobody is signed in to it
+  [false, false], // something here can answer
+];
+
 /** Every machine this flow can be opened on, stated as the facts it reads.
  *  The unreadable-store case is included with an empty set, because that is
  *  exactly how a job is told to treat it. */
 function everyMachine(): FirstRunJobWorld[] {
   const worlds: FirstRunJobWorld[] = [];
   for (const fluxReady of [false, true]) {
-    for (const nothingToThinkWith of [false, true]) {
-      // THE SIGNED-OUT MACHINE IS ITS OWN MACHINE, AND IT WAS MISSING HERE.
-      // `nothingToThinkWith` is FALSE on a computer whose only engine is
-      // signed out, so a sweep that did not vary `nothingRunnable`
-      // separately never once opened this flow as that person sees it. The
-      // impossible pairing is skipped: nothing to think with means nothing
-      // runnable by definition.
-      for (const nothingRunnable of [false, true]) {
-        if (nothingToThinkWith && !nothingRunnable) continue;
-        for (const connected of APP_SETS) {
-          for (const appsUnreadable of [false, true]) {
-            for (const search of ROUTINGS) {
-              if (appsUnreadable && connected.length > 0) continue;
-              worlds.push({ fluxReady, nothingToThinkWith, nothingRunnable, connected, appsUnreadable, search });
-            }
+    for (const [nothingToThinkWith, nothingCanAnswer] of ENGINE_STATES) {
+      for (const connected of APP_SETS) {
+        for (const appsUnreadable of [false, true]) {
+          for (const search of ROUTINGS) {
+            if (appsUnreadable && connected.length > 0) continue;
+            worlds.push({ fluxReady, nothingToThinkWith, nothingCanAnswer, connected, appsUnreadable, search });
           }
         }
       }
@@ -171,13 +184,24 @@ describe("the Chief's own screen, on every machine", () => {
     }
   });
 
-  it("never offers a job as ready on a machine that cannot run it", () => {
+  // READ OFF `nothingCanAnswer`, WHICH IS THE READINESS QUESTION. This used
+  // to skip every machine whose only engine was signed out, because that
+  // machine has `nothingToThinkWith` false, and those are precisely the
+  // machines on which every job was being offered as ready now with nothing
+  // behind it.
+  it("never offers a job as ready on a machine that cannot answer", () => {
+    let checked = 0;
     for (const world of MACHINES) {
-      if (!world.nothingToThinkWith || world.fluxReady) continue;
+      if (!world.nothingCanAnswer || world.fluxReady) continue;
+      checked += 1;
       for (const row of firstRunJobRows(world)) {
         expect(row.press, `${JSON.stringify(world)} ${row.id}`).toBe("connect");
+        expect(row.tag.text, `${JSON.stringify(world)} ${row.id}`).not.toBe(FIRST_RUN_COPY.chat.jobs.tags.ready);
       }
     }
+    // The signed-out row of the sweep really is in here, not filtered away.
+    expect(MACHINES.some((world) => !world.nothingToThinkWith && world.nothingCanAnswer)).toBe(true);
+    expect(checked).toBeGreaterThan(0);
   });
 });
 
@@ -311,6 +335,10 @@ describe("every result has a body and a way on, whatever was typed", () => {
             label,
           );
           saysAll(markup, label, [
+            // `unread` is the sentence that says which connected account this
+            // screen did NOT read. Somebody who has just handed over Gmail and
+            // Calendar for this job will otherwise assume the screen under it
+            // came out of them, which is the promise the brief used to make.
             result.header, result.provenance, result.unread, result.riskEyebrow, result.again,
             result.risk?.line, result.risk?.reason, result.risk?.advice,
             result.calm?.body, result.calm?.second,
@@ -353,6 +381,25 @@ describe("every result has a body and a way on, whatever was typed", () => {
       expect(result.onLocal === null || said(result.onLocal)).toBe(true);
       const markup = renderToStaticMarkup(createElement(FirstRunResearchResultView, { result, onAgain: noop }));
       saysAll(markup, "research", [result.again, result.onLocal]);
+    }
+  });
+
+  // THE ONE JOB WHOSE ANSWER IS NOT ON THIS CARD, SO A SEND THAT NEVER LANDED
+  // IS THE ONE THING THE PERSON CANNOT CHECK FOR THEMSELVES.
+  //
+  // This screen used to take no failure at all, so the card's own `setFailure`
+  // had nowhere to appear: a refused send drew the quiet return button and
+  // said nothing, under three lines that had already said "Ready."
+  it("says so on the research result when the question did not go through", () => {
+    const refusal = "That did not go through. Try it again whenever you are ready.";
+    for (const world of MACHINES) {
+      const result = researchResult(world);
+      const markup = screenOf(
+        createElement(FirstRunResearchResultView, { result, failure: refusal, onAgain: noop }),
+        "research refused",
+      );
+      expect(markup, JSON.stringify(world)).toContain(asHtml(refusal));
+      expect(markup, "no way off the refused research screen").toMatch(/<button/);
     }
   });
 
@@ -412,7 +459,7 @@ describe("every result has a body and a way on, whatever was typed", () => {
 /** The morning offer's heading, as the only screen that carries it words it. */
 function briefRoutineOfferHeading(): string {
   return dayResult(FIRST_RUN_JOB_SHAPES.brief, [], {
-    fluxReady: true, nothingToThinkWith: false, nothingRunnable: false, connected: [], appsUnreadable: false, search: "anonymous",
+    fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, connected: [], appsUnreadable: false, search: "anonymous",
   }).morning!.heading;
 }
 
@@ -430,6 +477,14 @@ function briefRoutineOfferHeading(): string {
 // button. A rule that lives only inside a component's closure is a rule
 // nothing here can read, which is how a step came to finish on a timer with
 // nobody noticing.
+//
+// THE OTHER AUDIT REACHED THE SAME ROAD FROM THE OTHER END, with
+// `finishFirstRunJob`, which refuses to settle anything until the send has
+// been heard back from. The two meet here: `finishFirstRunJob`'s settle step
+// IS `firstRunReachResult`, so a research question the server refused never
+// arrives at either of the assertions below. That half is executed in
+// first-run-flow.test.ts, which can make a send fail; this half is about the
+// roads.
 describe("step five finishes on every road into the result", () => {
   it("answers the step from the box, on a machine that can work and on one that cannot", async () => {
     for (const world of MACHINES) {
@@ -447,7 +502,7 @@ describe("step five finishes on every road into the result", () => {
           expect(stages, label).toEqual(["working"]);
           expect(answered, `${label} finished the step before doing the work`).toEqual([]);
         } else {
-          // THE PATH THAT NEVER SETTLED. Nothing to think with and no key:
+          // THE PATH THAT NEVER SETTLED. Nothing that can answer and no key:
           // the box keeps what they wrote, there is no working state to show,
           // and the result is the end of the step.
           expect(stages, label).toEqual(["result"]);
@@ -499,7 +554,7 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
     // asking for a key before letting somebody type a sentence is the form
     // this release exists to delete.
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, nothingRunnable: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingCanAnswer: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(flowStageFor(FIRST_RUN_JOB_SHAPES.notes, blank)).toBe("connect");
     expect(escapeHatchScreen(blank).kind).toBe("notes");
@@ -507,9 +562,177 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
 
   it("keeps what they wrote and starts nothing, on the machine with nothing", () => {
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, nothingRunnable: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingCanAnswer: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(typedMayShowWorking(blank)).toBe(false);
     expect(said(typedReply(blank))).toBe(true);
+  });
+});
+
+/**
+ * A PIN MUST NOT OUTLIVE THE STATE IT WAS PINNED AGAINST.
+ *
+ * The card derived its stage as `moved ?? (...)`, so once `moved` was pinned
+ * to "connect" it beat the live state for ever. Connect one of a job's two
+ * accounts, have polling then discover the other was completed somewhere
+ * else, and the pinned "connect" still won, `firstRunConnectScreen` returned
+ * null because nothing was missing, and the card rendered its generic lead
+ * and nothing else: no advance, no input, no control.
+ *
+ * The property asserted here is the strong one, and it is asserted by walking
+ * every job across every machine with every pin the card can hold: what comes
+ * back can ALWAYS be drawn.
+ */
+const PINS: readonly (import("./first-run-flow").FirstRunFlowStage | null)[] = [
+  null, "connect", "input", "working", "result",
+];
+
+describe("the stage the card lands on can always be drawn", () => {
+  it("never returns a stage whose screen would be null, on any machine", () => {
+    for (const world of MACHINES) {
+      for (const id of FIRST_RUN_JOB_IDS) {
+        const job = FIRST_RUN_JOB_SHAPES[id];
+        for (const escaped of [false, true]) {
+          for (const moved of PINS) {
+            const label = `${id} pinned ${moved} escaped=${escaped} on ${JSON.stringify(world)}`;
+            const stage = firstRunStage(job, world, moved, escaped);
+            expect(stage, label).not.toBeNull();
+            if (stage === "connect") {
+              expect(firstRunConnectScreen(job, world), label).not.toBeNull();
+            }
+            if (stage === "input" && !escaped) {
+              expect(firstRunInputScreen(job, world), label).not.toBeNull();
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // THE EXACT WALK THE AUDIT DESCRIBED. Two accounts wanted, one connected
+  // here, the second discovered by a poll as already done elsewhere.
+  it("lets go of a connect pin the moment the machine says there is nothing to connect", () => {
+    const job = FIRST_RUN_JOB_SHAPES.brief;
+    const keyed = { fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false, appsUnreadable: false, search: "anonymous" } as const;
+    const halfway: FirstRunJobWorld = { ...keyed, connected: ["gmail"] };
+    const both: FirstRunJobWorld = { ...keyed, connected: [...SETUP_JOB_APPS] };
+
+    // Pinned while it is still true.
+    expect(firstRunStage(job, halfway, "connect", false)).toBe("connect");
+    expect(firstRunConnectScreen(job, halfway)).not.toBeNull();
+
+    // The poll lands and the pin is gone, which is what `afterConnect` would
+    // have said had it been asked a second time.
+    expect(firstRunStage(job, both, "connect", false)).toBe(afterConnect(job, both));
+    expect(firstRunStage(job, both, "connect", false)).not.toBe("connect");
+  });
+
+  it("keeps the pins that are about the person rather than the machine", () => {
+    const job = FIRST_RUN_JOB_SHAPES.brief;
+    const both: FirstRunJobWorld = {
+      fluxReady: true, nothingToThinkWith: false, nothingCanAnswer: false,
+      connected: [...SETUP_JOB_APPS], appsUnreadable: false, search: "anonymous",
+    };
+    // They typed and it is working, or they have their answer. A poll landing
+    // underneath must not drag them back to the box.
+    for (const moved of ["input", "working", "result"] as const) {
+      expect(firstRunStage(job, both, moved, false), moved).toBe(moved);
+    }
+  });
+
+  it("holds nothing at all until the job and the machine are both known", () => {
+    const world = MACHINES[0];
+    expect(firstRunStage(null, world, null, false)).toBeNull();
+    expect(firstRunStage(FIRST_RUN_JOB_SHAPES.notes, null, null, false)).toBeNull();
+    expect(firstRunStage(null, null, "input", false)).toBe("input");
+  });
+
+  it("gives the screen that could not be drawn words and a way off it", async () => {
+    const { FirstRunLostView } = await import("@/components/FirstRunJobsCard");
+    const markup = screenOf(createElement(FirstRunLostView, { onAgain: noop }), "lost");
+    expect(markup, "no way off the screen that could not be drawn").toMatch(/<button/);
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.flow["do-it"].lost));
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.flow["do-it"].again));
+  });
+});
+
+/**
+ * THE TWO FACTS ABOUT THE CARD THAT THIS SUITE CANNOT EXECUTE.
+ *
+ * Everything above runs the real rules and renders the real screens. `finish`
+ * cannot be run here: it fires from a timer inside a mounted component and
+ * this suite has no DOM to mount one in. So the wiring is READ, off the
+ * source with every comment stripped out first, because the thing that was
+ * wrong before was a comment promising an ordinary send over a line that
+ * awaited nothing.
+ *
+ * The rule those reads enforce is proved by execution in
+ * first-run-flow.test.ts ("settling step five follows the work"). These only
+ * assert that the card is the caller.
+ */
+const cardSource = (await import("node:fs")).readFileSync(
+  new URL("../components/FirstRunJobsCard.tsx", import.meta.url),
+  "utf8",
+);
+/** Block comments, then line comments. The house writes long prose above
+ *  every decision in that file and none of it is wiring. */
+const code = cardSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+describe("the do-it card settles through the rule rather than around it", () => {
+  it("derives its stage through the rule rather than pinning moved for ever", () => {
+    expect(code, "the card stopped deriving its stage through the rule").toMatch(/firstRunStage\(job, world, moved,/);
+    expect(code, "the eternal pin is back").not.toMatch(/moved\s*\n?\s*\?\?\s*\(job/);
+  });
+
+  it("draws a screen when a builder returns null, never a lead on its own", () => {
+    // Both null branches used to be blanks: one rendered the generic connect
+    // lead with no control under it, the other returned null outright.
+    const nulls = [...code.matchAll(/if \(!screen\) return ([^;]+);/g)].map((match) => match[1]);
+    expect(nulls.length, "the null branches went missing").toBe(2);
+    for (const drawn of nulls) expect(drawn, "a screen builder's null still draws a blank").toContain("FirstRunLostView");
+  });
+
+  it("runs the finish through finishFirstRunJob", () => {
+    expect(code, "the card no longer settles through the rule").toMatch(/await finishFirstRunJob\(/);
+  });
+
+  it("never dispatches a send it cannot hear back from", () => {
+    const sends = code.match(/type:\s*"send"/g) ?? [];
+    const heard = code.match(/onSent:/g) ?? [];
+    expect(sends.length, "the card stopped sending anything").toBeGreaterThan(0);
+    expect(heard.length, "a send on this card with no confirmation behind it").toBe(sends.length);
+  });
+
+  it("records the step in one place, and reaches that place only through the settle step", () => {
+    // TWO AUDITS, ONE ROAD. One of them required that the step is settled
+    // only AFTER the work has been heard back from, which is `settle:` on
+    // `finishFirstRunJob`. The other required that every road into the result
+    // settles the step at all, which is `firstRunReachResult`, because the
+    // "keep what you typed" path never reaches `finish` and used to leave the
+    // last step of the first run outstanding for ever.
+    //
+    // Composing them rather than choosing between them means the recording
+    // lives in exactly one expression, `answerFlow`, and the only two things
+    // that are ever handed it are the two road functions. Asserting on the
+    // braces of an inlined settle step would have forced the recording to be
+    // written out twice, once per road, which is the thing this checks for.
+    const at = [...code.matchAll(/answerSetupStep\("flow"/g)].map((match) => match.index ?? 0);
+    expect(at.length, "the flow step is recorded from more than one place").toBe(1);
+    expect(code, "the one recording site stopped being the one both roads are handed")
+      .toMatch(/const answerFlow = \(\w+: FirstRunJobId\) => answerSetupStep\("flow", \w+\);/);
+
+    // The settle step reaches the result through the same road the box does.
+    expect(code, "the settle step stopped going through the one road").toMatch(/settle:\s*\(\)\s*=>\s*firstRunReachResult\(/);
+
+    // AND NOTHING ELSE MAY PUT SOMEBODY ON A RESULT SCREEN. A bare
+    // `setStage("result")` is a result nothing answered for, which is exactly
+    // the defect on the path that skips the working screen.
+    expect(code.match(/setStage\("result"\)/g), "a result screen reached without settling the step").toBeNull();
+
+    // Both roads take the recording as an argument rather than reaching for
+    // it, so this suite can run them; the ones above do.
+    for (const road of [/firstRunReachResult\(id, goTo, answerFlow\)/, /firstRunGo\(world, id, goTo, answerFlow\)/]) {
+      expect(code, `${road} is no longer how the card reaches a result`).toMatch(road);
+    }
   });
 });
