@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
+import { CHIEF_CONFIRMATIONS } from "../../shared/first-run-chief";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
@@ -45,6 +46,13 @@ function walk(value: unknown, path: string, into: Array<{ path: string; text: st
 
 const strings: Array<{ path: string; text: string }> = [];
 walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
+// THE CHIEF'S OWN SENTENCES ARE FIRST-RUN COPY TOO.
+//
+// They are posted by the server, so they cannot live in this module, and
+// while they sat as a literal inside server/index.ts no rule on this page
+// applied to them. That is how the flow came to have one sentence nobody had
+// checked. They are walked here for the same reason everything else is.
+walk(CHIEF_CONFIRMATIONS, "CHIEF_CONFIRMATIONS", strings);
 // Slugs, template names and row ids are wire identifiers and nobody reads
 // them. Everything else on a row is read out loud by somebody's eyes.
 //

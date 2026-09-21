@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
   FLUX_KEY_NOT_A_KEY,
+  FLUX_KEY_REJECTED,
   FLUX_KEY_STORAGE_UNAVAILABLE,
   detectFluxKeyInComposer,
   looksLikeFluxKey,
+  proveFluxKey,
   readFluxStatus,
+  saveAndProveFluxKey,
   saveFluxKey,
 } from "./flux-key-paste";
 
@@ -134,6 +139,149 @@ describe("saving a key", () => {
     await expect(saveFluxKey("my key is in the drawer", { status, bridge, desktop: true }))
       .rejects.toThrow(FLUX_KEY_NOT_A_KEY);
     expect(called).toBe(false);
+  });
+});
+
+/**
+ * THE DEFECT THESE EXIST FOR.
+ *
+ * The first-run save checked the SHAPE of the key and nothing else, wrote it
+ * to the keychain, and the Chief then said "That is saved, and locked away on
+ * this computer" in his own voice. A revoked key, somebody else's key or a
+ * key with one character wrong all earned that sentence and then failed on
+ * the person's first question, with nothing on screen joining the two.
+ *
+ * The rule being locked down here is not only "check it". It is that the
+ * three outcomes stay three: a key Flux Router refused, a key Flux Router
+ * accepted, and a key nobody could ask about because nothing could reach Flux
+ * Router. Collapsing the third into the first tells somebody on a train that
+ * their good key is wrong, which is the more expensive lie of the two.
+ */
+describe("proving a saved key against Flux Router", () => {
+  const catalogue = (body: any) => {
+    const calls: Array<{ path: string; method?: string; body?: unknown }> = [];
+    return {
+      calls,
+      request: async (path: string, init?: RequestInit) => {
+        calls.push({ path, method: init?.method, body: init?.body });
+        if (body instanceof Error) throw body;
+        return body;
+      },
+    };
+  };
+
+  it("proves a key the catalogue answered for", async () => {
+    const probe = catalogue({ modelCount: 412 });
+    expect(await proveFluxKey(probe.request)).toBe("proved");
+    // The route reads the saved credential server side. Nothing here holds
+    // the key, so nothing here can leak it.
+    expect(probe.calls).toEqual([{ path: "/api/flux-connection/test", method: "POST", body: undefined }]);
+  });
+
+  it("calls a key Flux Router refused refused, and only those two codes", async () => {
+    for (const code of ["unauthorized", "forbidden"]) {
+      expect
+        .soft(await proveFluxKey(catalogue({ modelCount: 0, error: "The provider rejected this key.", code }).request), code)
+        .toBe("rejected");
+    }
+  });
+
+  it("never calls a trip that failed a bad key", async () => {
+    // Every one of these is a statement about the network, the rate limiter
+    // or the payload. None of them is Flux Router's verdict on the key, and
+    // reporting one as a refusal is the lie this test exists to stop.
+    for (const code of ["offline", "rate-limited", "unavailable", "invalid-catalog", "connection-changed"]) {
+      expect.soft(await proveFluxKey(catalogue({ modelCount: 0, error: "Could not reach the provider.", code }).request), code)
+        .toBe("unproved");
+    }
+  });
+
+  it("treats a route that would not answer at all as unproved", async () => {
+    // A 409 while the credential store is mid change, a dropped connection,
+    // a server restart. The person is offline, not wrong.
+    expect(await proveFluxKey(catalogue(new Error("Flux credentials are being changed.")).request)).toBe("unproved");
+    expect(await proveFluxKey(catalogue({}).request)).toBe("unproved");
+  });
+
+  it("saves first and only then asks, and reports what the asking said", async () => {
+    const saved: any[] = [];
+    const bridge = async (change: any) => {
+      saved.push(change);
+      return { configured: true, revision: "rev-2", conflict: false, choices: [] };
+    };
+    const asked: string[] = [];
+    const request = async (path: string) => {
+      asked.push(path);
+      // The save has to have happened before the question is asked, or the
+      // question is about the previous key.
+      expect(saved).toHaveLength(1);
+      return { modelCount: 7 };
+    };
+    const proof = await saveAndProveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, request, desktop: true });
+    expect(proof).toBe("proved");
+    expect(saved[0]).toMatchObject({ action: "connect", key: REAL });
+    expect(asked).toEqual(["/api/flux-connection/test"]);
+  });
+
+  it("hands back the refusal rather than swallowing it", async () => {
+    const bridge = async () => ({ configured: true, revision: "rev-2", conflict: false, choices: [] });
+    const request = async () => ({ modelCount: 0, error: "The provider rejected this key.", code: "unauthorized" });
+    expect(await saveAndProveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, request, desktop: true }))
+      .toBe("rejected");
+  });
+
+  it("puts the key in no message a person can read", () => {
+    for (const line of [FLUX_KEY_REJECTED, FLUX_KEY_NOT_A_KEY, FLUX_KEY_STORAGE_UNAVAILABLE]) {
+      expect.soft(line).not.toContain(PREFIX);
+      expect.soft(line).not.toMatch(/\bsk-/);
+      expect.soft(line).not.toContain("—");
+    }
+  });
+});
+
+/**
+ * THE WIRING, WHICH IS WHERE THE DEFECT ACTUALLY LIVED.
+ *
+ * The library above can be perfect and the card can still congratulate
+ * somebody over an unchecked key, because the card is what answers the step
+ * and the answer is what makes the Chief speak. There is no DOM in this
+ * suite, so this is a read of the source with its comments stripped first,
+ * said plainly: comments in these files discuss the old behaviour at length
+ * and would satisfy any substring check on their own.
+ */
+describe("the first-run cards do not confirm a key they have not proved", () => {
+  const source = (file: string) =>
+    readFileSync(new URL(file, import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+
+  it("answers the key step only through the proof, and never on a refusal", () => {
+    const card = source("../components/FirstRunFluxCard.tsx");
+    expect(card).toContain("saveAndProveFluxKey(key,");
+    expect(card).not.toContain("saveFluxKey(key,");
+    // The only two answers it can send are the two the Chief has a true
+    // sentence for. A literal here is how the old one said "key saved".
+    expect(card).toContain("SETUP_FLUX_PROVED_ANSWER");
+    expect(card).toContain("SETUP_FLUX_UNPROVED_ANSWER");
+    expect(card).not.toMatch(/answerSetupStep\("flux", "/);
+    // A refusal leaves the step unanswered: the failure is shown and the
+    // function returns before anything is recorded.
+    const refusal = card.indexOf('proof === "rejected"');
+    expect(refusal, "the refusal branch has been renamed or removed").toBeGreaterThan(-1);
+    expect(card.indexOf('answerSetupStep("flux"')).toBeGreaterThan(refusal);
+    expect(card.slice(refusal, refusal + 200)).toContain("FLUX_KEY_REJECTED");
+    expect(card.slice(refusal, refusal + 200)).toMatch(/\n\s+return;\n/);
+  });
+
+  it("holds the job card to the same rule, because it takes the same paste", () => {
+    const card = source("../components/FirstRunJobsCard.tsx");
+    expect(card).toContain("saveAndProveFluxKey(key,");
+    expect(card).not.toContain("saveFluxKey(key,");
+    const refusal = card.indexOf('proof === "rejected"');
+    expect(refusal, "the refusal branch has been renamed or removed").toBeGreaterThan(-1);
+    // It must not walk on to the job on a key Flux Router refused.
+    expect(card.indexOf("setStage(afterConnect(job, { ...world, fluxReady: true }))")).toBeGreaterThan(refusal);
+    expect(card.slice(refusal, refusal + 200)).toMatch(/\n\s+return;\n/);
   });
 });
 

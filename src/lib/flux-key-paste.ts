@@ -82,6 +82,66 @@ export interface FluxKeySaveOptions {
 
 export const FLUX_KEY_STORAGE_UNAVAILABLE = "Secure Flux Router storage is unavailable.";
 export const FLUX_KEY_NOT_A_KEY = "That does not look like a Flux Router key. Check it and paste it again.";
+/** Flux Router itself refused the key. Said on the card that took the paste,
+ *  with the key nowhere in it. */
+export const FLUX_KEY_REJECTED = "Flux Router did not accept that key. Check it and paste it again.";
+
+/**
+ * THE THREE THINGS THAT CAN BE TRUE OF A KEY, AND WHY THERE ARE THREE.
+ *
+ * `proved`    Flux Router answered with this key's own model catalogue.
+ * `rejected`  Flux Router answered, and said no to this key.
+ * `unproved`  Nothing got an answer out of Flux Router. Offline, rate
+ *             limited, timed out, a proxy in the way, the service down.
+ *
+ * The third one exists because collapsing it into the second is the exact
+ * cruelty this whole change is against: somebody on a train with a perfectly
+ * good key must never be told their key is wrong.
+ */
+export type FluxKeyProof = "proved" | "rejected" | "unproved";
+
+/** The catalogue error codes that are Flux Router refusing THIS KEY. Every
+ *  other code that route can return ("offline", "rate-limited", "unavailable",
+ *  "invalid-catalog", "connection-changed") is about the trip, not the key.
+ *  Source: ProviderCatalogError, shared/provider-connections.ts. */
+const KEY_REFUSED = new Set(["unauthorized", "forbidden"]);
+
+/**
+ * Ask Flux Router whether the saved key is real.
+ *
+ * `POST /api/flux-connection/test` is the check the Settings card has always
+ * had, and it is a catalogue read: the server does one GET of
+ * `https://api.fluxrouter.ai/v1/models` with the saved key as a bearer token
+ * (server/provider-connections.ts, `refreshCatalog`). No model runs, nothing
+ * is generated, and the person is billed for nothing. It is capped at fifteen
+ * seconds and the result is cached against the key's revision, so the paste
+ * screen cannot hang and a retry on the same key does not re-ask.
+ *
+ * THE KEY IS NOT A PARAMETER AND CANNOT BE. The route reads the saved
+ * credential out of the keychain on the server side; nothing here has to hold
+ * it, send it or be careful with it, which is the only way to be sure it is
+ * never echoed into an error or a log.
+ */
+export async function proveFluxKey(
+  request: (path: string, init?: RequestInit) => Promise<any>,
+): Promise<FluxKeyProof> {
+  let result: { modelCount?: unknown; code?: unknown };
+  try {
+    result = await request("/api/flux-connection/test", { method: "POST" });
+  } catch {
+    // The route refused or never answered: a 409 while the credential store
+    // is mid change, a dropped connection, a server restart. None of that is
+    // Flux Router's verdict on the key, so none of it may be reported as one.
+    return "unproved";
+  }
+  const code = typeof result?.code === "string" ? result.code : "";
+  if (KEY_REFUSED.has(code)) return "rejected";
+  // Any other code, or a body that is not the shape this route promises, is
+  // an unanswered question rather than a verdict. Proof is the affirmative
+  // case only: a catalogue came back, which is Flux Router accepting the key.
+  if (code || typeof result?.modelCount !== "number") return "unproved";
+  return "proved";
+}
 
 /**
  * Save a key the same way the Settings card does.
@@ -104,6 +164,27 @@ export async function saveFluxKey(rawKey: string, options: FluxKeySaveOptions): 
   }
   if (!options.request) throw new Error(FLUX_KEY_STORAGE_UNAVAILABLE);
   return options.request("/api/flux-connection/mutate", { method: "POST", body: JSON.stringify(change) });
+}
+
+/**
+ * Save the key, then find out whether it is any good. The first run's road.
+ *
+ * The saving and the proving are one call because every caller needs both and
+ * the defect was a caller that had only the first half. A card that wants to
+ * congratulate somebody may do it on `proved` and on nothing else.
+ *
+ * Saving still happens first, and still happens for a key that turns out to
+ * be wrong. That is deliberate: the keychain is where a key belongs the
+ * moment it is pasted, the next paste replaces it on the same revision, and
+ * a key held back in a React state while a network call decides its fate is
+ * a key sitting in the renderer for fifteen seconds.
+ */
+export async function saveAndProveFluxKey(rawKey: string, options: FluxKeySaveOptions): Promise<FluxKeyProof> {
+  await saveFluxKey(rawKey, options);
+  // No request function means a desktop bridge save with no web fallback
+  // wired in. Nothing can ask, so nothing is claimed.
+  if (!options.request) return "unproved";
+  return proveFluxKey(options.request);
 }
 
 /** The current connection, so a save can carry its revision. */

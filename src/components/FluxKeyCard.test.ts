@@ -57,12 +57,14 @@ describe("setup links to one Flux key editor", () => {
     // The invitation used to hold no field and point at Models instead. The
     // card in the chat does hold a field, which is the whole improvement, so
     // the rule it inherits is the one that actually protected the key: one
-    // writer (`saveFluxKey`, the Settings card's own road into the keychain),
-    // masked, dropped from React the moment it is stored, never rendered back.
+    // writer (`saveAndProveFluxKey`, which is `saveFluxKey`, the Settings
+    // card's own road into the keychain, with the live check bolted on after
+    // it), masked, dropped from React the moment it is stored, never
+    // rendered back.
     expect(read("./BotProfileAvatarCard.tsx")).toContain('section: "models"');
     const card = read("./FirstRunFluxCard.tsx");
     expect(card).toContain('type="password"');
-    expect(card).toContain("saveFluxKey(key,");
+    expect(card).toContain("saveAndProveFluxKey(key,");
     expect(card).toContain('setKey("")');
     expect(card).not.toMatch(/\{ flux: \{ apiKey|fluxKeyPatch/);
     expect(card).not.toMatch(/value=\{[^}]*apiKey/);

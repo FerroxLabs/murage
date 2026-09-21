@@ -70,7 +70,7 @@ import {
   type FirstRunJobWorld,
   type FirstRunSearchRouting,
 } from "@/lib/first-run-jobs";
-import { FLUX_KEY_NOT_A_KEY, fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
+import { FLUX_KEY_NOT_A_KEY, FLUX_KEY_REJECTED, fluxBridge, readFluxStatus, saveAndProveFluxKey } from "@/lib/flux-key-paste";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { api, useStore, type Bot } from "@/state/store";
 import type { SetupJobApp, SetupView } from "../../shared/setup";
@@ -778,8 +778,18 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     setFailure("");
     try {
       const status = await readFluxStatus(api);
-      await saveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
+      // The same proof the key card does, for the same reason: this screen
+      // goes straight on to RUN the job on that key, and a key Flux Router
+      // refuses would fail there instead, one screen away from the paste
+      // that caused it.
+      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
       setKey("");
+      if (proof === "rejected") {
+        // Stay on the paste screen. "Something else" and the cancel are both
+        // still one press away, so declining is as available as retrying.
+        setFailure(FLUX_KEY_REJECTED);
+        return;
+      }
       setPasting(false);
       setStage(afterConnect(job, { ...world, fluxReady: true }));
       forgetSetupView();
@@ -817,7 +827,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         failure={failure}
         onChange={(next) => {
           setKey(next);
-          if (failure === FLUX_KEY_NOT_A_KEY) setFailure("");
+          if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
         }}
         onSubmit={() => void saveKey()}
         onAgain={() => void openOutside(FLUX_SIGNUP_URL)}
