@@ -102,6 +102,20 @@ export interface FirstRunJobWorld {
   /** Nothing on this computer can answer. Computed server-side over
    *  `runnable()`, never re-derived here: see `SetupView`. */
   nothingToThinkWith: boolean;
+  /**
+   * NOT ONE ENGINE ON THIS COMPUTER IS READY TO ANSWER RIGHT NOW.
+   *
+   * WHY IT IS NOT `nothingToThinkWith`. That predicate is
+   * `agents.length === 0 && signedOutAgents.length === 0`, so a machine with
+   * Codex installed and nobody signed in to it answers FALSE: it is not
+   * blank, it has something worth telling the person about, and it is the
+   * exact audience the `signed-out` variant was built for. The Chief then
+   * read that as "local" and opened with "Running on what is already on this
+   * computer", about an engine that answers nothing. This is the narrower
+   * fact the sentence actually needed: `agents` is already filtered by
+   * `runnable()`, so empty means nothing here will answer.
+   */
+  nothingRunnable: boolean;
   /** Which of the two first-run apps are connected. */
   connected: readonly SetupJobApp[];
   /**
@@ -120,12 +134,13 @@ export interface FirstRunJobWorld {
 }
 
 export function firstRunJobWorld(
-  view: Pick<SetupView, "fluxReady" | "nothingToThinkWith" | "connectedJobApps">,
+  view: Pick<SetupView, "fluxReady" | "nothingToThinkWith" | "connectedJobApps" | "agents">,
   search: FirstRunSearchRouting,
 ): FirstRunJobWorld {
   return {
     fluxReady: view.fluxReady,
     nothingToThinkWith: view.nothingToThinkWith,
+    nothingRunnable: (view.agents ?? []).length === 0,
     connected: view.connectedJobApps ?? [],
     appsUnreadable: view.connectedJobApps === null,
     search,
@@ -327,18 +342,27 @@ export function afterConnect(job: FirstRunJobShape, world: FirstRunJobWorld): "c
 
 // ── the status line the Chief opens with ───────────────────────────────
 
-export type FirstRunChiefState = "connected" | "no-brain" | "local";
+export type FirstRunChiefState = "connected" | "no-brain" | "signed-out" | "local";
 
 /**
- * Three openings, and `no-brain` is the one that has to be honest.
+ * Four openings, and only one of them is allowed to say something is running.
  *
- * It is not "you are all set". The jobs are still shown, because seeing what
- * this thing would do for you is the reason to connect anything at all, but
- * every one of them says what it needs first.
+ * It is never "you are all set". The jobs are still shown, because seeing
+ * what this thing would do for you is the reason to connect anything at all,
+ * but every one of them says what it needs first.
+ *
+ * THE DEFECT `signed-out` EXISTS FOR. There were three states and the test
+ * between the last two was `nothingToThinkWith`, which is false on a machine
+ * with a signed-out engine on it. So somebody with Codex installed and never
+ * signed in fell to `local` and was told "Running on what is already on this
+ * computer" while nothing at all was running: `view.agents` is empty, so
+ * even the engine's name came out blank. That is precisely the audience the
+ * `signed-out` detection variant was built for.
  */
 export function chiefState(world: FirstRunJobWorld): FirstRunChiefState {
   if (world.fluxReady) return "connected";
-  return world.nothingToThinkWith ? "no-brain" : "local";
+  if (world.nothingToThinkWith) return "no-brain";
+  return world.nothingRunnable ? "signed-out" : "local";
 }
 
 export function chiefStatusLine(world: FirstRunJobWorld, engineName: string): string {
@@ -346,6 +370,7 @@ export function chiefStatusLine(world: FirstRunJobWorld, engineName: string): st
   const state = chiefState(world);
   if (state === "connected") return lines.connected;
   if (state === "no-brain") return lines.noBrain;
+  if (state === "signed-out") return lines.signedOut;
   const named = engineName.trim();
   return named ? `${lines.localPrefix} ${named} ${lines.localTail}` : lines.localUnnamed;
 }
@@ -363,9 +388,18 @@ export function chiefQuestion(ownerName: string): string {
   return name ? `${words.question}, ${name}?` : `${words.question}?`;
 }
 
+/**
+ * "I will do it now" is a promise, so it is only made where it can be kept.
+ *
+ * A signed-out machine gets the same honest lead as a blank one. It sits
+ * directly under the status line, and a lead that said "Pick one and I will
+ * do it now" over a status line that has just said nothing here is signed in
+ * would be the two of them contradicting each other on the same screen.
+ */
 export function chiefLead(world: FirstRunJobWorld): string {
   const words = FIRST_RUN_COPY.chat.jobs;
-  return chiefState(world) === "no-brain" ? words.leadNoBrain : words.lead;
+  const state = chiefState(world);
+  return state === "no-brain" || state === "signed-out" ? words.leadNoBrain : words.lead;
 }
 
 // ── the escape hatch, on a machine with nothing ────────────────────────

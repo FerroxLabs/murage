@@ -548,12 +548,27 @@ export const FIRST_RUN_COPY = {
       status: {
         connected: "Connected. Smart routing on, and your apps are a click away when a job needs them.",
         noBrain: "Nothing to think with yet, so every job below is waiting on one connection.",
+        /**
+         * THE ENGINE IS HERE AND NOBODY IS SIGNED IN TO IT.
+         *
+         * This line did not exist, and the machine it describes read as
+         * `local` because `nothingToThinkWith` is false on it: an engine that
+         * is present but signed out is not a blank machine. The Chief
+         * therefore opened with "Running on what is already on this
+         * computer" to somebody with nothing running at all. Two ways out of
+         * it, because this person really has two: sign in to what they
+         * already have, or connect a key.
+         */
+        signedOut: "Nothing on this computer is signed in yet, so every job below is waiting on a sign in or a connection.",
         /** Wrapped around the engine's real name. The name comes from the
          *  reading, never from a sample: a status line that named an engine
          *  this computer does not have would be the first thing the person
          *  read and the first thing that was wrong. */
         localPrefix: "Running on",
         localTail: "here on this computer.",
+        /** A runnable engine whose name came back blank. It is running, so
+         *  this still says so; what it cannot do is name it. A machine with
+         *  NOTHING runnable never reaches here any more: see `signedOut`. */
         localUnnamed: "Running on what is already on this computer.",
       },
       rows: [

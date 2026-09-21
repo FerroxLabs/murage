@@ -29,14 +29,16 @@ import { SETUP_JOB_APPS } from "../../shared/setup";
  * the person's own day.
  */
 function machine(over: Partial<FirstRunJobWorld> = {}): FirstRunJobWorld {
-  return {
+  const world: FirstRunJobWorld = {
     fluxReady: false,
     nothingToThinkWith: false,
+    nothingRunnable: false,
     connected: [],
     appsUnreadable: false,
     search: "anonymous",
     ...over,
   };
+  return world.nothingToThinkWith ? { ...world, nothingRunnable: true } : world;
 }
 
 const READY = machine({ fluxReady: true, connected: [...SETUP_JOB_APPS] });

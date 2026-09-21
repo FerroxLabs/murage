@@ -247,6 +247,17 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   // once on the server for exactly this reason, so four surfaces cannot each
   // re-derive it and one of them get it wrong.
   const noBrain = view?.nothingToThinkWith === true;
+  // WHAT THERE IS TO CARRY ON WITH, WHICH IS NOT THE SAME QUESTION.
+  //
+  // THE DEFECT. The dismissal offered "Not yet, start me on the local model"
+  // whenever `noBrain` was false, and `nothingToThinkWith` is FALSE on a
+  // machine whose only engine is signed out. So the one audience the
+  // `signed-out` variant exists for was offered a local model to start on
+  // while `view.agents` was empty and there was none. `agents` is already
+  // filtered by `runnable()`, so it is the reading that answers this: the
+  // offer is made only where something can really take it, and anywhere else
+  // the dismissal is the plain "Not now" that is true on every machine.
+  const canCarryOn = (view?.agents.length ?? 0) > 0;
 
   if (pasting && !done) {
     return (
@@ -313,9 +324,9 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
           <p className="text-[13px] text-ink-secondary">{copy.keyCaveat}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <button type="button" disabled={busy} onClick={() => void notNow()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
-              {/* A blank machine has nothing to carry on WITH, so it is not
-                  offered anything to carry on with. */}
-              {noBrain ? copy.dismiss : copy.dismissLocal}
+              {/* A machine with nothing runnable on it has nothing to carry
+                  on WITH, so it is not offered anything to carry on with. */}
+              {canCarryOn ? copy.dismissLocal : copy.dismiss}
             </button>
             <span className="text-[13px] text-ink-secondary">{copy.dismissCaveat}</span>
           </div>

@@ -347,6 +347,32 @@ describe("card three: the key", () => {
     expect(markup).not.toContain(copy.heading);
   });
 
+  /**
+   * THE DEFECT: A LOCAL MODEL OFFERED TO SOMEBODY WHO HAS NONE.
+   *
+   * The dismissal was `noBrain ? copy.dismiss : copy.dismissLocal`, and
+   * `nothingToThinkWith` is FALSE on a machine whose only engine is signed
+   * out: that machine is not blank, which is exactly why it gets the
+   * `signed-out` variant. So the one audience that variant was built for was
+   * offered "Not yet, start me on the local model" while `view.agents` was
+   * empty and there was nothing to start.
+   */
+  it("offers no local model to a machine whose only engine is signed out", async () => {
+    await machine({
+      ownerName: "Sean",
+      nothingToThinkWith: false,
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    const markup = render("flux", "key");
+    expect(markup, "a local model was offered to a machine with none").not.toContain(copy.dismissLocal);
+    expect(markup).toContain(copy.dismiss);
+    // Still not the blank machine's report: something IS here, and detection
+    // ran on it. Only the dismissal changes.
+    expect(markup).toContain(copy.heading);
+    expect(markup).not.toContain(copy.headingBare);
+  });
+
   it("offers a machine with an engine the local model it already has", async () => {
     await machine({
       nothingToThinkWith: false,

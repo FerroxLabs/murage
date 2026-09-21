@@ -33,15 +33,24 @@ import { SETUP_JOB_APPS, type SetupJobApp } from "../../shared/setup";
  * there is the opposite of the obvious one: `notes` and `business` need
  * nothing on an ordinary computer and need Flux on that one.
  */
+/** One runnable engine, as `/api/setup` reports one. */
+const ENGINE = { id: "codex", name: "Codex", installed: true };
+
 function machine(over: Partial<FirstRunJobWorld> = {}): FirstRunJobWorld {
-  return {
+  const world: FirstRunJobWorld = {
     fluxReady: false,
     nothingToThinkWith: false,
+    nothingRunnable: false,
     connected: [],
     appsUnreadable: false,
     search: "anonymous",
     ...over,
   };
+  // A machine with nothing to think with has nothing runnable on it by
+  // definition. The reverse does NOT hold, and that gap is the signed-out
+  // machine: an engine is here, nobody is signed in to it, so it is not
+  // blank and nothing on it will answer.
+  return world.nothingToThinkWith ? { ...world, nothingRunnable: true } : world;
 }
 
 /** A computer with an engine on it, a key, and both accounts connected:
@@ -154,7 +163,7 @@ describe("what a job still needs, on a real machine", () => {
     // Claiming a connection nobody can see fails on the person's first real
     // job. Conservative here; the screen says which of the two it is.
     const world = firstRunJobWorld(
-      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: null },
+      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: null, agents: [ENGINE] },
       "anonymous",
     );
     expect(world.appsUnreadable).toBe(true);
@@ -163,12 +172,13 @@ describe("what a job still needs, on a real machine", () => {
 
   it("reads a real view without re-deriving anything from it", () => {
     const world = firstRunJobWorld(
-      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: ["gmail"] },
+      { fluxReady: true, nothingToThinkWith: false, connectedJobApps: ["gmail"], agents: [ENGINE] },
       "anonymous",
     );
     expect(world).toEqual({
       fluxReady: true,
       nothingToThinkWith: false,
+      nothingRunnable: false,
       connected: ["gmail"],
       appsUnreadable: false,
       search: "anonymous",
@@ -329,6 +339,38 @@ describe("the status line the Chief opens with", () => {
 
   it("does not leave a gap where a name should be when there is no name", () => {
     expect(chiefStatusLine(machine(), "  ")).toBe("Running on what is already on this computer.");
+  });
+
+  /**
+   * THE DEFECT: "RUNNING ON WHAT IS ALREADY ON THIS COMPUTER", WITH NOTHING
+   * RUNNING.
+   *
+   * `nothingToThinkWith` is `agents.length === 0 && signedOutAgents.length
+   * === 0`, so a machine with Codex installed and nobody signed in answers
+   * FALSE and fell straight through to `local`. `engineName` then returned
+   * "" because `view.agents` is empty, and the unnamed branch claimed
+   * something was running. That is the exact audience the `signed-out`
+   * variant exists for.
+   */
+  it("does not say anything is running on a machine whose engine is signed out", () => {
+    const signedOut = machine({ nothingRunnable: true });
+    expect(signedOut.nothingToThinkWith, "this is not the blank machine").toBe(false);
+    expect(chiefState(signedOut)).toBe("signed-out");
+    expect(chiefStatusLine(signedOut, ""))
+      .toBe("Nothing on this computer is signed in yet, so every job below is waiting on a sign in or a connection.");
+    // Not one of the four openings on that machine may claim it is running.
+    expect(chiefStatusLine(signedOut, "")).not.toMatch(/running on/i);
+    expect(chiefStatusLine(signedOut, "Codex")).not.toMatch(/running on/i);
+    // And the lead under it agrees with it rather than promising the work.
+    expect(chiefLead(signedOut)).toBe(chiefLead(BLANK));
+    expect(chiefLead(signedOut)).not.toMatch(/I will do it now/);
+  });
+
+  it("reads nothing runnable off the engines the view really has", () => {
+    expect(firstRunJobWorld({ fluxReady: false, nothingToThinkWith: false, connectedJobApps: [], agents: [] }, "anonymous")
+      .nothingRunnable).toBe(true);
+    expect(firstRunJobWorld({ fluxReady: false, nothingToThinkWith: false, connectedJobApps: [], agents: [ENGINE] }, "anonymous")
+      .nothingRunnable).toBe(false);
   });
 
   it("asks the question by name, and reads correctly after a skipped hello", () => {
