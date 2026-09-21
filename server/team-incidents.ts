@@ -39,7 +39,10 @@ export interface TeamIncidentBot extends ReachableBot {
 export interface TeamIncident {
   kind: TeamIncidentKind;
   bot: Pick<TeamIncidentBot, "id" | "name">;
-  threadId: string;
+  /** the thread the run was actually given — null when it broke before it got
+   * one. Null means null: there is no sensible substitute, and the bot's
+   * CURRENT live chat is the worst of them. */
+  threadId: string | null;
   /** the thread's title, when it is a task */
   title?: string | null;
   /** the room it happened in, when it was a room turn */
@@ -195,8 +198,15 @@ function whatHappened(incident: TeamIncident): string {
       return `${name}'s run ${where} stopped after showing no activity${detail}`;
     case "could-not-start":
       return `${name}'s run ${where} could not start${detail}`;
-    case "routine-failed":
-      return `${name}'s scheduled routine ${where} failed${detail}`;
+    case "routine-failed": {
+      // Named, not located. A routine runs in a throwaway thread it is given
+      // per run, and a routine that broke before the scheduler could make one
+      // has no thread at all — "in its main conversation" would then point at
+      // the bot's live chat, which had nothing to do with this.
+      const named = incident.title ? ` "${fold(incident.title, 60)}"` : "";
+      const room = incident.room ? ` in the room "${fold(incident.room, 60)}"` : "";
+      return `${name}'s scheduled routine${named}${room} failed${detail}`;
+    }
     default:
       return `${name}'s run ${where} failed${detail}`;
   }

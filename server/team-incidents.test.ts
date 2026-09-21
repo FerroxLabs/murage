@@ -192,7 +192,7 @@ describe("the one-line chip", () => {
     ["failed", `Incident: Ada's run in its thread "Morning brief" failed`],
     ["stalled", `Incident: Ada's run in its thread "Morning brief" stopped after showing no activity`],
     ["could-not-start", `Incident: Ada's run in its thread "Morning brief" could not start`],
-    ["routine-failed", `Incident: Ada's scheduled routine in its thread "Morning brief" failed`],
+    ["routine-failed", `Incident: Ada's scheduled routine "Morning brief" failed`],
   ];
   for (const [kind, expected] of shapes) {
     it(`says what ${kind} means in words`, () => {
@@ -210,6 +210,18 @@ describe("the one-line chip", () => {
 
   it("falls back to the main conversation when there is neither", () => {
     expect(teamIncidentChip({ ...incident, kind: "failed", title: null, detail: "" })).toContain("in its main conversation");
+  });
+
+  it("names a routine rather than locating it, because a routine has no conversation of its own", () => {
+    // A routine runs in a throwaway thread made for that one run, and a
+    // routine that broke before the scheduler could make one has no thread at
+    // all. "In its main conversation" would then point the Chief at the bot's
+    // live chat, which had nothing to do with this.
+    const homeless = teamIncidentChip({ ...incident, threadId: null, title: null, room: null, detail: "" });
+    expect(homeless).toBe("Incident: Ada's scheduled routine failed");
+    expect(homeless).not.toContain("main conversation");
+    expect(teamIncidentChip({ ...incident, threadId: null, title: null, room: "Launch", detail: "" }))
+      .toBe(`Incident: Ada's scheduled routine in the room "Launch" failed`);
   });
 });
 
@@ -236,6 +248,26 @@ describe("a failed routine is where this is wired in", () => {
     // and counts it against the routine, not against the throwaway thread the
     // run happened to be given (see routineIncidentMuteKeys)
     expect(handler).toContain("muteKeys: routineIncidentMuteKeys(run)");
+  });
+
+  it("quotes only the thread the broken run was given, never the bot's live chat", () => {
+    // teamIncidentContext lifts the last user message and the last bot message
+    // out of the thread it is handed. Handed the bot's CURRENT conversation as
+    // a fallback, it carries a private exchange the person had about something
+    // else into a PEER's prompt, for a failure that conversation has nothing
+    // to do with. canReach gates the pair, so it is not a roster violation —
+    // it is simply not this bot's to read.
+    const at = index.indexOf("onRunFailed:");
+    const handler = index.slice(at, index.indexOf("\n  },", at));
+    const call = handler.slice(handler.indexOf("reportTeamIncident("));
+    expect(call).toContain("threadId: run.threadId ?? null");
+    // the notification above may fall back to bot.threadId, because it goes to
+    // the person who owns that conversation. This report may not.
+    expect(call).not.toContain("bot.threadId");
+
+    const ctx = index.indexOf("function teamIncidentContext(");
+    expect(ctx, "teamIncidentContext has been renamed or removed").toBeGreaterThan(-1);
+    expect(index.slice(ctx, index.indexOf("\n}\n", ctx))).toContain("if (!threadId) return");
   });
 
   it("starts the Chief's report as an unattended turn", () => {

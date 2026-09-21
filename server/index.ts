@@ -5901,8 +5901,15 @@ const teamIncidentLedger = new TeamIncidentLedger();
 
 /** What the broken thread was about: the last thing asked in it and the last
  * thing the bot said. Both are quoted into another bot's prompt, so both are
- * marked as data by teamIncidentText and bounded by it. */
-function teamIncidentContext(threadId: string): { lastRequest: string | null; lastReply: string | null } {
+ * marked as data by teamIncidentText and bounded by it.
+ *
+ * Only ever the thread the broken run was actually given. A run that failed
+ * before the scheduler could make it a task has no thread, and there is no
+ * substitute for one: the bot's live chat is a different, private, unrelated
+ * conversation, and lifting its last exchange into a PEER's prompt would send
+ * the person's words to a bot that had nothing to do with the failure. */
+function teamIncidentContext(threadId: string | null): { lastRequest: string | null; lastReply: string | null } {
+  if (!threadId) return { lastRequest: null, lastReply: null };
   const messages = [...store.messagesFor(threadId)].reverse();
   return {
     lastRequest: messages.find((message) => message.role === "user" && message.kind === "text" && message.text)?.text ?? null,
@@ -5920,7 +5927,7 @@ function teamIncidentContext(threadId: string): { lastRequest: string | null; la
  *
  * The whole body is guarded. This runs on the failure path, and an incident
  * report that throws would turn one broken routine into two. */
-function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string; muteKeys: readonly string[]; detail: string }): void {
+function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string | null; muteKeys: readonly string[]; detail: string }): void {
   try {
     const { bot, threadId } = input;
     const chief = chiefForBrokenBot(store.bots, bot);
@@ -5931,8 +5938,12 @@ function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; thr
     const count = teamIncidentLedger.note(input.muteKeys);
     // a crash loop is one incident, not a storm
     if (count.muted) return;
-    const task = store.taskByThread(bot.id, threadId);
-    const group = store.groupByThread(threadId);
+    // Both of these describe the broken thread, so both are skipped when there
+    // was not one. A title read off the bot's live chat is the person's own
+    // words for their current conversation, which is no more this peer's
+    // business than the messages in it.
+    const task = threadId ? store.taskByThread(bot.id, threadId) : undefined;
+    const group = threadId ? store.groupByThread(threadId) : undefined;
     const incident: TeamIncident = {
       kind: input.kind,
       bot: { id: bot.id, name: bot.name },
@@ -6156,7 +6167,11 @@ routines = new RoutineManager({
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
-    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? bot.threadId, muteKeys: routineIncidentMuteKeys(run), detail });
+    // `run.threadId ?? null`, never the bot's live chat: a run that broke
+    // before it had a thread has none, and the notification above can fall
+    // back to the bot's current conversation because it goes to the person
+    // who owns it. This report goes to a PEER.
+    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? null, muteKeys: routineIncidentMuteKeys(run), detail });
   },
 });
 procedureReviews = createProcedureReviewHost({
