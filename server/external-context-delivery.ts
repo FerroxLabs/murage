@@ -19,8 +19,17 @@
 // So: when the engine still holds its own live cursor for this task, the
 // owed messages ride along INSIDE the next turn's prompt and the session is
 // resumed as normal. When there is no live session to deliver into — a fresh
-// engine, a rewind — the turn is replaying the branch anyway, and the owed
-// messages are simply marked as carried by that replay.
+// engine, a rewind — the turn is replaying the branch anyway, and an owed
+// message the replay PROVABLY contains rides along in it.
+//
+// "Provably" is the whole of it. The replay is not the branch: it is the
+// branch's settled TEXT messages, capped at the last 40. A delegation that
+// failed appends an ACTIVITY chip, which the replay never carries, and a
+// reply older than the cap has fallen out of it. Assuming the replay covers
+// the debt marks those delivered while they reach nobody — worst on drivers
+// that hold no persistent resume cursor, where every turn replays. So the
+// caller states exactly which ids its replay carries, and anything owed
+// outside that list is still handed over in the prompt.
 
 /** One message this thread owes the engine, already resolved from storage. */
 export interface ExternalUpdateMessage {
@@ -36,8 +45,9 @@ export interface ExternalDeliveryPlan {
    * Anything queued after the plan was made is absent on purpose — it is
    * still owed, and the next turn plans it. */
   consumedIds: string[];
-  /** prompt text handing the owed messages to a resumed session; empty
-   * whenever the turn already replays the branch or nothing is owed */
+  /** prompt text handing over the owed messages the turn does not otherwise
+   * deliver; empty when nothing is owed, when the branch replay already
+   * carries every owed id, or when none of them has readable content */
   preamble: string;
 }
 
@@ -50,27 +60,34 @@ const DELIVERY_GUARD =
 
 /** Decide how this turn hands over what the thread owes the engine.
  *
- * `replaying` is the turn's own decision, made before this one: a rewind, a
- * fresh engine or a memory rebuild is already sending the branch, so the owed
- * messages travel in that replay and need no prompt of their own. */
+ * `branchReplay` is the turn's own decision, made before this one: a rewind,
+ * a fresh engine or a memory rebuild is already sending the branch, and
+ * `carriedIds` is exactly what that replay puts in front of the engine.
+ * `null` means the turn resumes a live session and carries nothing by
+ * itself. Stating the ids is not bookkeeping: an id absent from them is an
+ * id the replay does not deliver, and it still owes a preamble. */
 export function planExternalDelivery(input: {
   pending: readonly ExternalUpdateMessage[];
-  replaying: boolean;
+  branchReplay: { carriedIds: readonly string[] } | null;
 }): ExternalDeliveryPlan {
   const pending = input.pending;
   if (pending.length === 0) return EMPTY;
+  const replaying = input.branchReplay !== null;
   const consumedIds = pending.map((message) => message.id);
-  // No session to keep: the branch replay is the delivery. Reported as an
-  // external update so the replay still says why it is happening.
-  if (input.replaying) return { replay: true, consumedIds, preamble: "" };
-  const lines = pending.map((message) => message.text.trim()).filter((text) => text.length > 0);
+  // Delivery accounting, never an assumption. Only an owed message the
+  // replay demonstrably carries is treated as delivered by it; an activity
+  // chip and anything past the replay's cap are not in that list and are
+  // handed over in the prompt instead, even though the turn is replaying.
+  const carried = new Set(input.branchReplay?.carriedIds ?? []);
+  const undelivered = pending.filter((message) => !carried.has(message.id));
+  const lines = undelivered.map((message) => message.text.trim()).filter((text) => text.length > 0);
   // Owed, but nothing left to hand over — the messages were rewound away, or
-  // carried no readable content. Resetting a healthy session to deliver
-  // nothing is exactly the cost this module exists to stop paying, so the
-  // debt is simply cleared.
-  if (lines.length === 0) return { replay: false, consumedIds, preamble: "" };
+  // carried no readable content, or the replay already carries every one of
+  // them. Resetting a healthy session to deliver nothing is exactly the cost
+  // this module exists to stop paying, so the debt is simply cleared.
+  if (lines.length === 0) return { replay: replaying, consumedIds, preamble: "" };
   return {
-    replay: false,
+    replay: replaying,
     consumedIds,
     preamble: [DELIVERY_HEADER, DELIVERY_GUARD, "--- added outside your session ---", ...lines, "--- end added ---"].join("\n"),
   };

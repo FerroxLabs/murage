@@ -5050,13 +5050,16 @@ async function startTurn(
   // Resolve its quote from full storage, while the replay itself remains
   // strictly limited to the selected branch below.
   const messagesById = new Map(store.messagesFor(threadId).map((message) => [message.id, message]));
-  let transcript = activeMessages
+  // Kept as messages, not just role/text: the external-delivery accounting
+  // below needs to know WHICH ids a branch replay would actually carry, and
+  // this filter (settled text only, last 40) is what decides that.
+  const replayedMessages = activeMessages
     .filter((m) => m.kind === "text" && m.text && !skipTranscript.has(m.id))
-    .slice(-40)
-    .map((m) => ({
-      role: m.role === "user" ? ("user" as const) : ("assistant" as const),
-      text: transcriptText(m, messagesById, cfg.profile?.name?.trim() || "User"),
-    }));
+    .slice(-40);
+  let transcript = replayedMessages.map((m) => ({
+    role: m.role === "user" ? ("user" as const) : ("assistant" as const),
+    text: transcriptText(m, messagesById, cfg.profile?.name?.trim() || "User"),
+  }));
 
   // After a rewind (edit / branch switch) the provider's native session
   // still contains the abandoned branch: start a fresh session instead of
@@ -5075,11 +5078,17 @@ async function startTurn(
     engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
   // Messages this thread owes the engine because they were appended outside
   // any provider turn. With a live session they ride inside this turn's
-  // prompt; with no session the branch replay already underway carries them.
-  // Either way the engine keeps whatever session it has — see
+  // prompt; with no session the branch replay already underway carries the
+  // ones it actually contains, and the rest still ride the prompt — a
+  // delegation FAILURE is an activity chip, which no replay carries, and a
+  // reply older than the 40-message cap has fallen out of one. Either way
+  // the engine keeps whatever session it has — see
   // external-context-delivery.ts for why the old reset was the defect.
+  // (A later memory rebuild can narrow this replay further by authority;
+  // withholding a message the owner may not disclose is that policy's call,
+  // not a delivery gap.)
   const externalDelivery = planExternalDelivery({
-    replaying: rewound || fresh,
+    branchReplay: rewound || fresh ? { carriedIds: replayedMessages.map((m) => m.id) } : null,
     pending: (task.externalUpdates ?? []).map((id) => {
       const message = messagesById.get(id);
       return { id, text: message?.kind === "activity" ? message.tool?.name ?? "" : message?.text ?? "" };
