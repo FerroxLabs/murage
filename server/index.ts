@@ -1050,6 +1050,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 }
 
 import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
+import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
 import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
@@ -6717,27 +6718,20 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
 // shape every comms entry point uses (ask_bot, delegate_bot).
 /** Delegation admission, asking the question the dispatch will ask.
  *
- * `runDelegatedTurn` runs the handoff on ONE thread — the target's task for
- * this source thread's human principal, its main thread otherwise — and
- * `startTurn` admits it on exactly three conditions. Admission used to test
- * `bot.busy` instead, which is the union over all of the bot's threads, so a
- * teammate busy on a routine in a detached task thread refused handoffs its
- * free threads could have taken. This mirrors the three real conditions so
- * admission and dispatch can no longer disagree.
- *
- * Throwing is not an option on the drain path, and an unreadable principal
- * means "not now", which is where a busy target already ends up. */
+ * The predicate itself — and the reason it is the delegation's own thread it
+ * asks about rather than `bot.busy` — is server/handoff-admission.ts, where a
+ * test can run it. This is the four collaborators it runs over. */
+const handoffAdmission: HandoffAdmission = {
+  bot: (botId) => store.bot(botId),
+  handoffThread: (botId, sourceThreadId) => humanTask(store, botId, threadHumanPrincipal(sourceThreadId))?.threadId,
+  threadBusy: (botId, threadId) => directThreadBusy(botId, threadId),
+  groupTurnActive: (botId) => activeGroupTurnForBot(botId) !== null,
+  runningThreads: (botId) => directRuns.forBot(botId).length,
+  maxThreads: MAX_CONCURRENT_BOT_THREADS,
+};
+
 function handoffCanStartNow(botId: string, sourceThreadId: string): boolean {
-  const profile = store.bot(botId);
-  if (!profile) return false;
-  let threadId: string;
-  try {
-    threadId = humanTask(store, botId, threadHumanPrincipal(sourceThreadId))?.threadId ?? profile.threadId;
-  } catch {
-    return false;
-  }
-  if (directThreadBusy(botId, threadId) || activeGroupTurnForBot(botId)) return false;
-  return directRuns.forBot(botId).length < MAX_CONCURRENT_BOT_THREADS;
+  return handoffCanStart(handoffAdmission, botId, sourceThreadId);
 }
 
 const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity, canStartHandoff: handoffCanStartNow };
