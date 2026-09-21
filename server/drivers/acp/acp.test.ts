@@ -244,6 +244,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
     delete process.env.FAKE_ACP_LOAD_NULL;
+    delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -1067,6 +1068,52 @@ createInterface({ input: process.stdin }).on("line", line => {
     await instance.adapter.interruptTurn("t-int");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ type: "turn.completed" });
+  });
+
+  // An agent that streams part of an answer and then goes silent forever
+  // never answers session/prompt, which has no wall-clock deadline (a long
+  // answer legitimately streams for minutes). Before the prompt idle guard
+  // the only thing that ended the turn was the server's 20-minute stall
+  // watchdog, so the bot sat busy for twenty minutes and then reported "no
+  // activity" rather than naming the engine that stopped talking.
+  it("fails a turn whose agent goes silent mid-answer, and kills the wedged child", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    await create(GrokAgentDriver, "stall-after-text");
+    await instance.adapter.sendTurn({ threadId: "t-stall", text: "go" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    // the chunk it did stream reached the transcript before the silence
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(true);
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
+    expect(error?.message).toMatch(/went silent/i);
+    // the message names the knob, so the owner of a slow model can raise it
+    expect(error?.message).toContain("MURAGE_ACP_PROMPT_IDLE_MS");
+    expect(instance.adapter.hasSession("t-stall")).toBe(false);
+  });
+
+  // The deadline restarts on traffic in either direction, so a card nobody
+  // has answered yet must never read as an unresponsive agent: the engine is
+  // silent because it is waiting for the person, and the guard would other-
+  // wise fail the turn out from under their cursor.
+  it("the prompt idle guard does not expire an agent while a person is answering a card", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({
+      threadId: "t-stall-ask",
+      text: "go",
+      integrations: {
+        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "linux", scope: "local-computer" },
+      },
+    });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+
+    await instance.adapter.respondToRequest("t-stall-ask", (opened as any).requestId, { behavior: "allow" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
   });
 
   it("cancellation-close regression: exit on cancellation is not an unexpected failure", async () => {

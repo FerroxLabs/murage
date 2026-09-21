@@ -776,6 +776,27 @@ const ELICITATION_METHODS = new Set(["elicitation/create", "session/elicitation"
 const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
 const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
+/** Longest `session/prompt` may go COMPLETELY silent before the turn is
+ * failed. Read lazily (not at import) so a fixture can shorten the window.
+ *
+ * Unlike the handshake budgets above this is not a wall-clock deadline:
+ * session/prompt legitimately streams for minutes, so a deadline from the
+ * request would kill long answers. The clock restarts on every inbound line
+ * and on every answer Murage sends, and an open permission or question card
+ * holds it off entirely, so it trips only on an agent that has stopped
+ * speaking for good — a wedged OpenCode turn streams thought chunks and then
+ * goes silent forever without ever answering the RPC.
+ *
+ * The server's stall watchdog (server/turn-watchdog.ts, 20 minutes) already
+ * bounds this; the guard here ends it sooner, with a message that names the
+ * engine and this knob instead of "no activity for 20 minutes". 0 turns it
+ * off and leaves the watchdog as the only bound. */
+const promptIdleTimeoutMs = (): number => {
+  const raw = process.env.MURAGE_ACP_PROMPT_IDLE_MS;
+  if (raw === undefined) return 180_000;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+};
 /** After session/cancel the agent may still answer the prompt; past this the
  * turn settles as cancelled and the child is terminated. */
 const ACP_CANCEL_GRACE_MS = 5_000;
@@ -1049,7 +1070,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
           number,
-          { method: string; resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
+          {
+            method: string;
+            resolve: (v: any) => void;
+            reject: (e: Error) => void;
+            timer: ReturnType<typeof setTimeout> | null;
+            /** live idle deadline, read for clearing; see `armIdle` */
+            readonly idleTimer: ReturnType<typeof setTimeout> | null;
+            /** restart this request's idle deadline (no-op without one) */
+            armIdle: () => void;
+          }
         >();
         // The folder-trust decision this turn runs under: the server's record
         // for the folder, or the owner's answer to the card raised below. It
@@ -1064,12 +1094,31 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const upstreamTrusted = support.folderTrust === true && turn.folderTrust?.upstreamTrusted === true;
 
         const send = (obj: unknown) => {
+          // Answering a server→client request (a permission decision, a file
+          // read) hands the agent back the thing it was blocked on, so its
+          // silence up to here was ours, not its: restart every idle deadline.
+          const message = obj as { id?: unknown; result?: unknown; error?: unknown };
+          if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+            for (const pending of rpcPending.values()) pending.armIdle();
+          }
           try {
             child?.stdin.write(JSON.stringify(obj) + "\n");
           } catch {}
           appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
         };
-        const request = (method: string, params: unknown, timeoutMs?: number) =>
+        /** `timeoutMs` is a hard deadline measured from the request. `idleMs`
+         *  is for `session/prompt` alone — the one call that legitimately
+         *  streams for minutes, so a wall-clock deadline would false-positive
+         *  on a long answer. It restarts on every inbound line and on every
+         *  answer we send, so it trips only on total silence; `idleMessage`
+         *  becomes the rejection. */
+        const request = (
+          method: string,
+          params: unknown,
+          timeoutMs?: number,
+          idleMs?: number,
+          idleMessage?: string,
+        ) =>
           new Promise<any>((resolve, reject) => {
             const id = nextId++;
             let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1080,7 +1129,31 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }, timeoutMs);
               timer.unref?.();
             }
-            rpcPending.set(id, { method, resolve, reject, timer });
+            let idleTimer: ReturnType<typeof setTimeout> | null = null;
+            const armIdle = () => {
+              if (!(idleMs && idleMs > 0)) return;
+              if (idleTimer) clearTimeout(idleTimer);
+              idleTimer = setTimeout(() => {
+                // Waiting on a person is not an unresponsive agent: an open
+                // permission or question card holds the engine, so restart
+                // instead of failing the turn under someone's cursor.
+                if (asks.size) { armIdle(); return; }
+                rpcPending.delete(id);
+                const error = new Error(idleMessage ?? `${method} stopped responding`);
+                Object.assign(error, { acpPromptStall: true });
+                reject(error);
+              }, idleMs);
+              idleTimer.unref?.();
+            };
+            armIdle();
+            rpcPending.set(id, {
+              method,
+              resolve,
+              reject,
+              timer,
+              get idleTimer() { return idleTimer; },
+              armIdle,
+            });
             lifecycle.record("rpc_requested", { rpcId: id, method });
             send({ jsonrpc: "2.0", id, method, params });
           });
@@ -1148,6 +1221,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           for (const finish of [...asks.values()]) finish("cancel", "system");
           for (const p of rpcPending.values()) {
             if (p.timer) clearTimeout(p.timer);
+            if (p.idleTimer) clearTimeout(p.idleTimer);
             p.reject(new Error("turn settled"));
           }
           rpcPending.clear();
@@ -1573,6 +1647,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return;
           }
           appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
+          // Any inbound line proves the child is alive and making progress, so
+          // every idle deadline restarts. Only total silence trips one.
+          for (const pending of rpcPending.values()) pending.armIdle();
           if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
             const pend = rpcPending.get(msg.id);
             if (!pend && msg.error) {
@@ -1582,6 +1659,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (pend) {
               rpcPending.delete(msg.id);
               if (pend.timer) clearTimeout(pend.timer);
+              if (pend.idleTimer) clearTimeout(pend.idleTimer);
               if (msg.error) {
                 const observedKind=pend.method==="session/prompt"&&!state.settled&&!state.cancelRequested?failureObservations.kind():undefined;
                 lifecycle.record("rpc_rejected", {...lifecycleRejection(msg.error, msg.id, pend.method),...(observedKind?{observedKind}:{})});
@@ -1886,10 +1964,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               state.promptSent = true;
               promptStartedAt = Date.now();
             }
-            const result = await request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
-            });
+            const promptIdleMs = promptIdleTimeoutMs();
+            const result = await request(
+              "session/prompt",
+              {
+                sessionId,
+                prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
+              },
+              undefined,
+              promptIdleMs,
+              // Kept inside ERROR_MESSAGE_MAX so the card shows all of it.
+              `${DRIVER_KIND} went silent for ${Math.round(promptIdleMs / 1000)} s and the turn was stopped. `
+                + "Raise MURAGE_ACP_PROMPT_IDLE_MS if it needs longer.",
+            );
             // opencode 1.18.18 reports usage at the result root; grok and
             // gemini put it under _meta. Read both rather than lose the count.
             const usage = result?.usage ?? result?._meta ?? {};

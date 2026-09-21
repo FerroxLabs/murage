@@ -8,7 +8,11 @@
 //   FAKE_ACP_LOAD_NULL  answer session/load with null, the way a real agent
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
-//   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | stall-after-text | no-auth | auth-required | permission
+//                   | stall-after-text (stream one message chunk, then go
+//                     fully silent forever — no update, no result, no exit:
+//                     a wedged agent mid-answer. Nothing else will arrive, so
+//                     the driver's prompt idle guard must fail the turn)
 //                     | wrapped-tool  one tool call made through a "use a tool"
 //                     wrapper, failing with a reason in its content
 //                   | tool-image  two completed tool calls whose output carries
@@ -855,6 +859,15 @@ function handle(msg: any) {
       }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
+        setInterval(() => {}, 1_000);
+        return;
+      }
+      if (mode === "stall-after-text") {
+        // Stream a chunk, then go fully silent forever: no further update, no
+        // result, no exit. The shape of a wedged OpenCode agent that stopped
+        // mid-answer. Nothing else will ever arrive, so only the driver's own
+        // prompt idle guard can end this turn.
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "half an answer, then silence" } } } });
         setInterval(() => {}, 1_000);
         return;
       }
