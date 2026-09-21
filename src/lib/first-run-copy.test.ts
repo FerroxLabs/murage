@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
+import { CHIEF_CONFIRMATIONS } from "../../shared/first-run-chief";
+import { morningOffer } from "./first-run-flow";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
@@ -45,6 +47,13 @@ function walk(value: unknown, path: string, into: Array<{ path: string; text: st
 
 const strings: Array<{ path: string; text: string }> = [];
 walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
+// THE CHIEF'S OWN SENTENCES ARE FIRST-RUN COPY TOO.
+//
+// They are posted by the server, so they cannot live in this module, and
+// while they sat as a literal inside server/index.ts no rule on this page
+// applied to them. That is how the flow came to have one sentence nobody had
+// checked. They are walked here for the same reason everything else is.
+walk(CHIEF_CONFIRMATIONS, "CHIEF_CONFIRMATIONS", strings);
 // Slugs, template names and row ids are wire identifiers and nobody reads
 // them. Everything else on a row is read out loud by somebody's eyes.
 //
@@ -77,6 +86,12 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
   { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
   { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
+  // The morning offer is three strings joined at render time, and the
+  // sentence that admits the immediate run is one of them. Walked assembled,
+  // because the three sentence ceiling is about what lands on the screen.
+  { path: "morningOffer(offer).body", text: morningOffer(false).body },
+  { path: "morningOffer(offer).button", text: morningOffer(false).button },
+  { path: "morningOffer(taken).taken", text: morningOffer(true).taken ?? "" },
 ];
 
 const everything = [...readable, ...assembled];

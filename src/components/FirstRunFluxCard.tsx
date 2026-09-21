@@ -18,19 +18,28 @@
 // because a number that arrived through a component would sail past a gate
 // that only walks FIRST_RUN_COPY.
 //
-// The paste field saves through `saveFluxKey`, which is the Settings card's
-// own road into the operating system's keychain. The key is never put in a
-// message, never sent to a model, and never re-displayed.
+// The paste field saves through `saveAndProveFluxKey`, which is the Settings
+// card's own road into the operating system's keychain and then the Settings
+// card's own live check on top of it. The key is never put in a message,
+// never sent to a model, and never re-displayed.
+//
+// THE CONFIRMATION IS EARNED OR IT IS NOT SAID. This card used to check the
+// SHAPE of the key, write it, and answer the step, at which point the Chief
+// said "That is saved, and locked away on this computer" in his own voice
+// over a key nobody had tried. Now the answer carries which of three things
+// happened, and a key Flux Router refused answers nothing at all.
 
 import { useState } from "react";
 
 import { FIRST_RUN_COPY, foundNothingLine, type FirstRunFluxFeature } from "@/lib/first-run-copy";
 import {
   FLUX_KEY_NOT_A_KEY,
+  FLUX_KEY_REJECTED,
   fluxBridge,
   readFluxStatus,
-  saveFluxKey,
+  saveAndProveFluxKey,
 } from "@/lib/flux-key-paste";
+import { SETUP_FLUX_PROVED_ANSWER, SETUP_FLUX_UNPROVED_ANSWER } from "../../shared/first-run-chief";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { api } from "@/state/store";
 import { FLUX_SIGNUP_URL } from "./FluxRouterConnection";
@@ -211,12 +220,28 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
     setFailure("");
     try {
       const status = await readFluxStatus(api);
-      await saveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
+      // SAVED, AND THEN ACTUALLY TRIED.
+      //
+      // A shape check is not a key check. `^sk-flux-…$` passes a revoked key,
+      // somebody else's key and a key with one character wrong, and the
+      // Chief used to confirm all three in his own voice; the person found
+      // out on their first question with nothing joining the two. The proof
+      // is one catalogue read on the key that was just stored, and it is
+      // free: no model runs (src/lib/flux-key-paste.ts, `proveFluxKey`).
+      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
       // Out of React's hands the moment it is stored. Nothing above keeps a
       // copy and nothing below renders one.
       setKey("");
+      if (proof === "rejected") {
+        // The step is NOT answered, so the Chief says nothing and the card
+        // keeps the floor with its paste field open. "Not now" is still
+        // there, one screen back, so nobody is stuck on a key they cannot
+        // make work.
+        setFailure(FLUX_KEY_REJECTED);
+        return;
+      }
       setActed(true);
-      await answerSetupStep("flux", "key saved");
+      await answerSetupStep("flux", proof === "proved" ? SETUP_FLUX_PROVED_ANSWER : SETUP_FLUX_UNPROVED_ANSWER);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
@@ -256,7 +281,10 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
         failure={failure}
         onChange={(next) => {
           setKey(next);
-          if (failure === FLUX_KEY_NOT_A_KEY) setFailure("");
+          // Both of the failures that mean "that key was wrong" clear the
+          // moment they start typing a different one. A refusal left on
+          // screen over a fresh paste is the card arguing with them.
+          if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
         }}
         onSubmit={() => void save()}
         onAgain={() => void openOutside(FLUX_SIGNUP_URL)}

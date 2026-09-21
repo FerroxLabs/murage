@@ -318,6 +318,7 @@ import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setu
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
 import { type EngineChoice, pickDefaultEngine } from "./default-engine.ts";
 import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
+import { chiefConfirmation, chiefConfirmationsFor } from "../shared/first-run-chief.ts";
 import {
   type SetupLiveState,
   type SetupRoutineReading,
@@ -1944,20 +1945,35 @@ function echoSetupAnswer(step: SetupStep, answer: string): void {
  * owed a reply. Idempotent on the exact sentence, because these routes are
  * re-entered on retries.
  */
-const CHIEF_CONFIRMS: Partial<Record<SetupStep, string>> = {
-  flux: "That is saved, and locked away on this computer. It never appears in our conversation, not even to me.",
-};
-
-function chiefConfirms(step: SetupStep): void {
-  const line = CHIEF_CONFIRMS[step];
+/**
+ * WHICH LINE, AND THE ANSWER DECIDES IT.
+ *
+ * This used to be a table of one sentence per step, said the moment the step
+ * was recorded. For the key step that made the Chief confirm something nobody
+ * had checked: the save path tested the SHAPE of the key and wrote it to the
+ * keychain, and then the Chief said "That is saved, and locked away on this
+ * computer" over a key that might be revoked, mistyped or somebody else's.
+ * The person found out on their first question, with nothing joining the two.
+ *
+ * The renderer now proves the key against Flux Router's own catalogue before
+ * it answers the step (src/lib/flux-key-paste.ts, `saveAndProveFluxKey`) and
+ * sends which of those happened as the answer. A key Flux Router REJECTED
+ * never answers the step at all, so no line is owed and none is said.
+ */
+function chiefConfirms(step: SetupStep, answer: string): void {
+  const line = chiefConfirmation(step, answer);
   if (!line) return;
   const chiefBotId = setup.chiefBotId();
   const chief = chiefBotId ? store.bot(chiefBotId) : null;
   if (!chief) return;
   try {
+    // Every line this step could have said, not just this one: a retry that
+    // comes back with the other verdict must not leave two confirmations in
+    // the thread contradicting each other.
+    const spoken = new Set(chiefConfirmationsFor(step));
     const already = store
       .messagesFor(chief.threadId)
-      .some((message) => message.role === "bot" && (message.text ?? "").trim() === line);
+      .some((message) => message.role === "bot" && spoken.has((message.text ?? "").trim()));
     if (already) return;
     store.appendMessage(chief.threadId, { role: "bot", kind: "text", text: line });
   } catch {
@@ -14992,7 +15008,15 @@ const server = createServer(async (req, res) => {
       fluxMediaRequests++;
       try {
         const catalog = await providerConnections.refresh("legacy-flux");
-        return json(res, 200, { modelCount: catalog.models.filter(model => model.enabled && model.chatEligible).length, ...(catalog.error ? { error: catalog.error.message } : {}) });
+        // `code` alongside the message, because the two callers of this route
+        // need to tell two different things apart and a sentence cannot be
+        // parsed. `unauthorized`/`forbidden` is Flux Router refusing THIS
+        // KEY; every other code is a statement about the network, the rate
+        // limiter or the payload, and reporting one of those as a bad key
+        // tells somebody offline that their perfectly good key is wrong. The
+        // enum carries no credential (server/provider-connections.ts,
+        // ProviderCatalogError).
+        return json(res, 200, { modelCount: catalog.models.filter(model => model.enabled && model.chatEligible).length, ...(catalog.error ? { error: catalog.error.message, code: catalog.error.code } : {}) });
       } finally { fluxMediaRequests--; }
     }
     if (path === "/api/flux-connection/replace" && method === "POST") {
@@ -15257,6 +15281,17 @@ const server = createServer(async (req, res) => {
       // A scheduled routine is a promise; a routine that has run is proof.
       // The brief runs ONCE, now, so the person SEES the thing work before
       // they are left alone with it. The other two are offers, not proofs.
+      //
+      // AND THEY ARE TOLD, WHICH FOR A WHOLE RELEASE THEY WERE NOT. This
+      // dispatches a full model turn on the Chief's engine the instant the
+      // button is pressed, and every word on the card talked about mornings
+      // and schedules: anybody on metered routing pressed a button labelled
+      // as scheduling and got a turn they had not agreed to. The offer now
+      // says it before the press and the confirmation says it again
+      // (src/lib/first-run-copy.ts, `morning.bodyNow` and `morning.takenNow`),
+      // and first-run-flow.test.ts holds the copy and this line together so
+      // neither can move without the other.
+      // Only for `brief`. `triage` and `watch` schedule and stay scheduled.
       let runId: string | undefined;
       if (parsed.data.template === "brief") {
         setup.recordBriefRoutine(routine.id);
@@ -15296,7 +15331,7 @@ const server = createServer(async (req, res) => {
         echoSetupAnswer(parsed.data.step, parsed.data.answer);
         const live = await setupLiveState();
         const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
-        chiefConfirms(parsed.data.step);
+        chiefConfirms(parsed.data.step, parsed.data.answer);
         await driveSetup(view);
         return json(res, 200, view);
       }

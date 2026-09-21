@@ -27,7 +27,12 @@ beforeAll(async () => {
     globalThis.fetch=(input,init)=>{
       const url=String(input);
       if(url==='https://api.fluxrouter.ai/v1/models'){
-        if(init?.headers?.authorization!=='Bearer '+process.env.FLUX_API_KEY)throw Error('Wrong fixture credential');
+        const auth=init?.headers?.authorization;
+        // Flux Router answering, and saying no to this key.
+        if(auth==='Bearer sk-flux-FAKE_REFUSED')return Promise.resolve(new Response('{"error":"invalid api key"}',{status:401}));
+        // Nothing answering at all. A good key on a machine with no way out.
+        if(auth==='Bearer sk-flux-FAKE_UNREACHABLE')return Promise.reject(new TypeError('fetch failed'));
+        if(auth!=='Bearer '+process.env.FLUX_API_KEY)throw Error('Wrong fixture credential');
         return Promise.resolve(new Response(JSON.stringify({data:[{id:'flux-fast'},{id:'flux-standard'}]})));
       }
       if(url.startsWith('https://'))throw Error('External network blocked in Flux fixture');
@@ -64,4 +69,33 @@ it("selects conflicting keys explicitly, preserves aliases, tests catalog and di
   const disconnected = await api("POST", "/api/flux-connection/mutate", { action: "disconnect", revision: restored.body.revision }); expect(disconnected.status).toBe(200); expect(disconnected.body.configured).toBe(false);
   expect((await api("GET", "/api/provider-connections/old-flux/catalog")).status).toBe(404);
   expect((await api("POST", "/api/flux-connection/test", {})).status).toBe(409);
+}, 30_000);
+
+/**
+ * A KEY FLUX ROUTER REFUSED AND A KEY NOBODY COULD ASK ABOUT ARE NOT THE SAME
+ * THING, AND THIS ROUTE HAS TO SAY WHICH.
+ *
+ * The first run now saves a key and immediately proves it here before the
+ * Chief confirms anything (src/lib/flux-key-paste.ts). It can only do that if
+ * the answer carries the catalogue's error CODE: a sentence cannot be parsed,
+ * and treating every failure as a refusal would tell somebody offline that
+ * their perfectly good key is wrong.
+ */
+it("says whether a failed test was the key or the trip, and never echoes either key", async () => {
+  const start = await api("GET", "/api/flux-connection");
+  const refusedSave = await api("POST", "/api/flux-connection/mutate", { action: start.body.configured ? "replace" : "connect", revision: start.body.revision, key: "sk-flux-FAKE_REFUSED" });
+  expect(refusedSave.status).toBe(200);
+  const refused = await api("POST", "/api/flux-connection/test", {});
+  expect(refused.status).toBe(200);
+  expect(refused.body.code).toBe("unauthorized");
+  expect(refused.body.modelCount).toBe(0);
+  expect(JSON.stringify(refused.body)).not.toContain("FAKE");
+
+  const offlineSave = await api("POST", "/api/flux-connection/mutate", { action: "replace", revision: refusedSave.body.revision, key: "sk-flux-FAKE_UNREACHABLE" });
+  expect(offlineSave.status).toBe(200);
+  const offline = await api("POST", "/api/flux-connection/test", {});
+  expect(offline.status).toBe(200);
+  expect(offline.body.code).toBe("offline");
+  expect(offline.body.code).not.toBe("unauthorized");
+  expect(JSON.stringify(offline.body)).not.toContain("FAKE");
 }, 30_000);
