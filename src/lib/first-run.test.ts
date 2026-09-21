@@ -53,7 +53,7 @@ function view(over: Partial<SetupView> = {}, statuses: Partial<Record<SetupStep,
   });
   const done = steps.filter((step) => step.done).length;
   return {
-    version: 2,
+    version: 3,
     startedAt: 1,
     chiefBotId: "chief",
     ownerName: "",
@@ -63,6 +63,8 @@ function view(over: Partial<SetupView> = {}, statuses: Partial<Record<SetupStep,
     routines: { total: 0, briefId: null, briefRan: false },
     crewSize: 0,
     fluxReady: false,
+    nothingToThinkWith: false,
+    connectedJobApps: [],
     firstRun: true,
     progress: { done, total: steps.length },
     blocked: steps.filter((step) => step.status === "blocked").map((step) => step.id),
@@ -80,7 +82,7 @@ function view(over: Partial<SetupView> = {}, statuses: Partial<Record<SetupStep,
 const RESTORED = () =>
   view(
     { firstRun: false, ownerName: "Sean", fluxReady: true, crewSize: 4, routines: { total: 3, briefId: "r1", briefRan: true } },
-    { hello: "done", agents: "done", flux: "done", apps: "done", brief: "done", routines: "done" },
+    { hello: "done", detect: "done", flux: "done", chat: "done", flow: "done" },
   );
 
 beforeEach(() => {
@@ -97,7 +99,7 @@ describe("a restored or established install never sees the first run", () => {
     // The dangerous middle: some steps outstanding, but the server has seen
     // a name, a key and a crew. Counting unfinished steps would call this a
     // first run. The server's answer does not.
-    const used = view({ firstRun: false, ownerName: "Sean", crewSize: 2 }, { hello: "done", agents: "done" });
+    const used = view({ firstRun: false, ownerName: "Sean", crewSize: 2 }, { hello: "done", detect: "done" });
     expect(firstRunRailVisible(used, readFirstRunRail())).toBe(false);
   });
 
@@ -164,31 +166,31 @@ describe("the rows are the server's list", () => {
   });
 
   it("marks done, passed over, waiting and the one they are on", () => {
-    const rows = firstRunRailRows(view({}, { hello: "done", agents: "skipped", flux: "blocked" }));
+    const rows = firstRunRailRows(view({}, { hello: "done", detect: "skipped", flux: "blocked" }));
     const mark = Object.fromEntries(rows.map((row) => [row.id, row.mark]));
     expect(mark.hello).toBe("done");
-    expect(mark.agents).toBe("skipped");
+    expect(mark.detect).toBe("skipped");
     expect(mark.flux).toBe("blocked");
     // `next` is the first step that is neither done nor passed over, and the
     // server works it out. Here that is flux, which is blocked, so the first
-    // plain open row is apps and it is not "now".
-    expect(mark.apps).toBe("todo");
-    expect(mark.routines).toBe("todo");
+    // plain open row is chat and it is not "now".
+    expect(mark.chat).toBe("todo");
+    expect(mark.flow).toBe("todo");
     const fresh = firstRunRailRows(view());
     expect(fresh.find((row) => row.id === "hello")?.mark).toBe("now");
   });
 
   it("draws a row for a step it has never heard of rather than dropping it", () => {
-    // A newer server sending a seventh step must not make a step quietly
+    // A newer server sending a sixth step must not make a step quietly
     // disappear from the list of what is left to do.
-    const seventh = view();
+    const known = view();
     const extended = {
-      ...seventh,
-      steps: [...seventh.steps, { id: "somethingnew" as SetupStep, done: false, status: "open" as SetupStepStatus }],
+      ...known,
+      steps: [...known.steps, { id: "somethingnew" as SetupStep, done: false, status: "open" as SetupStepStatus }],
     };
     const rows = firstRunRailRows(extended);
-    expect(rows).toHaveLength(7);
-    expect(rows[6].label).toBe("somethingnew");
+    expect(rows).toHaveLength(known.steps.length + 1);
+    expect(rows[rows.length - 1].label).toBe("somethingnew");
   });
 });
 

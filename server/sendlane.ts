@@ -18,9 +18,30 @@ export interface SendlaneCredentials {
   listId: string;
 }
 
-/** Config first, then env, so a packaged build can be pointed at a different
- *  list without a rebuild. Absent credentials disable the feature silently:
- *  a fork with no Sendlane account should not throw on every signup. */
+/**
+ * Murage's own list.
+ *
+ * A LIST ID IS CONFIGURATION, NOT A SECRET, and that is the whole reason it
+ * gets a default while `apiKey` and `hashKey` never will. Those two are write
+ * credentials for the entire Sendlane account; this is a number that says
+ * which of that account's lists the onboarding signup lands on. Owner's
+ * ruling, 2026-09-21: "List ID 37 is Murage's list."
+ *
+ * Defaulting it removes one of the three ways a packaged build could be
+ * silently misconfigured, and removes the one that would be WORST: credentials
+ * present, list id absent or wrong, so every address is either dropped on the
+ * floor or posted to somebody else's list. A build still cannot run without
+ * real credentials, because both keys stay required.
+ *
+ * An explicit `sendlane.listId` in config, or `SENDLANE_LIST_ID` in the
+ * environment, still wins. This is a default, not a constant.
+ */
+export const SENDLANE_DEFAULT_LIST_ID = "37";
+
+/** Config first, then env, then the default list, so a packaged build can be
+ *  pointed at a different list without a rebuild. Absent credentials disable
+ *  the feature: a fork with no Sendlane account should not throw on every
+ *  signup. Disabled is no longer SILENT, though — see `sendlaneStartupNotice`. */
 export function sendlaneCredentials(
   env: NodeJS.ProcessEnv = process.env,
 ): SendlaneCredentials | null {
@@ -32,9 +53,47 @@ export function sendlaneCredentials(
   }
   const apiKey = (cfg.sendlane?.apiKey ?? env.SENDLANE_API_KEY ?? "").trim();
   const hashKey = (cfg.sendlane?.hashKey ?? env.SENDLANE_HASH_KEY ?? "").trim();
-  const listId = (cfg.sendlane?.listId ?? env.SENDLANE_LIST_ID ?? "").trim();
-  if (!apiKey || !hashKey || !listId) return null;
+  const listId = (cfg.sendlane?.listId ?? env.SENDLANE_LIST_ID ?? "").trim() || SENDLANE_DEFAULT_LIST_ID;
+  if (!apiKey || !hashKey) return null;
   return { apiKey, hashKey, listId };
+}
+
+/**
+ * The names of the credentials this build is missing. NAMES ONLY, never
+ * values: nothing in this module may print a secret, and a diagnostic that
+ * echoed one would put a write credential for the whole marketing account
+ * into a log file and a support bundle.
+ */
+export function sendlaneMissing(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  return sendlaneCredentials(env) ? [] : ["SENDLANE_API_KEY", "SENDLANE_HASH_KEY"];
+}
+
+/**
+ * WHY THIS EXISTS, AND WHY IT IS AT STARTUP RATHER THAN PER SIGNUP.
+ *
+ * `subscribe()` answers `{ ok: false, reason: "disabled" }` when no credentials
+ * are configured, and the `/api/subscribe` route logs only `reason ===
+ * "upstream"`. So "disabled" was logged NOWHERE. A packaged build shipped
+ * without credentials therefore collected zero addresses, for ever, without a
+ * single line anywhere saying so — and this signup is the thing that builds
+ * the list.
+ *
+ * Once, at startup, server-side:
+ *   - once, because a line per signup is noise nobody reads, and the condition
+ *     it reports cannot change without a restart anyway;
+ *   - server-side, because the renderer must learn nothing whatsoever about
+ *     this credential. It is not told whether one exists, and it does not need
+ *     to be: the signup is fire-and-report either way, and a failure here has
+ *     never been allowed to block entry to the app.
+ *
+ * Returns the sentence rather than printing it, so the condition can be tested
+ * without a server and without capturing console output.
+ */
+export function sendlaneStartupNotice(env: NodeJS.ProcessEnv = process.env): string | null {
+  const missing = sendlaneMissing(env);
+  if (missing.length === 0) return null;
+  return `Sendlane is not configured (${missing.join(", ")}), so onboarding signups are recorded nowhere. `
+    + "Nobody who gives their email during the first run will reach the list until this build has credentials.";
 }
 
 /** Sendlane answers with an HTML error page instead of JSON when it is unhappy,

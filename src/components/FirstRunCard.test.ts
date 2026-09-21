@@ -20,6 +20,21 @@ type AnyMessage = Parameters<typeof FirstRunCard>[0]["message"];
 
 const bot = { id: "chief", threadId: "thread-1", name: "Chief of Staff" } as Parameters<typeof FirstRunCard>[0]["bot"];
 
+/**
+ * The step a PARKED card rides on.
+ *
+ * `apps`, `brief` and `routines` stopped being steps in W16 and the cards
+ * built against them are parked, not deleted: the apps rows, the morning
+ * brief, the "a couple more" offer, the closing card and the phone
+ * walkthrough are all real, tested work and the owner has not decided their
+ * fate. Nothing emits them today, so the only way to exercise them is to
+ * render them directly, and `FirstRunCard` dispatches on the VARIANT alone.
+ * The step here is therefore just a valid one for the card envelope to carry
+ * (`readSetupCard` validates it), and it matches PARKED_CARD_STEP in
+ * FirstRunChrome so the whole park says one thing.
+ */
+const PARKED = "flow";
+
 const render = (step: string, variant: string, extra: Record<string, unknown> = {}) =>
   renderToStaticMarkup(createElement(FirstRunCard, {
     bot,
@@ -102,7 +117,7 @@ describe("card three: the key", () => {
 describe("card four: the accounts", () => {
   const copy = FIRST_RUN_COPY.apps.apps;
   it("says why on every row", () => {
-    const markup = render("apps", "apps");
+    const markup = render(PARKED, "apps");
     for (const row of copy.rows) {
       expect(markup).toContain(row.label);
       expect(markup).toContain(row.why);
@@ -112,20 +127,20 @@ describe("card four: the accounts", () => {
   it("offers no Connect button until the surface is known to be the desktop", () => {
     // Undecided is not permission. A phone that showed a Connect button for
     // one frame has already shipped the bug.
-    const markup = render("apps", "apps");
+    const markup = render(PARKED, "apps");
     expect(markup).toContain(copy.desktopOnly);
     expect(markup).not.toContain(`>${copy.connect}</button>`);
   });
 
   it("puts email on graduated trust rather than on a limit", () => {
-    expect(render("apps", "apps")).toContain(copy.trust);
+    expect(render(PARKED, "apps")).toContain(copy.trust);
   });
 });
 
 describe("cards five and six: the brief", () => {
   const copy = FIRST_RUN_COPY.brief.brief;
   it("asks for one time and says it back on the button", () => {
-    const markup = render("brief", "brief");
+    const markup = render(PARKED, "brief");
     expect(markup).toContain('type="time"');
     expect(markup).toContain('value="07:00"');
     expect(markup).toContain("Set my brief for 7:00 am");
@@ -133,7 +148,7 @@ describe("cards five and six: the brief", () => {
   });
 
   it("points at the brief it has already run rather than promising one", () => {
-    const markup = render("brief", "brief-ran");
+    const markup = render(PARKED, "brief-ran");
     expect(markup).toContain(FIRST_RUN_COPY.brief["brief-ran"].body);
     expect(markup).toContain("From tomorrow it arrives on its own at 7:00 am.");
   });
@@ -142,7 +157,7 @@ describe("cards five and six: the brief", () => {
 describe("card seven: two more", () => {
   const copy = FIRST_RUN_COPY.routines["more-routines"];
   it("proposes exactly two and lets the watch one be aimed at something", () => {
-    const markup = render("routines", "more-routines");
+    const markup = render(PARKED, "more-routines");
     for (const row of copy.rows) expect(markup).toContain(row.label);
     expect(markup).toContain("For example: anything from my accountant");
   });
@@ -151,7 +166,7 @@ describe("card seven: two more", () => {
 describe("card eight: what shall we do", () => {
   const copy = FIRST_RUN_COPY.routines.next;
   it("offers work, a project, a job and the phone", () => {
-    const markup = render("routines", "next");
+    const markup = render(PARKED, "next");
     for (const offer of [...copy.work, ...copy.more]) expect(markup).toContain(offer.label);
     expect(markup).toContain("Hire your first teammate");
   });
@@ -163,7 +178,7 @@ describe("card eight: what shall we do", () => {
   // desktop bridge, which is what a test has, it says NOTHING rather than
   // guessing. A claim about somebody's backups is the last claim to get wrong.
   it("says nothing about backups when it cannot see the schedule", () => {
-    const markup = render("routines", "next");
+    const markup = render(PARKED, "next");
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.on);
     expect(markup).not.toContain(FIRST_RUN_COPY.backups.turnOn);
   });
@@ -174,7 +189,7 @@ describe("card nine: the phone", () => {
     // No desktop bridge in a test, which is exactly the shape of a machine
     // without Tailscale: words, and no dead button.
     for (const variant of ["phone", "phone-needs-tailscale"]) {
-      const markup = render("routines", variant);
+      const markup = render(PARKED, variant);
       expect.soft(markup, `${variant} drew a QR`).not.toContain("<svg");
       expect.soft(markup).toContain(FIRST_RUN_COPY.phone.phone.title);
     }

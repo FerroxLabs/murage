@@ -11,8 +11,11 @@ import { SETUP_STEPS, type SetupStep, type SetupView } from "../shared/setup.ts"
 // ones that depend on an engine stay open, and the card says why.
 //
 // It is also the install that proves the release's central rule. The brief is
-// created and run here and the run cannot succeed, so the brief step stays
-// outstanding: a routine that is scheduled has been promised, not proven.
+// created and run here and the run cannot succeed, so `routines.briefRan`
+// stays false: a routine that is scheduled has been promised, not proven. The
+// brief stopped being a STEP in W16, and the rule did not move with it. The
+// reading is still the truth and the "it has already run" card is still keyed
+// on the run.
 //
 // `launchVerificationServer` does not forward FAKE_CLAUDE_* overrides, so the
 // mode is set inside the server child by its instrumentation import, before
@@ -79,8 +82,11 @@ describe("the first run on a real server whose engine never answers", () => {
 
     expect(view.chiefBotId).toBe(chiefBotId);
     expect(view.steps.map((entry) => entry.id)).toEqual([...SETUP_STEPS]);
-    expect(view.progress.total).toBe(6);
+    expect(view.progress.total).toBe(5);
     expect(view.next).toBe("hello");
+    // The derived field the whole re-cut turns on, computed server-side once
+    // rather than four times in the renderer.
+    expect(typeof view.nothingToThinkWith).toBe("boolean");
   });
 
   it("knows this install has never been used, and opens the conversation in the Chief's thread", async () => {
@@ -108,7 +114,7 @@ describe("the first run on a real server whose engine never answers", () => {
     expect(await api("GET", "/api/setup", undefined, remote)).toMatchObject({ status: 404, body: { error: "no such route" } });
     expect(await api("POST", "/api/setup/answer", { step: "hello", answer: "anything" }, remote))
       .toMatchObject({ status: 404, body: { error: "no such route" } });
-    expect(await api("POST", "/api/setup/skip", { step: "apps" }, remote)).toMatchObject({ status: 404 });
+    expect(await api("POST", "/api/setup/skip", { step: "flow" }, remote)).toMatchObject({ status: 404 });
     expect(await api("POST", "/api/setup/routine", { template: "brief" }, remote))
       .toMatchObject({ status: 404, body: { error: "no such route" } });
   });
@@ -201,16 +207,18 @@ describe("POST /api/setup/routine", () => {
     expect(run).toMatchObject({ routineId, manual: true });
   });
 
-  it("does not call the brief step done just because it is scheduled", async () => {
+  it("does not claim the brief has run just because it is scheduled", async () => {
     // The engine in this fixture cannot answer, so the run it was given can
     // never complete. Scheduled is a promise; only a run that finished is
-    // proof, and the step says so.
+    // proof, and the reading says so. The brief is no longer a checklist row,
+    // and this is the half of it that must never soften.
     const view = await checklist();
     expect(view.routines.briefId).toBe(routineId);
     expect(view.routines.briefRan).toBe(false);
-    expect(step(view, "brief")).toMatchObject({ done: false });
-    expect(step(view, "brief").detail).toMatch(/has not run yet/);
-    expect((await setupCards()).map((card) => card.key)).not.toContain(setupCardKey("brief", "brief-ran"));
+    // Nothing anywhere in the thread claims a run. The "it has already run"
+    // card is parked in W16 and nothing emits it, so this now also proves the
+    // park: no key in the transcript carries that variant at all.
+    expect((await setupCards()).map((card) => card.key).filter((key) => key.endsWith(":brief-ran"))).toEqual([]);
   });
 
   it("leaves the person with one morning brief however many times the button is pressed", async () => {
@@ -248,27 +256,29 @@ describe("POST /api/setup/routine", () => {
 
     const view = triage.body as SetupView;
     expect(view.routines.total).toBeGreaterThanOrEqual(2);
-    expect(step(await checklist(), "routines").done).toBe(true);
   });
 
-  it("puts the brief step back when the brief is deleted", async () => {
+  it("forgets the brief pointer when the brief is deleted", async () => {
+    // The pointer is checked against the live routine list on every read, so
+    // nothing can go on claiming a brief the person deleted. This survived
+    // the brief ceasing to be a step, because it was never about the step.
     expect(await api("DELETE", `/api/routines/${routineId}`, undefined, desktop)).toMatchObject({ status: 200 });
     const view = await checklist();
     expect(view.routines.briefId).toBeNull();
-    expect(step(view, "brief").done).toBe(false);
-    // `apps` is still outstanding and comes first, so the brief is back on the
-    // list rather than at the front of it.
-    expect(view.next).toBe("apps");
-    expect(view.steps.filter((entry) => !entry.done && !entry.skipped).map((entry) => entry.id)).toContain("brief");
+    expect(view.routines.briefRan).toBe(false);
   });
 });
 
 describe("the rest of the walk", () => {
   it("moves past a skipped step without calling it done", async () => {
-    const skipped = await api("POST", "/api/setup/skip", { step: "apps" }, desktop);
+    // Detection is settled by being SHOWN, so it has to be acknowledged
+    // before the flow reaches the step this test is about. That is the
+    // re-cut: the engine in the box no longer ticks a report on its own.
+    await api("POST", "/api/setup/answer", { step: "detect", answer: "seen it" }, desktop);
+    const skipped = await api("POST", "/api/setup/skip", { step: "chat" }, desktop);
     expect(skipped.status).toBe(200);
-    expect(step(skipped.body as SetupView, "apps")).toMatchObject({ done: false, skipped: true });
-    expect((skipped.body as SetupView).next).toBe("brief");
+    expect(step(skipped.body as SetupView, "chat")).toMatchObject({ done: false, skipped: true });
+    expect((skipped.body as SetupView).next).toBe("flow");
   });
 
   it("re-opens a step by re-deriving it, so nothing is reinstalled and nothing is un-done", async () => {
@@ -287,8 +297,10 @@ describe("the rest of the walk", () => {
     const view = await checklist();
     expect(step(view, "hello").done).toBe(true);
     expect(step(view, "flux").done).toBe(true);
-    expect(step(view, "apps").skipped).toBe(true);
-    expect(step(view, "brief").done).toBe(false);
+    expect(step(view, "chat").skipped).toBe(true);
+    // Nothing has produced a result, and a skip on the step before it does
+    // not make one appear.
+    expect(step(view, "flow").done).toBe(false);
     // Whether the included engine can run here is genuinely machine state: a
     // developer box has its own `fuigo` on PATH, a clean install has only the
     // packaged one, which this fixture does not stage. What must hold
@@ -298,6 +310,50 @@ describe("the rest of the walk", () => {
     expect(view.engine.ready
       ? view.engine.reason === undefined
       : /fuigo is unavailable/.test(view.engine.reason ?? "")).toBe(true);
+  });
+
+  // THE SIGNUP THE HELLO STEP CARRIES, ON A REAL SERVER.
+  //
+  // The email that step collects goes to Sendlane, server-side, and the whole
+  // path already existed: POST /api/subscribe, server/sendlane.ts, and the
+  // renderer's own call in FirstRunHelloCard. W16 re-cut the steps AROUND it
+  // and the wiring had to survive that intact, so this walks the route the
+  // card calls rather than trusting that it is still there.
+  //
+  // This fixture has no Sendlane credentials and must not: a test that posted
+  // to a real list would be a test that mailed real people. Disabled is the
+  // interesting case anyway, because it is the one that used to be silent.
+  it("takes a signup without a credential in sight and without ever blocking", async () => {
+    const answered = await api("POST", "/api/subscribe", { email: "someone@example.com", name: "Someone" });
+    // 200 whatever happened downstream. Entry to the app has never been
+    // allowed to depend on a marketing list being reachable.
+    expect(answered.status).toBe(200);
+    expect(answered.body).toEqual({ ok: false, reason: "disabled" });
+
+    // And an address that is not an address is refused before anything leaves
+    // the machine, which is also a 200: it is not the person's problem.
+    const rubbish = await api("POST", "/api/subscribe", { email: "not-an-address" });
+    expect(rubbish.status).toBe(200);
+    expect(rubbish.body.ok).toBe(false);
+  });
+
+  it("still has the hello card calling that route, after the steps moved", async () => {
+    // A STRUCTURAL GUARD, NOT A COPY TEST. The re-cut moves cards between
+    // steps, and the one thing that must not be lost on the way is the call
+    // that puts an address on the list. Comments are stripped first, so this
+    // reads the code and not the paragraph above it explaining the code.
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/components/FirstRunHelloCard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+    expect(code, "the hello card stopped posting the signup").toContain('"/api/subscribe"');
+    // Server-side is the whole point: the key is a write credential for the
+    // account and an Electron renderer bundle is readable by anyone who
+    // installs the app. The renderer must never learn it exists.
+    expect(code).not.toMatch(/sendlane/i);
   });
 
   it("never says a word the release forbids, on any card it put in the thread", async () => {
@@ -369,7 +425,15 @@ describe("the opening moments, on a workspace nobody has touched", () => {
     const added = after.filter((key) => !before.includes(key));
     expect(added, "answering hello said nothing new in the thread").not.toHaveLength(0);
     // What this machine already has, reported rather than asked.
-    expect(added.some((key) => key.startsWith("agents:"))).toBe(true);
+    //
+    // WHICH card that is depends on the machine, and deliberately so. A box
+    // with something runnable on it gets the detection report; a box with
+    // nothing to think with skips detection entirely and gets the Flux card
+    // carrying the brain framing instead. Both are the flow moving on, which
+    // is what this test is about; pinning one would pin the fixture's own
+    // engine setup rather than the behaviour.
+    const opening = (await call("GET", "/api/setup", undefined, keys)).body as SetupView;
+    expect(added.some((key) => key.startsWith(opening.nothingToThinkWith ? "flux:" : "detect:"))).toBe(true);
   });
 
   it("marks the answered card settled, so it is not left looking live", async () => {
