@@ -123,7 +123,7 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
-import { subscribe } from "./sendlane.ts";
+import { sendlaneStartupNotice, subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
   cleanupStaleAttachmentPartials,
@@ -1785,14 +1785,24 @@ function seatChiefOfStaff(): void {
 async function setupLiveState(): Promise<SetupLiveState> {
   seatChiefOfStaff();
   const chiefBotId = setup.chiefBotId();
-  const connectedApps = await (async () => {
+  // WHICH apps, not just how many. Per-job connect has to name the one that
+  // is missing, and a count cannot. One call for both: `connectedServices`
+  // goes to the broker, and asking twice on a route documented as needing to
+  // stay cheap would double that for an answer we already have.
+  //
+  // `null` in both fields means the same thing everywhere it appears: the
+  // connector store could not be read, so this is unknown rather than empty.
+  const connected = await (async () => {
     const availability = composio.connectorAvailability(cfg);
-    if (availability === "unconfigured") return 0;
-    if (availability !== "configured") return null;
+    if (availability === "unconfigured") return { count: 0, ids: [] as string[] };
+    if (availability !== "configured") return { count: null, ids: null };
     try {
-      return Object.values(await composio.connectedServices(cfg)).filter((service) => service.connected).length;
+      const services = Object.entries(await composio.connectedServices(cfg))
+        .filter(([, service]) => service.connected)
+        .map(([slug]) => slug);
+      return { count: services.length, ids: services };
     } catch {
-      return null;
+      return { count: null, ids: null };
     }
   })();
   const flux = fluxCredentialStatus(readFluxConnectionState());
@@ -1808,7 +1818,8 @@ async function setupLiveState(): Promise<SetupLiveState> {
     signedOutAgents: setupSignedOutReading(described),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
-    connectedApps,
+    connectedApps: connected.count,
+    connectedAppIds: connected.ids,
     routines: setupRoutinesReading(),
     ...readWorkspace(
       { bots: store.bots, messagesFor: (threadId) => store.messagesFor(threadId), routesThroughFlux: isFluxModel },
@@ -2206,7 +2217,7 @@ function setupRoutineCommit(
  * request id derived from them worth having: the same submit twice resolves
  * to the same anchor and so to the same receipt.
  */
-function setupRoutineAnchor(threadId: string, step: "brief" | "routines"): string | null {
+function setupRoutineAnchor(threadId: string, step: SetupStep): string | null {
   const messages = store.messagesFor(threadId);
   for (let index = messages.length - 1; index >= 0; index--) {
     const card = messages[index].card ? readSetupCard(messages[index].card) : null;
@@ -15225,7 +15236,12 @@ const server = createServer(async (req, res) => {
         weekdays: parsed.data.weekdaysOnly === true ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6],
       };
       const operation = { template: parsed.data.template, name, prompt, schedule };
-      const anchor = setupRoutineAnchor(chief.threadId, parsed.data.template === "brief" ? "brief" : "routines");
+      // Both templates anchor on `flow` now. `brief` and `routines` stopped
+      // being steps in W16: a routine is an outcome of a job the person
+      // chose, and the card that offered it is the `flow` card. The fallback
+      // to the thread's opening message is unchanged and still covers the
+      // case where no card is up yet.
+      const anchor = setupRoutineAnchor(chief.threadId, "flow");
       if (!anchor) return json(res, 409, { error: "There is nothing in this conversation to attach that to yet." });
 
       let routine;
@@ -16147,6 +16163,14 @@ try { imageOperations.resumePendingPublications(); outputPublisher.resumePending
 catch { console.warn("Pending image publication could not finish. It will retry at the next startup."); }
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
+  //
+  // Without credentials `subscribe()` returns "disabled" and the route below
+  // logs only "upstream", so a build that collects nothing said nothing. This
+  // is the one line that makes that visible, and it names the variables rather
+  // than any value.
+  const sendlaneNotice = sendlaneStartupNotice();
+  if (sendlaneNotice) console.warn(sendlaneNotice);
   // Warm the skill index while nobody is waiting.
   //
   // It is built lazily by whichever request needs it first, and all three of

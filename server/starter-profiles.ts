@@ -44,6 +44,18 @@ export function listStarterProfiles(libraryRoot = LIBRARY_ROOT) {
     return { id, name: pkg.name, summary: pkg.summary, outcomes: pkg.outcomes, members: pkg.agents.length,
       agents: pkg.agents.map(agent => ({ key: agent.key, name: agent.name })),
       routines: (pkg.routines ?? []).map(routine => ({ key: routine.key, name: routine.name })),
+      // INERT TODAY, AND THE FIRST RUN MUST NOT BUILD ON IT. All three
+      // shipped profiles declare `requirements.apps: []`, so this is `false`
+      // on every profile that exists and its only reader is the starter
+      // profile card, which therefore always prints "no connected accounts
+      // required to begin". That is currently true, so the card is not
+      // lying, and this is left exactly as it is.
+      //
+      // It is recorded here because per-job connect in the 0.1.58 first run
+      // looked like it could read this and cannot: it would answer "nothing
+      // is needed" for every job. The first run derives what a job needs from
+      // the job itself and from `connectedJobApps` on the setup view
+      // (shared/setup.ts), which is new work rather than a reuse of this.
       connectionsRequired: pkg.requirements.apps.length > 0 };
   });
 }
