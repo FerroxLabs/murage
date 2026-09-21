@@ -34,6 +34,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/container-computer.ts": "rm -rf \"$source\" inside a generated shell script that runs in the sandbox container against its own copy",
   "installer/lib/systemd.mjs": "prints `rm -r <mkdtemp staging dir>` for the operator to run by hand after the unit is installed; not executed here",
   "installer/lib/tailscale.mjs": "shredAuthKeyFile removes the private mkdtemp directory it created for the auth key",
+  "server/tts/windows-voices.ts": "the finally clause removes the `murage-say-` mkdtemp directory opened three lines above in the same function; `dir` is never reassigned and never comes from config, a bot or a request",
   ".github/workflows/package-win.yml": "rm -rf dist dist-server release: build outputs on an ephemeral CI runner",
   ".github/workflows/release.yml": "rm -rf dist dist-server dist-native release: build outputs on an ephemeral CI runner",
   ".github/workflows/package-mac-qualification.yml": "rm -rf dist dist-server dist-native release: build outputs on an ephemeral CI runner",
