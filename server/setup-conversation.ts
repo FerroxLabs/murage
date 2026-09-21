@@ -91,6 +91,10 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
     title: "You are not signed in to it yet",
     subtitle: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
   },
+  "sample-brief": {
+    title: "This is what tomorrow morning looks like",
+    subtitle: "A made up day, so you can see the shape of it. The real one is yours, every morning, at a time you pick.",
+  },
   key: {
     title: "One key turns the rest on",
     subtitle:
@@ -242,6 +246,23 @@ export function setupConversationPlan(
   // promise, a routine that has run is proof. `brief` is done only once a run
   // completed, so this card can only appear after the person saw it work.
   if (stepView(view, "brief")?.done === true) wanted.push(plan("brief", "brief-ran"));
+
+  // SHOW BEFORE ASKING.
+  //
+  // Both cross-research models, independently, proposed the same thing: put a
+  // real brief in front of the person BEFORE the key card, rendered from
+  // example data. It answers "what does this actually do" with the thing
+  // itself rather than a sentence about it, and it turns the next card from a
+  // request into an offer they can already see the point of.
+  //
+  // It can sit here, ahead of the ask, precisely because it costs nothing to
+  // produce: no model call, no network, no key. There is no free allowance to
+  // abuse because nothing is spent.
+  //
+  // A report rather than a question, like the agents card and the brief that
+  // ran, so it is deliberately NOT in ASK_VARIANTS and never settles. It stays
+  // in the transcript afterwards, which is the point: it is their template.
+  if (view.next === "flux") wanted.push(plan("flux", "sample-brief"));
 
   if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
   else wanted.push(plan(CLOSING_STEP, "next"));

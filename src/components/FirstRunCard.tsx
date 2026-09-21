@@ -14,12 +14,15 @@
 // is still there tomorrow, every action happens where the person is
 // standing, and nothing sends anybody to Settings.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, signedOutAgentsLine } from "@/lib/first-run-copy";
 import type { Bot, Message } from "@/state/store";
+import { renderBriefHtml } from "../../shared/brief-html";
+import { sampleBrief } from "../../shared/brief-sample";
 import { readSetupCard } from "../../shared/setup-card";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
+import { artifactPreviewHtml } from "./Files";
 import { FirstRunBriefCard, FirstRunBriefRanCard, FirstRunMoreRoutinesCard } from "./FirstRunBriefCard";
 import {
   FIRST_RUN_CHIP,
@@ -50,6 +53,8 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
       return <FirstRunBareAgentsCard needsKey />;
     case "signed-out":
       return <FirstRunSignedOutAgentsCard settled={settled} />;
+    case "sample-brief":
+      return <FirstRunSampleBriefCard />;
     case "key":
       return <FirstRunFluxCard settled={settled} />;
     case "no-key":
@@ -103,6 +108,54 @@ function FirstRunAgentsCard() {
       {local && <FirstRunLine>{localModelLine(local.model, local.host)}</FirstRunLine>}
       {rest.length > 0 && <FirstRunLine>{foundAgentsLine(rest)}</FirstRunLine>}
       <FirstRunLine>{FIRST_RUN_COPY.agents.found.second}</FirstRunLine>
+    </FirstRunBubble>
+  );
+}
+
+/**
+ * TOMORROW MORNING, BEFORE ANYTHING IS ASKED FOR.
+ *
+ * The card that answers "what does this actually do" with the thing itself.
+ * It sits immediately in front of the key card because both cross-research
+ * models, independently, said the same: show, then ask. An offer somebody can
+ * already see the point of is not a pitch.
+ *
+ * It is a real render of the real template with example data in it, which is
+ * the constraint that keeps it honest. Every section in it is one the daily
+ * routine can fill, so it is not a promise the next morning cannot keep.
+ *
+ * NO MODEL CALL AND NO NETWORK. That is what lets this exist at all: there is
+ * no free starter allowance, so the thing that demonstrates the product
+ * before the ask has to cost nothing to produce and have no abuse surface.
+ * `shared/brief-html.ts` pins that property with its own test.
+ *
+ * Shown through the same hardened seam the Files pane uses for an HTML
+ * artifact: `artifactPreviewHtml` strips anything active and adds a strict
+ * CSP, and the frame is sandboxed with no referrer. The page is ours and is
+ * already inert, but this is generated markup carrying the owner's own name,
+ * and the established gate is better than a second opinion about it.
+ */
+function FirstRunSampleBriefCard() {
+  const { view } = useSetupView();
+  const copy = FIRST_RUN_COPY.flux["sample-brief"];
+  const html = useMemo(
+    () => artifactPreviewHtml(renderBriefHtml(sampleBrief(view?.ownerName ?? ""))),
+    [view?.ownerName],
+  );
+  if (!view) return null;
+
+  return (
+    <FirstRunBubble>
+      <FirstRunLine>{copy.body}</FirstRunLine>
+      <FirstRunLine>{copy.second}</FirstRunLine>
+      <iframe
+        title={copy.frameTitle}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        srcDoc={html}
+        className="mt-3 h-[26rem] w-full rounded-xl border border-hairline/40 bg-white"
+      />
+      <FirstRunLine quiet>{copy.third}</FirstRunLine>
     </FirstRunBubble>
   );
 }

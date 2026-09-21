@@ -125,6 +125,23 @@ export const FIRST_RUN_COPY = {
     },
   },
   flux: {
+    /**
+     * SHOW, THEN ASK.
+     *
+     * The words are deliberately small, because the card below them is doing
+     * the talking. Three short lines and then the thing itself.
+     *
+     * It says plainly that the day is made up. A sample that let somebody
+     * believe it was their real morning would be a lie they would catch
+     * within seconds, and catching the assistant in one on its first day is
+     * not recoverable.
+     */
+    "sample-brief": {
+      body: "Before I ask you for anything, here is what tomorrow morning looks like.",
+      second: "The day in it is made up. The shape of it is real, and so is the one you would get.",
+      third: "Yours arrives at a time you pick, and it learns what matters to you as we go.",
+      frameTitle: "An example morning brief",
+    },
     key: {
       title: "One key worth having",
       body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
