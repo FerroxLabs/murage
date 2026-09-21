@@ -126,6 +126,28 @@ describe("what the Chief says on a machine with nothing to think with", () => {
     expect(card.subtitle).not.toMatch(/you are ready/i);
   });
 
+  // THE SECOND HALF OF THE SAME DEFECT.
+  //
+  // The detection report does not ride on `view.next`; it is pushed whenever
+  // the greeting is behind us and the machine is not blank. Both of those go
+  // true on a blank machine the instant a key fills the shipped engine's
+  // catalogue, so a person who had detection skipped FOR them would be handed
+  // the detection card for the first time after the flow had moved past it.
+  it("never hands the blank machine a detection card after the key lands", () => {
+    const present = new Set([setupCardKey("hello", "welcome")]);
+    // Read once while blank, exactly as the server does, and keep what that
+    // read recorded. `SetupChecklist.read` persists what it derived.
+    const settled = deriveSetupState(state(), blank, 2_000);
+    expect(settled.steps.detect.done).toBe(true);
+
+    const keyed = live({ ownerName: "Sean", flux: FLUX_SAVED });
+    const after = setupConversationPlan(view(keyed, settled), present);
+    for (const variant of ["found", "bare", "signed-out"] as const) {
+      expect(keys(after.append), variant).not.toContain(setupCardKey("detect", variant));
+    }
+    expect(keys(after.append)).toEqual([setupCardKey("chat", "jobs")]);
+  });
+
   it("goes back to the ordinary offer the moment something can think", () => {
     const card = plan(live({ ownerName: "Sean" }), [setupCardKey("hello", "welcome")], state({ detect: DETECTED }))
       .append.find((entry) => entry.step === "flux")!;
