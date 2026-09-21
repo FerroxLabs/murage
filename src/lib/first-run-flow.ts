@@ -448,6 +448,51 @@ export function flowStageFor(job: FirstRunJobShape, world: FirstRunJobWorld): Fi
  * `typedOutcome` exists. The box still opens, what they write is still kept,
  * and nothing spins. See first-run-jobs.ts.
  */
+// ── settling step five, AFTER the work rather than in front of it ──────
+
+/**
+ * WHAT THE LAST STEP OF THE FIRST RUN HAS TO DO BEFORE IT IS RECORDED DONE.
+ *
+ * THE DEFECT THIS EXISTS TO STOP. The research job's question was handed to
+ * `dispatch` and forgotten. A dispatch returns nothing, so the card could not
+ * tell a delivered question from one the route refused, and the very next
+ * statement recorded `flow` complete. A rejected send, an authentication
+ * failure, an unanswered approval card and a dead provider all ended the same
+ * way: "Ready." on screen and the first run marked finished over a question
+ * nobody had received. Worse, the whole thing ran from the timer that had
+ * ALREADY played the three working lines, so the theatre came first and the
+ * work, such as it was, ran into the void behind it.
+ *
+ * Settlement now follows the work. `send` resolves only when the server has
+ * accepted the message and rejects when it has not, and `settle` is on the
+ * resolving path alone. Anything that throws in here leaves the step open,
+ * which is the honest state: it did not happen. The caller says so where it
+ * happened, which is what the card's failure line is for.
+ *
+ * INJECTED RATHER THAN IMPORTED, so the rule is decidable without a server,
+ * a clock or a DOM, exactly like every other rule in this module.
+ */
+export interface FirstRunJobWork {
+  /** The person's question, as a promise that settles on the server's own
+   *  answer. Called for `research` and for nothing else. */
+  send: () => Promise<void>;
+  /** The business package. Called for `business` and for nothing else. */
+  install: () => Promise<void>;
+  /** Records `flow` answered. Reached only once the work above has. */
+  settle: () => Promise<void>;
+  /** The card has gone. Nothing it owns should still be written to, and a
+   *  step settled under a card nobody is looking at is a step settled on
+   *  nothing. */
+  gone?: () => boolean;
+}
+
+export async function finishFirstRunJob(job: FirstRunJobShape, work: FirstRunJobWork): Promise<void> {
+  if (job.id === "business") await work.install();
+  if (job.id === "research") await work.send();
+  if (work.gone?.()) return;
+  await work.settle();
+}
+
 export function escapeHatchScreen(world: FirstRunJobWorld): FirstRunInputScreen {
   const screen = firstRunInputScreen(FIRST_RUN_JOB_SHAPES.notes, world);
   // `notes` always has a box, so this is a type narrowing rather than a

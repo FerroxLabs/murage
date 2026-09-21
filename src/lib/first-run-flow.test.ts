@@ -6,6 +6,7 @@ import {
   briefRoutineRequest,
   businessResult,
   dayResult,
+  finishFirstRunJob,
   firstRunInputScreen,
   flowStageFor,
   morningOffer,
@@ -579,5 +580,99 @@ describe("the flow copy stays where the flow can find it", () => {
     expect(Object.keys(FIRST_RUN_COPY.flow["do-it"]).sort()).toEqual([
       "again", "business", "connect", "day", "failure", "input", "morning", "notes", "research", "working",
     ]);
+  });
+});
+
+/**
+ * THE LAST STEP OF THE FIRST RUN MAY NOT BE RECORDED OVER NOTHING.
+ *
+ * The research job's send was fired and forgotten, and the statement straight
+ * after it recorded `flow` complete. Every one of these walks the real
+ * `finishFirstRunJob` with the work made to behave the way a real machine can
+ * behave, and asserts on ORDER and on whether `settle` was reached at all.
+ * Nothing here reads source.
+ */
+describe("settling step five follows the work", () => {
+  function recorder() {
+    const log: string[] = [];
+    const never = (name: string) => async () => {
+      log.push(name);
+      throw new Error(`${name} should not have been called`);
+    };
+    return { log, never };
+  }
+
+  it("sends the question BEFORE it records the step, and records it once", async () => {
+    const { log, never } = recorder();
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { log.push("send"); },
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    });
+    expect(log).toEqual(["send", "settle"]);
+  });
+
+  it("does not record the step when the send is refused", async () => {
+    const { log, never } = recorder();
+    const refused = new Error("That did not go through.");
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { throw refused; },
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    })).rejects.toBe(refused);
+    expect(log, "the first run settled on a question nobody received").toEqual([]);
+  });
+
+  it("does not record the step when the send never comes back in time", async () => {
+    // A send that hangs is the other way to be wrong here: the caller bounds
+    // the wait and rejects, and a rejection must not settle anything.
+    const { log, never } = recorder();
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: () => new Promise<void>((_, reject) => setTimeout(() => reject(new Error("no answer")), 1)),
+      install: never("install"),
+      settle: async () => { log.push("settle"); },
+    })).rejects.toThrow("no answer");
+    expect(log).toEqual([]);
+  });
+
+  it("installs the crew before it records the step, and not after a refusal", async () => {
+    const { log, never } = recorder();
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.business, {
+      send: never("send"),
+      install: async () => { log.push("install"); },
+      settle: async () => { log.push("settle"); },
+    });
+    expect(log).toEqual(["install", "settle"]);
+
+    const after: string[] = [];
+    await expect(finishFirstRunJob(FIRST_RUN_JOB_SHAPES.business, {
+      send: never("send"),
+      install: async () => { throw new Error("that crew is not available"); },
+      settle: async () => { after.push("settle"); },
+    })).rejects.toThrow("that crew is not available");
+    expect(after).toEqual([]);
+  });
+
+  it("sends nothing at all for the jobs that have nothing to send", async () => {
+    for (const id of ["brief", "day", "notes"] as const) {
+      const { log, never } = recorder();
+      await finishFirstRunJob(FIRST_RUN_JOB_SHAPES[id], {
+        send: never("send"),
+        install: never("install"),
+        settle: async () => { log.push("settle"); },
+      });
+      expect(log, id).toEqual(["settle"]);
+    }
+  });
+
+  it("settles nothing under a card the person has already left", async () => {
+    const log: string[] = [];
+    await finishFirstRunJob(FIRST_RUN_JOB_SHAPES.research, {
+      send: async () => { log.push("send"); },
+      install: async () => { log.push("install"); },
+      settle: async () => { log.push("settle"); },
+      gone: () => true,
+    });
+    expect(log).toEqual(["send"]);
   });
 });

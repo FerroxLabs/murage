@@ -345,6 +345,25 @@ describe("every result has a body and a way on, whatever was typed", () => {
     }
   });
 
+  // THE ONE JOB WHOSE ANSWER IS NOT ON THIS CARD, SO A SEND THAT NEVER LANDED
+  // IS THE ONE THING THE PERSON CANNOT CHECK FOR THEMSELVES.
+  //
+  // This screen used to take no failure at all, so the card's own `setFailure`
+  // had nowhere to appear: a refused send drew the quiet return button and
+  // said nothing, under three lines that had already said "Ready."
+  it("says so on the research result when the question did not go through", () => {
+    const refusal = "That did not go through. Try it again whenever you are ready.";
+    for (const world of MACHINES) {
+      const result = researchResult(world);
+      const markup = screenOf(
+        createElement(FirstRunResearchResultView, { result, failure: refusal, onAgain: noop }),
+        "research refused",
+      );
+      expect(markup, JSON.stringify(world)).toContain(asHtml(refusal));
+      expect(markup, "no way off the refused research screen").toMatch(/<button/);
+    }
+  });
+
   it("fills the crew result whatever the package turns out to hold", () => {
     for (const crew of [
       { agents: [{ key: "business-planner", name: "Business Planner" }, { key: "draft-partner", name: "Draft Partner" }], routine: { name: "Weekly business review (suggested)", time: "09:00", weekdays: [1], durationMinutes: 15, enabledAfterInstall: false } },
@@ -440,5 +459,61 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
     };
     expect(typedMayShowWorking(blank)).toBe(false);
     expect(said(typedReply(blank))).toBe(true);
+  });
+});
+
+/**
+ * THE TWO FACTS ABOUT THE CARD THAT THIS SUITE CANNOT EXECUTE.
+ *
+ * Everything above runs the real rules and renders the real screens. `finish`
+ * cannot be run here: it fires from a timer inside a mounted component and
+ * this suite has no DOM to mount one in. So the wiring is READ, off the
+ * source with every comment stripped out first, because the thing that was
+ * wrong before was a comment promising an ordinary send over a line that
+ * awaited nothing.
+ *
+ * The rule those reads enforce is proved by execution in
+ * first-run-flow.test.ts ("settling step five follows the work"). These only
+ * assert that the card is the caller.
+ */
+const cardSource = (await import("node:fs")).readFileSync(
+  new URL("../components/FirstRunJobsCard.tsx", import.meta.url),
+  "utf8",
+);
+/** Block comments, then line comments. The house writes long prose above
+ *  every decision in that file and none of it is wiring. */
+const code = cardSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+describe("the do-it card settles through the rule rather than around it", () => {
+  it("runs the finish through finishFirstRunJob", () => {
+    expect(code, "the card no longer settles through the rule").toMatch(/await finishFirstRunJob\(/);
+  });
+
+  it("never dispatches a send it cannot hear back from", () => {
+    const sends = code.match(/type:\s*"send"/g) ?? [];
+    const heard = code.match(/onSent:/g) ?? [];
+    expect(sends.length, "the card stopped sending anything").toBeGreaterThan(0);
+    expect(heard.length, "a send on this card with no confirmation behind it").toBe(sends.length);
+  });
+
+  it("records the step in one place, and that place is inside the settle step", () => {
+    const at = [...code.matchAll(/answerSetupStep\("flow"/g)].map((match) => match.index ?? 0);
+    expect(at.length, "the flow step is recorded from more than one place").toBe(1);
+    // Brace matched rather than measured in characters: "near the word settle"
+    // is satisfied by a line sitting just after the settle step, which is the
+    // shape of the defect, not the fix.
+    const opened = code.indexOf("{", code.indexOf("settle:"));
+    expect(opened, "the card no longer passes a settle step").toBeGreaterThan(0);
+    let depth = 0;
+    let closed = -1;
+    for (let at2 = opened; at2 < code.length; at2 += 1) {
+      if (code[at2] === "{") depth += 1;
+      if (code[at2] === "}") {
+        depth -= 1;
+        if (depth === 0) { closed = at2; break; }
+      }
+    }
+    expect(closed, "the settle step never closes").toBeGreaterThan(opened);
+    expect(at[0] > opened && at[0] < closed, "the step is recorded outside the settle step").toBe(true);
   });
 });
