@@ -330,21 +330,83 @@ const SHOT_CMD = [
   'test -s "$f" && echo captured',
 ].join("; ");
 
+// The box runs whatever the bot (and anything the bot reads) put on it, so
+// the frame it hands back is untrusted in size as well as content. Cap what
+// this process will ever buffer for one frame, and enforce the cap WHILE the
+// body arrives: content-length is a claim from the same box, absent on a
+// chunked response and free to understate, so a check that reads the header
+// and then calls arrayBuffer() has already bought the whole response before
+// it can refuse. Same streaming shape as server/web-search.ts.
+const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+// The files API answers with the frame base64'd inside a JSON envelope, so
+// the wire form is 4/3 of the raw bytes plus the envelope around it.
+const MAX_FRAME_ENVELOPE_BYTES = Math.ceil(MAX_FRAME_BYTES / 3) * 4 + 64 * 1024;
+
+class FrameTooLarge extends Error {
+  constructor() {
+    super("the box frame exceeds the 8 MB limit");
+    this.name = "FrameTooLarge";
+  }
+}
+
+/** Buffer a response body with a hard ceiling, counting bytes as they land
+ * and cancelling the reader the moment the ceiling is crossed. */
+async function boundedBody(res: Response, limit: number): Promise<Buffer> {
+  if (Number(res.headers.get("content-length")) > limit) {
+    void res.body?.cancel().catch(() => {});
+    throw new FrameTooLarge();
+  }
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const parts: Buffer[] = [];
+  let size = 0;
+  let complete = false;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        complete = true;
+        break;
+      }
+      size += chunk.value.byteLength;
+      if (size > limit) throw new FrameTooLarge();
+      parts.push(Buffer.from(chunk.value));
+    }
+    return Buffer.concat(parts);
+  } finally {
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 /** Read a file off the box as base64 — raw artifact bytes when the API
  * supports it (33% less transfer, no JSON envelope), else the files API. */
 async function readFileBase64(cfg: AppConfig, boxId: string, path: string): Promise<string | null> {
+  let bytes: Buffer | null = null;
   try {
     const res = await boxFetch(cfg, `/boxes/${boxId}/artifacts?path=${encodeURIComponent(path)}`);
-    if (res.ok) {
-      const bytes = Buffer.from(await res.arrayBuffer());
-      if (bytes.length) return bytes.toString("base64");
-    }
-  } catch {
+    if (res.ok) bytes = await boundedBody(res, MAX_FRAME_BYTES);
+    else void res.body?.cancel().catch(() => {});
+  } catch (error) {
+    // An oversized frame is a refusal, not a transport hiccup: retrying it
+    // on the files API would buy the same bytes again, 33% fatter.
+    if (error instanceof FrameTooLarge) throw error;
     /* fall through */
   }
-  const { ok, body } = await boxJson(cfg, `/boxes/${boxId}/files?path=${encodeURIComponent(path)}&encoding=base64`);
+  if (bytes?.length) return bytes.toString("base64");
+  const res = await boxFetch(cfg, `/boxes/${boxId}/files?path=${encodeURIComponent(path)}&encoding=base64`);
+  const envelope = await boundedBody(res, MAX_FRAME_ENVELOPE_BYTES);
+  let body: any = null;
+  try {
+    body = JSON.parse(envelope.toString("utf8"));
+  } catch {
+    body = null;
+  }
+  const ok = res.ok && body?.ok !== false;
   const content = body?.content;
-  return ok && typeof content === "string" && content ? content : null;
+  if (!ok || typeof content !== "string" || !content) return null;
+  if (Buffer.byteLength(content, "base64") > MAX_FRAME_BYTES) throw new FrameTooLarge();
+  return content;
 }
 
 /** `knownBoxId` skips box resolution entirely — the screen poller holds
