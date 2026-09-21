@@ -23,6 +23,23 @@ export interface TurnContextInput {
   replaysNatively: boolean;
 }
 
+/** Drivers whose sendTurn rebuilds the entire prompt from `transcript` on
+ * every turn — that is, every caller of createOpenAIChatRuntime, which turns
+ * `turn.transcript` into chat `messages` (drivers/openai-chat.ts). They hold
+ * no provider-side session and produce no resume cursor.
+ *
+ * They must never ALSO get the branch embedded in `turnText`: the model would
+ * receive the same history twice, once as `messages` and once again inside the
+ * final user message, and the two copies disagree about who is speaking. This
+ * used to be hardcoded to "grok", which was true when Grok was the only such
+ * driver and silently wrong the day openai-compat and minimax joined it.
+ * Enforced against the drivers themselves by turn-context.test.ts. */
+export const TRANSCRIPT_REPLAY_DRIVER_KINDS: readonly string[] = ["grok", "minimax", "openai-compat"];
+
+export function replaysTranscriptNatively(driverKind: string): boolean {
+  return TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);
+}
+
 /** Does this engine need the thread replayed to it? True when a DIFFERENT
  * instance ran the last turn here — a cursor of our own is not enough,
  * because it only proves we once had a session covering some prefix of the

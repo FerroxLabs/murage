@@ -1,7 +1,15 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { openerAt } from "../shared/bot-openers.ts";
-import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
+import {
+  buildTurnContext,
+  engineIsFresh,
+  replaysTranscriptNatively,
+  TRANSCRIPT_REPLAY_DRIVER_KINDS,
+} from "./turn-context.ts";
 
 const transcript = [
   { role: "user" as const, text: "my dog is named Biscuit" },
@@ -118,4 +126,49 @@ it("replays refreshed memory without claiming a user rewind", () => {
   expect(result.turnText).toContain("authorized memory context was refreshed");
   expect(result.turnText).toContain("User: prior request");
   expect(result.turnText).not.toContain("The user rewound");
+});
+
+// W13: replaysNatively was hardcoded to "grok". It is not a property of xAI —
+// it is a property of createOpenAIChatRuntime, which turns `turn.transcript`
+// into chat `messages` on every turn. openai-compat and minimax were built on
+// that same runtime and were never added, so on any context reset they got the
+// branch twice: once as `messages` and once again embedded in the final user
+// message. This reads the drivers rather than trusting a literal list.
+describe("TRANSCRIPT_REPLAY_DRIVER_KINDS", () => {
+  // Comments are stripped before matching, and only whole-line comments are
+  // dropped so a URL's "//" survives. A previous source scan on this branch
+  // matched prose and ended up enforcing the very claim it should have caught.
+  const stripComments = (source: string): string =>
+    source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+
+  it("names exactly the drivers built on createOpenAIChatRuntime", () => {
+    const dir = fileURLToPath(new URL("./drivers/", import.meta.url));
+    const found = new Set<string>();
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".ts") || name.includes(".test.") || name === "openai-chat.ts") continue;
+      const code = stripComments(readFileSync(join(dir, name), "utf8"));
+      if (!code.includes("createOpenAIChatRuntime(")) continue;
+      const kind = /const\s+DRIVER_KIND\s*=\s*"([^"]+)"/.exec(code)?.[1];
+      expect(kind, `${name} calls createOpenAIChatRuntime but declares no DRIVER_KIND`).toBeTruthy();
+      found.add(kind!);
+    }
+    expect(found.size).toBeGreaterThan(1);
+    expect([...found].sort()).toEqual([...TRANSCRIPT_REPLAY_DRIVER_KINDS].sort());
+  });
+
+  it("stops a transcript-replay driver being sent the branch twice", () => {
+    for (const kind of TRANSCRIPT_REPLAY_DRIVER_KINDS) {
+      expect(replaysTranscriptNatively(kind)).toBe(true);
+      const out = buildTurnContext({
+        text: "hi", transcript, rewound: false, fresh: true,
+        externallyUpdated: false, replaysNatively: replaysTranscriptNatively(kind),
+      });
+      expect(out.turnText, `${kind} embedded the branch in turnText as well`).toBe("hi");
+    }
+    expect(replaysTranscriptNatively("claudeAgent")).toBe(false);
+  });
 });
