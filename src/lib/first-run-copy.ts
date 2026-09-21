@@ -984,7 +984,20 @@ export const FIRST_RUN_COPY = {
    */
   backups: {
     on: "Your backups are running quietly in the background. Nothing for you to do there.",
-    offer: "One more thing worth a press. I can keep a private copy of everything on this computer, taken fresh every day.",
+    /**
+     * WHAT IS IN THE BACKUP, SAID AS WHAT IS IN THE BACKUP.
+     *
+     * This offered "a private copy of everything on this computer". It is
+     * not. The capture is Murage's own installation data and nothing else:
+     * server/installation-fidelity-snapshot.ts walks the data directory,
+     * keeps a named set of application roots (bots, routines, messages,
+     * channels, workspaces, attachments, skills, events) and excludes the
+     * rest by name, credentials and models and logs and browser profiles
+     * among them. Documents, applications and working folders were never in
+     * it. Somebody who believed that sentence would find out on the day they
+     * lost the laptop, which is the one day it must not be wrong.
+     */
+    offer: "One more thing worth a press. I can keep a private copy of your Murage: your bots, your routines, everything we have said and the work we have made in here, taken fresh every day.",
     offerSecond: "I will ask you where to keep it, write you a recovery key, and take the first one straight away.",
     turnOn: "Keep me backed up",
     working: "Setting your backups up",
