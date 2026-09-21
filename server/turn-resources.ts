@@ -55,6 +55,82 @@ export class TurnResources {
       if (sameOwner(current, owner)) this.owners.delete(key);
     }
   }
+
+  /** Hand back part of what this generation holds, keeping the rest. A turn
+   * claims the bot's computer and screen before it knows which destination it
+   * will resolve to; without this it would hold a destination it never mounted
+   * for the whole turn, and every sibling thread would queue behind it.
+   * Returns what was actually given up. */
+  releaseSome(owner: TurnOwner, resources: readonly string[]): string[] {
+    const released: string[] = [];
+    for (const resource of resources) {
+      const current = this.owners.get(resource);
+      if (current && sameOwner(current, owner)) { this.owners.delete(resource); released.push(resource); }
+    }
+    return released;
+  }
+}
+
+/** The bot's computer and its screen, as claim keys. A bot has ONE of each,
+ * whatever destination a turn resolves to, which is why two threads of the
+ * same bot must not hold them at once. `local` is deliberately absent from
+ * the computer key: host tools are arbitrated per action by the broker and
+ * are never reserved for a whole turn. */
+export function computerResourceKeys(botId: string, kind: string): string[] {
+  return [...(kind === "local" ? [] : [kind === "vm" ? "computer:vm" : `computer:bot:${botId}`]), screenResourceKey(botId)];
+}
+
+export function screenResourceKey(botId: string): string {
+  return `screen:bot:${botId}`;
+}
+
+/** What a turn must claim at admission, before any destination side effect.
+ *
+ * An explicit destination is known here. Auto is not: it resolves later, to
+ * an existing cloud box, a reachable VPS, or the host — and until this was
+ * written it claimed NOTHING for the first two, so two Auto threads of the
+ * same bot could mount the SAME box and drive the same screen at once, which
+ * is precisely the inconsistent ownership the atomic claim exists to prevent.
+ * Auto now claims the same pair up front and `unusedComputerClaims` hands
+ * back whatever it did not use. */
+export function admissionComputerClaims(input: {
+  botId: string;
+  /** explicit destination; undefined is Auto */
+  wants: string | undefined;
+  /** Auto could still resolve to this bot's cloud computer */
+  autoCloudPossible: boolean;
+  /** Auto could still fall back to the host's own screen */
+  autoHostScreenPossible: boolean;
+}): string[] {
+  const { botId, wants } = input;
+  if (wants !== undefined) {
+    return wants === "off" || wants === "browser" ? [] : computerResourceKeys(botId, wants);
+  }
+  if (input.autoCloudPossible) return computerResourceKeys(botId, "cloud");
+  return input.autoHostScreenPossible ? [screenResourceKey(botId)] : [];
+}
+
+/** What to hand back once the destination has actually resolved. Only claims
+ * this turn made are returned, and only ones nothing else still needs: a
+ * mounted computer keeps both, a routed screen preview keeps the screen, and
+ * a browser that claimed the same screen keeps it too. */
+export function unusedComputerClaims(input: {
+  botId: string;
+  claimed: readonly string[];
+  mountedKind: "box" | "vps" | "vm" | "local" | null;
+  /** a screenshot source is wired for this turn's preview */
+  previewRouted: boolean;
+  /** the browser side of this turn claimed the same screen */
+  browserHoldsScreen: boolean;
+}): string[] {
+  const { botId, claimed, mountedKind } = input;
+  const holdsComputer = mountedKind === "box" || mountedKind === "vps" || mountedKind === "vm";
+  const holdsScreen = mountedKind !== null || input.previewRouted || input.browserHoldsScreen;
+  const give = [
+    ...(holdsComputer ? [] : [`computer:bot:${botId}`, "computer:vm"]),
+    ...(holdsScreen ? [] : [screenResourceKey(botId)]),
+  ];
+  return give.filter((resource) => claimed.includes(resource));
 }
 
 export function sameOwner(a: TurnOwner, b: TurnOwner): boolean {

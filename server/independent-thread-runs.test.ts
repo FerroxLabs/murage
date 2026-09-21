@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { IndependentThreadRuns, requireDirectThreadTarget } from "./independent-thread-runs.ts";
 
 it("runs three detached per-thread snapshots and stopping one does not change its sibling", () => {
@@ -247,4 +247,98 @@ it("stopping or releasing a run queued for a slot resolves false and hands the s
   runs.release(held[0]);
   expect(await nextSlot).toBe(true);
   expect(await runs.awaitSlot(stopped)).toBe(false);
+});
+
+// W14: acquire() pushed a waiter with no deadline. Stop ends the wait for a
+// person who is watching; an unattended queued routine behind a thread that
+// never lets go waited forever, and never ran, failed or said why.
+it("gives up on a wait that hits its deadline and says so", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    runs.admit("bot", "holder", {}, ["computer:bot:x"]);
+    const waiter = runs.admit("bot", "waiter", {});
+    const waiting = runs.acquire(waiter, ["computer:bot:x"], undefined, 60_000);
+    const settled = waiting.then(() => "granted").catch((error: Error) => error.name);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(runs.waiting(waiter)).toBe(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(await settled).toBe("ResourceWaitTimeout");
+  } finally { vi.useRealTimers(); }
+});
+
+// The hazard the deadline must avoid: a bare Promise.race abandons the caller
+// but leaves the waiter QUEUED, so the next release hands it the computer on
+// behalf of a turn that has already failed, with nobody left to release it.
+it("removes the expired waiter from the queue instead of letting it win later", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    const holder = runs.admit("bot", "holder", {}, ["computer:bot:x"]);
+    const waiter = runs.admit("bot", "waiter", {});
+    const expired = runs.acquire(waiter, ["computer:bot:x"], undefined, 60_000).catch(() => "expired");
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(await expired).toBe("expired");
+    expect(runs.waiting(waiter)).toBe(false);
+    runs.release(holder);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runs.owns(waiter, "computer:bot:x")).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+// An expired waiter must not take the thread behind it down with it.
+it("lets the next waiter in once an expired one leaves the queue", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    const holder = runs.admit("bot", "holder", {}, ["computer:bot:x"]);
+    const first = runs.admit("bot", "first", {});
+    const second = runs.admit("bot", "second", {});
+    const expiring = runs.acquire(first, ["computer:bot:x"], undefined, 60_000).catch(() => "expired");
+    const patient = runs.acquire(second, ["computer:bot:x"]);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(await expiring).toBe("expired");
+    runs.release(holder);
+    expect(await patient).toBe(true);
+    expect(runs.owns(second, "computer:bot:x")).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+
+it("a granted wait clears its timer and never rejects afterwards", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    const holder = runs.admit("bot", "holder", {}, ["computer:bot:x"]);
+    const waiter = runs.admit("bot", "waiter", {});
+    const waiting = runs.acquire(waiter, ["computer:bot:x"], undefined, 60_000);
+    runs.release(holder);
+    expect(await waiting).toBe(true);
+    let rejected = false;
+    void waiting.catch(() => { rejected = true; });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(rejected).toBe(false);
+    expect(runs.owns(waiter, "computer:bot:x")).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+
+// W14, the other half: a turn claims the bot's computer optimistically and
+// must be able to hand back what it did not mount, without dropping its
+// working folder and without disturbing the generation that replaced it.
+it("releases part of a turn's claims and admits whoever was queued behind them", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("bot", "holder", {}, ["computer:bot:x", "screen:bot:x", "workspace:/project"]);
+  const waiter = runs.admit("bot", "waiter", {});
+  const waiting = runs.acquire(waiter, ["computer:bot:x"]);
+  expect(runs.releaseResources(holder, ["computer:bot:x", "screen:bot:x"])).toEqual(["computer:bot:x", "screen:bot:x"]);
+  expect(await waiting).toBe(true);
+  expect(runs.owns(holder, "workspace:/project")).toBe(true);
+  expect(runs.owns(holder, "computer:bot:x")).toBe(false);
+});
+it("ignores a partial release from a generation that has been replaced", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const stale = runs.admit("bot", "thread", {}, ["computer:bot:x"]);
+  runs.release(stale);
+  const current = runs.admit("bot", "thread", {}, ["computer:bot:x"]);
+  expect(runs.releaseResources(stale, ["computer:bot:x"])).toEqual([]);
+  expect(runs.owns(current, "computer:bot:x")).toBe(true);
 });

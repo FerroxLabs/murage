@@ -1042,8 +1042,8 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
   }));
 }
 
-import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
-import { workspaceResource } from "./turn-resources.ts";
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
+import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
   botId: string;
@@ -1067,12 +1067,21 @@ function botForDirectThread(botId:string,threadId:string):BotRecord|null {
 async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean):Promise<void>{
   if(!resources.length)return;
   let waited=false;
-  const granted=await directRuns.acquire(run,resources,(blockers)=>{
-    waited=true;
-    store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
-  });
-  if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
-  if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+  try{
+    // A deadline, because this wait had none. Stop ends it for a person who is
+    // watching; an 8am routine queued behind a thread that never lets go had
+    // nobody to press Stop and simply never ran, never failed and never said
+    // why. ResourceWaitTimeout leaves the queue as well as the promise.
+    const granted=await directRuns.acquire(run,resources,(blockers)=>{
+      waited=true;
+      store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
+    },RESOURCE_WAIT_TIMEOUT_MS);
+    if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+  }finally{
+    // Also on the timeout and on a refusal: a thread left showing "waiting for
+    // the working folder" after its turn is over is not waiting for anything.
+    if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
+  }
 }
 /** A queued routine admitted past the three-thread limit waits here, visibly
  * and holding nothing, before any setup side effect; Stop ends the wait. */
@@ -5171,22 +5180,38 @@ async function startTurn(
           : null;
       let cwd = pinnedCwd ?? undefined;
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
-      const screenResource = `screen:bot:${bot.id}`;
-      const computerResources = (kind: string) => [...(kind === "local" ? [] : [kind === "vm" ? "computer:vm" : `computer:bot:${bot.id}`]), screenResource];
+      const screenResource = screenResourceKey(bot.id);
+      const computerResources = (kind: string) => computerResourceKeys(bot.id, kind);
+      // Destination capabilities, read before admission because Auto's claim
+      // depends on them: they are pure reads of the engine and the bot record.
+      const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
+      const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
+      const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       // Admission for every shared resource this turn is expected to use, as
       // ONE atomic claim before the folder, VM, VPS or browser side effects
       // below. Waiting here holds nothing, so turns needing the same folder
       // and computer in any order cannot deadlock; a later unexpected claim
       // uses the same release-then-wait path.
       if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
+      const admissionBot = store.bot(bot.id);
+      const browserHoldsScreen = Boolean(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true);
+      // Auto has no destination yet, and used to claim nothing for the two it
+      // can still reach: an existing cloud box and a reachable VPS are the
+      // bot's ONE computer and its ONE screen, so two Auto threads of the same
+      // bot could mount the same box and drive the same screen at once. It now
+      // claims the pair here and hands back below whatever it did not mount.
+      const autoCloudPossible = mountsCloudComputer && (cloudBackend === "vps" || box.boxConfigured(cfg));
+      const autoHostScreenPossible = !autoHostDeclined(bot)
+        && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: mountsLocalComputer })
+        && Boolean(readCuaConnection());
+      const admittedComputerClaims = admissionComputerClaims({ botId: bot.id, wants, autoCloudPossible, autoHostScreenPossible });
       {
-        const admissionBot = store.bot(bot.id);
         const expected = [
           ...(privateWorkspace && opts?.runOn !== "cloud" ? [workspaceResource(cwd ?? homedir())] : []),
-          ...(wants && wants !== "off" && wants !== "browser" ? computerResources(wants) : []),
-          ...(wants === undefined && !autoHostDeclined(bot) && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: instance.adapter.capabilities.localComputerMcp === true }) && readCuaConnection() ? [screenResource] : []),
-          ...(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true
-            ? [`browser:${unifiedBrowserKey(admissionBot) ?? `guest:${bot.id}`}`, screenResource] : []),
+          ...admittedComputerClaims,
+          ...(browserHoldsScreen
+            ? [`browser:${unifiedBrowserKey(admissionBot!) ?? `guest:${bot.id}`}`, screenResource] : []),
         ];
         await acquireDirectTurnResources(run, expected, wants && wants !== "off" && wants !== "browser" ? "computer" : "browser", humanIsOwner);
       }
@@ -5208,12 +5233,8 @@ async function startTurn(
       // The broker arbitrates actual host actions; private screens and other
       // destinations retain their existing turn-lifetime ownership.
       if (wants && wants !== "off" && wants !== "browser") await acquireDirectTurnResources(run, computerResources(wants), "computer", humanIsOwner);
-      // Cloud routines always use Box/BoxAgent. The per-bot backend applies
-      // only to ordinary turns that mount a computer into the local agent.
-      const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
-      const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
-      const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
-      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
+      // Cloud routines always use Box/BoxAgent; the per-bot backend applies
+      // only to ordinary turns. Resolved above, with the admission claim.
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
       let autoVpsProblem: string | null = null;
@@ -5366,6 +5387,22 @@ async function startTurn(
           ? "Check the VPS connection in App Settings → Connections."
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new LocalSetupError("computer", `${autoVpsProblem}. ${hint}`);
+      }
+      // The destination has resolved. Hand back the bot's computer and screen
+      // if this turn did not end up using them — an Auto turn that found no
+      // box, or a selection that mounted nothing — so a sibling thread is not
+      // queued for the rest of this turn behind a destination nobody is using.
+      // Only ever this generation's own claims, and never one the mounted
+      // computer, the screen preview or the browser still needs.
+      {
+        const giveBack = unusedComputerClaims({
+          botId: bot.id,
+          claimed: admittedComputerClaims,
+          mountedKind: computerKind,
+          previewRouted: previewCapture !== null,
+          browserHoldsScreen,
+        });
+        if (giveBack.length) directRuns.releaseResources(run, giveBack);
       }
       // Keep management/status tools available on delegated turns. Handoff
       // depth and shared chain allowances are enforced at action admission;

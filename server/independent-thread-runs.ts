@@ -2,6 +2,31 @@ import { randomUUID } from "node:crypto";
 import { overlaps, sameOwner, TurnResources, type TurnOwner } from "./turn-resources.ts";
 
 export const MAX_CONCURRENT_BOT_THREADS = 3;
+
+/** How long a turn will wait for a thread ahead of it before giving up.
+ * Deliberately longer than the 20-minute inactivity watchdog that interrupts
+ * a stalled holder and releases its claims: anything still holding after this
+ * is a turn that is genuinely working, and a waiter that has been queued for
+ * an hour is better told so than left in a wait that can never end on its own. */
+export const RESOURCE_WAIT_TIMEOUT_MS = 60 * 60_000;
+
+/** A wait that hit its deadline. Distinct from a wait that resolved false:
+ * nobody stopped this turn and it was never refused — the thread ahead of it
+ * simply never let go, and an unattended run (a queued routine at 8am) had no
+ * one to press Stop for it. */
+export class ResourceWaitTimeout extends Error {
+  // Plain fields, assigned in the body: the server runs under Node's
+  // type-stripping loader, which rejects TypeScript parameter properties.
+  readonly resources: readonly string[];
+  readonly waitedMs: number;
+  constructor(resources: readonly string[], waitedMs: number) {
+    super(`waited ${Math.round(waitedMs / 1000)}s for another thread to release this browser, computer or working folder`);
+    this.name = "ResourceWaitTimeout";
+    this.resources = resources;
+    this.waitedMs = waitedMs;
+  }
+}
+
 export type DirectThreadRun<T> = Readonly<TurnOwner & {
   botId: string;
   snapshot: T;
@@ -84,16 +109,50 @@ export class IndependentThreadRuns<T> {
    * turn releases every claim it holds (never wait while holding), then
    * re-claims the whole union atomically when a release lets it in. Resolves
    * false when the run is cancelled, released or replaced while waiting. */
-  acquire(owner: TurnOwner, resources: readonly string[], onWait?: (blockers: readonly ResourceBlocker[]) => void): Promise<boolean> {
+  acquire(
+    owner: TurnOwner,
+    resources: readonly string[],
+    onWait?: (blockers: readonly ResourceBlocker[]) => void,
+    timeoutMs?: number,
+  ): Promise<boolean> {
     if (!this.claimable(owner)) return Promise.resolve(false);
     const wanted = [...new Set([...this.resources.heldBy(owner), ...resources])];
     if (this.claim(owner, wanted)) return Promise.resolve(true);
     this.resources.release(owner);
-    return new Promise<boolean>((resolve) => {
-      this.waiters.push({ owner, resources: wanted, resolve, onWait });
+    return new Promise<boolean>((resolve, reject) => {
+      const waiter: ResourceWaiter = { owner, resources: wanted, resolve, onWait };
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        const timer = setTimeout(() => {
+          const index = this.waiters.indexOf(waiter);
+          if (index === -1) return;
+          // Leave the QUEUE, not just the promise. A bare Promise.race would
+          // abandon the caller while this waiter stayed queued: the next
+          // release would hand it the resources, and it would then hold a
+          // browser, computer or working folder on behalf of a turn that has
+          // already failed, with nobody left to release it.
+          this.waiters.splice(index, 1);
+          // This waiter may have been the one holding later waiters back.
+          this.pump();
+          reject(new ResourceWaitTimeout(wanted, timeoutMs));
+        }, timeoutMs);
+        // A pending wait must never keep the process alive on its own.
+        timer.unref?.();
+        waiter.resolve = (granted) => { clearTimeout(timer); resolve(granted); };
+      }
+      this.waiters.push(waiter);
       // Our own release may already admit an earlier waiter, and with it this one.
       this.pump();
     });
+  }
+
+  /** Hand back part of this generation's claims mid-turn, and let whoever was
+   * queued behind them in. Silently ignored once the generation is gone: a
+   * late release must never disturb the run that replaced it. */
+  releaseResources(owner: TurnOwner, resources: readonly string[]): string[] {
+    if (!this.current(owner)) return [];
+    const released = this.resources.releaseSome(owner, resources);
+    if (released.length) this.pump();
+    return released;
   }
 
   /** Whether this generation is waiting for a shared resource. */
