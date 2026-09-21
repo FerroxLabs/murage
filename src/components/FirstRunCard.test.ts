@@ -364,6 +364,100 @@ describe("card three: the key", () => {
   });
 });
 
+// STEPS FOUR AND FIVE, THROUGH THE DISPATCH THAT SHIPS.
+//
+// THE DEFECT: `firstRunCardBody` had no case for `jobs` or `do-it`. Both fell
+// to `default: return null`, and `FirstRunCard` returns null on a null body,
+// so the server planned both cards, appended both to the transcript, and the
+// last two steps of the first run drew LITERALLY NOTHING. Not a blank card:
+// nothing. The behaviour was all there, built and tested, in
+// src/lib/first-run-jobs.ts and src/lib/first-run-flow.ts, and nothing
+// rendered a line of it.
+//
+// These go through `render`, which is the real dispatch on the real variant,
+// so the case coming back out of the switch is what is being checked.
+describe("step four: what can I take off your plate", () => {
+  const copy = FIRST_RUN_COPY.chat.jobs;
+
+  it("draws the question and all five jobs rather than nothing at all", async () => {
+    await machine({ ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    const markup = render("chat", "jobs");
+    expect(markup, "the jobs card rendered nothing").not.toBe("");
+    expect(markup).toContain(asHtml(`${copy.question}, Sean?`));
+    for (const row of copy.rows) {
+      expect.soft(markup, row.id).toContain(asHtml(row.title));
+      expect.soft(markup, row.id).toContain(asHtml(row.sub));
+    }
+    expect(markup).toContain(copy.escape);
+  });
+
+  it("tags each job with what it is still waiting on, live", async () => {
+    await machine({ ownerName: "Sean", fluxReady: false, nothingToThinkWith: false, connectedJobApps: [] });
+    const missing = render("chat", "jobs");
+    // Nothing connected and no key: the brief wants both accounts and the
+    // key, and the jobs that reach for nothing are ready on this machine.
+    expect(missing).toContain(copy.tags.ready);
+    expect(missing).toContain("3 " + copy.tags.countTail);
+
+    await machine({ ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    expect(render("chat", "jobs")).toContain(copy.status.connected);
+  });
+
+  // A machine nobody has looked at yet must not be told anything is ready.
+  it("offers no tag and nothing to press while the machine is unknown", async () => {
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    const markup = render("chat", "jobs");
+    expect(markup).toContain(asHtml(copy.rows[0].title));
+    expect(markup, "claimed a job was ready on a machine it cannot see").not.toContain(copy.tags.ready);
+  });
+});
+
+describe("step five: the job, done", () => {
+  it("draws the job's own screen rather than nothing at all", async () => {
+    // Nothing connected and no key, so the brief opens on what it needs.
+    await machine({
+      ownerName: "Sean",
+      fluxReady: false,
+      nothingToThinkWith: false,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: true, note: "brief", status: "done" }],
+    });
+    const markup = render("flow", "do-it");
+    expect(markup, "the do-it card rendered nothing").not.toBe("");
+    const connect = FIRST_RUN_COPY.flow["do-it"].connect;
+    expect(markup).toContain(asHtml(connect.lead));
+    expect(markup).toContain(asHtml(connect.reasons.flux));
+    expect(markup).toContain(asHtml(connect.reasons.gmail));
+    expect(markup).toContain(connect.elsewhere);
+  });
+
+  it("opens the box straight away when the job needs nothing", async () => {
+    await machine({
+      ownerName: "Sean",
+      fluxReady: true,
+      nothingToThinkWith: false,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: true, note: "notes", status: "done" }],
+    });
+    const box = FIRST_RUN_COPY.flow["do-it"].input.notes;
+    const markup = render("flow", "do-it");
+    expect(markup).toContain(asHtml(box.heading));
+    expect(markup).toContain(`placeholder="${asHtml(box.placeholder)}"`);
+    // The box is the person's. An earlier version pre-filled it.
+    expect(markup).not.toMatch(/<textarea[^>]*>[^<]/);
+  });
+
+  it("says nothing at all about a job nobody chose", async () => {
+    await machine({ ownerName: "Sean", steps: [{ id: "chat", done: false, status: "open" }] });
+    expect(render("flow", "do-it")).toBe("");
+    // ...including a note from a build that had other jobs in it.
+    await machine({ ownerName: "Sean", steps: [{ id: "chat", done: true, note: "phone", status: "done" }] });
+    expect(render("flow", "do-it")).toBe("");
+  });
+});
+
 describe("card four: the accounts", () => {
   const copy = FIRST_RUN_COPY.apps.apps;
   it("says why on every row", () => {

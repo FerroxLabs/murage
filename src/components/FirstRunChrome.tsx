@@ -319,6 +319,21 @@ export async function skipSetupStep(step: SetupStep): Promise<void> {
   forgetSetupView();
 }
 
+/**
+ * Put a step back on the list.
+ *
+ * "Something else" and "take something else off my plate" both mean the same
+ * thing: the job they chose is not the job any more. `chat` is settled by the
+ * recorded job id, so putting it back is how the Chief's question becomes the
+ * live one again. Reopening drops the answer and re-derives, so a step still
+ * backed by live state comes straight back done; it asks again, it does not
+ * undo anything.
+ */
+export async function reopenSetupStep(step: SetupStep): Promise<void> {
+  await api("/api/setup/reopen", { method: "POST", body: JSON.stringify({ step }) });
+  forgetSetupView();
+}
+
 /** The routine the brief and routine cards ask for. The contract is the one
  *  `/api/setup/routine` answers: a template, an optional time, and the
  *  setup view back with the routine's id on it. */
