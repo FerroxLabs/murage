@@ -58,7 +58,9 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
       identifyEmail(profile.email);
       void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
       try { setEmailGateDone("submitted"); } catch { /* a blocked store is not a failed signup */ }
-      await answerSetupStep("hello", profile.name || profile.email);
+      // Both halves, because both are what they just told the Chief and the
+      // transcript is where a person checks what an assistant heard.
+      await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(" \u00b7 "));
       setSaved(greetingLine(profile.name));
       setDone(true);
     } catch (cause) {

@@ -38,6 +38,16 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
   const [done, setDone] = useState(settled);
   const gone = useRef(false);
 
+  // WHAT THIS SESSION CONNECTED, as opposed to what simply arrived.
+  //
+  // Connected apps travel with the Flux Router key rather than with the
+  // computer, so a key that already has Gmail on it shows Gmail working on a
+  // machine that has never seen it. Saying only "Connected" there reads as a
+  // lie about something this machine did. The honest split is the one the
+  // card can actually make: a row this person just pressed is theirs, and a
+  // row that was on before they touched anything came with the key.
+  const [justConnected, setJustConnected] = useState<readonly string[]>([]);
+
   useEffect(() => {
     gone.current = false;
     // What is already connected, so a person who did this last week is not
@@ -66,7 +76,10 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
       });
       if (gone.current) return;
       setStatus((current) => ({ ...current, [slug]: result }));
-      if (result.connected) await answerSetupStep("apps", slug);
+      if (result.connected) {
+        setJustConnected((current) => (current.includes(slug) ? current : [...current, slug]));
+        await answerSetupStep("apps", slug);
+      }
     } catch (cause) {
       if (!gone.current) setFailure(failureText(cause, copy.failure));
     } finally {
@@ -91,10 +104,16 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
       <FirstRunLine>{copy.body}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
 
+      {copy.rows.some((row) => {
+        const state = status[row.slug];
+        return Boolean(state?.connected && !state.pending) && !justConnected.includes(row.slug);
+      }) && <FirstRunLine quiet>{copy.cameWithKey}</FirstRunLine>}
+
       <ul className="mt-3 grid gap-2">
         {copy.rows.map((row) => {
           const state = status[row.slug];
           const connected = Boolean(state?.connected && !state.pending);
+          const mine = justConnected.includes(row.slug);
           const waiting = busySlug === row.slug;
           return (
             <li key={row.slug} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-inset px-3 py-2">
@@ -103,7 +122,7 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
                 <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.why}</span>
               </span>
               {connected ? (
-                <span className="text-[13px] text-success">{copy.connected}</span>
+                <span className="text-[13px] text-success">{mine ? copy.connected : copy.connectedElsewhere}</span>
               ) : desktop === true ? (
                 <button
                   type="button"

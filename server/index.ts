@@ -1832,6 +1832,72 @@ function setupRoutinesReading(): SetupRoutineReading {
  * already in the thread and appends nothing. A workspace with no Chief simply
  * does nothing, because there is nowhere to say it.
  */
+/**
+ * The person's own half of the first run, in their own thread.
+ *
+ * Only the steps where they actually SAID something. Pressing "Not now" on a
+ * card is a choice the card already shows as settled, and echoing it as if it
+ * were speech would put words in their mouth.
+ *
+ * Idempotent on the same answer for the same reason every card is: these
+ * routes are re-entered on retries, and a doubled "Sean" in the transcript is
+ * the kind of small wrongness that makes a person stop trusting the rest.
+ */
+function echoSetupAnswer(step: SetupStep, answer: string): void {
+  if (step !== "hello") return;
+  const said = answer.trim();
+  if (!said) return;
+  const chiefBotId = setup.chiefBotId();
+  const chief = chiefBotId ? store.bot(chiefBotId) : null;
+  if (!chief) return;
+  try {
+    const already = store
+      .messagesFor(chief.threadId)
+      .some((message) => message.role === "user" && (message.text ?? "").trim() === said);
+    if (already) return;
+    store.appendMessage(chief.threadId, { role: "user", kind: "text", text: said });
+  } catch {
+    // The transcript is the nice half of this route, never the job. A store
+    // that refused the line must not cost them the step they just answered.
+  }
+}
+
+/**
+ * The Chief saying the thing out loud, instead of a note inside a card.
+ *
+ * The key card confirmed itself in small green type inside its own box. The
+ * owner's words: "it has that small green text, which doesn't look like
+ * anything and gets lost. It should look like part of the chat." He is right
+ * about more than the colour. A confirmation that lives inside the card that
+ * asked is an inline validation message; a confirmation in the thread is the
+ * person you are talking to answering you, which is what this whole release
+ * decided the first run should be.
+ *
+ * Only for the steps where something genuinely happened and the person is
+ * owed a reply. Idempotent on the exact sentence, because these routes are
+ * re-entered on retries.
+ */
+const CHIEF_CONFIRMS: Partial<Record<SetupStep, string>> = {
+  flux: "That is saved, and locked away on this computer. It never appears in our conversation, not even to me.",
+};
+
+function chiefConfirms(step: SetupStep): void {
+  const line = CHIEF_CONFIRMS[step];
+  if (!line) return;
+  const chiefBotId = setup.chiefBotId();
+  const chief = chiefBotId ? store.bot(chiefBotId) : null;
+  if (!chief) return;
+  try {
+    const already = store
+      .messagesFor(chief.threadId)
+      .some((message) => message.role === "bot" && (message.text ?? "").trim() === line);
+    if (already) return;
+    store.appendMessage(chief.threadId, { role: "bot", kind: "text", text: line });
+  } catch {
+    // Same rule as the echo: the transcript is the nice half, never the job.
+  }
+}
+
 function driveSetupConversation(view: SetupView): void {
   if (!view.chiefBotId) return;
   const chief = store.bot(view.chiefBotId);
@@ -14895,8 +14961,20 @@ const server = createServer(async (req, res) => {
       if (setupAction[1] === "answer") {
         const parsed = setupAnswerRequestSchema.safeParse(body);
         if (!parsed.success) return json(res, 400, { error: "Choose a setup step and give an answer." });
+        // WHAT THEY SAID GOES IN THE TRANSCRIPT, BEFORE THE REPLY TO IT.
+        //
+        // The first run is a conversation and every other conversation in
+        // this app has both halves in it. Typing a name into a card and
+        // watching it vanish is a form, not a chat, and the owner said so:
+        // "when I enter my name and email address, that should appear in
+        // chat so you can see it."
+        //
+        // Before `setup.answer`, so the order on screen is the order it
+        // happened in: they speak, then the Chief answers.
+        echoSetupAnswer(parsed.data.step, parsed.data.answer);
         const live = await setupLiveState();
         const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
+        chiefConfirms(parsed.data.step);
         await driveSetup(view);
         return json(res, 200, view);
       }

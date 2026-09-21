@@ -229,7 +229,26 @@ export const FIRST_RUN_COPY = {
       ] as readonly FirstRunAppRow[],
       connect: "Connect",
       connecting: "Finish it in the window that just opened",
+      /**
+       * WHOSE CONNECTION IS IT.
+       *
+       * This said only "Connected", and on a machine where the owner had
+       * connected nothing it read as a plain lie. It was not: connected apps
+       * travel with the Flux Router key rather than with the computer, so a
+       * key that has Gmail on it arrives with Gmail already working, on a
+       * machine that has never seen it. Reported as "I have never connected
+       * them on this machine, so that's bullshit", which is exactly the right
+       * reaction to a word that claims something the machine did not do.
+       *
+       * Saying where it came from turns the same fact from a broken-looking
+       * claim into the good news it actually is: you do this once, not once
+       * per computer.
+       */
       connected: "Connected",
+      connectedElsewhere: "Connected, through your key",
+      /** Said once above the rows when at least one of them arrived with the
+       *  key, so the rows themselves stay short. */
+      cameWithKey: "Some of these are already on, because they came with your Flux Router key. You connected them once and they work everywhere you sign in.",
       trust: "On email you stay in charge. You approve, I send. Once you trust me with a kind of email, I can send those myself.",
       desktopOnly: "Connect this from Murage on your computer",
       dismiss: "Not now",

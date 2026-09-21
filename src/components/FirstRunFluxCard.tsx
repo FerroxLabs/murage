@@ -30,7 +30,6 @@ import {
   FirstRunBubble,
   FirstRunFailure,
   FirstRunLine,
-  FirstRunNote,
   answerSetupStep,
   failureText,
   openOutside,
@@ -64,7 +63,6 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   const desktop = useDesktopSurface();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState("");
   const [done, setDone] = useState(settled);
 
@@ -78,7 +76,6 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
       // Out of React's hands the moment it is stored. Nothing above keeps a
       // copy and nothing below renders one.
       setKey("");
-      setSaved(true);
       setDone(true);
       await answerSetupStep("flux", "key saved");
     } catch (cause) {
@@ -156,7 +153,6 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
         </div>
       )}
 
-      {saved && <FirstRunNote>{copy.saved}</FirstRunNote>}
       <FirstRunFailure message={failure} />
     </FirstRunBubble>
   );
