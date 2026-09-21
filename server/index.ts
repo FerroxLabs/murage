@@ -382,6 +382,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, teamIncidentChip, teamIncidentText, type TeamIncident, type TeamIncidentKind } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -5894,6 +5895,82 @@ function routineSourceThread(run: RoutineRun): string | null {
   return routineSourceOwner(run)?.threadId ?? null;
 }
 
+// ── a broken routine reaches somebody on the team ──────────────────────
+// A failed routine buzzes the owner and leaves a routine.run card, and that
+// is where it stopped: nobody on the team was told, so nothing on the team
+// responded, and a 7am brief that broke sat there until the person opened
+// the desktop. Policy — who hears, how often, what the report says — is in
+// server/team-incidents.ts and is tested there. This is only the wiring.
+const teamIncidentLedger = new TeamIncidentLedger();
+
+/** What the broken thread was about: the last thing asked in it and the last
+ * thing the bot said. Both are quoted into another bot's prompt, so both are
+ * marked as data by teamIncidentText and bounded by it. */
+function teamIncidentContext(threadId: string): { lastRequest: string | null; lastReply: string | null } {
+  const messages = [...store.messagesFor(threadId)].reverse();
+  return {
+    lastRequest: messages.find((message) => message.role === "user" && message.kind === "text" && message.text)?.text ?? null,
+    lastReply: messages.find((message) => message.role === "bot" && message.kind === "text" && message.text)?.text ?? null,
+  };
+}
+
+/** Deliver one incident to the bot's Chief, or do nothing.
+ *
+ * Doing nothing is a complete outcome here, not a failure: every caller has
+ * ALREADY notified the owner by the time it gets here, so a workspace with no
+ * Chief on duty is a workspace where the person has been told and there is
+ * nobody else to tell. That is also what keeps the once-not-twice
+ * notification invariant — this path never raises a second banner.
+ *
+ * The whole body is guarded. This runs on the failure path, and an incident
+ * report that throws would turn one broken routine into two. */
+function reportTeamIncident(input: { kind: TeamIncidentKind; bot: BotRecord; threadId: string; detail: string }): void {
+  try {
+    const { bot, threadId } = input;
+    const chief = chiefForBrokenBot(store.bots, bot);
+    if (!chief) return;
+    const count = teamIncidentLedger.note(threadId);
+    // a crash loop is one incident, not a storm
+    if (count.muted) return;
+    const task = store.taskByThread(bot.id, threadId);
+    const group = store.groupByThread(threadId);
+    const incident: TeamIncident = {
+      kind: input.kind,
+      bot: { id: bot.id, name: bot.name },
+      threadId,
+      title: task?.title ?? null,
+      room: group?.name ?? null,
+      detail: redactSecretsInText(input.detail),
+      ...teamIncidentContext(threadId),
+    };
+    const incidents = store.tasks(chief.id).find((candidate) => candidate.title === TEAM_INCIDENTS_THREAD_TITLE)
+      ?? store.createTask(chief.id, TEAM_INCIDENTS_THREAD_TITLE, false);
+    // The broken thread must never be the reporting thread: that would append
+    // a report about a failure into the conversation that just failed.
+    if (!incidents || incidents.threadId === threadId) return;
+    store.appendMessage(incidents.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: teamIncidentChip(incident), ok: false },
+    });
+    // `unattended`, because nobody is at the keyboard and the report quotes a
+    // failed run: the Chief's own tool calls are judged accordingly.
+    void startTurn(chief.id, teamIncidentText(incident, count), { threadId: incidents.threadId, unattended: true })
+      .catch((error) => {
+        // The Chief being busy is the common case and is not worth a banner —
+        // the chip above is already durable in its incidents thread.
+        const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
+        store.appendMessage(incidents.threadId, {
+          role: "bot",
+          kind: "activity",
+          tool: { name: `error: this incident could not reach ${chief.name} — ${why}`, ok: false },
+        });
+      });
+  } catch {
+    // never make the failure we are reporting worse than it already is
+  }
+}
+
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
   const visibleSummary = run.status === "waiting" ? run.attention : run.output;
   const summary = visibleSummary ? redactSecretsInText(visibleSummary).slice(0, 2_000) : undefined;
@@ -6079,6 +6156,7 @@ routines = new RoutineManager({
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
+    reportTeamIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? bot.threadId, detail });
   },
 });
 procedureReviews = createProcedureReviewHost({
