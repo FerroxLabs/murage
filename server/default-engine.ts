@@ -81,11 +81,29 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
   // The sign-in ranking keeps its job for everything else: between Claude,
   // Codex and the rest, an engine that says it is signed in still wins, and
   // one that does not answer the question keeps the benefit of the doubt.
-  const fuigo = usable.find((d) => d.driverKind === "fuigoAgent");
+  // SIGNED IN IS THE SIGNAL THAT SAYS "THEY ALREADY PAY FOR THIS".
+  //
+  // This ordering was briefly inverted, to put the engine we ship above
+  // everything. That was wrong, and wrong in the way that costs a customer
+  // money: on a machine with Claude Code signed in, the moment a Flux key
+  // landed the Chief moved OFF their flat-rate subscription and onto our
+  // meter. They are paying twice for the same sentence, and they find out
+  // on a bill rather than from us.
+  //
+  // Fuigo is still the default on the machine this product is for, because
+  // an engine nobody has signed into is not usable and drops to the bottom
+  // rank, and a machine with nothing installed has only Fuigo in the list at
+  // all. What it must not do is outrank something the person has already
+  // bought.
+  //
+  // Note the scope: this is the INTERACTIVE assistant. Scheduled work is a
+  // separate question, because a subscription is flat-rate but rate-limited
+  // and draining it with background routines would make Murage the thing
+  // that broke the tool they bought for their day job.
   const best = Math.min(...usable.map(signInRank));
   const preferred = usable.filter((d) => signInRank(d) === best);
   const pick =
-    fuigo ??
+    preferred.find((d) => d.driverKind === "fuigoAgent") ??
     preferred.find((d) => d.driverKind === "claudeAgent") ??
     preferred[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
