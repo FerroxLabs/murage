@@ -4,6 +4,7 @@ import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
+  botsEyebrowLine,
   briefButtonLabel,
   briefRanLine,
   clockLabel,
@@ -72,6 +73,10 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
   { path: "localModelLine(none)", text: localModelLine("", "") },
   { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
+  { path: "botsEyebrowLine(0)", text: botsEyebrowLine(0) },
+  { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
+  { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
+  { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
 ];
 
 const everything = [...readable, ...assembled];
@@ -415,6 +420,40 @@ describe("first run copy: the things the flow promises", () => {
     for (const named of [/\bbots\b/i, /\broutines\b/i]) {
       expect.soft(offer, "the offer does not name what is in the backup").toMatch(named);
     }
+  });
+
+  // A CROWD IS COUNTED, NOT REMEMBERED.
+  //
+  // "Two bots" was written as a literal twice: on the job row offered before
+  // anything is installed, and as `botsEyebrowMany` on the crew screen. Both
+  // were claims about `starter-solo-business.json` rather than readings of
+  // it, and the second one rendered directly above the names, so a package
+  // that grew a third bot would have said "Two bots" over three of them.
+  //
+  // The eyebrow now counts what `businessResult` was handed. Nothing else in
+  // the flow states a number of bots at all, because nothing else in the
+  // flow has the package in front of it when it renders.
+  it("never states a crew size the screen has not counted", () => {
+    const counting = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+bots?\b/i;
+    // The two eyebrow pieces are the counter's own words and are excluded by
+    // path, not by a list of sentences: "One bot" is chosen only when the
+    // reading says one.
+    for (const { path, text } of readable.filter((entry) => !/\.botsEyebrow\w*$/.test(entry.path))) {
+      const hit = counting.exec(text);
+      expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null, "claims a crew size").toBeNull();
+    }
+  });
+
+  it("counts the crew it is given, however big the package turns out to be", () => {
+    expect(botsEyebrowLine(1)).toBe("One bot");
+    expect(botsEyebrowLine(2)).toBe("Two bots");
+    // The one that mattered: a third bot changes the eyebrow rather than
+    // leaving it saying two.
+    expect(botsEyebrowLine(3)).toBe("Three bots");
+    // A package with nothing in it still leaves words on the screen, and a
+    // count past spelling out is a figure rather than a wrong word.
+    expect(botsEyebrowLine(0)).toBe("No bots");
+    expect(botsEyebrowLine(12)).toBe("12 bots");
   });
 
   it("never claims found engines on a bare machine", () => {

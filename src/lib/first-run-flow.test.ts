@@ -164,12 +164,19 @@ describe("the three lines while it works", () => {
   // THE SIMULATION SAID THREE BOTS AND TWO ROUTINES. THE PACKAGE HAS TWO AND
   // ONE. The screen after this one shows the real crew, so a count here that
   // did not match would be caught by the person two seconds later.
-  it("announces the crew the package actually contains", () => {
+  // These three lines are shown while the package installs, and
+  // `workingLines` is handed the job and what the person typed, never the
+  // crew. It said "Two bots and one review", which is a count made by a
+  // function that cannot see what it is counting: right today, wrong the
+  // day the package grows. So it names the crew and counts nothing, and the
+  // counting happens on the screen after, which does have the reading.
+  it("announces the crew without counting one it cannot see", () => {
     expect(workingLines("business", [], "")).toEqual([
       "Picking a shape that fits one person running the whole thing.",
-      "Two bots and one review, and no plumbing for you to do.",
+      "Your crew and one review, and no plumbing for you to do.",
       "Ready.",
     ]);
+    expect(workingLines("business", [], "").join(" ")).not.toMatch(/\b(?:one|two|three|\d+)\s+bots?\b/i);
     expect(workingLines("business", [], "").join(" ")).not.toMatch(/three bots|two routines/i);
   });
 });

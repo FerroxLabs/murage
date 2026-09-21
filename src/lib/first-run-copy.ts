@@ -588,7 +588,11 @@ export const FIRST_RUN_COPY = {
         {
           id: "business",
           title: "Help me run my business",
-          sub: "Two bots and a Monday review, set up in one go.",
+          // A count claimed on a row that renders BEFORE anything is
+          // installed, and with no package in front of it to read. The
+          // crew screen counts because it has the reading; this row cannot,
+          // so it stops claiming a number rather than claiming a stale one.
+          sub: "Your crew and a Monday review, set up in one go.",
         },
       ] as readonly FirstRunJobRowCopy[],
       /** What one missing thing is called out loud. Shared by the tag on a
@@ -727,8 +731,15 @@ export const FIRST_RUN_COPY = {
          * one routine. A first run that announced a third bot would be
          * describing a crew the person does not then have, on the one screen
          * whose whole job is showing them what they just got.
+         *
+         * The fix for that was "Two bots and one review", which is the same
+         * mistake with today's number in it: this line is one of three shown
+         * while the package installs, and `workingLines` is handed the job
+         * and what the person typed, never the crew. So it names the crew
+         * rather than counting one it cannot see. The counting happens on
+         * the screen that follows, which does have the reading.
          */
-        businessBuilt: "Two bots and one review, and no plumbing for you to do.",
+        businessBuilt: "Your crew and one review, and no plumbing for you to do.",
         topicSourced: "Keeping what has a source, flagging what does not.",
         /** Wrapped around the first words of what they typed, so they can
          *  see it is their topic and not a generic one. */
@@ -832,8 +843,17 @@ export const FIRST_RUN_COPY = {
       business: {
         header: "Your crew",
         lead: "Installed and running. Change any of it whenever you like.",
+        /**
+         * THE EYEBROW COUNTS, IT DOES NOT REMEMBER.
+         *
+         * `botsEyebrowMany` was the literal "Two bots", so a package that
+         * grew a third would have put "Two bots" directly above three names,
+         * on the one screen whose entire job is showing somebody what they
+         * just got. The count now comes off the crew reading through
+         * `botsEyebrowLine`; these are the noun it counts.
+         */
         botsEyebrowOne: "One bot",
-        botsEyebrowMany: "Two bots",
+        botsEyebrowMany: "bots",
         roles: {
           "business-planner": "priorities, and what finished means",
           "draft-partner": "writes it, then reviews it",
@@ -1122,6 +1142,24 @@ export function signedOutAgentsLine(names: readonly string[]): string {
   // and two is the ordinary case on a developer's machine.
   const them = names.filter((name) => name.trim()).length > 1 ? "them" : "it";
   return `You have ${listed} on this computer, and nobody is signed in to ${them} yet.`;
+}
+
+/**
+ * "One bot", "Two bots", "Three bots": the crew eyebrow, counted.
+ *
+ * Spelled out because the whole flow says numbers the way a person says
+ * them, and spelled only as far as a crew plausibly goes; past that the
+ * figure is better than a word nobody reads. Zero is "No bots" rather than
+ * "Zero bots", and it exists because a package with no agents in it must
+ * still leave words on the screen.
+ */
+const SPELLED = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"] as const;
+
+export function botsEyebrowLine(count: number): string {
+  const words = FIRST_RUN_COPY.flow["do-it"].business;
+  const whole = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (whole === 1) return words.botsEyebrowOne;
+  return `${SPELLED[whole] ?? String(whole)} ${words.botsEyebrowMany}`;
 }
 
 /** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */
