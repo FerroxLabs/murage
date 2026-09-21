@@ -1,17 +1,28 @@
-// When a bot's run breaks, somebody on the team hears about it.
+// When a bot BELOW the Chief breaks, somebody on the team hears about it.
 //
-// Today a broken run reaches the OWNER and stops there: a failed routine
-// buzzes a notification and leaves a routine.run card, a dispatch failure
-// buzzes turn-failed. Both are true and neither is help. Nobody on the team
-// is told, so nothing on the team responds, and the work sits until the
-// person opens the desktop — which for a 7am routine means the morning is
-// already gone.
+// Before this, a broken run reached the OWNER and stopped there: a failed
+// routine buzzed a notification and left a routine.run card, a dispatch
+// failure buzzed turn-failed. Both are true and neither is help. Nobody on
+// the team was told, so nothing on the team responded, and the work sat until
+// the person opened the desktop — which for a 7am routine means the morning
+// is already gone.
 //
 // The team already has the role for this. Murage's org chart has one
 // workspace Chief and section leads under it, and `canReach` in store.ts is
 // the single predicate that says who may coordinate whom. So a broken run is
 // delivered to that bot as a turn of its own, in one "Team incidents" thread,
 // with what broke, where, and what the thread last said.
+//
+// WHAT THIS DOES NOT COVER, AND IT IS THE COMMON CASE ON A FRESH INSTALL:
+// the workspace Chief's own runs. There is nobody above the Chief, so
+// `chiefForBrokenBot` returns nobody for it — and the first routine most
+// people ever have, the first run's 07:00 Morning brief, is scheduled on
+// exactly that bot (server/index.ts, POST /api/setup/routine, `botId:
+// chief.id`). For that one routine this module changes nothing: the person's
+// routine-failed banner is still the whole of the delivery. The escalation
+// begins when there is a team under the Chief. team-incidents.test.ts runs
+// the real election and the real predicate over it, so this is a recorded
+// fact rather than a description of one.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO: retry. Upstream pairs this with a
 // `retry_thread` tool and a `mayRetry` flag, and that flag only changes the

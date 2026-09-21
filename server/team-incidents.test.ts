@@ -3,10 +3,14 @@
 // These pin the policy half of team incidents: who hears about a broken run,
 // how often, and what the report says. The harness half (creating the
 // incidents thread, starting the Chief's turn) is in server/index.ts.
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { readFileSync, rmSync } from "node:fs";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import { DATA_DIR } from "./config.ts";
+import type { ModelSelection } from "./contracts.ts";
 import { turnFailureBuzzes } from "./notify.ts";
+import { chiefDecision } from "./setup.ts";
+import { Store } from "./store.ts";
 
 import {
   MAX_WAITING_TEAM_INCIDENTS,
@@ -51,6 +55,75 @@ describe("who hears about a broken run", () => {
   it("nobody, for the workspace Chief itself — there is nothing above it", () => {
     const roster = [chief("chief"), lead("sales-lead", "Sales")];
     expect(chiefForBrokenBot(roster, chief("chief"))).toBeNull();
+  });
+
+  // WHOSE ROUTINE IS THE 07:00 BRIEF?
+  //
+  // The clause above reads as an edge case beside the four that escalate. On
+  // a fresh install it is the ORDINARY case, and this runs the real seating
+  // path to say so rather than asserting it from hand-written records: the
+  // first bot a blank machine creates is elected workspace Chief the first
+  // time setup is opened (chiefDecision + setChiefOfStaff), and the first
+  // run's Morning brief is created with `botId: chief.id`. So the single most
+  // likely scheduled failure in the product — the first routine most people
+  // ever have, on the first morning they have it — escalates to nobody, and
+  // the person's banner is the whole of the delivery.
+  //
+  // That is correct, and it is not what "a routine that breaks at 7am reaches
+  // somebody on the team" says. Recorded as a fact so the next person to read
+  // that sentence is arguing with a test.
+  describe("the first-run Chief's own routine, on the roster a blank machine builds", () => {
+    const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
+    let store: Store;
+
+    beforeEach(() => {
+      rmSync(DATA_DIR, { recursive: true, force: true });
+      store = new Store(selection);
+    });
+
+    /** Exactly what opening setup does on a blank machine: the oldest visible
+     *  bot is elected, at workspace scope. */
+    const seatTheChief = (): string => {
+      const decision = chiefDecision(undefined, store.bots);
+      expect(decision.kind).toBe("elect");
+      const botId = decision.kind === "none" ? "" : decision.botId;
+      store.setChiefOfStaff(botId, decision.kind === "elect" ? decision.section : null, "workspace");
+      return botId;
+    };
+
+    it("escalates to nobody, because the Chief is the top of the org chart", () => {
+      const first = store.createBot({ name: "Chief" });
+      const chiefId = seatTheChief();
+      expect(chiefId).toBe(first.id);
+      expect(store.workspaceChief()?.id).toBe(first.id);
+      // the bot the brief is scheduled on, asked of the real predicate
+      expect(chiefForBrokenBot(store.bots, store.bot(chiefId)!)).toBeNull();
+    });
+
+    it("still escalates to nobody once the person has hired a team", () => {
+      const first = store.createBot({ name: "Chief" });
+      const chiefId = seatTheChief();
+      // no section, which is what the Add-a-bot button makes: the Chief's
+      // own team, and the one roster edge that needs no lead
+      store.createBot({ name: "Ada" });
+      store.createBot({ name: "Bo" });
+      expect(chiefId).toBe(first.id);
+      expect(chiefForBrokenBot(store.bots, store.bot(chiefId)!)).toBeNull();
+      // and the team below it escalates normally, which is the case that
+      // makes the Chief's own silence easy to miss
+      const ada = store.bots.find((bot) => bot.name === "Ada")!;
+      expect(chiefForBrokenBot(store.bots, ada)?.id).toBe(chiefId);
+    });
+
+    it("is the bot the first run's Morning brief is scheduled on", () => {
+      // The route is in server/index.ts, which boots a server on import, so
+      // this one is read from the source with comments stripped.
+      const route = index.slice(index.indexOf('path === "/api/setup/routine"'));
+      const body = route.slice(0, route.indexOf("setupAction"));
+      expect(body).toContain("const chiefBotId = setup.chiefBotId();");
+      expect(body).toContain("botId: chief.id");
+      expect(body).toContain('template === "brief"');
+    });
   });
 
   it("nobody, when no workspace Chief is elected and the bot has no lead", () => {
