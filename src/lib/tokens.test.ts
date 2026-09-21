@@ -207,7 +207,16 @@ describe("token drift", () => {
     const localModels = readFileSync(join(root, "shared/local-models.ts"), "utf8");
     const PROBE_OUTCOME_IDS = ["instead-of-tool", "instead-of-tools"];
     for (const id of PROBE_OUTCOME_IDS) expect(localModels, id).toContain(`"text-${id}"`);
-    const NOT_A_CLASS = new Set(PROBE_OUTCOME_IDS);
+    // The same shape again, for the Inbox's view tabs. `"to-read"` is one of
+    // four values the view switches on, and the utility regex reads it as the
+    // gradient prefix `to-` plus a token named `read`. It never reaches a
+    // className either. This guard has been red on the branch because of it,
+    // and a red guard is a guard nobody reads: the data-safety gate spent
+    // tonight red for the same reason and hid a real recursive delete.
+    const inbox = readFileSync(join(root, "src/components/Inbox.tsx"), "utf8");
+    const INBOX_VIEW_IDS = ["read"];
+    for (const id of INBOX_VIEW_IDS) expect(inbox, id).toContain(`"to-${id}"`);
+    const NOT_A_CLASS = new Set([...PROBE_OUTCOME_IDS, ...INBOX_VIEW_IDS]);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
     // not theme surfaces, and Tailwind does generate them.
