@@ -123,7 +123,7 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
-import { subscribe } from "./sendlane.ts";
+import { sendlaneStartupNotice, subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
   cleanupStaleAttachmentPartials,
@@ -16088,6 +16088,14 @@ try { imageOperations.resumePendingPublications(); outputPublisher.resumePending
 catch { console.warn("Pending image publication could not finish. It will retry at the next startup."); }
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
+  //
+  // Without credentials `subscribe()` returns "disabled" and the route below
+  // logs only "upstream", so a build that collects nothing said nothing. This
+  // is the one line that makes that visible, and it names the variables rather
+  // than any value.
+  const sendlaneNotice = sendlaneStartupNotice();
+  if (sendlaneNotice) console.warn(sendlaneNotice);
   // Warm the skill index while nobody is waiting.
   //
   // It is built lazily by whichever request needs it first, and all three of
