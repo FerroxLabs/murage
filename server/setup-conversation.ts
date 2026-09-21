@@ -42,9 +42,27 @@ export interface SetupConversationPlan {
   append: SetupCardPlan[];
   /** Keys of cards ALREADY in the thread that should now be shown settled. */
   settle: string[];
+  /**
+   * Keys of cards already in the thread that must be shown LIVE again.
+   *
+   * SETTLED USED TO BE A ONE-WAY LATCH AND THAT WAS RELEASE BLOCK #2. The
+   * driver set `settled: true` and nothing in the tree ever set it back, so
+   * "Something else" on the do-it card reopened `chat` on the checklist while
+   * the jobs card above it stayed settled: five greyed-out rows, the escape
+   * hatch hidden, and the server refusing to append a replacement because
+   * `chat:jobs` was already claimed. The person had asked for another job and
+   * there was nothing on screen that could take one.
+   *
+   * It is the same list as `settle`, read the other way round, so the
+   * transcript says what the checklist says. `deriveSetupState` re-decides
+   * every step from live state on every read and calls that the checklist
+   * telling the truth; a card that cannot follow it back is a card that lies
+   * on the way down.
+   */
+  unsettle: string[];
 }
 
-const NOTHING: SetupConversationPlan = { append: [], settle: [] };
+const NOTHING: SetupConversationPlan = { append: [], settle: [], unsettle: [] };
 
 // THE CLOSING CARD IS PARKED WITH THE REST. It used to ride on the last step
 // once `view.next` went null. The `flow` step now ends on the job's own
@@ -352,13 +370,20 @@ export function setupConversationPlan(
 
   if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
 
+  // SETTLED FOLLOWS THE STEP, IN BOTH DIRECTIONS. A step that is finished
+  // shows its card settled; a step that is outstanding shows its card live,
+  // including one that WAS finished and has been put back. Deciding both here
+  // is what stops the two halves disagreeing: the old code emitted only the
+  // settling half, so a reopened step left its card greyed out for ever.
   const settle: string[] = [];
+  const unsettle: string[] = [];
   for (const step of SETUP_STEPS) {
     const entry = stepView(view, step);
-    if (!entry || (!entry.done && !entry.skipped)) continue;
+    const finished = entry !== undefined && (entry.done || entry.skipped === true);
     for (const variant of SETUP_ASK_VARIANTS[step]) {
       const key = setupCardKey(step, variant);
-      if (present.has(key)) settle.push(key);
+      if (!present.has(key)) continue;
+      (finished ? settle : unsettle).push(key);
     }
   }
 
@@ -371,5 +396,5 @@ export function setupConversationPlan(
     claimed.add(card.key);
     append.push(card);
   }
-  return { append, settle };
+  return { append, settle, unsettle };
 }

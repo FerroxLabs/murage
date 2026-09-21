@@ -1978,7 +1978,13 @@ function driveSetupConversation(view: SetupView): void {
       if (card && parsed) present.set(parsed.key, { id: message.id, card, setup: parsed });
     }
     const plan = setupConversationPlan(view, new Set(present.keys()));
-    if (plan.append.length === 0 && plan.settle.every((key) => present.get(key)?.setup.settled === true)) return;
+    // A card whose step went BACK has to come back live, which is the half
+    // this early return used to be blind to: "Something else" reopened `chat`
+    // and the plan had nothing to append, so the driver returned here and the
+    // jobs card stayed settled with all five rows disabled.
+    const settling = plan.settle.some((key) => present.get(key)?.setup.settled !== true);
+    const unsettling = plan.unsettle.some((key) => present.get(key)?.setup.settled === true);
+    if (plan.append.length === 0 && !settling && !unsettling) return;
     // THE OTHER QUESTION IN THIS THREAD.
     //
     // A new bot is seeded with a greeting and an intake card asking what the
@@ -2005,6 +2011,14 @@ function driveSetupConversation(view: SetupView): void {
       const existing = present.get(key);
       if (!existing || existing.setup.settled === true) continue;
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: true } } });
+    }
+    // THE WAY BACK, WHICH DID NOT EXIST. Nothing in the tree ever wrote
+    // `settled: false`, so a step that reopened left the card that asks it
+    // greyed out and the person with nothing to press.
+    for (const key of plan.unsettle) {
+      const existing = present.get(key);
+      if (!existing || existing.setup.settled !== true) continue;
+      store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: false } } });
     }
     for (const card of plan.append) {
       store.appendMessage(threadId, {

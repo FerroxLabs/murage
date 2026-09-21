@@ -364,6 +364,48 @@ describe("the rest of the walk", () => {
   });
 });
 
+// RELEASE BLOCK #2, FIRST HALF, ON A REAL SERVER.
+//
+// "Something else" and "Take something else off my plate" both reopen `chat`,
+// and `SetupChecklist.reopen` drops the recorded job id, which is exactly what
+// puts the Chief's question back. The transcript did not follow: the driver
+// wrote `settled: true` and nothing in the tree ever wrote it back, so the
+// jobs card stayed settled, which is five disabled rows with the escape hatch
+// hidden. No replacement was coming either, because one card per key is the
+// rule that makes this plan idempotent. Everybody who finished their first
+// job and pressed the only control on the screen got a greyed out list.
+//
+// The card, over HTTP, both ways round. The plan's own test covers the rule;
+// this covers the wiring, which is the half that was actually missing.
+describe("a reopened step's card comes back live", () => {
+  const jobs = setupCardKey("chat", "jobs");
+  const cardFor = async (key: string) => (await setupCards()).find((card) => card.key === key);
+
+  it("asks the question again in the thread it was asked in", async () => {
+    // Put `chat` back on the list, which is what the do-it card's two back
+    // affordances do, and the Chief asks it.
+    const reopened = await api("POST", "/api/setup/reopen", { step: "chat" }, desktop);
+    expect(reopened.status).toBe(200);
+    expect((reopened.body as SetupView).next).toBe("chat");
+    expect(await cardFor(jobs), "the Chief never asked what to take off your plate").toBeTruthy();
+
+    const answered = await api("POST", "/api/setup/answer", { step: "chat", answer: "notes" }, desktop);
+    expect(step(answered.body as SetupView, "chat")).toMatchObject({ done: true, note: "notes" });
+    expect((await cardFor(jobs))?.settled).toBe(true);
+  });
+
+  it("un-settles it when the person asks for something else", async () => {
+    const back = await api("POST", "/api/setup/reopen", { step: "chat" }, desktop);
+    expect(back.status).toBe(200);
+    expect(step(back.body as SetupView, "chat")).toMatchObject({ done: false });
+    // The job id is gone, so `chosenJob` is null and the do-it card has
+    // nothing left to show. The card that CAN take a new one has to be
+    // pressable, and it is the one already in the thread.
+    expect(step(back.body as SetupView, "chat").note).toBeUndefined();
+    expect((await cardFor(jobs))?.settled, "the jobs card stayed settled after its step reopened").toBe(false);
+  });
+});
+
 // A PRISTINE FIRST RUN, ON ITS OWN SERVER.
 //
 // The suite above shares one fixture and walks it forward through the whole

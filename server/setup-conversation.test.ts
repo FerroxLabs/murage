@@ -455,6 +455,54 @@ describe("called on every read, so it must be idempotent", () => {
   });
 });
 
+// RELEASE BLOCK #2, FIRST HALF: A STEP CAN GO BACK AND ITS CARD COULD NOT.
+//
+// Both back affordances on the do-it card call `reopenSetupStep("chat")`, and
+// `SetupChecklist.reopen` replaces the step with `{ done: false }`. The
+// checklist said the question was open again and the transcript did not: the
+// driver wrote `settled: true` and NOTHING in the tree ever wrote it back, so
+// the jobs card above stayed settled, which is five disabled rows and no
+// escape hatch. The server would not append a replacement either, because
+// `chat:jobs` is already in the thread and one card per key is the rule that
+// makes this whole plan idempotent. So the person pressed the only control
+// they had, asked for another job, and got a greyed out list.
+describe("a step that goes back takes its card with it", () => {
+  const keyed = live({ ownerName: "Sean", flux: FLUX_SAVED });
+  const present = [
+    setupCardKey("hello", "welcome"),
+    setupCardKey("detect", "bare"),
+    setupCardKey("flux", "key"),
+    setupCardKey("chat", "jobs"),
+    setupCardKey("flow", "do-it"),
+  ];
+
+  it("settles the jobs card while the job is chosen", () => {
+    const chosen = plan(keyed, present, state({ detect: DETECTED, chat: { note: "brief" } }));
+    expect(chosen.settle).toContain(setupCardKey("chat", "jobs"));
+    expect(chosen.unsettle).not.toContain(setupCardKey("chat", "jobs"));
+  });
+
+  it("puts it back live the moment the step is reopened", () => {
+    // Exactly what `reopen` leaves behind: `{ done: false }`, with the
+    // recorded job id dropped, which is what makes the question live again.
+    const back = plan(keyed, present, state({ detect: DETECTED }));
+    expect(back.unsettle, "the card that asks the reopened question stayed settled")
+      .toContain(setupCardKey("chat", "jobs"));
+    expect(back.settle).not.toContain(setupCardKey("chat", "jobs"));
+    // And no replacement is coming, which is why the card in the thread had
+    // to be the thing that came back.
+    expect(keys(back.append)).not.toContain(setupCardKey("chat", "jobs"));
+  });
+
+  it("leaves a card whose step is still finished alone", () => {
+    const back = plan(keyed, present, state({ detect: DETECTED }));
+    for (const settled of [setupCardKey("hello", "welcome"), setupCardKey("detect", "bare"), setupCardKey("flux", "key")]) {
+      expect(back.settle, settled).toContain(settled);
+      expect(back.unsettle, settled).not.toContain(settled);
+    }
+  });
+});
+
 describe("an install that has already been used", () => {
   // A restored backup trips every one of these: answered turns, a saved key,
   // connected apps and routines. Interrupting it with a welcome card is the
@@ -471,7 +519,7 @@ describe("an install that has already been used", () => {
 
   it("is shown nothing at all", () => {
     expect(view(restored).firstRun).toBe(false);
-    expect(setupConversationPlan(view(restored), new Set())).toEqual({ append: [], settle: [] });
+    expect(setupConversationPlan(view(restored), new Set())).toEqual({ append: [], settle: [], unsettle: [] });
   });
 
   it("is still shown nothing when the checklist has open steps", () => {

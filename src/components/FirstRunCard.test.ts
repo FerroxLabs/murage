@@ -22,7 +22,7 @@ const { helloAnswerReady } = await import("./FirstRunHelloCard");
 const { FirstRunFluxConnect } = await import("./FirstRunFluxCard");
 const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
 const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
-const { setupCardKey } = await import("../../shared/setup-card");
+const { SETUP_CARD_VARIANTS, setupCardKey } = await import("../../shared/setup-card");
 // The server's own list of which card asked for which step. Imported rather
 // than copied: a hand-kept twin of it is how the Flux step came to open on a
 // card with no controls while every list in the tree agreed with itself.
@@ -535,12 +535,83 @@ describe("step five: the job, done", () => {
     expect(markup).not.toMatch(/<textarea[^>]*>[^<]/);
   });
 
-  it("says nothing at all about a job nobody chose", async () => {
+  // RELEASE BLOCK #2, SECOND HALF, AND THE TEST THAT USED TO SAY IT WAS FINE.
+  //
+  // This read `expect(render("flow", "do-it")).toBe("")` and passed, and what
+  // it was describing is the card rendering THE EMPTY STRING. That was
+  // defensible while a job nobody chose was impossible: the server only plans
+  // this card once `chat` is settled, and `chat` is settled by a recorded job
+  // id. Then "Something else" made it the normal case. It calls
+  // `reopenSetupStep("chat")`, `SetupChecklist.reopen` replaces the step with
+  // `{ done: false }` and DROPS the note, so `chosenJob` returns null and
+  // everybody who finished their first job and pressed the only control on
+  // the screen landed on blank space.
+  //
+  // A card with no body is not a smaller card, it is a hole in a transcript.
+  it("says where the question went rather than rendering nothing", async () => {
+    const copy = FIRST_RUN_COPY.flow["do-it"];
     await machine({ ownerName: "Sean", steps: [{ id: "chat", done: false, status: "open" }] });
-    expect(render("flow", "do-it")).toBe("");
-    // ...including a note from a build that had other jobs in it.
+    const reopened = render("flow", "do-it");
+    expect(reopened, "the do-it card rendered nothing after the step reopened").not.toBe("");
+    expect(reopened).toContain(asHtml(copy.noJob));
+
+    // ...including a note from a build that had other jobs in it, which is
+    // the same fact arriving down a different road.
     await machine({ ownerName: "Sean", steps: [{ id: "chat", done: true, note: "phone", status: "done" }] });
-    expect(render("flow", "do-it")).toBe("");
+    expect(render("flow", "do-it")).toContain(asHtml(copy.noJob));
+
+    // And a machine nobody has read yet is a different sentence, because it
+    // is a different fact: nothing has been chosen is not nothing is known.
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    const unknown = render("flow", "do-it");
+    expect(unknown, "the do-it card rendered nothing while the view was in flight").not.toBe("");
+    expect(unknown).toContain(asHtml(copy.waiting));
+  });
+});
+
+// NOT ONE CARD IN THE FLOW MAY RENDER NOTHING.
+//
+// Two shipped that did. `jobs` and `do-it` had no case in `firstRunCardBody`
+// at all and drew literally nothing, and then `do-it` drew nothing again for
+// everybody who pressed "Something else". Both were single cards found one at
+// a time, after they shipped, which is what a sweep is for: the states below
+// are the ones a card can actually be in, and every variant is put through
+// all of them.
+describe("no card in this flow can be reached and render nothing", () => {
+  const STATES: Array<[string, Record<string, unknown>]> = [
+    ["nothing known about the machine", {}],
+    ["a blank machine, mid flow", { ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true }],
+    ["an engine, a key and two apps", {
+      ownerName: "Sean",
+      fluxReady: true,
+      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      connectedJobApps: ["gmail", "googlecalendar"],
+      steps: [{ id: "chat", done: true, note: "brief", status: "done" }],
+    }],
+    ["the job chosen, then handed back", {
+      ownerName: "Sean",
+      fluxReady: true,
+      connectedJobApps: [],
+      steps: [{ id: "chat", done: false, status: "open" }],
+    }],
+  ];
+
+  it("gives every variant a body in every state a person can be in", async () => {
+    for (const [label, where] of STATES) {
+      await machine(where);
+      for (const variant of SETUP_CARD_VARIANTS) {
+        for (const settled of [false, true]) {
+          const markup = render(PARKED, variant, settled ? { settled: true } : {});
+          // The words, not the elements: an empty body is still a div, and
+          // that is exactly the shape the audit found.
+          const words = markup.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+          expect.soft(words.length, `${variant} rendered nothing a person can read: ${label}, settled=${settled}`)
+            .toBeGreaterThan(20);
+        }
+      }
+    }
   });
 });
 
