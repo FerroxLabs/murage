@@ -13,15 +13,19 @@
 //  2. `send()` consults it BEFORE it composes the draft. Checking afterwards
 //     would be checking after the text had already been taken.
 //
-// (2) is an ordering inside a React component that this node-environment
-// suite cannot render, so it is read out of the SOURCE, with comments
-// stripped first — a test that matched prose could be satisfied by this very
-// paragraph.
+// (2) used to be written out inside a React component this node-environment
+// suite cannot render, so the only check available was a regex over that
+// component's source: green for any rewrite the regex did not anticipate, and
+// never once running the branch. The ordering now lives in
+// src/lib/composer-send-gate.ts, and the tests below RUN it with a real
+// intake in flight. One source check survives, and says so: that the
+// component still asks.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { composerSendGate } from "./composer-send-gate";
 import {
   composerUploadsPending,
   resetComposerUploads,
@@ -115,36 +119,79 @@ describe("the pending-upload count a composer sends against", () => {
 });
 
 describe("the composer's send path", () => {
-  const composer = () => code("components/Composer.tsx");
+  // A real Flux Router key SHAPE (shared/key-extract.ts), in a real sentence,
+  // built the way src/components/PasteKeys.test.ts builds its fixture.
+  const KEY = `sk-flux-${"F".repeat(40)}`;
 
-  // The guard STATEMENT, not merely a mention of the predicate: the same
-  // call also feeds the subscription that takes the notice back down, and
-  // that one sits near the top of the component where it would satisfy any
-  // ordering check by accident.
-  const GUARD = /if \(composerUploadsPending\(threadId\)\) \{\s*setSendNotice\(\{ kind: "upload-pending" \}\);\s*return;\s*\}/;
-
-  it("holds the message instead of sending it without the image", () => {
-    expect(composer()).toMatch(GUARD);
+  it("holds the message instead of sending it without the image", async () => {
+    let release = () => {};
+    const intake = trackComposerUpload("thread-a", () => new Promise<void>((r) => { release = r; }));
+    expect(composerSendGate({ text: "here you go", threadId: "thread-a" }))
+      .toEqual({ kind: "upload-pending" });
+    release();
+    await intake;
+    // and the moment the intake finishes, the same send goes through
+    expect(composerSendGate({ text: "here you go", threadId: "thread-a" }))
+      .toEqual({ kind: "compose" });
   });
 
-  it("asks whether an upload is pending before it composes the draft", () => {
-    const source = composer();
-    const guard = source.search(GUARD);
-    const compose = source.indexOf("composeMessage(effectiveText, attachments)");
-    expect(guard).toBeGreaterThan(-1);
-    expect(compose).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(compose);
+  it("lets another conversation send while this one is uploading", async () => {
+    let release = () => {};
+    const intake = trackComposerUpload("thread-a", () => new Promise<void>((r) => { release = r; }));
+    expect(composerSendGate({ text: "unrelated", threadId: "thread-b" }))
+      .toEqual({ kind: "compose" });
+    release();
+    await intake;
   });
 
-  it("still lets the pasted-key guard go first, because a key in the transcript is unrecoverable", () => {
-    const source = composer();
-    const keyGuard = source.indexOf("detectFluxKeyInComposer(effectiveText)");
-    expect(keyGuard).toBeGreaterThan(-1);
-    expect(keyGuard).toBeLessThan(source.search(GUARD));
+  it("still lets the pasted-key guard go first, because a key in the transcript is unrecoverable", async () => {
+    // The two guards fire on the same send. The key wins: an image arriving
+    // on the next message is a confusion, a key in the transcript is on disk
+    // and in the next prompt a model reads.
+    let release = () => {};
+    const intake = trackComposerUpload("thread-a", () => new Promise<void>((r) => { release = r; }));
+    expect(composerSendGate({ text: `my key is ${KEY} thanks`, threadId: "thread-a" }))
+      .toEqual({ kind: "flux-key", key: KEY, rest: "my key is thanks" });
+    release();
+    await intake;
   });
 
-  it("wraps every composer intake path, so drop and paste are no safer or worse than the attach button", () => {
-    expect(composer().match(/trackComposerUpload\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(code("components/ComposerAttachments.tsx")).toContain("trackComposerUpload(");
+  it("keeps the sentence around the key and takes only the key", () => {
+    expect(composerSendGate({ text: `${KEY}`, threadId: "thread-a" }))
+      .toEqual({ kind: "flux-key", key: KEY, rest: "" });
+    expect(composerSendGate({ text: "no key in here", threadId: "thread-a" }))
+      .toEqual({ kind: "compose" });
+  });
+
+  it("guards a composer with no thread of its own too", async () => {
+    let release = () => {};
+    const intake = trackComposerUpload(undefined, () => new Promise<void>((r) => { release = r; }));
+    expect(composerSendGate({ text: "here you go" })).toEqual({ kind: "upload-pending" });
+    release();
+    await intake;
+  });
+
+  // The one thing the gate cannot prove about itself: that the composer asks
+  // it, ahead of composing the draft. Read from the source with comments
+  // stripped, because this suite cannot render the component.
+  describe("and the composer asks it before it composes the draft", () => {
+    const composer = () => code("components/Composer.tsx");
+
+    it("gates the send, and gates it first", () => {
+      const source = composer();
+      const gate = source.indexOf("composerSendGate({ text: effectiveText, threadId })");
+      const compose = source.indexOf("composeMessage(effectiveText, attachments)");
+      expect(gate).toBeGreaterThan(-1);
+      expect(compose).toBeGreaterThan(-1);
+      expect(gate).toBeLessThan(compose);
+      // and it acts on both answers rather than only one of them
+      expect(source).toContain('gate.kind === "flux-key"');
+      expect(source).toContain('gate.kind === "upload-pending"');
+    });
+
+    it("wraps every composer intake path, so drop and paste are no safer or worse than the attach button", () => {
+      expect(composer().match(/trackComposerUpload\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+      expect(code("components/ComposerAttachments.tsx")).toContain("trackComposerUpload(");
+    });
   });
 });

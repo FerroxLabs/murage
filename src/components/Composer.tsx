@@ -52,6 +52,7 @@ import {
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { composerUploadsPending, subscribeComposerUploads, trackComposerUpload } from "@/lib/composer-uploads";
+import { composerSendGate } from "@/lib/composer-send-gate";
 import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -62,7 +63,7 @@ import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
-import { detectFluxKeyInComposer, fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
+import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
 import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
 
 /** The active @mention query at the caret: the text between an `@` that
@@ -559,25 +560,24 @@ export function Composer({
   };
   const send = () => {
     if (locked) return;
-    // A KEY NEVER REACHES THE TRANSCRIPT.
+    // WHAT HAS TO BE SETTLED BEFORE A DRAFT IS COMPOSED.
     //
-    // First, before the size check, before the draft is composed, before
-    // anything at all. People paste a Flux Router key into whatever is on
-    // screen, and during the first run the only thing on screen is this box.
-    // A key that gets past here is a key written into the conversation, saved
-    // to disk with it, and handed to the next model that reads the thread.
-    // There is no taking it back afterwards, so the guard goes before every
-    // other decision this function makes.
-    //
-    // The sentence around it is theirs and is kept: only the key itself is
-    // lifted out, and the composer says where it went.
-    const pastedKey = detectFluxKeyInComposer(effectiveText);
-    if (pastedKey) {
-      setText(pastedKey.rest);
+    // A pasted Flux Router key must never reach the transcript, and an image
+    // still uploading belongs to THIS message rather than the next one. Both
+    // are orderings, both have to run ahead of composeMessage, and both used
+    // to be written out here — where the only test that can reach them is a
+    // regex over this file. They are one function now
+    // (src/lib/composer-send-gate.ts), which a test can execute; the effects
+    // below stay here, because they are React's.
+    const gate = composerSendGate({ text: effectiveText, threadId });
+    if (gate.kind === "flux-key") {
+      // The sentence around the key is theirs and is kept: only the key
+      // itself is lifted out, and the composer says where it went.
+      setText(gate.rest);
       setSendNotice({ kind: "flux-key-saved" });
       void (async () => {
         try {
-          await saveFluxKey(pastedKey.key, {
+          await saveFluxKey(gate.key, {
             status: await readFluxStatus(api),
             bridge: fluxBridge(),
             request: api,
@@ -592,16 +592,7 @@ export function Composer({
       })();
       return;
     }
-    // AN IMAGE STILL UPLOADING IS PART OF THIS MESSAGE.
-    //
-    // Before the draft is composed and before it is cleared. `attachments`
-    // holds only the chips that have already landed, so sending mid-intake
-    // used to send the text without the picture and then hand the picture to
-    // the next draft — the person saw their image appear on the FOLLOWING
-    // message, with nothing to explain it. The live count is read here rather
-    // than the rendered one: an intake that finished microseconds ago must
-    // not be waited on, and one that started microseconds ago must be.
-    if (composerUploadsPending(threadId)) {
+    if (gate.kind === "upload-pending") {
       setSendNotice({ kind: "upload-pending" });
       return;
     }
