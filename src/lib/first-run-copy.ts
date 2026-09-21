@@ -33,7 +33,12 @@
 /** Where a person gets a Flux Router key. Mirrors FLUX_SIGNUP_URL in
  *  src/components/FluxRouterConnection.tsx, imported by the card itself so
  *  there is one URL and not two. */
-import type { SetupCardVariant } from "../../shared/setup-card";
+// Explicit extension because this file is no longer renderer-only: the server
+// project now reads it too (server/first-run-email-trust.test.ts ties the copy
+// to what approvalKey can actually key), and tsconfig.server.json resolves
+// NodeNext, which requires one. The rest of the repo already writes imports
+// this way; the renderer build is unaffected.
+import type { SetupCardVariant } from "../../shared/setup-card.ts";
 
 export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
 
