@@ -40,7 +40,19 @@ export function FirstRunBriefCard({ settled }: { settled: boolean }) {
   const [weekdays, setWeekdays] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  const [done, setDone] = useState(settled);
+  // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
+  //
+  // This was `useState(settled)`, which reads the prop ONCE. `settled` is set
+  // by the server when the step lands, and that can happen after this card
+  // first rendered: another surface answered it, the step completed on its
+  // own, or the app reopened mid-flow. The card went on showing an open form
+  // with live buttons for a question that was already answered, which is most
+  // of why the thread read as a wall of unfinished business.
+  //
+  // Derived instead, so the two ways a card can be finished agree: this
+  // component did it, or the server says so.
+  const [acted, setActed] = useState(false);
+  const done = acted || settled;
 
   const schedule = async () => {
     if (busy) return;
@@ -48,7 +60,7 @@ export function FirstRunBriefCard({ settled }: { settled: boolean }) {
     setFailure("");
     try {
       await createSetupRoutine({ template: "brief", time, weekdaysOnly: weekdays });
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
@@ -62,7 +74,7 @@ export function FirstRunBriefCard({ settled }: { settled: boolean }) {
     setFailure("");
     try {
       await skipSetupStep("brief");
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
@@ -146,7 +158,9 @@ export function FirstRunMoreRoutinesCard({ settled }: { settled: boolean }) {
   const [busy, setBusy] = useState("");
   const [added, setAdded] = useState<string[]>([]);
   const [failure, setFailure] = useState("");
-  const [done, setDone] = useState(settled);
+  // Same reason as the card above: `settled` can arrive late.
+  const [acted, setActed] = useState(false);
+  const done = acted || settled;
 
   const add = async (template: "triage" | "watch") => {
     if (busy) return;
@@ -170,7 +184,7 @@ export function FirstRunMoreRoutinesCard({ settled }: { settled: boolean }) {
     setFailure("");
     try {
       await skipSetupStep("routines");
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, moreCopy.failure));
     }

@@ -39,7 +39,19 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState("");
   const [failure, setFailure] = useState("");
-  const [done, setDone] = useState(settled);
+  // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
+  //
+  // This was `useState(settled)`, which reads the prop ONCE. `settled` is set
+  // by the server when the step lands, and that can happen after this card
+  // first rendered: another surface answered it, the step completed on its
+  // own, or the app reopened mid-flow. The card went on showing an open form
+  // with live buttons for a question that was already answered, which is most
+  // of why the thread read as a wall of unfinished business.
+  //
+  // Derived instead, so the two ways a card can be finished agree: this
+  // component did it, or the server says so.
+  const [acted, setActed] = useState(false);
+  const done = acted || settled;
 
   const valid = EMAIL.test(email.trim());
 
@@ -62,7 +74,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
       // transcript is where a person checks what an assistant heard.
       await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(", "));
       setSaved(greetingLine(profile.name));
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
@@ -77,7 +89,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
     try {
       try { setEmailGateDone("skipped"); } catch { /* as above */ }
       await skipSetupStep("hello");
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {

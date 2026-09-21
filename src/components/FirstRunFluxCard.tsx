@@ -64,7 +64,19 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  const [done, setDone] = useState(settled);
+  // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
+  //
+  // This was `useState(settled)`, which reads the prop ONCE. `settled` is set
+  // by the server when the step lands, and that can happen after this card
+  // first rendered: another surface answered it, the step completed on its
+  // own, or the app reopened mid-flow. The card went on showing an open form
+  // with live buttons for a question that was already answered, which is most
+  // of why the thread read as a wall of unfinished business.
+  //
+  // Derived instead, so the two ways a card can be finished agree: this
+  // component did it, or the server says so.
+  const [acted, setActed] = useState(false);
+  const done = acted || settled;
 
   const save = async () => {
     if (busy || !key.trim()) return;
@@ -76,7 +88,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
       // Out of React's hands the moment it is stored. Nothing above keeps a
       // copy and nothing below renders one.
       setKey("");
-      setDone(true);
+      setActed(true);
       await answerSetupStep("flux", "key saved");
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
@@ -91,7 +103,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
     setFailure("");
     try {
       await skipSetupStep("flux");
-      setDone(true);
+      setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
