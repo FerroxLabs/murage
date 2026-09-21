@@ -1453,6 +1453,22 @@ describe("CodexDriver bounded ingress (A4)", () => {
     expect(noLargePayload("t-open")).toBe(true);
   });
 
+  // `imageGeneration` was the only raster this driver kept; an MCP tool's own
+  // image was read for its ok flag and dropped.
+  it("surfaces an MCP tool's image and withholds the computer surface's frame", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      threadId: "t-mcp-image",
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      alt: "omarchy__screenshot",
+    });
+  });
+
   it("still carries a generated image at the 10 MiB image cap", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });

@@ -11,6 +11,9 @@
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
 //                     | wrapped-tool  one tool call made through a "use a tool"
 //                     wrapper, failing with a reason in its content
+//                   | tool-image  two completed tool calls whose output carries
+//                     an image: a custom MCP server's, and the computer
+//                     surface's (a live frame, not a deliverable)
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -134,6 +137,8 @@ const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 const permissionFile = process.env.FAKE_ACP_PERMISSION_FILE || "/tmp/fake-acp-edit.md";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+// A second, distinguishable 1x1 raster: the computer surface's frame.
+const SCREEN_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 // opencode-shaped surface: the session carries its own model catalog and the
 // model is chosen with session/set_config_option, because `opencode acp` takes
 // no -m. Off unless FAKE_ACP_MODELS is set, so every existing mode is byte-
@@ -475,6 +480,19 @@ function playWrappedToolTurn() {
     rawInput: { tool_name: "murage-memory-1f83c2b455279a599bd7__memory_search", tool_input: { query: "quarterly plan" } } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-w", status: "failed",
     content: [{ type: "content", content: { type: "text", text: "Memory is not available for this turn.\nsearch timed out after 5s" } }] } } });
+}
+
+/** Two completed tool calls whose output carries an image: one from a custom
+ * MCP server (a deliverable) and one from Murage's own computer surface
+ * (a live frame that must not be retained). ACP wraps each output part as
+ * `{type:"content", content:<block>}`. */
+function playToolImageTurn() {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-img", title: "mcp__omarchy__screenshot" } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-img", status: "completed",
+    content: [{ type: "content", content: { type: "text", text: "captured" } }, { type: "content", content: { type: "image", data: ONE_PIXEL_PNG, mimeType: "image/png" } }] } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-screen", title: "mcp__computer__screenshot" } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-screen", status: "completed",
+    content: [{ type: "content", content: { type: "image", data: SCREEN_PIXEL_PNG, mimeType: "image/png" } }] } } });
 }
 
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
@@ -1092,6 +1110,7 @@ function handle(msg: any) {
         });
       } else if (mode === "interleave") playInterleaveTurn();
       else if (mode === "wrapped-tool") playWrappedToolTurn();
+      else if (mode === "tool-image") playToolImageTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with

@@ -132,6 +132,22 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     expect(started).toMatchObject({ title: "memory_search", summary: "quarterly plan" });
   });
 
+  // A completed tool call was reduced to a chip; an image in its output had
+  // no route to the message or to Files at all.
+  it("surfaces an MCP tool's image and withholds the computer surface's frame", async () => {
+    process.env.FAKE_ACP_MODE = "tool-image";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-tool-image", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      alt: "mcp__omarchy__screenshot",
+    });
+  });
+
   it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();

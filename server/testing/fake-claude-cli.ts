@@ -98,6 +98,10 @@ const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeText = () => "é".repeat(7 * 1024 * 1024);
+// 1x1 rasters for the MCP tool-result image fixture: one from a custom
+// server (a deliverable), one from Murage's own computer surface (not).
+const FIXTURE_TOOL_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const FIXTURE_SCREEN_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 // Markers count only on the prompt's last line (the current request): the
 // harness replays earlier messages into a fresh process's prompt, and an old
 // marker there must not re-trigger a fixture on a later, ordinary turn.
@@ -414,6 +418,25 @@ const playTurn = (prompt: JsonValue) => {
   if (fixtureRequested(promptText(prompt), "__fixture_oversize_open_frame__")) {
     out({ type: "system", subtype: "init", session_id: sessionId, model });
     process.stdout.write(`{"type":"assistant","message":{"content":[{"type":"text","text":"${fixtureOversizeText()}`);
+    return;
+  }
+  // An MCP tool answering with an image. The Claude CLI rewrites MCP image
+  // content into Anthropic Messages shape before a driver sees it; the
+  // computer surface's frame rides along to prove it is not retained.
+  if (fixtureRequested(promptText(prompt), "__fixture_mcp_tool_image__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-mcp", name: "mcp__omarchy__screenshot" }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-mcp", is_error: false, content: [
+      { type: "text", text: "captured" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: FIXTURE_TOOL_IMAGE } },
+    ] }] } });
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-screen", name: "mcp__computer__screenshot" }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-screen", is_error: false, content: [
+      { type: "image", data: FIXTURE_SCREEN_IMAGE, mimeType: "image/png" },
+    ] }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
     return;
   }
   if (fixtureRequested(promptText(prompt), "__fixture_large_frame__")) {
