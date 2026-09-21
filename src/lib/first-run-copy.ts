@@ -187,7 +187,17 @@ export const FIRST_RUN_COPY = {
       title: "One key worth having",
       body: "Flux Router gives you all the latest AI models, with smart routing that sends each job to the one that is best at it.",
       second: "The same key connects 500+ apps, Gmail, Slack, Notion and GitHub among them.",
-      third: "It brings pictures, voice and transcription too.",
+      /**
+       * NOT "voice". Flux Router has no synthesis endpoint of any kind:
+       * server/voice/flux-voice.ts says so in its own header, and
+       * src/lib/flux-invite.ts already refused to claim speech for the same
+       * reason. Murage speaks through ElevenLabs on the person's OWN key, or
+       * the free OS voices, never on this one. Transcription IS on this key
+       * (POST /v1/audio/transcriptions), which is the half worth selling:
+       * dictation that works from a phone, where the native macOS helper
+       * cannot reach.
+       */
+      third: "It brings pictures and transcription too, so you can talk to me from your phone.",
       /**
        * TWO PEOPLE ARE READING THIS CARD AND THEY ARE NOT IN THE SAME
        * SITUATION.

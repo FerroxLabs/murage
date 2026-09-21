@@ -66,10 +66,30 @@ function Shell() {
   // count — that CLI can still host a local model. Wait for the first
   // /api/instances response before deciding: an empty list means "not asked
   // yet", and flashing the setup screen at every launch would be worse.
+  //
+  // AVAILABLE IS NOT THE SAME AS USABLE, AND THIS GATE USED TO CONFUSE THEM.
+  //
+  // Murage SHIPS the Fuigo binary, so on a machine with no key, no login and
+  // no local runtime, `fuigo --version` still answers and its snapshot reads
+  // "available" — with a catalogue that has merged down to nothing. This test
+  // said "an engine exists, so hide the setup screen", and the person landed
+  // in a chat with a bot that had no model behind it: the single worst first
+  // run the app can produce, and precisely the one a blank machine gets.
+  //
+  // server/default-engine.ts has always been stricter (it refuses to hand a
+  // bot an engine with an empty `models.default`), so the two readings
+  // disagreed: the selector said "no engine", this said "we have one". The
+  // condition below is `runnable()` from server/setup.ts, kept deliberately
+  // identical so they cannot drift apart again.
   const noEngines =
     state.connected &&
     state.instances.length > 0 &&
-    !state.instances.some((i) => i.snapshot.state === "available");
+    !state.instances.some(
+      (i) =>
+        i.enabled !== false &&
+        i.snapshot.state === "available" &&
+        (i.models?.default ?? "").trim().length > 0,
+    );
 
   // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
   // Kept deliberately small; every panel already closes on Esc.

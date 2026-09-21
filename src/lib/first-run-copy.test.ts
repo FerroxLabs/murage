@@ -171,8 +171,29 @@ describe("first run copy: the things the flow promises", () => {
     expect(flux.body).toContain("smart routing");
     expect(flux.second).toContain("500+ apps");
     for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(flux.second).toContain(named);
-    expect(flux.third).toMatch(/pictures.*voice.*transcription/);
+    expect(flux.third).toMatch(/pictures.*transcription/);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
+  });
+
+  // THIS CARD MUST NOT PROMISE SPEECH, AND THE OLD ASSERTION DEMANDED IT.
+  //
+  // The line above used to read /pictures.*voice.*transcription/, so the test
+  // was not guarding the copy, it was enforcing an untrue claim: Flux Router
+  // exposes transcription at POST /v1/audio/transcriptions and NOTHING ELSE.
+  // There is no /v1/audio/speech, no voice ids, no passthrough — stated at
+  // the top of server/voice/flux-voice.ts, and src/lib/flux-invite.ts had
+  // already refused to sell speech on this key for the same reason.
+  //
+  // Murage does speak, through ElevenLabs on the person's own credential or
+  // the free OS voices. That is a different key and a different card. A
+  // person who pays for Flux Router expecting their assistant to talk back
+  // has been mis-sold, so the word is banned here rather than merely absent.
+  it("never sells speech on the Flux Router key", () => {
+    const flux = FIRST_RUN_COPY.flux.key;
+    for (const field of [flux.title, flux.body, flux.second, flux.third]) {
+      expect.soft(field, `"${field}" sells speech on a key that cannot synthesise it`)
+        .not.toMatch(/\b(voice|speak|speaks|spoken|read (?:it )?aloud|out loud|text to speech)\b/i);
+    }
   });
 
   it("puts email on graduated trust wherever email is mentioned", () => {
