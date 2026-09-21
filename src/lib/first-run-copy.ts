@@ -176,16 +176,25 @@ export const FIRST_RUN_COPY = {
      * Not a UX preference. The owner ruled that this builds the list and is a
      * business requirement, so it goes first and the look around the machine
      * happens underneath it while they type. Every word here is the approved
-     * flow's, and the two fields say what each one is FOR: a name is what the
-     * Chief calls them, an email is how it reaches them when they are not sat
-     * in front of this computer. A field with no stated purpose is a field
-     * people skip, and this is the one step that cannot afford that.
+     * flow's, and the two fields say what each one is FOR: a field with no
+     * stated purpose is a field people skip, and this is the one step that
+     * cannot afford that.
+     *
+     * THE DEFECT: THE STATED PURPOSE OF THE EMAIL WAS FALSE. The lead read
+     * "Your email is how I reach you when you are away from this computer".
+     * Nothing in `server/` consumes an owner email and nothing in the product
+     * ever mails the person: the address is saved on the owner profile, it
+     * identifies them to analytics, and it joins the list this step exists to
+     * build (FirstRunHelloCard.tsx:88-89). The owner has separately ruled the
+     * morning brief must never be emailed, so it was not a promise about
+     * something coming either. What is left is the half of the sentence that
+     * was always true, which is what the field is really for.
      */
     welcome: {
       heading: "First, who am I working for?",
       lead:
-        "I am your chief of staff. Your name is what I call you. Your email is how I reach you when you are "
-        + "away from this computer, and how Murage tells you when there is something new it can do.",
+        "I am your chief of staff. Your name is what I call you. Your email is how Murage tells you when "
+        + "there is something new it can do.",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email",

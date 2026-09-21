@@ -106,9 +106,35 @@ describe("card one: hello", () => {
     // they are FOR: a field with no stated purpose is a field people skip.
     expect(copy.heading).toBe("First, who am I working for?");
     expect(copy.lead).toContain("Your name is what I call you.");
-    expect(copy.lead).toContain("how I reach you when you are away from this computer");
+    expect(copy.lead).toContain("how Murage tells you when there is something new it can do");
     expect(copy.submit).toBe("Continue");
     expect(copy.skip).toBe("Skip for now");
+  });
+
+  /**
+   * THE DEFECT: THE STATED PURPOSE OF THE EMAIL WAS FALSE.
+   *
+   * "Your email is how I reach you when you are away from this computer" was
+   * the first promise the flow made and there is nothing behind it: no
+   * `ownerEmail` consumer anywhere in `server/`, and nothing in the product
+   * mails the owner. The address is saved on the profile, it identifies them
+   * to analytics, and it joins the announcement list. The morning brief is
+   * separately ruled never to be emailed, so it was not a feature in flight.
+   *
+   * The lead is checked against `server/` here rather than against itself:
+   * the sentence may come back the day something really does mail the owner,
+   * and not one day before.
+   */
+  it("promises no message it cannot send", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(new URL("../../server/", import.meta.url));
+    const consumers = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.includes(".test."))
+      .filter((entry) => readFileSync(root + entry.name, "utf8").includes("ownerEmail"))
+      .map((entry) => entry.name);
+    expect(consumers, "something now reads an owner email; the lead may say so again").toEqual([]);
+    expect(copy.lead).not.toMatch(/reach you|away from this computer|email you|send you/i);
   });
 
   it("will not save until the email is one", () => {
