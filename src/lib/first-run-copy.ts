@@ -47,6 +47,22 @@ export interface FirstRunOffer {
   say: string;
 }
 
+/**
+ * One of the Chief's five jobs, as words.
+ *
+ * `id` is a wire identifier and is the join to `FIRST_RUN_JOB_SHAPES` in
+ * src/lib/first-run-jobs.ts, which says what each one needs and what box it
+ * opens. Two lists rather than one because the words belong in this file,
+ * where the house rules are checked over them, and the behaviour does not.
+ * first-run-jobs.test.ts pins the two together so neither can grow a row the
+ * other does not have.
+ */
+export interface FirstRunJobRowCopy {
+  id: "brief" | "day" | "notes" | "research" | "business";
+  title: string;
+  sub: string;
+}
+
 /** One step of the Tailscale walkthrough, which happens in the chat and not
  *  in a settings pane. `action` is the button under it. */
 export interface FirstRunWalkStep {
@@ -261,6 +277,152 @@ export const FIRST_RUN_COPY = {
        */
       bodyBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
       secondBare: "Any OpenAI-style service you already pay for will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
+    },
+  },
+  /**
+   * STEP FOUR. The Chief asks one question and offers five answers.
+   *
+   * The five are jobs, not features. "Brief me every morning" is a thing
+   * somebody wants; "connect your calendar" is a thing software wants, and
+   * the whole re-cut is that the second one is only ever asked for by the
+   * first. Every row carries what it still needs, recomputed live, so
+   * nothing is offered that cannot run and nothing is hidden that could.
+   *
+   * The behaviour behind these words is in src/lib/first-run-jobs.ts, which
+   * holds no readable strings of its own. The two lists are pinned together
+   * by a test rather than by hoping.
+   */
+  chat: {
+    jobs: {
+      question: "What can I take off your plate",
+      lead: "Pick one and I will do it now. I only ask for what that job needs, when it needs it.",
+      /** A machine with nothing to think with. The jobs are still shown,
+       *  because seeing what this would do for you is the reason to connect
+       *  anything, but not one of them is claimed to be ready. */
+      leadNoBrain: "Pick one anyway. I will show you exactly what it needs before anything happens.",
+      status: {
+        connected: "Connected. Smart routing on, and your apps are a click away when a job needs them.",
+        noBrain: "Nothing to think with yet, so every job below is waiting on one connection.",
+        /** Wrapped around the engine's real name. The name comes from the
+         *  reading, never from a sample: a status line that named an engine
+         *  this computer does not have would be the first thing the person
+         *  read and the first thing that was wrong. */
+        localPrefix: "Running on",
+        localTail: "here on this computer.",
+        localUnnamed: "Running on what is already on this computer.",
+      },
+      rows: [
+        {
+          id: "brief",
+          title: "Brief me every morning",
+          sub: "What is fixed, what is owed, what will slip.",
+        },
+        {
+          id: "day",
+          title: "Organise my day",
+          sub: "Today's commitments, in an order that survives the first phone call.",
+        },
+        {
+          id: "notes",
+          title: "Make sense of these notes",
+          sub: "Paste anything. Get back what matters and what to do next.",
+        },
+        {
+          id: "research",
+          title: "Look into something for me",
+          sub: "I search the web and read what comes back, then tell you where each thing came from.",
+        },
+        {
+          id: "business",
+          title: "Help me run my business",
+          sub: "Two bots and a Monday review, set up in one go.",
+        },
+      ] as readonly FirstRunJobRowCopy[],
+      /** What one missing thing is called out loud. Shared by the tag on a
+       *  job row and the bold on a connect row, so the person reads the same
+       *  name in both places. */
+      needLabels: {
+        flux: "Flux Router",
+        gmail: "Gmail",
+        googlecalendar: "Google Calendar",
+      },
+      tags: {
+        ready: "ready now",
+        flux: "needs Flux Router",
+        /** Followed by one need label. */
+        connectOne: "connect",
+        /** Follows a count, from two upwards. */
+        countTail: "to connect",
+      },
+      /**
+       * SAID ONLY WHEN THERE IS SOMETHING TO SAY.
+       *
+       * Searching on an unconfigured machine goes out anonymously and uses
+       * no account of the person's, which is checked in first-run-jobs.ts
+       * against the route rather than assumed, so the ordinary case has no
+       * line at all. These three are the machines where somebody chose
+       * otherwise before they got here, and a job that searched without
+       * saying whose account it was searching on would be the thing that
+       * check exists to prevent.
+       */
+      searchNotes: {
+        "own-account": "Searching goes out through the search account you connected yourself.",
+        unconfigured: "The search service picked for this computer has no key on it yet, so I will work from what you tell me and say where I am unsure.",
+        off: "Web search is switched off on this computer, so I will answer from what you give me and say plainly what I could not check.",
+      },
+      /** The way out for somebody whose thing is not on the list. Goes
+       *  straight to the notes box, which asks for nothing. */
+      escape: "Or just tell me what you need",
+      /**
+       * BLANK MACHINE, NO KEY, AND THEY TYPED SOMETHING ANYWAY.
+       *
+       * There is nothing here to ask, and Murage does not offer to fetch a
+       * model. So this keeps what they wrote and says so. It promises no
+       * answer and starts no wait, because a box that spins forever tells
+       * somebody something false no matter how carefully the words around it
+       * are chosen.
+       */
+      kept: "I have that, and I am keeping it. The moment there is something here to think with, it is the first thing I pick up.",
+    },
+  },
+  /**
+   * STEP FIVE. The chosen job, from what it needs through to its result.
+   *
+   * `connect` is the front of it, and it is the standalone apps step's
+   * replacement: the same two sign-ins, asked for by a job the person just
+   * picked, with the reason on each row written for THAT job rather than in
+   * general.
+   */
+  flow: {
+    "do-it": {
+      connect: {
+        headingOne: "One thing, and then I can do it.",
+        /** Follows a count, from two upwards. */
+        headingManyTail: "things, and then I can do it.",
+        lead: "Everything this job needs is on this screen. Nothing else gets asked, and you can stop after any of them.",
+        /**
+         * The reason on each row, written for the job in hand.
+         *
+         * "You sign in on Google's own screen, and take it back there" is
+         * the sentence that does the work: the person is about to be sent to
+         * a browser and handed back, and being told that first is the
+         * difference between a step and a surprise.
+         *
+         * THE SIMULATION PUT THAT SAME SENTENCE ON A SLACK ROW, where it is
+         * simply untrue. Slack is not offered in 0.1.58 at all
+         * (`SETUP_JOB_APPS`), so the wrong sentence is not here to be read;
+         * if Slack ever comes back it comes back saying Slack's own screen.
+         */
+        reasons: {
+          flux: "your apps run through it, and it picks the right model for this job",
+          gmail: "so I can see what came in overnight and who is waiting. You sign in on Google's own screen, and take it back there.",
+          googlecalendar: "so I know what is already fixed in your day. You sign in on Google's own screen, and take it back there.",
+        },
+        /** Offered only by a job that has a box, because a job with no box
+         *  has nothing to type instead. */
+        skipToInput: "Skip that and let me type it in instead",
+        elsewhere: "Something else",
+      },
     },
   },
   apps: {
