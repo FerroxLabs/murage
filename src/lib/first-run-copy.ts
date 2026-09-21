@@ -132,6 +132,52 @@ export const FIRST_RUN_COPY = {
     },
   },
   agents: {
+    /**
+     * STEP TWO, THE REPORT, AND IT IS SKIPPED ON A MACHINE WITH NOTHING.
+     *
+     * One row per engine, and the row says three things: what it is, one fact
+     * about it, and whether it can answer right now. The three details below
+     * are the three shapes a row can take, and each one is a fact the setup
+     * view can prove rather than a sentence about how good anything is.
+     *
+     * WHAT IS NOT HERE. The approved flow marks one row "using this", and this
+     * build cannot prove which row that is: the engine the Chief is actually
+     * on lives on `SetupLiveState.chiefInstanceId` and is not carried on the
+     * view. On a machine with two local models that tag would be false on one
+     * of them, and a false tag in the first minute is what the whole release
+     * exists to stop. Every runnable engine gets the claim that is true of all
+     * of them until there is a field that can prove the stronger one.
+     */
+    detect: {
+      heading: "What is already here.",
+      /** An engine pointed at a model on this machine. */
+      localDetail: "Nothing you type leaves this computer.",
+      /** A remote engine the person signed in to themselves. Not named by
+       *  vendor: the reading knows the engine, not whose account it is on. */
+      cloudDetail: "Signed in on your own account.",
+      /** The engine Murage ships. It is not something they did, and claiming
+       *  an account for it would be the Chief taking credit for one that does
+       *  not exist. */
+      bundledDetail: "It came in the box, and it is already running.",
+      /** Installed, nobody signed in. Said without blame: nothing is broken
+       *  and nothing was installed wrong. */
+      offDetail: "Installed, nobody signed in.",
+      readyTag: "ready when you want it",
+      offTag: "one command away",
+      more: (count: number) => `and ${count} more on this computer`,
+      hide: "Hide them",
+      /**
+       * THE HANDOVER TO THE FLUX SCREEN, AND IT IS THE HONEST VERSION.
+       *
+       * Not "you are all set", which is what a machine with a signed-in Claude
+       * Code on it would hear as an ending. What was found can answer
+       * questions; what it cannot do is reach the person's mail, their
+       * calendar or their apps. Saying both halves is what makes the next
+       * screen an offer rather than a pitch.
+       */
+      closing: "That is enough for me to answer you. It is not enough for me to do the interesting part.",
+      action: "Show me the interesting part",
+    },
     found: {
       second: "They answer to you in here now, and they still work exactly as they did on their own.",
     },
@@ -607,6 +653,25 @@ export function greetingLine(name: string): string {
  */
 export function firstRunAddress(name: string | null | undefined): string {
   return (name ?? "").trim() || "there";
+}
+
+/**
+ * The detection report's opening line.
+ *
+ * It says the looking around happened WHILE THEY TYPED, because it did: the
+ * hello card says so as they are filling it in, and a report that then claimed
+ * to have gone away and looked would be describing a wait that never happened.
+ *
+ * A SKIPPED NAME DROPS THE CLAUSE RATHER THAN FILLING IT. "Good to meet you,
+ * there. I had a look around" is a sentence nobody writes, and the whole
+ * comma clause is what goes, not the greeting. This is the one place where
+ * `firstRunAddress` would be wrong, which is why the two are separate
+ * functions and neither calls the other.
+ */
+export function lookedAroundLine(name: string | null | undefined): string {
+  const clean = (name ?? "").trim();
+  const greeting = clean ? `Good to meet you, ${clean}.` : "Good to meet you.";
+  return `${greeting} I had a look around this computer while you typed.`;
 }
 
 /** The brief card's button, once a time is chosen. A button that repeats the

@@ -6,16 +6,30 @@ import { describe, expect, it, vi } from "vitest";
 // test, and neither is what these tests are about: what is being checked is
 // that the right card renders the right words and never renders a control
 // that could not work.
+// THE SETUP VIEW IS ANSWERABLE, because half of what these cards say is a
+// report about the machine and a card with no view says nothing at all. The
+// stub is one variable the tests set, so a card can be rendered against a
+// machine with six engines on it without a server.
+let setupReply: unknown = {};
 vi.mock("@/state/store", () => ({
-  api: async () => ({}),
+  api: async (path: string) => (path === "/api/setup" ? setupReply : {}),
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard } = await import("./FirstRunCard");
 const { helloAnswerReady } = await import("./FirstRunHelloCard");
-const { FIRST_RUN_COPY, firstRunAddress, greetingLine } = await import("@/lib/first-run-copy");
+const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
+const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
 const { setupCardKey } = await import("../../shared/setup-card");
+
+/** Put a machine behind the cards. `renderToStaticMarkup` runs no effects, so
+ *  the view has to be in the shared cache before the render, not after it. */
+async function machine(view: Record<string, unknown>): Promise<void> {
+  setupReply = { steps: [], agents: [], signedOutAgents: [], ownerName: "", ...view };
+  forgetSetupView();
+  await readSetupView(true);
+}
 
 type AnyMessage = Parameters<typeof FirstRunCard>[0]["message"];
 
@@ -131,6 +145,57 @@ describe("card one: hello", () => {
     expect(firstRunAddress("  Sean  ")).toBe("Sean");
     expect(greetingLine("")).toBe("Good to meet you. Right then.");
     expect(greetingLine("")).not.toContain("there");
+  });
+});
+
+describe("card two: what is already here", () => {
+  const copy = FIRST_RUN_COPY.agents.detect;
+
+  it("draws a row for every runnable engine and collapses the rest", async () => {
+    await machine({
+      ownerName: "Sean",
+      agents: [
+        { id: "ollama", name: "generic", installed: true, localModel: { model: "qwen3:8b", host: "Ollama" } },
+        { id: "claude", name: "Claude Code", installed: true },
+      ],
+      signedOutAgents: [
+        { id: "codex", name: "Codex", installed: true },
+        { id: "gemini", name: "Gemini CLI", installed: true },
+      ],
+    });
+    const markup = render("detect", "found");
+    expect(markup).toContain(lookedAroundLine("Sean"));
+    expect(markup).toContain(copy.heading);
+    // Every runnable engine, named the way its owner names it.
+    expect(markup).toContain("qwen3:8b on Ollama");
+    expect(markup).toContain("Claude Code");
+    expect(markup).toContain(copy.localDetail);
+    // The signed-out pair is BEHIND the button, not on the page.
+    expect(markup).toContain("and 2 more on this computer");
+    expect(markup).not.toContain("Codex");
+    expect(markup).toContain(copy.closing);
+  });
+
+  // The wall this collapse exists to prevent is the owner's own machine, which
+  // has eighteen engines on it. What must never happen is the opposite
+  // mistake: hiding something that CAN think behind a button, so the person
+  // cannot see what is about to answer them.
+  it("never hides a runnable engine behind the button", async () => {
+    await machine({
+      agents: Array.from({ length: 6 }, (_, index) => ({ id: `e${index}`, name: `Engine ${index}`, installed: true })),
+    });
+    const markup = render("detect", "found");
+    for (let index = 0; index < 6; index += 1) expect.soft(markup).toContain(`Engine ${index}`);
+    expect(markup).not.toContain("more on this computer");
+  });
+
+  it("says nothing about a machine it cannot see", async () => {
+    // No view is not an empty machine, and a report built from a guess is a
+    // report that is wrong on half the machines it ships to.
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    expect(render("detect", "found")).not.toContain(copy.heading);
   });
 });
 
