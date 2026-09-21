@@ -259,11 +259,16 @@ export function morningOffer(taken: boolean): FirstRunMorningOffer {
   const spoken = clockLabel(FIRST_RUN_BRIEF_TIME);
   return {
     heading: words.heading,
-    body: `${words.bodyPrefix} ${spoken} ${words.bodyTail}`,
+    // `bodyNow` is not optional decoration. The button schedules the routine
+    // AND runs it once immediately, and until this sentence existed nothing
+    // on the card said so: the offer talked about every morning, the button
+    // said a time, and the person got a turn they had not agreed to. Said
+    // before the press, and said again in the confirmation.
+    body: `${words.bodyPrefix} ${spoken} ${words.bodyTail} ${words.bodyNow}`,
     button: `${spoken}${words.buttonTail}`,
     working: words.working,
     failure: words.failure,
-    taken: taken ? `${words.takenPrefix} ${spoken}.` : null,
+    taken: taken ? `${words.takenPrefix} ${spoken}. ${words.takenNow}` : null,
   };
 }
 

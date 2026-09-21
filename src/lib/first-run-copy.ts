@@ -800,8 +800,30 @@ export const FIRST_RUN_COPY = {
         heading: "Want this waiting for you every morning?",
         bodyPrefix: "Built at",
         bodyTail: "on weekdays and waiting here when you open this computer. It never goes to your inbox.",
+        /**
+         * THE PART THE BUTTON WAS DOING WITHOUT SAYING SO.
+         *
+         * Pressing this schedules the routine AND runs it once, right then,
+         * on the Chief's engine (server/index.ts, POST /api/setup/routine).
+         * That is the right behaviour: a scheduled routine is a promise and a
+         * routine that has run is proof, and somebody should see the thing
+         * work before they are left alone with it.
+         *
+         * Nothing on the card said so. The heading asked about "every
+         * morning", the body described 7:00 on weekdays, and the
+         * confirmation said "Set." Anybody whose routing is metered pressed a
+         * button labelled as scheduling and got a turn they had not agreed
+         * to. So the card says it before it happens, and the confirmation
+         * says it again while it is happening.
+         *
+         * NO FIGURE AND NO MENTION OF WHAT A TURN COSTS. Telling somebody
+         * what they are about to spend is still selling on price, and the
+         * rule is absolute. What they are owed is the fact.
+         */
+        bodyNow: "I will build the first one now so you can see what arrives.",
         buttonTail: ", weekdays",
         takenPrefix: "Set. Weekdays at",
+        takenNow: "The first one is building now.",
         working: "Setting it up",
         failure: "That did not go through. Ask me again whenever you like.",
       },

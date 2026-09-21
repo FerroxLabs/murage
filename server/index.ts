@@ -15281,6 +15281,17 @@ const server = createServer(async (req, res) => {
       // A scheduled routine is a promise; a routine that has run is proof.
       // The brief runs ONCE, now, so the person SEES the thing work before
       // they are left alone with it. The other two are offers, not proofs.
+      //
+      // AND THEY ARE TOLD, WHICH FOR A WHOLE RELEASE THEY WERE NOT. This
+      // dispatches a full model turn on the Chief's engine the instant the
+      // button is pressed, and every word on the card talked about mornings
+      // and schedules: anybody on metered routing pressed a button labelled
+      // as scheduling and got a turn they had not agreed to. The offer now
+      // says it before the press and the confirmation says it again
+      // (src/lib/first-run-copy.ts, `morning.bodyNow` and `morning.takenNow`),
+      // and first-run-flow.test.ts holds the copy and this line together so
+      // neither can move without the other.
+      // Only for `brief`. `triage` and `watch` schedule and stay scheduled.
       let runId: string | undefined;
       if (parsed.data.template === "brief") {
         setup.recordBriefRoutine(routine.id);

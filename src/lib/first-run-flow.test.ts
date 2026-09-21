@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { FIRST_RUN_BRIEF_TIME, FIRST_RUN_COPY } from "./first-run-copy";
@@ -319,11 +321,56 @@ describe("the offer to do it every morning", () => {
     // confirmation that disagreed with it.
     expect(offer.button).toBe("7:00 am, weekdays");
     expect(offer.body).toContain("7:00 am");
-    expect(offer.taken).toBe("Set. Weekdays at 7:00 am.");
+    expect(offer.taken).toBe("Set. Weekdays at 7:00 am. The first one is building now.");
   });
 
   it("does not claim it is set before it is", () => {
     expect(morningOffer(false).taken).toBeNull();
+  });
+
+  /**
+   * THE BUTTON FIRES A MODEL TURN, AND FOR A WHOLE RELEASE IT DID NOT SAY SO.
+   *
+   * `POST /api/setup/routine` schedules the brief AND calls
+   * `routines.runNow` on it immediately, on the Chief's engine. The intent is
+   * good and is staying: a scheduled routine is a promise and a routine that
+   * has run is proof, and somebody should see the thing work before they are
+   * left alone with it.
+   *
+   * What was wrong is that nothing told them. The heading asked about every
+   * morning, the body described 7:00 on weekdays, and the confirmation said
+   * "Set." Anybody on metered routing pressed a button labelled as scheduling
+   * and paid for a turn they had not agreed to.
+   *
+   * These two assertions are deliberately one test. The copy and the
+   * behaviour have to move together: if the immediate run is ever taken out,
+   * this fails and makes somebody delete the sentence that promises it, and
+   * if the sentence is deleted while the run stays, it fails the same way.
+   */
+  it("says the first one is being built now, before the button is pressed", () => {
+    const offer = morningOffer(false);
+    expect(offer.body).toContain("I will build the first one now");
+    // In the offer, not only in the confirmation: after the press is too late
+    // for somebody who would have said no.
+    expect(offer.body.indexOf("build the first one now")).toBeGreaterThan(-1);
+    expect(morningOffer(true).taken).toContain("The first one is building now.");
+    // And no price, no figure, no count of anything. Saying what a turn costs
+    // is still selling on price, and that rule has no exception.
+    expect(`${offer.heading} ${offer.body} ${offer.button} ${morningOffer(true).taken}`)
+      .not.toMatch(/\bcost|\bpric|\bpay|\bspend|\btoken|[$£€]\s?\d/i);
+
+    // The behaviour the sentence is about, read off the route that does it.
+    // Comments stripped first: server/index.ts discusses this run at length
+    // and the comment alone would satisfy any substring check.
+    const server = readFileSync(new URL("../../server/index.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const branch = server.indexOf('if (parsed.data.template === "brief") {');
+    expect(branch, "the brief branch of POST /api/setup/routine has moved").toBeGreaterThan(-1);
+    expect(
+      server.slice(branch, branch + 400),
+      "the brief no longer runs on the press, so the card must stop promising it will",
+    ).toContain("runNow(routine.id)");
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import { CHIEF_CONFIRMATIONS } from "../../shared/first-run-chief";
+import { morningOffer } from "./first-run-flow";
 import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
@@ -85,6 +86,12 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
   { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
   { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
+  // The morning offer is three strings joined at render time, and the
+  // sentence that admits the immediate run is one of them. Walked assembled,
+  // because the three sentence ceiling is about what lands on the screen.
+  { path: "morningOffer(offer).body", text: morningOffer(false).body },
+  { path: "morningOffer(offer).button", text: morningOffer(false).button },
+  { path: "morningOffer(taken).taken", text: morningOffer(true).taken ?? "" },
 ];
 
 const everything = [...readable, ...assembled];
