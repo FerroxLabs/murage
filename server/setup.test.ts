@@ -16,6 +16,7 @@ import {
   setupIsFirstRun,
   setupProgress,
   setupStepBlock,
+  setupStepAnswered,
   setupStepDetail,
   setupStepStatus,
   setupView,
@@ -261,10 +262,26 @@ describe("what the detection card's one button does to the checklist", () => {
   });
 
   it("is a real note, because an empty one settles nothing", () => {
-    // `setupStepAnswered` wants a non-empty note that was not then skipped.
+    // MEASURED ON THE CONSTANT, NOT ON THE FLOW. `trim().length > 0` is a
+    // fact about a string; what matters is that answering WITH it settles the
+    // step and answering with a blank does not, which is the whole reason a
+    // blank constant would be a silent defect. So both are run through the
+    // real checklist and the two are contrasted.
+    const found = live({ ownerName: "Sean", agents: [BUNDLED, { id: "claude", name: "Claude Code", installed: true }] });
+
+    const real = checklist().answer("detect", SETUP_DETECT_ANSWER, found);
+    expect(real.steps.detect.done, "the detect answer no longer settles the step").toBe(true);
+    expect(nextSetupStep(real)).toBe("flux");
+
     // A blank constant would compile, render and record, and leave the flow
-    // exactly where it was.
-    expect(SETUP_DETECT_ANSWER.trim().length).toBeGreaterThan(0);
+    // exactly where it was. That is what this is contrasted against.
+    // A blank constant would compile, render and record. What it would NOT do
+    // is satisfy the predicate every recorded answer is read through, which
+    // is the thing the old length check was standing in for. Run, on the real
+    // constant and on a blank one.
+    expect(setupStepAnswered({ done: false, note: SETUP_DETECT_ANSWER })).toBe(true);
+    expect(setupStepAnswered({ done: false, note: "   " }), "a blank note counts as an answer").toBe(false);
+    expect(setupStepAnswered({ done: false, note: SETUP_DETECT_ANSWER, skipped: true })).toBe(false);
   });
 });
 

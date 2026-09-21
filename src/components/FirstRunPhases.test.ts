@@ -20,15 +20,39 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// EVERY PANEL IN THE APP OPEN AT ONCE, and a desktop that has answered.
+//
+// The bar must be conditioned on NOTHING a dialog changes, and the way to
+// show that is to render it with every one of those flags true rather than to
+// grep the source for their names. `dispatched` is read by the wiring tests
+// below.
+const storeState: Record<string, unknown> = {
+  settingsOpen: true,
+  pluginsOpen: true,
+  computerOpen: true,
+  inspectorOpen: true,
+  appSettingsOpen: true,
+  teamMapMemoryOpen: true,
+};
+const dispatched: Array<Record<string, unknown>> = [];
 
 vi.mock("@/state/store", () => ({
   api: async () => ({}),
-  useStore: () => ({ state: {}, dispatch: () => {} }),
+  useStore: () => ({ state: storeState, dispatch: (action: Record<string, unknown>) => { dispatched.push(action); } }),
 }));
 
-const { FirstRunPhasesBody } = await import("./FirstRunPhases");
-const { FIRST_RUN_PHASES, firstRunPhaseRows } = await import("@/lib/first-run");
+let surfaceAnswer: boolean | undefined = true;
+vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => surfaceAnswer }));
+
+let liveView: unknown = null;
+vi.mock("./FirstRunChrome", () => ({
+  useSetupView: () => ({ view: liveView, refresh: () => {} }),
+}));
+
+const { FirstRunPhases, FirstRunPhasesBody } = await import("./FirstRunPhases");
+const { FIRST_RUN_PHASES, firstRunPhaseRows, resetFirstRunPhases } = await import("@/lib/first-run");
 const { SETUP_STEPS } = await import("../../shared/setup");
 
 type View = Parameters<typeof FirstRunPhasesBody>[0]["view"];
@@ -176,12 +200,68 @@ describe("it is not a gate", () => {
   });
 });
 
-describe("it survives a dialog taking focus", () => {
-  it("is not conditioned on anything a dialog changes", () => {
-    // Onboarding.tsx had to early-return while Settings was open so a trip
-    // there did not wipe a half-typed form. Nothing here is conditioned on a
-    // panel at all, so there is no state left to lose.
-    expect(code).not.toContain("appSettingsOpen");
-    expect(code).not.toContain("pluginsOpen");
+// THE WIRED COMPONENT, RENDERED. NOTHING IN THIS FILE USED TO RENDER IT.
+//
+// Everything above drives `FirstRunPhasesBody`, which takes a view as a prop
+// and has no conditions in it at all. `FirstRunPhases` is the one with the
+// conditions: the desktop check, the view check, the latch, and the effect
+// that selects the Chief. The guard on all of that was two greps for the
+// ABSENCE of the identifiers `appSettingsOpen` and `pluginsOpen` in the
+// source. A reviewer added a real early return hiding the bar whenever
+// Settings was open and 11 tests stayed green, because an early return can be
+// written a thousand ways and a scan for two names sees one of them.
+//
+// So the wired component is rendered here, with every panel flag in the store
+// true at once. If anything in it comes to depend on a dialog, the bar
+// disappears from this markup and these fail.
+describe("the wired bar", () => {
+  beforeEach(() => {
+    resetFirstRunPhases();
+    dispatched.length = 0;
+    surfaceAnswer = true;
+    liveView = view();
+  });
+
+  const wired = () => renderToStaticMarkup(createElement(FirstRunPhases));
+
+  it("draws itself with every panel in the app open", () => {
+    const html = wired();
+    for (const id of SETUP_STEPS) expect(html, `${id} is missing while a dialog is open`).toContain(labelFor(id));
+    expect(html.match(/<li/g) ?? []).toHaveLength(SETUP_STEPS.length);
+    expect(html).toContain(FIRST_RUN_PHASES.footer);
+  });
+
+  it("still draws itself when the panels are all shut, so the test above is not the only shape it works in", () => {
+    for (const key of Object.keys(storeState)) storeState[key] = false;
+    try {
+      expect(wired()).toContain(labelFor("hello"));
+    } finally {
+      for (const key of Object.keys(storeState)) storeState[key] = true;
+    }
+  });
+
+  // ...and the conditions it IS allowed to have, so "it always renders" is
+  // not what the tests above are really asserting.
+  it("draws nothing where it is not allowed to", () => {
+    surfaceAnswer = undefined;
+    expect(wired(), "the unknown surface answer drew the bar").toBe("");
+    surfaceAnswer = false;
+    expect(wired(), "a paired phone drew the bar").toBe("");
+
+    surfaceAnswer = true;
+    liveView = null;
+    expect(wired(), "the bar drew before the server had answered").toBe("");
+
+    liveView = view({}, { firstRun: false, next: null, progress: { done: 5, total: 5 } });
+    expect(wired(), "the bar drew on an install that is not in its first run").toBe("");
+  });
+
+  it("goes away when it is closed, and comes back when something asks for it", async () => {
+    const { closeFirstRun, openFirstRun } = await import("@/lib/first-run");
+    expect(wired()).toContain(labelFor("hello"));
+    closeFirstRun();
+    expect(wired(), "closing the bar left it on screen").toBe("");
+    openFirstRun();
+    expect(wired(), "asking for the first run did not bring the bar back").toContain(labelFor("hello"));
   });
 });

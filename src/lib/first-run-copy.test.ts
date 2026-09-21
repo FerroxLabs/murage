@@ -1,98 +1,37 @@
 import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
-import { CHIEF_CONFIRMATIONS } from "../../shared/first-run-chief";
-import { morningOffer } from "./first-run-flow";
 import {
-  FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
   botsEyebrowLine,
   briefButtonLabel,
-  briefRanLine,
   clockLabel,
   foundAgentsLine,
   greetingLine,
-  localModelLine,
-  signedOutAgentsLine,
   joinNames,
 } from "./first-run-copy";
+import { sellsOnPrice } from "./first-run-copy-rules";
+import { firstRunAssembledStrings, firstRunStoredStrings } from "./first-run-surfaces";
 
 /**
  * THE COPY GATE.
  *
- * Every string a person can read during the first run is in one module, so
- * the rules the product owner has rejected work over can be checked over all
- * of it at once rather than argued about per pull request. A rule that lives
- * only in a brief is a rule that comes back.
+ * Every string a person can read during the first run obeys rules the product
+ * owner has rejected work over, so the rules are checked over ALL of it at
+ * once rather than argued about per pull request. A rule that lives only in a
+ * brief is a rule that comes back.
  *
- * The walk is deep and type blind on purpose: a new card added to
- * FIRST_RUN_COPY is covered the moment it exists, without anyone remembering
- * to add it here. Strings produced by the module's formatters are fed in
- * beside it, because a sentence assembled at render time is still a sentence
- * on screen.
+ * IT WALKED ONE FILE AND CALLED IT "EVERY STRING". `FIRST_RUN_COPY` is not
+ * the whole first run: `SETUP_CARD_COPY` in server/setup-conversation.ts is
+ * the title and subtitle of every card the Chief puts in the thread, and no
+ * house rule reached it. "Talk to me and I will answer out loud." on the jobs
+ * card passed 244 tests. The surfaces are registered in
+ * src/lib/first-run-surfaces.ts now, the gate walks the register, and
+ * first-run-surfaces.test.ts fails any module in the area that holds prose
+ * and has not joined it.
  */
-function walk(value: unknown, path: string, into: Array<{ path: string; text: string }>): void {
-  if (typeof value === "string") {
-    into.push({ path, text: value });
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => walk(item, `${path}[${index}]`, into));
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) walk(item, `${path}.${key}`, into);
-  }
-}
-
-const strings: Array<{ path: string; text: string }> = [];
-walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
-// THE CHIEF'S OWN SENTENCES ARE FIRST-RUN COPY TOO.
-//
-// They are posted by the server, so they cannot live in this module, and
-// while they sat as a literal inside server/index.ts no rule on this page
-// applied to them. That is how the flow came to have one sentence nobody had
-// checked. They are walked here for the same reason everything else is.
-walk(CHIEF_CONFIRMATIONS, "CHIEF_CONFIRMATIONS", strings);
-// Slugs, template names and row ids are wire identifiers and nobody reads
-// them. Everything else on a row is read out loud by somebody's eyes.
-//
-// `.id` earns its place here rather than being an oversight: the Flux row
-// keyed `voice` is a React key and a stable handle for the row, and a rule
-// about what a person may be TOLD has no business failing because of the word
-// an array is keyed by. What the person actually reads is `title` and `body`,
-// and both of those stay in the walk.
-const IDENTIFIER = /\.(slug|template|id)$/;
-const readable = strings.filter((entry) => !IDENTIFIER.test(entry.path));
-
-const assembled: Array<{ path: string; text: string }> = [
-  { path: "foundAgentsLine(one)", text: foundAgentsLine(["Claude Code"]) },
-  { path: "foundAgentsLine(two)", text: foundAgentsLine(["Claude Code", "Codex"]) },
-  { path: "foundAgentsLine(three)", text: foundAgentsLine(["Claude Code", "Codex", "Fuigo"]) },
-  { path: "foundAgentsLine(none)", text: foundAgentsLine([]) },
-  { path: "briefRanLine", text: briefRanLine(FIRST_RUN_BRIEF_TIME) },
-  { path: "briefRanLine(pm)", text: briefRanLine("18:30") },
-  { path: "briefButtonLabel", text: briefButtonLabel(FIRST_RUN_BRIEF_TIME) },
-  { path: "greetingLine", text: greetingLine("Sean") },
-  { path: "greetingLine(blank)", text: greetingLine("  ") },
-  { path: "signedOutAgentsLine(one)", text: signedOutAgentsLine(["Claude Code"]) },
-  { path: "signedOutAgentsLine(two)", text: signedOutAgentsLine(["Claude Code", "Codex"]) },
-  { path: "signedOutAgentsLine(none)", text: signedOutAgentsLine([]) },
-  { path: "localModelLine", text: localModelLine("Qwen3.8-27B", "llama.cpp") },
-  { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
-  { path: "localModelLine(none)", text: localModelLine("", "") },
-  { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
-  { path: "botsEyebrowLine(0)", text: botsEyebrowLine(0) },
-  { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
-  { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },
-  { path: "botsEyebrowLine(3)", text: botsEyebrowLine(3) },
-  // The morning offer is three strings joined at render time, and the
-  // sentence that admits the immediate run is one of them. Walked assembled,
-  // because the three sentence ceiling is about what lands on the screen.
-  { path: "morningOffer(offer).body", text: morningOffer(false).body },
-  { path: "morningOffer(offer).button", text: morningOffer(false).button },
-  { path: "morningOffer(taken).taken", text: morningOffer(true).taken ?? "" },
-];
+const readable = firstRunStoredStrings();
+const assembled = firstRunAssembledStrings();
 
 const everything = [...readable, ...assembled];
 
@@ -120,18 +59,13 @@ describe("first run copy: the house rules", () => {
   });
 
   it("never sells on price", () => {
-    // Money in any form: the adjectives, the nouns, and the figures. The
-    // first run says what the thing does, never what it costs.
-    // `pay` was missing, and "Any OpenAI-style service you already pay for"
-    // was live on the no-key branch of a blank machine for the whole of this
-    // release. A rule with a hole in it is not a rule; it is the hole.
-    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|pay\w*|paid|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
+    // ONE RULE, IMPORTED. It used to be this pattern hand-copied into three
+    // test files; `pay` was added to this copy after it shipped and to
+    // neither of the others, so the rule was fixed in one place of three.
+    // first-run-copy-rules.ts is the rule now and nothing here holds a copy.
     for (const { path, text } of everything) {
-      const hit = banned.exec(text);
-      expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null).toBeNull();
-    }
-    for (const { path, text } of everything) {
-      expect.soft(`${path}: ${text}`).not.toMatch(/[$£€]\s?\d/);
+      const hit = sellsOnPrice(text);
+      expect.soft(hit ? `${path}: ${hit} in "${text}"` : null).toBeNull();
     }
   });
 
@@ -283,10 +217,33 @@ describe("first run copy: the things the flow promises", () => {
   // to me" onto an unmarked row still fails. Writing it onto the transcription
   // row still fails, because a row that claims to be transcription may not
   // then promise an answer out loud.
-  const SPEECH = /\b(voice|speaks?|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
-  /** What a row claiming to be TRANSCRIPTION may never say. You talk, it
-   *  types; the key has no synthesis endpoint of any kind. */
-  const SYNTHESIS = /\b(voice|speaks?|spoken|read (?:it )?aloud|text to speech|talk to me|talk back|speak to you)\b/i;
+  // `speak up` is carved out, and it is the only carve-out. It is the idiom
+  // for raising a matter ("keep an eye on one thing and speak up when it
+  // changes", on the more-routines card), not a claim that anything is said
+  // out loud. Every other spelling of speech stays banned, and a sentence
+  // that really did promise synthesis alongside it would still be caught by
+  // `out loud`, `aloud`, `voice`, `talk back` or `speak to you`.
+  const SPEECH = /\b(?:voice|speaks?(?!\s+up\b)|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
+  /**
+   * WHAT A ROW CLAIMING TO BE TRANSCRIPTION IS ENTITLED TO DESCRIBE: the
+   * PERSON talking. That is the whole of what the key does, so "say it out
+   * loud" and "talk instead of type" are true and have to stay sayable.
+   *
+   * THE SECOND REGEX WAS THE FIRST ONE WITH `out loud` DELETED, which is how
+   * a rule dies. It meant the one phrase the row is allowed to use bought the
+   * row a blanket exemption from the phrase, and "say it out loud, and it
+   * answers you out loud as well" went straight through it: a synthesis claim
+   * on a key with no synthesis endpoint, which is the exact false claim that
+   * has already shipped once and been enforced backwards by a test once.
+   *
+   * So there is ONE speech regex now, and the exemption is a narrow strip
+   * rather than a hole in the pattern: the user-speaking clauses below are
+   * removed from the row and the FULL regex is run over what is left. The row
+   * may say the person talks; every other mention of speech on it, wherever
+   * in the sentence it sits and whoever it is about, still fails.
+   */
+  const YOU_SPEAKING =
+    /\b(?:say|says|saying|said|talk|talks|talking|speak|speaks|speaking|dictate|dictates|dictating)\b(?:\s+(?:it|this|that|them))?\s+(?:out loud|aloud|instead of typ\w+|into\b[^.,;]*)/gi;
 
   const features = FIRST_RUN_COPY.flux.key.features;
   const declared = new Set(
@@ -329,7 +286,15 @@ describe("first run copy: the things the flow promises", () => {
     // a row that quietly grew into "talk to me" would be the shipped false
     // claim arriving through the exemption door.
     for (const row of features.filter((one) => one.speech === "transcription")) {
-      expect.soft(`${row.title} ${row.body}`, `"${row.title}" promises speech back`).not.toMatch(SYNTHESIS);
+      // What the person does is struck out; what is left is what the row says
+      // about anything else, and a transcription row may say nothing else
+      // about speech at all.
+      const rest = `${row.title} ${row.body}`.replace(YOU_SPEAKING, " ");
+      const hit = SPEECH.exec(rest);
+      expect.soft(
+        hit ? `"${row.title}": "${hit[0]}" in "${row.title} ${row.body}"` : null,
+        `"${row.title}" promises speech back on a key that cannot synthesise it`,
+      ).toBeNull();
       expect.soft(row.state, `"${row.title}" is transcription, which works today`).toBe("live");
     }
   });

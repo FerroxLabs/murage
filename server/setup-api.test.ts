@@ -84,9 +84,27 @@ describe("the first run on a real server whose engine never answers", () => {
     expect(view.steps.map((entry) => entry.id)).toEqual([...SETUP_STEPS]);
     expect(view.progress.total).toBe(5);
     expect(view.next).toBe("hello");
-    // The derived field the whole re-cut turns on, computed server-side once
-    // rather than four times in the renderer.
-    expect(typeof view.nothingToThinkWith).toBe("boolean");
+    // THE DERIVED FIELD THE WHOLE RE-CUT TURNS ON, CHECKED AGAINST THE FLOW
+    // IT DRIVES. `typeof x === "boolean"` was all this said, which is a claim
+    // about the wire format and not about the answer: any value at all passed
+    // as long as it was one of two, and neither of them had to be right.
+    //
+    // What the field MEANS is that this machine has nothing to think with, so
+    // detection has nothing honest to report and the Flux card carries it.
+    // Whichever way it answers on this box, the flow has to agree with it.
+    expect([true, false]).toContain(view.nothingToThinkWith);
+    // The invariant the re-cut rests on, asserted in BOTH directions so
+    // neither branch is vacuous: a machine with nothing to think with has no
+    // honest "here is what I found" to write, so detection is settled before
+    // it is ever presented and the flow never stops on it; a machine that has
+    // something still owes that report, so the step is open.
+    const detect = step(view, "detect");
+    expect(
+      detect.done === true || detect.skipped === true,
+      view.nothingToThinkWith
+        ? "nothing to think with, and the flow is still going to ask for a detection report"
+        : "there is something on this machine, and detection was settled without reporting it",
+    ).toBe(view.nothingToThinkWith);
   });
 
   it("knows this install has never been used, and opens the conversation in the Chief's thread", async () => {
@@ -306,10 +324,16 @@ describe("the rest of the walk", () => {
     // packaged one, which this fixture does not stage. What must hold
     // everywhere is that the view says which, and never reports "not ready"
     // without the resolver's own sentence for why.
-    expect(typeof view.engine.ready).toBe("boolean");
-    expect(view.engine.ready
-      ? view.engine.reason === undefined
-      : /fuigo is unavailable/.test(view.engine.reason ?? "")).toBe(true);
+    // The `typeof` line that was here said nothing the line below does not,
+    // and read as though it were a second check. One assertion, and it names
+    // which branch it took when it fails.
+    expect([true, false]).toContain(view.engine.ready);
+    if (view.engine.ready) {
+      expect(view.engine.reason, "a ready engine carried a reason it is not ready").toBeUndefined();
+    } else {
+      expect(view.engine.reason ?? "", "the engine is not ready and will not say why")
+        .toMatch(/fuigo is unavailable/);
+    }
   });
 
   // THE SIGNUP THE HELLO STEP CARRIES, ON A REAL SERVER.
@@ -337,24 +361,26 @@ describe("the rest of the walk", () => {
     expect(rubbish.body.ok).toBe(false);
   });
 
-  it("still has the hello card calling that route, after the steps moved", async () => {
-    // A STRUCTURAL GUARD, NOT A COPY TEST. The re-cut moves cards between
-    // steps, and the one thing that must not be lost on the way is the call
-    // that puts an address on the list. Comments are stripped first, so this
-    // reads the code and not the paragraph above it explaining the code.
-    const { readFileSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(
-      fileURLToPath(new URL("../src/components/FirstRunHelloCard.tsx", import.meta.url)),
-      "utf8",
-    );
-    const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
-    expect(code, "the hello card stopped posting the signup").toContain('"/api/subscribe"');
-    // Server-side is the whole point: the key is a write credential for the
-    // account and an Electron renderer bundle is readable by anyone who
-    // installs the app. The renderer must never learn it exists.
-    expect(code).not.toMatch(/sendlane/i);
-  });
+  // THE GREP THAT USED TO SIT HERE PROVED NOTHING, AND IS GONE.
+  //
+  // It read src/components/FirstRunHelloCard.tsx and looked for the string
+  // `"/api/subscribe"`. A reviewer replaced the real call with a dead
+  // constant of the same name and 22 tests stayed green: Sendlane would have
+  // collected nothing, from everybody, and this file would have said the
+  // wiring was intact.
+  //
+  // The card's half is EXECUTED now, in src/components/FirstRunHelloCard.test.ts:
+  // `saveHelloAnswer` is run against a recording fake, and the subscribe POST
+  // with the trimmed address is asserted, along with the case where the
+  // profile did not save and nobody is subscribed. It cannot live here,
+  // because tsconfig.server.json has no `jsx` and a server test cannot import
+  // a .tsx module.
+  //
+  // What this file owns is the other half, above: the route exists on a real
+  // server, answers 200 with no credential staged, and never blocks entry to
+  // the app. Between the two, the only thing now unproven is that the button
+  // in the card is wired to `saveHelloAnswer`, which is one line this repo has
+  // no DOM test environment to press.
 
   it("never says a word the release forbids, on any card it put in the thread", async () => {
     for (const card of await setupCards()) {

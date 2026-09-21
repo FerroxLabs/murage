@@ -9,9 +9,12 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 
+const { FIRST_RUN_BRIEF_TIME, clockLabel } = await import("./first-run-copy");
+
 const {
   briefRoutineRequest,
   businessResult,
+  morningOffer,
   dayResult,
   escapeHatchScreen,
   firstRunInputScreen,
@@ -451,8 +454,23 @@ describe("every result has a body and a way on, whatever was typed", () => {
   });
 
   it("sends one brief request and only one, whatever screen asked for it", () => {
-    expect(briefRoutineRequest()).toEqual(briefRoutineRequest());
-    expect(briefRoutineRequest().template).toBe("brief");
+    // THIS WAS `expect(briefRoutineRequest()).toEqual(briefRoutineRequest())`:
+    // a literal compared with itself, which is true of every function that
+    // returns anything at all, including one that returned nothing useful.
+    //
+    // The property is that ONE value is scheduled and the SAME value is said
+    // back on every screen that offers it. So the request is asserted against
+    // the module's single source for the time, and the screens are asserted
+    // to say that time rather than a time of their own. A picker and a
+    // confirmation that disagreed is the defect this is about.
+    const request = briefRoutineRequest();
+    expect(request).toEqual({ template: "brief", time: FIRST_RUN_BRIEF_TIME, weekdaysOnly: true });
+    const spoken = clockLabel(request.time);
+    expect(briefRoutineOfferHeading()).toBeTruthy();
+    const offer = morningOffer(true);
+    expect(offer.button, "the button schedules one time and offers another").toContain(spoken);
+    expect(offer.body).toContain(spoken);
+    expect(offer.taken).toContain(spoken);
   });
 });
 
@@ -716,13 +734,23 @@ describe("the do-it card settles through the rule rather than around it", () => 
     // that are ever handed it are the two road functions. Asserting on the
     // braces of an inlined settle step would have forced the recording to be
     // written out twice, once per road, which is the thing this checks for.
+    //
+    // WRITTEN TO GO RED ONLY WHEN THE WIRING REALLY CHANGES. A source read
+    // that pins whitespace, a parameter name or an argument list goes red on
+    // a reformat that changes nothing and green on a call sitting in dead
+    // code, which is the guard class this branch deleted seven of. The
+    // BEHAVIOUR of both roads is executed above, against the real exported
+    // functions; the only fact left that this suite cannot run is that the
+    // card is the caller, so that is all these match on, as loosely as the
+    // property allows.
     const at = [...code.matchAll(/answerSetupStep\("flow"/g)].map((match) => match.index ?? 0);
     expect(at.length, "the flow step is recorded from more than one place").toBe(1);
     expect(code, "the one recording site stopped being the one both roads are handed")
-      .toMatch(/const answerFlow = \(\w+: FirstRunJobId\) => answerSetupStep\("flow", \w+\);/);
+      .toMatch(/const answerFlow\s*=[^;]*answerSetupStep\("flow"/);
 
     // The settle step reaches the result through the same road the box does.
-    expect(code, "the settle step stopped going through the one road").toMatch(/settle:\s*\(\)\s*=>\s*firstRunReachResult\(/);
+    expect(code, "the settle step stopped going through the one road")
+      .toMatch(/settle:\s*(?:async\s*)?\(\)\s*=>\s*firstRunReachResult\(/);
 
     // AND NOTHING ELSE MAY PUT SOMEBODY ON A RESULT SCREEN. A bare
     // `setStage("result")` is a result nothing answered for, which is exactly
@@ -731,7 +759,7 @@ describe("the do-it card settles through the rule rather than around it", () => 
 
     // Both roads take the recording as an argument rather than reaching for
     // it, so this suite can run them; the ones above do.
-    for (const road of [/firstRunReachResult\(id, goTo, answerFlow\)/, /firstRunGo\(world, id, goTo, answerFlow\)/]) {
+    for (const road of [/firstRunReachResult\([^)]*answerFlow\)/, /firstRunGo\([^)]*answerFlow\)/]) {
       expect(code, `${road} is no longer how the card reaches a result`).toMatch(road);
     }
   });

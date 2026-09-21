@@ -44,14 +44,14 @@ import {
   clipboardHasImages,
   clipboardImageFiles,
   composeMessage,
-  intakeFiles,
   isLongPaste,
   pasteAttachment,
   type Attachment,
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
-import { composerUploadsPending, subscribeComposerUploads, trackComposerUpload } from "@/lib/composer-uploads";
+import { composerFileIntake, composerPasteIntake } from "@/lib/composer-intake";
+import { composerUploadsPending, subscribeComposerUploads } from "@/lib/composer-uploads";
 import { composerSendGate } from "@/lib/composer-send-gate";
 import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
@@ -483,18 +483,17 @@ export function Composer({
   // Tracked for its whole length, append included: an Enter that lands while
   // this is running must be held, or the image it is fetching is attached to
   // the draft AFTER this one.
-  const pickFiles = (picked: FileList | null) => trackComposerUpload(threadId, async () => {
-    if (!picked?.length) return;
-    const { attachments: added, notice } = await intakeFiles(Array.from(picked), {
-      allowImages: engineSupportsImages,
-      getPath: pathForFile,
-      uploadImage: file => imageAttachmentFromFile(file, threadId),
-      queueAudio: queueAudioFile,
-    });
-    if (added.length) addUploadedAttachments(added);
+  const pickFiles = (picked: FileList | null) => composerFileIntake({
+    threadId,
+    files: picked ? Array.from(picked) : [],
+    allowImages: engineSupportsImages,
+    getPath: pathForFile,
+    uploadImage: file => imageAttachmentFromFile(file, threadId),
+    queueAudio: queueAudioFile,
+    onAdd: addUploadedAttachments,
     // Keep file-specific failures beside the attachments. A successful
     // overlapping intake must not erase an earlier failure before it is read.
-    if (notice) setAttachmentNotice(notice);
+    onNotice: setAttachmentNotice,
   });
   const setMode = (mode: PermissionMode) => {
     if (!autoBot) return;
@@ -963,18 +962,12 @@ export function Composer({
                 });
                 return;
               }
-              void trackComposerUpload(threadId, async () => {
-                for (const file of imageFiles) {
-                  try {
-                    const attachment = await imageAttachmentFromFile(file, threadId);
-                    if (attachment) addUploadedAttachments([attachment]);
-                  } catch (err) {
-                    dispatch({
-                      type: "error",
-                      message: err instanceof Error ? err.message : "image upload failed",
-                    });
-                  }
-                }
+              void composerPasteIntake({
+                threadId,
+                files: imageFiles,
+                uploadImage: file => imageAttachmentFromFile(file, threadId),
+                onAdd: addUploadedAttachments,
+                onError: (message) => dispatch({ type: "error", message }),
               });
               return;
             }

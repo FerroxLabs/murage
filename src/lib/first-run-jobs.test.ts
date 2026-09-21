@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FIRST_RUN_COPY } from "./first-run-copy";
+import { sellsOnPrice } from "./first-run-copy-rules";
 import {
   FIRST_RUN_JOB_IDS,
   FIRST_RUN_JOB_SHAPES,
@@ -515,11 +516,13 @@ describe("the assembled sentences obey the house rules too", () => {
   });
 
   it("never sells on price", () => {
-    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
+    // The same imported rule the other two copy tests use. This file used to
+    // carry its own copy of the pattern, without `pay`, which is how "already
+    // pay for" shipped: the rule was corrected in one of the three places it
+    // had been written out.
     for (const text of assembled) {
-      const hit = banned.exec(text);
-      expect.soft(hit ? `${hit[0]} in "${text}"` : null).toBeNull();
-      expect.soft(text).not.toMatch(/[$£€]\s?\d/);
+      const hit = sellsOnPrice(text);
+      expect.soft(hit ? `${hit} in "${text}"` : null).toBeNull();
     }
   });
 

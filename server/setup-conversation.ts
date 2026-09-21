@@ -106,8 +106,16 @@ export const SETUP_ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> 
  * dashes, nothing about what anything costs, the connected-app catalog is
  * "500+ apps" named by example, and Flux Router leads with routing. Three
  * sentences is the ceiling and one is usually better.
+ *
+ * EXPORTED BECAUSE THE RULES ARE CHECKED OVER IT, AND WERE NOT.
+ *
+ * The copy gate used to walk src/lib/first-run-copy.ts alone, and these
+ * sentences are rendered into the person's transcript exactly as visibly. A
+ * reviewer put "Talk to me and I will answer out loud." on the jobs card and
+ * the whole suite stayed green. This map is now a registered first-run
+ * surface (src/lib/first-run-surfaces.ts) and every house rule runs over it.
  */
-const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> = {
+export const SETUP_CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> = {
   welcome: {
     title: "Hello",
     subtitle: "I am your Chief of Staff. Tell me what to call you and I will get the rest ready.",
@@ -124,7 +132,7 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
    * THIS ENTRY WAS MISSING ONCE AND THE BLANK MACHINE IS THE PATH THAT
    * NEEDED IT.
    *
-   * The old `plan()` built its block with `...CARD_COPY[variant]`, and
+   * The old `plan()` built its block with `...SETUP_CARD_COPY[variant]`, and
    * spreading `undefined` is a silent no-op in JS, so a machine with no
    * agents produced a card with no title and no subtitle at all. Only the
    * server typecheck saw it, and the server typecheck was not being run. That
@@ -206,19 +214,19 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
 /**
  * The words for one card, or a throw.
  *
- * THE LOOKUP THROWS ON PURPOSE. `plan()` used to spread `CARD_COPY[variant]`
+ * THE LOOKUP THROWS ON PURPOSE. `plan()` used to spread `SETUP_CARD_COPY[variant]`
  * straight into its block, and a missing entry spreads as nothing at all, so
  * a card with no title and no subtitle reached a person's transcript in
- * silence. `CARD_COPY` is an exhaustive `Record` and the compiler will catch
+ * silence. `SETUP_CARD_COPY` is an exhaustive `Record` and the compiler will catch
  * the next hole — but that was true when the hole shipped, because the server
  * typecheck was not being run. A map lookup that cannot fail quietly is the
  * belt to that braces, and `setup-conversation.test.ts` executes this for
  * every variant in `SETUP_CARD_VARIANTS` rather than reading the source.
  */
 export function setupCardCopy(variant: SetupCardVariant): { title: string; subtitle: string } {
-  const copy = CARD_COPY[variant] as { title: string; subtitle: string } | undefined;
+  const copy = SETUP_CARD_COPY[variant] as { title: string; subtitle: string } | undefined;
   if (!copy?.title?.trim() || !copy.subtitle?.trim()) {
-    throw new Error(`First-run card "${variant}" has no copy. Add it to CARD_COPY.`);
+    throw new Error(`First-run card "${variant}" has no copy. Add it to SETUP_CARD_COPY.`);
   }
   return copy;
 }

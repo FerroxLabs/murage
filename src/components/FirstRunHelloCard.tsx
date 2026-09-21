@@ -51,6 +51,61 @@ export function helloAnswerReady(name: string, email: string): boolean {
   return name.trim().length > 0 && EMAIL.test(email.trim());
 }
 
+/** What the hello step talks to. The live versions are below; a test hands
+ *  its own and watches what the step actually calls. */
+export interface HelloAnswerDeps {
+  api: (path: string, init?: RequestInit) => Promise<any>;
+  identify: (email: string) => void;
+  markGate: (status: "submitted" | "skipped") => void;
+  answer: (step: "hello", answer: string) => Promise<void>;
+}
+
+const LIVE: HelloAnswerDeps = {
+  api,
+  identify: identifyEmail,
+  markGate: setEmailGateDone,
+  answer: answerSetupStep,
+};
+
+/**
+ * THE WHOLE HELLO ANSWER, OUT OF THE COMPONENT SO IT CAN BE RUN.
+ *
+ * THE DEFECT THIS EXISTS FOR. The signup behind this step is the only thing
+ * on the first run that leaves the machine for a list, and the only guard on
+ * it was a `readFileSync` of this file grepping for the string
+ * `"/api/subscribe"`. A reviewer replaced the real call with a dead constant
+ * and 22 tests stayed green: the list would have collected nothing, from
+ * everybody, and the suite would have been happy about it. A grep cannot tell
+ * a call from a comment, a constant, or dead code.
+ *
+ * So the sequence is a function now, and FirstRunHelloCard.test.ts RUNS it:
+ * the profile is saved, the save is CONFIRMED (a PUT that answered is not a
+ * PUT that saved, which is the check worth keeping deliberately — a profile
+ * that silently did not save has the Chief using a name it does not have, all
+ * week), and only then is the address identified and put on the list. The
+ * subscribe is fire and forget on purpose: entry to the app has never been
+ * allowed to depend on a marketing list being reachable.
+ */
+export async function saveHelloAnswer(
+  typed: { name: string; email: string },
+  deps: HelloAnswerDeps = LIVE,
+): Promise<{ profile: { name: string; email: string }; greeting: string }> {
+  const profile = { name: typed.name.trim(), email: typed.email.trim().toLowerCase() };
+  const result = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+  // The same confirmation Onboarding makes: a PUT that answered is not a PUT
+  // that saved.
+  if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) {
+    throw new Error(copy.failure);
+  }
+  deps.identify(profile.email);
+  void deps.api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
+  try { deps.markGate("submitted"); } catch { /* a blocked store is not a failed signup */ }
+  // Both halves, because both are what they just told the Chief and the
+  // transcript is where a person checks what an assistant heard.
+  await deps.answer("hello", [profile.name, profile.email].filter(Boolean).join(", "));
+  return { profile, greeting: greetingLine(profile.name) };
+}
+
 export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -73,25 +128,14 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
   const valid = helloAnswerReady(name, email);
 
+  // Nothing but the form state lives here: the answer itself is
+  // `saveHelloAnswer` above, which a test runs.
   const save = async () => {
     if (busy || !valid) return;
     setBusy(true);
     setFailure("");
-    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
     try {
-      const result = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
-      // The same confirmation Onboarding makes: a PUT that answered is not a
-      // PUT that saved.
-      if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) {
-        throw new Error(copy.failure);
-      }
-      identifyEmail(profile.email);
-      void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
-      try { setEmailGateDone("submitted"); } catch { /* a blocked store is not a failed signup */ }
-      // Both halves, because both are what they just told the Chief and the
-      // transcript is where a person checks what an assistant heard.
-      await answerSetupStep("hello", [profile.name, profile.email].filter(Boolean).join(", "));
-      setSaved(greetingLine(profile.name));
+      setSaved((await saveHelloAnswer({ name, email })).greeting);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
