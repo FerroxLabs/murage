@@ -128,7 +128,16 @@ const proposeRoutine = (bot: { id: string }, threadId: string, auth: Record<stri
     fromBotId: bot.id,
     fromThreadId: threadId,
     action: "create",
-    routine: { name, instructions: "Summarize the day.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] } },
+    // The instructions follow the name, and they have to. This file proposes
+    // several routines on one bot to walk the approval paths, and it used to
+    // send "Summarize the day." for every one of them. Once 0.1.58 added the
+    // duplicate guard (server/routine-requests.ts, revalidateOperation) the
+    // second proposal was refused 409 as the same work as the first, which it
+    // was: same bot, same prompt, same schedule. The guard is right and the
+    // name is deliberately not part of its comparison, so the fixture is what
+    // has to change. Nothing about what this file tests depends on the three
+    // routines being identical; they only ever needed to be distinct requests.
+    routine: { name, instructions: `Summarize the day for ${name}.`, schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] } },
   }, auth);
 
 const stageSkill = (bot: { id: string }, threadId: string, auth: Record<string, string>, name: string) =>
