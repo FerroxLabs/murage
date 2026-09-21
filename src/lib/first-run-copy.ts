@@ -1250,10 +1250,15 @@ export function greetingLine(name: string): string {
  * it is there for is the Chief's question a step later: "What can I take off
  * your plate, there?", which reads correctly and warmly.
  *
- * IT IS A RENDER FALLBACK AND IT WRITES NOTHING. The simulation sets its own
- * `S.name`, which is a variable in a mock-up. The obvious translation of that
- * is to save "there" onto the owner profile when the step is skipped, and that
- * would be wrong twice over. It would put a word the person never typed into
+ * IT IS A RENDER FALLBACK AND IT WRITES NOTHING, AND IT HAS TO BE CALLED.
+ * Nothing called it: `FirstRunJobsCard` passed `view.ownerName` straight to
+ * `chiefQuestion`, so a skipped hello produced the bare "What can I take off
+ * your plate?" and the word this function exists for reached no screen at
+ * all. It is called at that one site now.
+ *
+ * The simulation sets its own `S.name`, which is a variable in a mock-up. The
+ * obvious translation of that is to save "there" onto the owner profile when
+ * the step is skipped, and that would be wrong twice over. It would put a word the person never typed into
  * the profile every other surface in the app reads from, and it would defeat
  * the greeting rule in the same spec: a skipped name DROPS the clause, so
  * `greetingLine` says "Good to meet you." and a stored "there" would make it

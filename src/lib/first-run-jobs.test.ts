@@ -374,7 +374,9 @@ describe("the status line the Chief opens with", () => {
   });
 
   it("asks the question by name, and reads correctly after a skipped hello", () => {
-    // Skipping hello stores "there", which is why that word was chosen.
+    // Skipping hello stores NOTHING. "there" is a render fallback the card
+    // applies on its way in (`firstRunAddress`), which is why that word was
+    // chosen: it reads correctly here, and the greeting drops the clause.
     expect(chiefQuestion("Sean")).toBe("What can I take off your plate, Sean?");
     expect(chiefQuestion("there")).toBe("What can I take off your plate, there?");
     expect(chiefQuestion("  Sean  ")).toBe("What can I take off your plate, Sean?");

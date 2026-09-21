@@ -27,7 +27,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { connectApp } from "@/lib/connect-app";
-import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
 import {
@@ -240,7 +240,16 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
   return (
     <FirstRunBubble>
       {world && <FirstRunLine quiet>{chiefStatusLine(world, engineName(view))}</FirstRunLine>}
-      <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(view?.ownerName ?? "")}</div>
+      {/* WHAT THE CHIEF CALLS SOMEBODY WHO SKIPPED THE NAME.
+          THE DEFECT. This passed `view.ownerName` straight through, and a
+          skipped hello leaves that "", so the one sentence the approved flow
+          gives the word "there" to asked a bare "What can I take off your
+          plate?" instead. `firstRunAddress` is the render fallback that word
+          was written as: it fills this sentence and writes nothing, because
+          storing "there" on the owner profile would put a word the person
+          never typed into what every other surface reads, and would make the
+          greeting say "Good to meet you, there." */}
+      <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(firstRunAddress(view?.ownerName))}</div>
       <FirstRunLine>{world ? chiefLead(world) : jobsCopy.lead}</FirstRunLine>
 
       <ul className="mt-3 grid gap-2">

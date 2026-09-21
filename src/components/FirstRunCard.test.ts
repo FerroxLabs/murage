@@ -160,7 +160,7 @@ describe("card one: hello", () => {
     expect(helloAnswerReady("  Sean  ", "  sean@example.com  ")).toBe(true);
   });
 
-  // SKIPPING SETS THE NAME TO "there", AND IT SETS IT ON SCREEN ONLY.
+  // SKIPPING SETS THE NAME TO "there" ON SCREEN, AND NOWHERE ELSE.
   //
   // The two sentences want opposite things from the same blank: the Chief's
   // question a step later reads "What can I take off your plate, there?", and
@@ -441,6 +441,29 @@ describe("step four: what can I take off your plate", () => {
       expect.soft(markup, row.id).toContain(asHtml(row.sub));
     }
     expect(markup).toContain(copy.escape);
+  });
+
+  /**
+   * THE DEFECT: SKIPPING HELLO LEFT THE NAME EMPTY ON SCREEN.
+   *
+   * The approved flow gives a skipped person the word "there" for exactly
+   * one sentence, this one, and `firstRunAddress` was written for it and
+   * called by nothing: the card passed `view.ownerName` straight through, so
+   * a skip produced the bare "What can I take off your plate?".
+   *
+   * It is a RENDER fallback. Nothing writes "there" to the owner profile,
+   * because the greeting wants the opposite thing from the same blank, and
+   * that is asserted here on the same machine rather than left to a comment.
+   */
+  it("calls a skipped person there, and still stores no name for them", async () => {
+    await machine({ ownerName: "", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    const markup = render("chat", "jobs");
+    expect(markup, "a skipped hello left a bare question").toContain(asHtml(`${copy.question}, there?`));
+    expect(markup).not.toContain(asHtml(`${copy.question}?`));
+    // The blank stays blank: the greeting drops the clause rather than
+    // saying "Good to meet you, there."
+    expect(greetingLine("")).not.toContain("there");
+    expect(lookedAroundLine("")).not.toContain("there");
   });
 
   it("tags each job with what it is still waiting on, live", async () => {

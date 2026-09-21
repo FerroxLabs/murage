@@ -378,9 +378,23 @@ export function chiefStatusLine(world: FirstRunJobWorld, engineName: string): st
 /**
  * The question, with their name in it when there is one.
  *
- * Skipping the hello step stores `there`, which reads correctly here and is
- * why it was chosen. An empty name is still possible from an older saved
- * state, and drops the comma clause rather than greeting nobody.
+ * SKIPPING THE HELLO STEP STORES NOTHING. This comment used to say it
+ * "stores `there`", flatly contradicting `firstRunAddress`, which says in so
+ * many words that it is a render fallback that writes nothing; and neither
+ * of them was true of the code, which passed a bare `view.ownerName` in and
+ * asked "What can I take off your plate?" of somebody the approved flow
+ * calls "there".
+ *
+ * `firstRunAddress` is what fills this sentence, at the call site, and the
+ * reason it is a fallback rather than a saved name is that the greeting
+ * wants the opposite thing from the same blank: a skipped name DROPS the
+ * comma clause there ("Good to meet you."), and a stored "there" would make
+ * it say "Good to meet you, there." Both are only possible while the blank
+ * stays blank.
+ *
+ * The empty branch stays because a caller is not obliged to use the
+ * fallback, and a question with a gap in it would be worse than one without
+ * the clause.
  */
 export function chiefQuestion(ownerName: string): string {
   const words = FIRST_RUN_COPY.chat.jobs;
