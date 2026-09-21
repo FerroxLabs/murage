@@ -104,6 +104,25 @@ export interface SetupInstanceReading {
  * of the doubt and stays in `setupAgentsReading`, exactly as it does today.
  */
 function signedOut(instance: SetupInstanceReading): boolean {
+  // THE ENGINE WE SHIP IS NEVER "SIGNED OUT", whatever it reports.
+  //
+  // Caught on a real machine rather than in a fixture. Fuigo answers
+  // `authenticated: false` whenever nobody has logged into Flux, and it does
+  // that while sitting on a perfectly good local model:
+  //
+  //   fuigo | state=available | auth=False | default=[ollama::qwen:latest]
+  //
+  // Without this clause that engine left `agents` entirely, so the one thing
+  // that WAS working stopped being counted, and on a machine with nothing
+  // else the card would have offered a sign-in command for it. That is the
+  // wrong advice twice over: Fuigo is a CLIENT, its missing credential is a
+  // key rather than a login, and "bare-needs-key" is the card that already
+  // says so correctly.
+  //
+  // Everything else about the bundled engine is unchanged: it still has to
+  // be available with a non-empty catalogue to count as an agent, which is
+  // what stops a keyless, model-less Fuigo claiming to be one.
+  if (instance.driverKind === "fuigoAgent") return false;
   return instance.snapshot.authenticated === false;
 }
 

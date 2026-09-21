@@ -198,3 +198,60 @@ describe("the model already running on this computer", () => {
     expect(setupAgentsReading([imposter])[0]).not.toHaveProperty("localModel");
   });
 });
+
+// THE ENGINE WE SHIP IS NEVER "SIGNED OUT".
+//
+// Caught on a real machine, not in a fixture. Fuigo answers
+// `authenticated: false` whenever nobody has logged into Flux, and it says
+// that while sitting on a working local model:
+//
+//   fuigo | state=available | auth=False | default=[ollama::qwen:latest]
+//
+// The first version of the split believed it. The engine that was actually
+// doing the thinking dropped out of `agents`, so the agents step stopped
+// counting the one thing that worked, and on a machine with nothing else the
+// Chief would have offered a sign-in command for it. Wrong twice: Fuigo is a
+// client, its missing credential is a key rather than a login, and there is
+// already a card that says exactly that.
+describe("the engine that came in the box", () => {
+  const bundledNoFluxLogin = instance({
+    instanceId: "fuigo",
+    displayName: "Fuigo",
+    driverKind: "fuigoAgent",
+    snapshot: { state: "available", authenticated: false },
+    models: { default: "ollama::qwen:latest" },
+  });
+
+  it("still counts as an agent when it can think", () => {
+    expect(setupAgentsReading([bundledNoFluxLogin]).map((agent) => agent.id)).toEqual(["fuigo"]);
+  });
+
+  it("is never offered a sign-in, because a key is what it is missing", () => {
+    expect(setupSignedOutReading([bundledNoFluxLogin])).toEqual([]);
+  });
+
+  // The catalogue check is what still holds it honest. A Fuigo with nothing
+  // to think with is not an agent, and this clause must not have quietly
+  // bought it a pass.
+  it("is still not an agent when it has nothing to think with", () => {
+    const brainless = instance({
+      instanceId: "fuigo",
+      driverKind: "fuigoAgent",
+      snapshot: { state: "available", authenticated: false },
+      models: { default: "" },
+    });
+    expect(setupAgentsReading([brainless])).toEqual([]);
+    expect(setupSignedOutReading([brainless])).toEqual([]);
+  });
+
+  // ...and the exemption is for the engine we ship, not for everybody.
+  it("does not excuse an engine the person installed", () => {
+    const codex = instance({
+      instanceId: "codex",
+      displayName: "Codex",
+      driverKind: "codex",
+      snapshot: { state: "available", authenticated: false },
+    });
+    expect(setupSignedOutReading([codex]).map((agent) => agent.id)).toEqual(["codex"]);
+  });
+});
