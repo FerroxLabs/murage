@@ -102,13 +102,27 @@ export interface BriefData {
   quiet?: string;
 }
 
-/** The sections, in the order they are read, with the heading each carries. */
+/**
+ * The sections, in the order they are read.
+ *
+ * `heading` is what the page prints. `asks` is the phrase the morning
+ * routine's own prompt uses to ask for that section, and it is here rather
+ * than only in the prompt because those two things have to stay in step and
+ * nothing in the type system makes them.
+ *
+ * The requirement is that the sample brief shown during the first run IS the
+ * template the real one renders. If the prompt stopped asking for a section,
+ * or asked for them in a different order, the sample would carry on looking
+ * perfect while the real brief quietly came back in another shape, and the
+ * person would find out on their second morning. `server/setup-brief-template.test.ts`
+ * reads the prompt out of the server source and checks it against this list.
+ */
 export const BRIEF_SECTIONS = [
-  { key: "needsYou", heading: "Needs you" },
-  { key: "today", heading: "Today" },
-  { key: "overnight", heading: "Overnight" },
-  { key: "handled", heading: "Handled for you" },
-  { key: "noticed", heading: "Worth knowing" },
+  { key: "needsYou", heading: "Needs you", asks: "needs a decision from me" },
+  { key: "today", heading: "Today", asks: "Then today" },
+  { key: "overnight", heading: "Overnight", asks: "changed overnight" },
+  { key: "handled", heading: "Handled for you", asks: "handled for me" },
+  { key: "noticed", heading: "Worth knowing", asks: "worth knowing" },
 ] as const;
 
 export type BriefSectionKey = (typeof BRIEF_SECTIONS)[number]["key"];

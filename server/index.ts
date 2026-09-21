@@ -1972,9 +1972,30 @@ async function driveSetup(view: SetupView): Promise<void> {
 const SETUP_ROUTINE_TEMPLATES = {
   brief: {
     name: "Morning brief",
+    /**
+     * THE SAME SHAPE AS THE SAMPLE, IN WORDS A PERSON CAN READ.
+     *
+     * The first run shows a rendered sample brief before it asks for
+     * anything, and Sean's requirement is that the sample IS the template
+     * this runs every morning. That only holds if this prompt asks for the
+     * sections `shared/brief.ts` defines, in the order it defines them, so
+     * `server/setup-brief-template.test.ts` pins the two together.
+     *
+     * Still written for the person, per the note above: it appears in their
+     * routines list and they have to be able to read it and change it. Hence
+     * five plain clauses rather than a specification.
+     *
+     * The omissions are in here on purpose. Both cross-research models named
+     * counts, wholesale lists and yesterday's unchanged items as exactly what
+     * makes a brief get skimmed on day five and ignored by day thirty.
+     */
     prompt: () =>
-      "Go through the calendar, what came in overnight and anything that moved, and boil it down to a few lines. "
-      + "Lead with whatever will not wait. If nothing needs me, say so in one line.",
+      "Go through my calendar, what came in overnight and anything that moved, and write me a brief. "
+      + "Lead with anything that needs a decision from me, and for each one say what you would do and why. "
+      + "Then today, then what changed overnight, then anything you handled for me, then anything else worth knowing. "
+      + "Leave out any section you have nothing real for. Keep it short, under about 150 words. "
+      + "No counts, no listing everything, nothing repeated unchanged from yesterday. "
+      + "If nothing needs me, say so in one line.",
   },
   triage: {
     name: "Inbox triage",
