@@ -1,3 +1,16 @@
+// PARKED, PENDING THE OWNER'S DECISION (W16, 0.1.58).
+//
+// `brief` and `routines` are no longer steps. The morning
+// brief is now an outcome of the `brief` job, and its "every morning?" offer
+// arrives on that job's own result, where the person has just seen one.
+//
+// Nothing renders this today: server/setup-conversation.ts never emits its
+// card variant. It stays in the tree, compiling and untouched otherwise, and
+// its step calls point at PARKED_CARD_STEP rather than at a step that no
+// longer exists. Whether it moves to another surface, returns later in the
+// flow, or goes, is the owner's call and it has not been taken. Deleting
+// tested work on a guess is how you lose a week.
+//
 // CARDS FIVE, SIX AND SEVEN: the brief, the proof, and two more.
 //
 // The brief is the moment the release is built around, so the card does the
@@ -17,6 +30,7 @@ import {
   briefRanLine,
 } from "@/lib/first-run-copy";
 import {
+  PARKED_CARD_STEP,
   FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
   FIRST_RUN_INPUT,
@@ -73,7 +87,7 @@ export function FirstRunBriefCard({ settled }: { settled: boolean }) {
     setBusy(true);
     setFailure("");
     try {
-      await skipSetupStep("brief");
+      await skipSetupStep(PARKED_CARD_STEP);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
@@ -184,7 +198,7 @@ export function FirstRunMoreRoutinesCard({ settled }: { settled: boolean }) {
     if (busy) return;
     setFailure("");
     try {
-      await skipSetupStep("routines");
+      await skipSetupStep(PARKED_CARD_STEP);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, moreCopy.failure));

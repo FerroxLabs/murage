@@ -1,3 +1,18 @@
+// PARKED, PENDING THE OWNER'S DECISION (W16, 0.1.58).
+//
+// the standalone `apps` step is gone. Connecting Gmail or a
+// calendar before anything has asked for them is a form to fill in; the same
+// two connections, asked for by a job the person just chose, are obviously
+// worth making. These rows and their reasons are what per-job connect is
+// built from, so the file stays.
+//
+// Nothing renders this today: server/setup-conversation.ts never emits its
+// card variant. It stays in the tree, compiling and untouched otherwise, and
+// its step calls point at PARKED_CARD_STEP rather than at a step that no
+// longer exists. Whether it moves to another surface, returns later in the
+// flow, or goes, is the owner's call and it has not been taken. Deleting
+// tested work on a guess is how you lose a week.
+//
 // CARD FOUR: the accounts the work actually lives in.
 //
 // BEFORE any routine, and that order is the point. A morning brief with
@@ -16,6 +31,7 @@ import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { api } from "@/state/store";
 import {
+  PARKED_CARD_STEP,
   FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
   FIRST_RUN_QUIET,
@@ -90,7 +106,7 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
       setStatus((current) => ({ ...current, [slug]: result }));
       if (result.connected) {
         setJustConnected((current) => (current.includes(slug) ? current : [...current, slug]));
-        await answerSetupStep("apps", slug);
+        await answerSetupStep(PARKED_CARD_STEP, slug);
       }
     } catch (cause) {
       if (!gone.current) setFailure(failureText(cause, copy.failure));
@@ -103,7 +119,7 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
     if (busySlug) return;
     setFailure("");
     try {
-      await skipSetupStep("apps");
+      await skipSetupStep(PARKED_CARD_STEP);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));

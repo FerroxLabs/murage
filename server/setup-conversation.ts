@@ -46,11 +46,12 @@ export interface SetupConversationPlan {
 
 const NOTHING: SetupConversationPlan = { append: [], settle: [] };
 
-/**
- * The closing card is not a checklist row. It belongs to the flow, so it
- * rides on the last step, exactly as `shared/setup-card.ts` says.
- */
-const CLOSING_STEP: SetupStep = SETUP_STEPS[SETUP_STEPS.length - 1];
+// THE CLOSING CARD IS PARKED WITH THE REST. It used to ride on the last step
+// once `view.next` went null. The `flow` step now ends on the job's own
+// result, which carries "take something else off my plate" and puts the
+// person back at the jobs, so a separate "what would you like to do next?"
+// would be a second ending to the same scene. The `next` variant and its copy
+// stay in the tree; nothing emits them.
 
 /**
  * The card that ASKED for each step.
@@ -61,11 +62,13 @@ const CLOSING_STEP: SetupStep = SETUP_STEPS[SETUP_STEPS.length - 1];
  */
 const ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> = {
   hello: ["welcome"],
-  agents: ["found", "bare", "bare-needs-key", "signed-out"],
-  flux: ["key"],
-  apps: ["apps"],
-  brief: ["brief"],
-  routines: ["more-routines"],
+  // Detection is a REPORT, not a question, and it settles when it has been
+  // read rather than when something was chosen. It is here all the same so
+  // that a read card is shown settled instead of sitting open forever.
+  detect: ["found", "bare", "signed-out"],
+  flux: ["key", "bare-needs-key"],
+  chat: ["jobs"],
+  flow: ["do-it"],
 };
 
 /**
@@ -88,21 +91,25 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
     subtitle: "Murage brought its own AI with it, so you are ready without installing anything.",
   },
   /**
-   * THIS ENTRY WAS MISSING AND THE BLANK MACHINE IS THE PATH THAT NEEDED IT.
+   * THIS ENTRY WAS MISSING ONCE AND THE BLANK MACHINE IS THE PATH THAT
+   * NEEDED IT.
    *
-   * `asked()` builds its block with `...CARD_COPY[variant]`, and spreading
-   * `undefined` is a silent no-op in JS, so a machine with no agents produced
-   * a card with no title and no subtitle at all. Only the server typecheck saw
-   * it, and the server typecheck was not being run.
+   * The old `plan()` built its block with `...CARD_COPY[variant]`, and
+   * spreading `undefined` is a silent no-op in JS, so a machine with no
+   * agents produced a card with no title and no subtitle at all. Only the
+   * server typecheck saw it, and the server typecheck was not being run. That
+   * class of mistake is now impossible twice over: this map is an exhaustive
+   * `Record<SetupCardVariant, …>`, and `setupCardCopy` below THROWS rather than
+   * spreading a hole. A test executes it for every variant.
    *
-   * The words match `FIRST_RUN_COPY.agents["bare-needs-key"]` in the renderer
-   * on purpose: the same card must not say two different things depending on
-   * which half of the app you read. And it must not say what `bare` above
-   * says, because on this machine "you are ready" is false.
+   * It is the Flux step's card now, not detection's, and the words say why a
+   * key is the next thing rather than claiming anything was found. It must
+   * not say what `bare` says, because on this machine "you are ready" is
+   * false.
    */
   "bare-needs-key": {
-    title: "I came with the engine",
-    subtitle: "There was nothing else on this computer to connect, and nothing to think with yet. One key sorts that, and it is the next thing I will ask you for.",
+    title: "Your bots need a brain first",
+    subtitle: "Murage came with an engine. It did not come with anything to think with, and there is nothing on this computer I can use. One connection fixes that, and it is the same one your apps run through.",
   },
   "signed-out": {
     title: "You are not signed in to it yet",
@@ -113,14 +120,22 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
     subtitle: "A made up day, so you can see the shape of it. Yours would be built from what you have just connected.",
   },
   key: {
-    title: "One key turns the rest on",
+    title: "Get the right answer faster",
     subtitle:
-      "Flux Router gives you all the latest AI models, with smart routing that sends each job to the best one. "
-      + "The same key unlocks 500+ apps, pictures, voice and transcription.",
+      "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask. "
+      + "The same key opens 500+ apps and pictures in the chat.",
   },
   "no-key": {
     title: "Not now, then",
     subtitle: "We carry on with what is already on this computer. You can add the key whenever you like.",
+  },
+  jobs: {
+    title: "What can I take off your plate?",
+    subtitle: "Pick one and I will do it now. I only ask for what that job needs, when it needs it.",
+  },
+  "do-it": {
+    title: "On it",
+    subtitle: "Everything this job needs is on one screen, and you can stop after any of it.",
   },
   apps: {
     title: "Where your work actually lives",
@@ -156,49 +171,68 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
   },
 };
 
+/**
+ * The words for one card, or a throw.
+ *
+ * THE LOOKUP THROWS ON PURPOSE. `plan()` used to spread `CARD_COPY[variant]`
+ * straight into its block, and a missing entry spreads as nothing at all, so
+ * a card with no title and no subtitle reached a person's transcript in
+ * silence. `CARD_COPY` is an exhaustive `Record` and the compiler will catch
+ * the next hole — but that was true when the hole shipped, because the server
+ * typecheck was not being run. A map lookup that cannot fail quietly is the
+ * belt to that braces, and `setup-conversation.test.ts` executes this for
+ * every variant in `SETUP_CARD_VARIANTS` rather than reading the source.
+ */
+export function setupCardCopy(variant: SetupCardVariant): { title: string; subtitle: string } {
+  const copy = CARD_COPY[variant] as { title: string; subtitle: string } | undefined;
+  if (!copy?.title?.trim() || !copy.subtitle?.trim()) {
+    throw new Error(`First-run card "${variant}" has no copy. Add it to CARD_COPY.`);
+  }
+  return copy;
+}
+
 function plan(step: SetupStep, variant: SetupCardVariant): SetupCardPlan {
-  return { step, variant, key: setupCardKey(step, variant), ...CARD_COPY[variant] };
+  return { step, variant, key: setupCardKey(step, variant), ...setupCardCopy(variant) };
 }
 
 /** The variant the step the flow is ON should open with, chosen from live
- *  detection rather than guessed. */
+ *  detection rather than guessed. Never returns a parked variant. */
 function variantForCurrentStep(step: SetupStep, view: SetupView): SetupCardVariant {
   switch (step) {
     case "hello":
       return "welcome";
-    case "agents":
+    case "detect":
       // "I found three agents" on a machine with nothing on it is the kind of
-      // small lie that costs the first hour its credibility. So is "the one
-      // in the box is already running" on a machine where it has nothing to
-      // think with, which is every bare install before a key exists.
+      // small lie that costs the first hour its credibility.
       if (view.agents.some((agent) => agent.installed)) return "found";
-      // An engine that is HERE and signed out beats both bare cards, and the
-      // ordering is an economic decision as much as an honest one.
-      //
-      // Above `bare-needs-key` is obvious: a sign-in is what is missing, not a
-      // key, and sending that person to buy something would be wrong.
-      //
-      // Above plain `bare` is the one worth stating. `bare` is reached with a
-      // keyed Fuigo running, which IS usable, so nothing is broken. But that
-      // person has a subscription sitting one command away on their own
-      // computer, and saying nothing would quietly leave them on a metered
-      // router while they pay for a flat rate elsewhere. That is the mistake
-      // 3c9770f1 reverted in `pickDefaultEngine`, arriving through a different
-      // door.
+      // An engine that is HERE and signed out beats the bare card, and the
+      // ordering is an economic decision as much as an honest one. `bare` is
+      // reached with a keyed engine in the box, which IS usable, so nothing
+      // is broken. But that person has a subscription sitting one command
+      // away on their own computer, and saying nothing would quietly leave
+      // them on a metered router while they pay for a flat rate elsewhere.
+      // That is the mistake 3c9770f1 reverted in `pickDefaultEngine`,
+      // arriving through a different door.
       //
       // Below `found`, though. If something usable really was found, a second
       // engine nobody signed into is noise, and the first run has no room for
       // noise.
-      if (view.signedOutAgents.length > 0) return "signed-out";
-      return view.agents.length === 0 ? "bare-needs-key" : "bare";
+      //
+      // `bare-needs-key` IS NOT REACHABLE HERE, and that is the re-cut rather
+      // than an omission: a machine with nothing to think with has
+      // `nothingToThinkWith` true, so `detect` is already settled and the
+      // flow never stops on it. That card is the Flux step's second opening.
+      return view.signedOutAgents.length > 0 ? "signed-out" : "bare";
     case "flux":
-      return "key";
-    case "apps":
-      return "apps";
-    case "brief":
-      return "brief";
-    case "routines":
-      return "more-routines";
+      // TWO OPENINGS, ONE CARD. On a machine that found something this is an
+      // offer; on a machine with nothing to think with it is also the report
+      // that detection never got to make, which is why it carries the "what I
+      // looked for and did not find" framing.
+      return view.nothingToThinkWith ? "bare-needs-key" : "key";
+    case "chat":
+      return "jobs";
+    case "flow":
+      return "do-it";
   }
 }
 
@@ -239,19 +273,23 @@ export function setupConversationPlan(
 
   const wanted: SetupCardPlan[] = [];
 
-  // What this machine can already run, said once, as soon as the greeting is
-  // behind us.
+  // WHAT IS ALREADY HERE, SAID ONCE, AS SOON AS THE GREETING IS BEHIND US.
   //
-  // This card cannot ride on `view.next` alone. `agents` is done whenever a
-  // single engine is runnable, and on almost every machine that is true before
-  // anybody has typed anything, because Murage ships one. `view.next` would
-  // therefore skip straight past it and the person would never be told what
-  // was found. It is a report rather than a question, like the brief that ran,
-  // so it is owed the moment the flow gets past hello. When there is genuinely
-  // no engine, `view.next` IS `agents` and the same key covers both.
+  // Skipped entirely on a machine with nothing to think with. There is no
+  // honest "here is what I found" to write for that machine, so detection is
+  // settled before it is presented and the Flux card carries the report
+  // instead. That is the release's skip predicate doing its one job, and it
+  // rests on `runnable()` rather than on an engine reporting itself
+  // available: Murage ships the Fuigo binary, so a bare machine ALWAYS has
+  // something calling itself available with an empty catalogue.
+  //
+  // It cannot ride on `view.next` alone even when it is shown. It is a report
+  // rather than a question, and it is owed the moment the flow gets past
+  // hello; when it is genuinely outstanding, `view.next` IS `detect` and the
+  // same key covers both.
   const hello = stepView(view, "hello");
-  if (hello?.done === true || hello?.skipped === true) {
-    wanted.push(plan("agents", variantForCurrentStep("agents", view)));
+  if ((hello?.done === true || hello?.skipped === true) && !view.nothingToThinkWith) {
+    wanted.push(plan("detect", variantForCurrentStep("detect", view)));
   }
 
   // A step passed over says so once, in the person's own transcript. The flow
@@ -259,46 +297,15 @@ export function setupConversationPlan(
   // on `view.next`.
   if (stepView(view, "flux")?.skipped === true) wanted.push(plan("flux", "no-key"));
 
-  // The release's central rule, in card form: a scheduled routine is a
-  // promise, a routine that has run is proof. `brief` is done only once a run
-  // completed, so this card can only appear after the person saw it work.
-  // KEYED ON THE RUN, NOT ON THE STEP.
-  //
-  // It used to read the step's `done`, which was the same thing while the
-  // step required a completed run. It no longer does: the flow stopped
-  // waiting for the brief so that approving its tool calls could happen in
-  // the background. Left as it was, "it has already run" would appear the
-  // moment the brief was merely scheduled, which is the exact claim this
-  // release exists to stop making.
-  if (view.routines.briefRan) wanted.push(plan("brief", "brief-ran"));
-
-  // SHOW BEFORE ASKING, AND SHOW IT NEXT TO THE THING IT IS ASKING FOR.
-  //
-  // Both cross-research models, independently, proposed the same thing: put a
-  // real brief in front of the person BEFORE the key card, rendered from
-  // example data. It answers "what does this actually do" with the thing
-  // itself rather than a sentence about it, and it turns the next card from a
-  // request into an offer they can already see the point of.
-  //
-  // It sat on the FLUX step first, which put a rendered brief four cards away
-  // from the ask it motivates and one card ahead of a request for a key. The
-  // owner's objection is the right one: a brief is made of a calendar and a
-  // mailbox, so showing one to somebody who has not connected either is
-  // showing them a thing they cannot have, and it argues for the wrong
-  // purchase. It belongs immediately before "shall I do this every morning?",
-  // after the connections that make it real.
-  //
-  // It can sit ahead of that ask precisely because it costs nothing to
-  // produce: no model call, no network, no key. There is no free allowance to
-  // abuse because nothing is spent.
-  //
-  // A report rather than a question, like the agents card and the brief that
-  // ran, so it is deliberately NOT in ASK_VARIANTS and never settles. It stays
-  // in the transcript afterwards, which is the point: it is their template.
-  if (view.next === "brief") wanted.push(plan("brief", "sample-brief"));
+  // The brief cards, the apps step and the closing card used to be planned
+  // here. They are PARKED, not deleted: `brief-ran`, `sample-brief`, `apps`,
+  // `more-routines`, `next`, `phone` and `phone-needs-tailscale` still exist
+  // as variants with their copy intact, and nothing emits them. The morning
+  // brief is now an outcome of the `brief` job rather than a checklist row,
+  // and its "every morning?" offer arrives on that job's own result, where
+  // the person has just seen one.
 
   if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
-  else wanted.push(plan(CLOSING_STEP, "next"));
 
   const settle: string[] = [];
   for (const step of SETUP_STEPS) {
@@ -311,7 +318,7 @@ export function setupConversationPlan(
   }
 
   // One card per key, within this plan as well as against the thread: the
-  // agents report and the agents step can both ask for the same card.
+  // detection report and the detection step can both ask for the same card.
   const append: SetupCardPlan[] = [];
   const claimed = new Set(present);
   for (const card of wanted) {

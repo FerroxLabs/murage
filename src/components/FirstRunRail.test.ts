@@ -6,8 +6,8 @@
 // close control that is reachable from the keyboard, and one sentence saying
 // out loud that closing it stops nothing.
 //
-// Rendered rather than read, because "it says six steps" and "it says the
-// right six steps in the right order" are not the same claim. The store and
+// Rendered rather than read, because "it says five steps" and "it says the
+// right five steps in the right order" are not the same claim. The store and
 // the harness are mocked away: what the rail draws from a given view is the
 // whole subject.
 
@@ -42,7 +42,7 @@ function view(statuses: Partial<Record<string, Status>> = {}): View {
   });
   const done = steps.filter((step) => step.done).length;
   return {
-    version: 2,
+    version: 3,
     startedAt: 1,
     ownerName: "",
     engine: { ready: true },
@@ -51,6 +51,8 @@ function view(statuses: Partial<Record<string, Status>> = {}): View {
     routines: { total: 0, briefId: null, briefRan: false },
     crewSize: 0,
     fluxReady: false,
+    nothingToThinkWith: false,
+    connectedJobApps: [],
     firstRun: true,
     progress: { done, total: steps.length },
     blocked: [],
@@ -67,7 +69,7 @@ const render = (v: View = view()) =>
 const LABELS = new Map(firstRunRailRows(view()).map((row) => [row.id as string, row.label]));
 const labelFor = (id: string): string => LABELS.get(id) ?? id;
 
-describe("the rail lists the server's six steps", () => {
+describe("the rail lists the server's five steps", () => {
   it("draws a row per step, in the order the view sent them", () => {
     const html = render();
     const positions = SETUP_STEPS.map((id) => html.indexOf(labelFor(id)));
@@ -77,11 +79,11 @@ describe("the rail lists the server's six steps", () => {
   });
 
   it("says how far along it is, in steps", () => {
-    expect(render(view({ hello: "done", agents: "done" }))).toContain("2 of 6 done");
+    expect(render(view({ hello: "done", detect: "done" }))).toContain("2 of 5 done");
   });
 
   it("marks what is done, what was passed over and what they are on", () => {
-    const html = render(view({ hello: "done", agents: "skipped" }));
+    const html = render(view({ hello: "done", detect: "skipped" }));
     expect(html).toContain(FIRST_RUN_RAIL.state.done);
     expect(html).toContain(FIRST_RUN_RAIL.state.skipped);
     expect(html).toContain(FIRST_RUN_RAIL.state.now);
