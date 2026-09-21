@@ -92,13 +92,13 @@ const renamedMcpServers = new Set<string>();
  * this server's tools under the new prefix, and someone reading the log needs
  * to know the server was moved aside rather than lost. Carries names only —
  * never the server's command, args or env. */
-function noteRenamedMcpServer(name: string, mountName: string): void {
+function noteRenamedMcpServer(name: string, mountName: string, why: string): void {
   // Keyed by the pair, not the name: if the same server later moves to a
   // different mount name, that is a different fact and worth a line.
   const said = JSON.stringify([name, mountName]);
   if (renamedMcpServers.has(said)) return;
   renamedMcpServers.add(said);
-  console.error(`codex: MCP server ${JSON.stringify(name)} is also declared in Codex's own config.toml — mounted as ${JSON.stringify(mountName)} so the two definitions do not merge`);
+  console.error(`codex: MCP server ${JSON.stringify(name)} mounted as ${JSON.stringify(mountName)} so definitions do not merge — ${why}`);
 }
 
 function mountMcpServer(
@@ -297,7 +297,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         );
         for (const [name, server] of customMcpServers) {
           const mountName = mountNames.get(name) ?? name;
-          if (mountName !== name) noteRenamedMcpServer(name, mountName);
+          if (mountName !== name) {
+            noteRenamedMcpServer(
+              name,
+              mountName,
+              declaredInCodexConfig.kind === "unreadable"
+                ? `Codex's own config.toml could not be read (${declaredInCodexConfig.why}), so every name is treated as taken`
+                : "it is also declared in Codex's own config.toml",
+            );
+          }
           mountMcpServer(appServerArgs, env, mountName, server, false);
         }
         if (turn.integrations?.phone) {
