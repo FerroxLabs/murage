@@ -320,6 +320,7 @@ import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
 import {
   type SetupLiveState,
   type SetupRoutineReading,
+  type SetupStep,
   type SetupView,
   fluxKeyLooksValid,
   setupAnswerRequestSchema,
@@ -1808,14 +1809,20 @@ async function setupLiveState(): Promise<SetupLiveState> {
  * working rather than to tell them it will.
  */
 function setupRoutinesReading(): SetupRoutineReading {
-  const all = routines.listRoutines();
+  // The manager is built during boot, and the first run's own checklist is one
+  // of the things that can ask for this reading before boot has got there. No
+  // manager means no routines have been loaded yet, which is a truthful
+  // "nothing scheduled" — not a reason to fail the step the person is on.
+  const manager = routines;
+  if (!manager) return { total: 0, briefId: null, briefRan: false };
+  const all = manager.listRoutines();
   const recorded = setup.briefRoutineId();
   const briefId = recorded && all.some((routine) => routine.id === recorded) ? recorded : null;
   return {
     total: all.length,
     briefId,
     briefRan: briefId !== null
-      && routines.listRuns().some((run) => run.routineId === briefId && run.status === "completed"),
+      && manager.listRuns().some((run) => run.routineId === briefId && run.status === "completed"),
   };
 }
 

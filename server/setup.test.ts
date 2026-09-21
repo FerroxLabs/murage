@@ -40,6 +40,11 @@ const BUNDLED = { id: "fuigo", name: "Fuigo", installed: false };
 const live = (patch: Partial<SetupLiveState> = {}): SetupLiveState => ({
   ownerName: "",
   agents: [BUNDLED],
+  // Required, and its absence here was the whole of the type error: spreading
+  // a Partial over a base that never mentions the field leaves it possibly
+  // undefined. The default is the honest one, since a machine whose engines
+  // are all signed in has nothing to offer on this list.
+  signedOutAgents: [],
   flux: { configured: false, conflict: false, looksValid: false },
   bundledEngine: { ready: true },
   chiefInstanceId: "",

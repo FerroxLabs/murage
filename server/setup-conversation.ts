@@ -87,6 +87,23 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
     title: "There is one in the box",
     subtitle: "Murage brought its own AI with it, so you are ready without installing anything.",
   },
+  /**
+   * THIS ENTRY WAS MISSING AND THE BLANK MACHINE IS THE PATH THAT NEEDED IT.
+   *
+   * `asked()` builds its block with `...CARD_COPY[variant]`, and spreading
+   * `undefined` is a silent no-op in JS, so a machine with no agents produced
+   * a card with no title and no subtitle at all. Only the server typecheck saw
+   * it, and the server typecheck was not being run.
+   *
+   * The words match `FIRST_RUN_COPY.agents["bare-needs-key"]` in the renderer
+   * on purpose: the same card must not say two different things depending on
+   * which half of the app you read. And it must not say what `bare` above
+   * says, because on this machine "you are ready" is false.
+   */
+  "bare-needs-key": {
+    title: "I came with the engine",
+    subtitle: "There was nothing else on this computer to connect, and nothing to think with yet. One key sorts that, and it is the next thing I will ask you for.",
+  },
   "signed-out": {
     title: "You are not signed in to it yet",
     subtitle: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
