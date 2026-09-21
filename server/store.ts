@@ -25,6 +25,7 @@ import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { queueExternalUpdate } from "./external-context-delivery.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import type { MascotBodyId } from "../shared/mascot-bodies.ts";
@@ -347,6 +348,10 @@ export interface TaskRecord {
    * taken turns since — so this is what decides an inline replay. Absent
    * on tasks from before the field existed. */
   lastInstanceId?: string;
+  /** ids of messages appended to this thread outside a provider turn — a
+   * delegated teammate's reply — that no dispatch has carried to the engine
+   * yet. Delivery accounting: see server/external-context-delivery.ts. */
+  externalUpdates?: string[];
   /** what this task has spent: banked once per turn from turn.completed */
   usage?: TaskUsage;
   /** the folder this task's turns run in, pinned on its first turn from
@@ -2266,6 +2271,29 @@ export class Store {
     const task = this.taskByThread(botId, threadId);
     if (!task || task.lastInstanceId === instanceId) return;
     task.lastInstanceId = instanceId;
+    this.saveBots();
+  }
+
+  /** Queue a message this thread owes the engine: appended outside any
+   * provider turn, so no session can contain it. */
+  recordTaskExternalUpdate(botId: string, threadId: string, messageId: string) {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return;
+    task.externalUpdates = queueExternalUpdate(task.externalUpdates, messageId);
+    this.saveBots();
+  }
+
+  /** Drop exactly the owed messages a dispatch carried. Anything queued
+   * while that turn was being set up is not in `ids`, stays pending, and is
+   * delivered by the next turn instead of being lost to this one. */
+  consumeTaskExternalUpdates(botId: string, threadId: string, ids: readonly string[]) {
+    const task = this.taskByThread(botId, threadId);
+    if (!task?.externalUpdates?.length || ids.length === 0) return;
+    const carried = new Set(ids);
+    const remaining = task.externalUpdates.filter((id) => !carried.has(id));
+    if (remaining.length === task.externalUpdates.length) return;
+    if (remaining.length) task.externalUpdates = remaining;
+    else delete task.externalUpdates;
     this.saveBots();
   }
 

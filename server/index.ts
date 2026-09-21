@@ -310,7 +310,8 @@ import {
 } from "./sse-visibility.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
-import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
+import { buildTurnContext, engineIsFresh, replaysTranscriptNatively } from "./turn-context.ts";
+import { planExternalDelivery, withExternalDelivery } from "./external-context-delivery.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
@@ -1042,8 +1043,8 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
   }));
 }
 
-import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
-import { workspaceResource } from "./turn-resources.ts";
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
+import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
   botId: string;
@@ -1067,12 +1068,21 @@ function botForDirectThread(botId:string,threadId:string):BotRecord|null {
 async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean):Promise<void>{
   if(!resources.length)return;
   let waited=false;
-  const granted=await directRuns.acquire(run,resources,(blockers)=>{
-    waited=true;
-    store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
-  });
-  if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
-  if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+  try{
+    // A deadline, because this wait had none. Stop ends it for a person who is
+    // watching; an 8am routine queued behind a thread that never lets go had
+    // nobody to press Stop and simply never ran, never failed and never said
+    // why. ResourceWaitTimeout leaves the queue as well as the promise.
+    const granted=await directRuns.acquire(run,resources,(blockers)=>{
+      waited=true;
+      store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
+    },RESOURCE_WAIT_TIMEOUT_MS);
+    if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+  }finally{
+    // Also on the timeout and on a refusal: a thread left showing "waiting for
+    // the working folder" after its turn is over is not waiting for anything.
+    if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
+  }
 }
 /** A queued routine admitted past the three-thread limit waits here, visibly
  * and holding nothing, before any setup side effect; Stop ends the wait. */
@@ -4383,28 +4393,27 @@ const delegationWatch = new Map<string, {
 }>();
 
 // Provider-native sessions only know about messages produced inside their
-// own turns. A delegated result is appended later by the harness, so mark the
-// source task with a persisted, impossible-to-resume owner. Its next turn
-// will replay the active branch once before replacing this marker with the
-// real provider instance id. A unique suffix also closes the setup race: if
-// another result arrives while that replay is launching, the newer marker is
-// left intact for one more replay instead of being accidentally consumed.
-const EXTERNAL_CONTEXT_MARKER_PREFIX = "__murage_external_context__:";
-
-function isExternalContextMarker(value: string | undefined): boolean {
-  return Boolean(value?.startsWith(EXTERNAL_CONTEXT_MARKER_PREFIX));
-}
-
-function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string): void {
-  const task = store.taskByThread(bot.id, threadId);
-  if (!task) return;
-  task.resumeCursors = {};
-  task.lastInstanceId = `${EXTERNAL_CONTEXT_MARKER_PREFIX}${randomUUID()}`;
-  // patchBot persists the task mutation and broadcasts unread/context state.
-  // The legacy cursor mirror follows only the task currently open in chat.
-  const patch: Partial<BotRecord> = { unread: true };
-  if (bot.threadId === threadId) patch.resumeCursors = {};
-  store.patchBot(bot.id, patch);
+// own turns. A delegated result is appended later by the harness, so the
+// engine is owed that message and the task records the debt by id.
+//
+// It used to record it by destroying the session instead: every cursor on the
+// task was wiped and `lastInstanceId` was set to an impossible-to-resume
+// marker, so the next turn abandoned the provider session and re-sent the
+// branch as flat text. That cost the whole session — and the replay it bought
+// carries only settled text messages, capped at the last 40, so on the failure
+// path (an activity chip, no text) it delivered literally nothing. One
+// paragraph from a teammate is not worth a context reset.
+//
+// The debt is now explicit: queue the message id, leave the cursors alone, and
+// let the next turn hand the message over inside its prompt on a resumed
+// session (external-context-delivery.ts). Consuming exactly the queued ids at
+// dispatch keeps the setup race closed — a result that lands while a turn is
+// being set up is not in that turn's list, so it survives for the next one.
+function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string, messageId: string): void {
+  if (!store.taskByThread(bot.id, threadId)) return;
+  store.recordTaskExternalUpdate(bot.id, threadId, messageId);
+  // patchBot broadcasts the unread state; the queued debt is already saved.
+  store.patchBot(bot.id, { unread: true });
 }
 
 /** Where a delegation's result has to land. A source conversation is a bot's
@@ -4454,6 +4463,7 @@ function finalizeDelegationWatch(
   const targetName = target?.name ?? watched.toBotName ?? watched.toBotId;
   const source = delegationSource(watched.sourceThreadId);
   if (source && watched.sourceThreadId) {
+    let appended: Message;
     if (ok && reply.trim()) {
       const sourceReply: Omit<Message, "id" | "at"> = {
         role: "bot",
@@ -4461,9 +4471,9 @@ function finalizeDelegationWatch(
         text: `@${targetName} replied to the delegated task:\n\n${reply.trim()}`,
       };
       if (target) sourceReply.from = { botId: target.id, name: target.name, color: target.color };
-      store.appendMessage(watched.sourceThreadId, sourceReply);
+      appended = store.appendMessage(watched.sourceThreadId, sourceReply);
     } else {
-      store.appendMessage(watched.sourceThreadId, {
+      appended = store.appendMessage(watched.sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: {
@@ -4480,7 +4490,7 @@ function finalizeDelegationWatch(
     // passes no cursor and rebuilds its prompt from the transcript every
     // time — so the external-context marker has no consumer there. Unread
     // is the whole job, and it is what the room path itself sets.
-    if (source.kind === "bot") markTaskContextExternallyUpdated(source.bot, watched.sourceThreadId);
+    if (source.kind === "bot") markTaskContextExternallyUpdated(source.bot, watched.sourceThreadId, appended.id);
     else store.patchGroup(source.group.id, { unread: true });
   }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
@@ -5054,24 +5064,36 @@ async function startTurn(
   // rewound: the OTHER instances' cursors are left alone (a rewind wipes
   // them all), and "fresh" is decided by who ran the last turn, not by
   // whether we hold a cursor — see engineIsFresh.
-  const externalContextMarker = isExternalContextMarker(task.lastInstanceId)
-    ? task.lastInstanceId
-    : undefined;
   const fresh =
     !rewound &&
-    !externalContextMarker &&
     engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
+  // Messages this thread owes the engine because they were appended outside
+  // any provider turn. With a live session they ride inside this turn's
+  // prompt; with no session the branch replay already underway carries them.
+  // Either way the engine keeps whatever session it has — see
+  // external-context-delivery.ts for why the old reset was the defect.
+  const externalDelivery = planExternalDelivery({
+    replaying: rewound || fresh,
+    pending: (task.externalUpdates ?? []).map((id) => {
+      const message = messagesById.get(id);
+      return { id, text: message?.kind === "activity" ? message.tool?.name ?? "" : message?.text ?? "" };
+    }),
+  });
   const skillAuthoring =
     skillRecorderEnabled(cfg) &&
     commsDepth < MAX_COMMS_DEPTH &&
     instance.adapter.capabilities.agentsMcp === true;
+  const turnPrompt = withExternalDelivery(
+    promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    externalDelivery,
+  );
   let { turnText, resume } = buildTurnContext({
-    text: promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    text: turnPrompt,
     transcript,
     rewound,
     fresh,
-    externallyUpdated: Boolean(externalContextMarker),
-    replaysNatively: instance.driverKind === "grok",
+    externallyUpdated: externalDelivery.replay,
+    replaysNatively: replaysTranscriptNatively(instance.driverKind),
   });
   // Snapshot the cursor alongside the context decision. An external result
   // can arrive during async computer/setup work and clear the task cursor;
@@ -5165,22 +5187,38 @@ async function startTurn(
           : null;
       let cwd = pinnedCwd ?? undefined;
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
-      const screenResource = `screen:bot:${bot.id}`;
-      const computerResources = (kind: string) => [...(kind === "local" ? [] : [kind === "vm" ? "computer:vm" : `computer:bot:${bot.id}`]), screenResource];
+      const screenResource = screenResourceKey(bot.id);
+      const computerResources = (kind: string) => computerResourceKeys(bot.id, kind);
+      // Destination capabilities, read before admission because Auto's claim
+      // depends on them: they are pure reads of the engine and the bot record.
+      const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
+      const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
+      const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       // Admission for every shared resource this turn is expected to use, as
       // ONE atomic claim before the folder, VM, VPS or browser side effects
       // below. Waiting here holds nothing, so turns needing the same folder
       // and computer in any order cannot deadlock; a later unexpected claim
       // uses the same release-then-wait path.
       if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
+      const admissionBot = store.bot(bot.id);
+      const browserHoldsScreen = Boolean(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true);
+      // Auto has no destination yet, and used to claim nothing for the two it
+      // can still reach: an existing cloud box and a reachable VPS are the
+      // bot's ONE computer and its ONE screen, so two Auto threads of the same
+      // bot could mount the same box and drive the same screen at once. It now
+      // claims the pair here and hands back below whatever it did not mount.
+      const autoCloudPossible = mountsCloudComputer && (cloudBackend === "vps" || box.boxConfigured(cfg));
+      const autoHostScreenPossible = !autoHostDeclined(bot)
+        && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: mountsLocalComputer })
+        && Boolean(readCuaConnection());
+      const admittedComputerClaims = admissionComputerClaims({ botId: bot.id, wants, autoCloudPossible, autoHostScreenPossible });
       {
-        const admissionBot = store.bot(bot.id);
         const expected = [
           ...(privateWorkspace && opts?.runOn !== "cloud" ? [workspaceResource(cwd ?? homedir())] : []),
-          ...(wants && wants !== "off" && wants !== "browser" ? computerResources(wants) : []),
-          ...(wants === undefined && !autoHostDeclined(bot) && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: instance.adapter.capabilities.localComputerMcp === true }) && readCuaConnection() ? [screenResource] : []),
-          ...(humanIsOwner && admissionBot && builtInBrowserEnabled(cfg) && admissionBot.browser !== false && instance.adapter.capabilities.browserMcp === true
-            ? [`browser:${unifiedBrowserKey(admissionBot) ?? `guest:${bot.id}`}`, screenResource] : []),
+          ...admittedComputerClaims,
+          ...(browserHoldsScreen
+            ? [`browser:${unifiedBrowserKey(admissionBot!) ?? `guest:${bot.id}`}`, screenResource] : []),
         ];
         await acquireDirectTurnResources(run, expected, wants && wants !== "off" && wants !== "browser" ? "computer" : "browser", humanIsOwner);
       }
@@ -5202,12 +5240,8 @@ async function startTurn(
       // The broker arbitrates actual host actions; private screens and other
       // destinations retain their existing turn-lifetime ownership.
       if (wants && wants !== "off" && wants !== "browser") await acquireDirectTurnResources(run, computerResources(wants), "computer", humanIsOwner);
-      // Cloud routines always use Box/BoxAgent. The per-bot backend applies
-      // only to ordinary turns that mount a computer into the local agent.
-      const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
-      const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
-      const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
-      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
+      // Cloud routines always use Box/BoxAgent; the per-bot backend applies
+      // only to ordinary turns. Resolved above, with the admission claim.
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
       let autoVpsProblem: string | null = null;
@@ -5361,6 +5395,22 @@ async function startTurn(
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new LocalSetupError("computer", `${autoVpsProblem}. ${hint}`);
       }
+      // The destination has resolved. Hand back the bot's computer and screen
+      // if this turn did not end up using them — an Auto turn that found no
+      // box, or a selection that mounted nothing — so a sibling thread is not
+      // queued for the rest of this turn behind a destination nobody is using.
+      // Only ever this generation's own claims, and never one the mounted
+      // computer, the screen preview or the browser still needs.
+      {
+        const giveBack = unusedComputerClaims({
+          botId: bot.id,
+          claimed: admittedComputerClaims,
+          mountedKind: computerKind,
+          previewRouted: previewCapture !== null,
+          browserHoldsScreen,
+        });
+        if (giveBack.length) directRuns.releaseResources(run, giveBack);
+      }
       // Keep management/status tools available on delegated turns. Handoff
       // depth and shared chain allowances are enforced at action admission;
       // removing the whole integration strands leads and encourages native
@@ -5484,14 +5534,18 @@ async function startTurn(
       if(memoryState().mode==="active") {
         const access=turnMemoryAccess(bot.id,threadId,dispatchClaimId);
         const revoked=Boolean(resumeCursor && continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access));
-        const needsReplay=!resumeCursor || revoked || ["grok","openai","openai-compatible","minimax"].includes(instance.driverKind);
+        // Transcript-replay drivers hold no session at all, so they always
+        // rebuild. The old literal list spelled two ids that no driver has
+        // ever used ("openai", "openai-compatible") and missed the real
+        // "openai-compat"; the driver set is now asserted against the drivers.
+        const needsReplay=!resumeCursor || revoked || replaysTranscriptNatively(instance.driverKind);
         if(needsReplay) {
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
-          const rebuilt=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound,memoryRefreshed:revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
+          const rebuilt=buildTurnContext({text:turnPrompt,transcript,
+            rewound,memoryRefreshed:revoked,fresh,externallyUpdated:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind)});
           turnText=rebuilt.turnText;
           if(revoked)resumeCursor=undefined;
         }
@@ -5508,8 +5562,8 @@ async function startTurn(
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
-          turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
+          turnText=buildTurnContext({text:turnPrompt,transcript,
+            rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:replaysTranscriptNatively(instance.driverKind)}).turnText;
           resumeCursor=undefined;
         }
         if(!resumeCursor) {
@@ -5525,8 +5579,8 @@ async function startTurn(
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
-          turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"}).turnText;
+          turnText=buildTurnContext({text:turnPrompt,transcript,
+            rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind)}).turnText;
         }
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
         memoryDispatches.set(threadId,memoryReceipt);
@@ -5707,12 +5761,12 @@ async function startTurn(
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchTask(bot.id,threadId, { rewound: false, resumeCursors: {} });
       // and this engine now owns the thread's most recent turn
-      // Consume exactly the external-update generation this turn replayed.
-      // If a newer delegated result landed during setup, its unique marker
-      // differs and must survive so the next turn also receives that update.
-      if (!isExternalContextMarker(task.lastInstanceId) || task.lastInstanceId === externalContextMarker) {
-        store.markTaskDispatched(bot.id, threadId, instanceId);
-      }
+      store.markTaskDispatched(bot.id, threadId, instanceId);
+      // Delivery accounting: drop exactly the externally appended messages
+      // this turn carried. A delegated result that landed while this turn was
+      // being set up is not in that list, so it stays owed and the next turn
+      // delivers it instead of being silently swallowed by this one.
+      store.consumeTaskExternalUpdates(bot.id, threadId, externalDelivery.consumedIds);
       // a turn can settle before dispatch returns, and a poller started
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
