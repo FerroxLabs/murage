@@ -27,8 +27,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { connectApp } from "@/lib/connect-app";
-import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
-import { installFirstRunCrew } from "@/lib/first-run-crew";
+import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
+import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
 import {
   briefRoutineRequest,
@@ -240,7 +240,16 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
   return (
     <FirstRunBubble>
       {world && <FirstRunLine quiet>{chiefStatusLine(world, engineName(view))}</FirstRunLine>}
-      <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(view?.ownerName ?? "")}</div>
+      {/* WHAT THE CHIEF CALLS SOMEBODY WHO SKIPPED THE NAME.
+          THE DEFECT. This passed `view.ownerName` straight through, and a
+          skipped hello leaves that "", so the one sentence the approved flow
+          gives the word "there" to asked a bare "What can I take off your
+          plate?" instead. `firstRunAddress` is the render fallback that word
+          was written as: it fills this sentence and writes nothing, because
+          storing "there" on the owner profile would put a word the person
+          never typed into what every other surface reads, and would make the
+          greeting say "Good to meet you, there." */}
+      <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(firstRunAddress(view?.ownerName))}</div>
       <FirstRunLine>{world ? chiefLead(world) : jobsCopy.lead}</FirstRunLine>
 
       <ul className="mt-3 grid gap-2">
@@ -462,6 +471,10 @@ export function FirstRunDayResultView({
     <FirstRunBubble>
       <div className="text-[17px] font-semibold text-ink">{result.header}</div>
       <FirstRunLine quiet>{result.provenance}</FirstRunLine>
+      {/* Connected and NOT read, said out loud. Somebody who has just handed
+          over Gmail and Calendar for this job will otherwise assume the
+          screen under it came out of them. */}
+      {result.unread && <FirstRunLine quiet>{result.unread}</FirstRunLine>}
 
       <Eyebrow>{result.riskEyebrow}</Eyebrow>
       {result.risk ? (
@@ -878,6 +891,34 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     }
   };
 
+  /**
+   * THE MONDAY REVIEW, SWITCHED ON FOR REAL.
+   *
+   * `reviewTaken` is what draws "On. It runs on Monday.", so it is set ONLY
+   * after the routine has answered `enabled: true`. It used to be set by the
+   * click alone, with no request behind it at all, which told the person a
+   * paused routine was running.
+   */
+  const switchOnReview = async () => {
+    const name = crew?.routine?.name;
+    if (busy || !name) return;
+    setBusy(true);
+    setFailure("");
+    try {
+      await enableFirstRunReview(api, name);
+      if (!gone.current) setReviewTaken(true);
+    } catch (cause) {
+      if (!gone.current) setFailure(failureText(cause, flowCopy.failure));
+    } finally {
+      if (!gone.current) setBusy(false);
+    }
+  };
+
+  // A job that has not been chosen yet is not this card's to guess at. It is
+  // never the normal case: the server only plans this card once `chat` is
+  // settled, and `chat` is settled by a recorded job id.
+  if (!job || !id || !world) return null;
+
   // NOTHING IS NOT A CARD, AND THIS RETURNED NOTHING.
   //
   // RELEASE BLOCK #2, SECOND HALF. A job that has not been chosen is not this
@@ -1008,7 +1049,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       busy={busy}
       taken={reviewTaken}
       failure={failure}
-      onSwitchOn={() => setReviewTaken(true)}
+      onSwitchOn={() => void switchOnReview()}
       onAgain={() => void elsewhere()}
     />
   );

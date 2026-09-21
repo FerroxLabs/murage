@@ -176,6 +176,9 @@ export interface FirstRunColumn {
 export interface FirstRunDayResult {
   header: string;
   provenance: string;
+  /** Connected, and not opened for this screen. Null when there was nothing
+   *  to open. */
+  unread: string | null;
   risk: FirstRunRisk | null;
   riskEyebrow: string;
   calm: { body: string; second: string } | null;
@@ -186,17 +189,39 @@ export interface FirstRunDayResult {
   again: string;
 }
 
-/** What was actually read, said plainly. The calendar and the mail are named
- *  ONLY when they are really connected; a provenance line that claimed a
- *  source it did not have would undo the point of having one. */
-function provenance(count: number, world: FirstRunJobWorld, job: FirstRunJobShape): string {
+/**
+ * WHAT WAS ACTUALLY READ, AND NOTHING ELSE.
+ *
+ * THE DEFECT. This used to append "plus your calendar and your mail"
+ * whenever both were connected. Every field of the result beside it comes
+ * from `parseLines(typed)` and from nothing else: the risk, its reason,
+ * Fixed and "Someone is waiting" are a re-sort of the person's own typing.
+ * The `brief` job demands both grants before it will run, so the line was at
+ * its most confident exactly where it was most wrong, on the release whose
+ * one rule is that nothing is claimed that was not read.
+ *
+ * The lines are the only source, so the lines are the only thing named here.
+ * What is connected but unread is said separately and said as that.
+ */
+function provenance(count: number): string {
+  const words = FIRST_RUN_COPY.flow["do-it"].day;
+  return `${words.fromLines} ${count} ${count === 1 ? words.linesOne : words.linesMany}.`;
+}
+
+/**
+ * The grants this screen had and did not open, or null when it had none.
+ *
+ * Silence would be the other option and it is the worse one: somebody who
+ * has just handed over Gmail and Calendar for this job, and is then shown a
+ * screen with their commitments on it, will reasonably assume it read them.
+ */
+function unreadSources(world: FirstRunJobWorld, job: FirstRunJobShape): string | null {
   const words = FIRST_RUN_COPY.flow["do-it"].day;
   const sources: string[] = [];
   if (job.needs.includes("googlecalendar") && world.connected.includes("googlecalendar")) sources.push(words.plusCalendar);
   if (job.needs.includes("gmail") && world.connected.includes("gmail")) sources.push(words.plusMail);
-  const base = `${words.fromLines} ${count} ${count === 1 ? words.linesOne : words.linesMany}`;
-  if (sources.length === 0) return `${base}.`;
-  return `${base}, plus ${sources.join(" and ")}.`;
+  if (sources.length === 0) return null;
+  return `${words.notRead} ${sources.join(" and ")} ${words.notReadTail}`;
 }
 
 function riskFor(items: readonly FirstRunItem[], chosen: FirstRunItem): FirstRunRisk {
@@ -221,7 +246,8 @@ export function dayResult(
   const chosen = pickRisk(items);
   return {
     header: job.id === "brief" ? words.headerBrief : words.headerDay,
-    provenance: provenance(items.length, world, job),
+    provenance: provenance(items.length),
+    unread: unreadSources(world, job),
     risk: chosen ? riskFor(items, chosen) : null,
     riskEyebrow: chosen ? words.riskEyebrow : words.calmEyebrow,
     calm: chosen ? null : { body: words.calmBody, second: words.calmSecond },

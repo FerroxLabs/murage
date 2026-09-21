@@ -176,16 +176,25 @@ export const FIRST_RUN_COPY = {
      * Not a UX preference. The owner ruled that this builds the list and is a
      * business requirement, so it goes first and the look around the machine
      * happens underneath it while they type. Every word here is the approved
-     * flow's, and the two fields say what each one is FOR: a name is what the
-     * Chief calls them, an email is how it reaches them when they are not sat
-     * in front of this computer. A field with no stated purpose is a field
-     * people skip, and this is the one step that cannot afford that.
+     * flow's, and the two fields say what each one is FOR: a field with no
+     * stated purpose is a field people skip, and this is the one step that
+     * cannot afford that.
+     *
+     * THE DEFECT: THE STATED PURPOSE OF THE EMAIL WAS FALSE. The lead read
+     * "Your email is how I reach you when you are away from this computer".
+     * Nothing in `server/` consumes an owner email and nothing in the product
+     * ever mails the person: the address is saved on the owner profile, it
+     * identifies them to analytics, and it joins the list this step exists to
+     * build (FirstRunHelloCard.tsx:88-89). The owner has separately ruled the
+     * morning brief must never be emailed, so it was not a promise about
+     * something coming either. What is left is the half of the sentence that
+     * was always true, which is what the field is really for.
      */
     welcome: {
       heading: "First, who am I working for?",
       lead:
-        "I am your chief of staff. Your name is what I call you. Your email is how I reach you when you are "
-        + "away from this computer, and how Murage tells you when there is something new it can do.",
+        "I am your chief of staff. Your name is what I call you. Your email is how Murage tells you when "
+        + "there is something new it can do.",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email",
@@ -539,12 +548,27 @@ export const FIRST_RUN_COPY = {
       status: {
         connected: "Connected. Smart routing on, and your apps are a click away when a job needs them.",
         noBrain: "Nothing to think with yet, so every job below is waiting on one connection.",
+        /**
+         * THE ENGINE IS HERE AND NOBODY IS SIGNED IN TO IT.
+         *
+         * This line did not exist, and the machine it describes read as
+         * `local` because `nothingToThinkWith` is false on it: an engine that
+         * is present but signed out is not a blank machine. The Chief
+         * therefore opened with "Running on what is already on this
+         * computer" to somebody with nothing running at all. Two ways out of
+         * it, because this person really has two: sign in to what they
+         * already have, or connect a key.
+         */
+        signedOut: "Nothing on this computer is signed in yet, so every job below is waiting on a sign in or a connection.",
         /** Wrapped around the engine's real name. The name comes from the
          *  reading, never from a sample: a status line that named an engine
          *  this computer does not have would be the first thing the person
          *  read and the first thing that was wrong. */
         localPrefix: "Running on",
         localTail: "here on this computer.",
+        /** A runnable engine whose name came back blank. It is running, so
+         *  this still says so; what it cannot do is name it. A machine with
+         *  NOTHING runnable never reaches here any more: see `signedOut`. */
         localUnnamed: "Running on what is already on this computer.",
       },
       rows: [
@@ -754,8 +778,24 @@ export const FIRST_RUN_COPY = {
         fromLines: "From your",
         linesOne: "line",
         linesMany: "lines",
+        /**
+         * THE SOURCES THIS SCREEN DID NOT READ, NAMED AS SUCH.
+         *
+         * The provenance line used to read "From your 4 lines, plus your
+         * calendar and your mail" whenever those two were connected, and not
+         * one field on the screen came from either of them: the risk, Fixed
+         * and "Someone is waiting" are all `parseLines` over what the person
+         * typed. Naming a grant the screen never touched, on the release
+         * whose whole rule is that nothing is claimed that was not read, is
+         * the worst possible place to do it.
+         *
+         * Connecting them is also not nothing, so they are still named. They
+         * are named as what they are: connected, and not read for this one.
+         */
+        notRead: "I have not read",
         plusCalendar: "your calendar",
         plusMail: "your mail",
+        notReadTail: "for this one. Everything here comes from what you gave me.",
         riskEyebrow: "The one that will slip",
         /**
          * WHY THERE ARE TWO VERSIONS OF THE DEADLINE REASON.
@@ -1250,10 +1290,15 @@ export function greetingLine(name: string): string {
  * it is there for is the Chief's question a step later: "What can I take off
  * your plate, there?", which reads correctly and warmly.
  *
- * IT IS A RENDER FALLBACK AND IT WRITES NOTHING. The simulation sets its own
- * `S.name`, which is a variable in a mock-up. The obvious translation of that
- * is to save "there" onto the owner profile when the step is skipped, and that
- * would be wrong twice over. It would put a word the person never typed into
+ * IT IS A RENDER FALLBACK AND IT WRITES NOTHING, AND IT HAS TO BE CALLED.
+ * Nothing called it: `FirstRunJobsCard` passed `view.ownerName` straight to
+ * `chiefQuestion`, so a skipped hello produced the bare "What can I take off
+ * your plate?" and the word this function exists for reached no screen at
+ * all. It is called at that one site now.
+ *
+ * The simulation sets its own `S.name`, which is a variable in a mock-up. The
+ * obvious translation of that is to save "there" onto the owner profile when
+ * the step is skipped, and that would be wrong twice over. It would put a word the person never typed into
  * the profile every other surface in the app reads from, and it would defeat
  * the greeting rule in the same spec: a skipped name DROPS the clause, so
  * `greetingLine` says "Good to meet you." and a stored "there" would make it

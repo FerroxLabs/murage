@@ -179,9 +179,35 @@ describe("card one: hello", () => {
     // they are FOR: a field with no stated purpose is a field people skip.
     expect(copy.heading).toBe("First, who am I working for?");
     expect(copy.lead).toContain("Your name is what I call you.");
-    expect(copy.lead).toContain("how I reach you when you are away from this computer");
+    expect(copy.lead).toContain("how Murage tells you when there is something new it can do");
     expect(copy.submit).toBe("Continue");
     expect(copy.skip).toBe("Skip for now");
+  });
+
+  /**
+   * THE DEFECT: THE STATED PURPOSE OF THE EMAIL WAS FALSE.
+   *
+   * "Your email is how I reach you when you are away from this computer" was
+   * the first promise the flow made and there is nothing behind it: no
+   * `ownerEmail` consumer anywhere in `server/`, and nothing in the product
+   * mails the owner. The address is saved on the profile, it identifies them
+   * to analytics, and it joins the announcement list. The morning brief is
+   * separately ruled never to be emailed, so it was not a feature in flight.
+   *
+   * The lead is checked against `server/` here rather than against itself:
+   * the sentence may come back the day something really does mail the owner,
+   * and not one day before.
+   */
+  it("promises no message it cannot send", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(new URL("../../server/", import.meta.url));
+    const consumers = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.includes(".test."))
+      .filter((entry) => readFileSync(root + entry.name, "utf8").includes("ownerEmail"))
+      .map((entry) => entry.name);
+    expect(consumers, "something now reads an owner email; the lead may say so again").toEqual([]);
+    expect(copy.lead).not.toMatch(/reach you|away from this computer|email you|send you/i);
   });
 
   it("will not save until the email is one", () => {
@@ -207,7 +233,7 @@ describe("card one: hello", () => {
     expect(helloAnswerReady("  Sean  ", "  sean@example.com  ")).toBe(true);
   });
 
-  // SKIPPING SETS THE NAME TO "there", AND IT SETS IT ON SCREEN ONLY.
+  // SKIPPING SETS THE NAME TO "there" ON SCREEN, AND NOWHERE ELSE.
   //
   // The two sentences want opposite things from the same blank: the Chief's
   // question a step later reads "What can I take off your plate, there?", and
@@ -407,6 +433,32 @@ describe("card three: the key", () => {
     expect(markup).not.toContain(copy.heading);
   });
 
+  /**
+   * THE DEFECT: A LOCAL MODEL OFFERED TO SOMEBODY WHO HAS NONE.
+   *
+   * The dismissal was `noBrain ? copy.dismiss : copy.dismissLocal`, and
+   * `nothingToThinkWith` is FALSE on a machine whose only engine is signed
+   * out: that machine is not blank, which is exactly why it gets the
+   * `signed-out` variant. So the one audience that variant was built for was
+   * offered "Not yet, start me on the local model" while `view.agents` was
+   * empty and there was nothing to start.
+   */
+  it("offers no local model to a machine whose only engine is signed out", async () => {
+    await machine({
+      ownerName: "Sean",
+      nothingToThinkWith: false,
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    const markup = render("flux", "key");
+    expect(markup, "a local model was offered to a machine with none").not.toContain(copy.dismissLocal);
+    expect(markup).toContain(copy.dismiss);
+    // Still not the blank machine's report: something IS here, and detection
+    // ran on it. Only the dismissal changes.
+    expect(markup).toContain(copy.heading);
+    expect(markup).not.toContain(copy.headingBare);
+  });
+
   it("offers a machine with an engine the local model it already has", async () => {
     await machine({
       nothingToThinkWith: false,
@@ -475,6 +527,29 @@ describe("step four: what can I take off your plate", () => {
       expect.soft(markup, row.id).toContain(asHtml(row.sub));
     }
     expect(markup).toContain(copy.escape);
+  });
+
+  /**
+   * THE DEFECT: SKIPPING HELLO LEFT THE NAME EMPTY ON SCREEN.
+   *
+   * The approved flow gives a skipped person the word "there" for exactly
+   * one sentence, this one, and `firstRunAddress` was written for it and
+   * called by nothing: the card passed `view.ownerName` straight through, so
+   * a skip produced the bare "What can I take off your plate?".
+   *
+   * It is a RENDER fallback. Nothing writes "there" to the owner profile,
+   * because the greeting wants the opposite thing from the same blank, and
+   * that is asserted here on the same machine rather than left to a comment.
+   */
+  it("calls a skipped person there, and still stores no name for them", async () => {
+    await machine({ ownerName: "", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
+    const markup = render("chat", "jobs");
+    expect(markup, "a skipped hello left a bare question").toContain(asHtml(`${copy.question}, there?`));
+    expect(markup).not.toContain(asHtml(`${copy.question}?`));
+    // The blank stays blank: the greeting drops the clause rather than
+    // saying "Good to meet you, there."
+    expect(greetingLine("")).not.toContain("there");
+    expect(lookedAroundLine("")).not.toContain("there");
   });
 
   it("tags each job with what it is still waiting on, live", async () => {

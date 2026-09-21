@@ -85,11 +85,20 @@ function everyMachine(): FirstRunJobWorld[] {
   const worlds: FirstRunJobWorld[] = [];
   for (const fluxReady of [false, true]) {
     for (const nothingToThinkWith of [false, true]) {
-      for (const connected of APP_SETS) {
-        for (const appsUnreadable of [false, true]) {
-          for (const search of ROUTINGS) {
-            if (appsUnreadable && connected.length > 0) continue;
-            worlds.push({ fluxReady, nothingToThinkWith, connected, appsUnreadable, search });
+      // THE SIGNED-OUT MACHINE IS ITS OWN MACHINE, AND IT WAS MISSING HERE.
+      // `nothingToThinkWith` is FALSE on a computer whose only engine is
+      // signed out, so a sweep that did not vary `nothingRunnable`
+      // separately never once opened this flow as that person sees it. The
+      // impossible pairing is skipped: nothing to think with means nothing
+      // runnable by definition.
+      for (const nothingRunnable of [false, true]) {
+        if (nothingToThinkWith && !nothingRunnable) continue;
+        for (const connected of APP_SETS) {
+          for (const appsUnreadable of [false, true]) {
+            for (const search of ROUTINGS) {
+              if (appsUnreadable && connected.length > 0) continue;
+              worlds.push({ fluxReady, nothingToThinkWith, nothingRunnable, connected, appsUnreadable, search });
+            }
           }
         }
       }
@@ -302,7 +311,7 @@ describe("every result has a body and a way on, whatever was typed", () => {
             label,
           );
           saysAll(markup, label, [
-            result.header, result.provenance, result.riskEyebrow, result.again,
+            result.header, result.provenance, result.unread, result.riskEyebrow, result.again,
             result.risk?.line, result.risk?.reason, result.risk?.advice,
             result.calm?.body, result.calm?.second,
             result.fixed.heading, result.waiting.heading,
@@ -403,7 +412,7 @@ describe("every result has a body and a way on, whatever was typed", () => {
 /** The morning offer's heading, as the only screen that carries it words it. */
 function briefRoutineOfferHeading(): string {
   return dayResult(FIRST_RUN_JOB_SHAPES.brief, [], {
-    fluxReady: true, nothingToThinkWith: false, connected: [], appsUnreadable: false, search: "anonymous",
+    fluxReady: true, nothingToThinkWith: false, nothingRunnable: false, connected: [], appsUnreadable: false, search: "anonymous",
   }).morning!.heading;
 }
 
@@ -490,7 +499,7 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
     // asking for a key before letting somebody type a sentence is the form
     // this release exists to delete.
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingRunnable: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(flowStageFor(FIRST_RUN_JOB_SHAPES.notes, blank)).toBe("connect");
     expect(escapeHatchScreen(blank).kind).toBe("notes");
@@ -498,7 +507,7 @@ describe("the escape hatch for somebody whose thing is not on the list", () => {
 
   it("keeps what they wrote and starts nothing, on the machine with nothing", () => {
     const blank: FirstRunJobWorld = {
-      fluxReady: false, nothingToThinkWith: true, connected: [], appsUnreadable: false, search: "anonymous",
+      fluxReady: false, nothingToThinkWith: true, nothingRunnable: true, connected: [], appsUnreadable: false, search: "anonymous",
     };
     expect(typedMayShowWorking(blank)).toBe(false);
     expect(said(typedReply(blank))).toBe(true);
