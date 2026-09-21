@@ -91,6 +91,38 @@ export const FIRST_RUN_COPY = {
       body: "There was nothing else on this computer to connect, so it is you and me.",
       second: "I came with the engine but not yet with anything to think with. One key sorts that, and it is the next thing I will ask you for.",
     },
+    /**
+     * IT IS HERE AND NOBODY IS SIGNED IN TO IT.
+     *
+     * This card used not to exist, and the absence was a bug rather than a
+     * gap. A signed-out engine still answers `--version` and still hands over
+     * its model list, so it read as working, the "found" card above said we
+     * had connected it, and the Chief was pointed at something that died on
+     * the first thing it was ever asked to do.
+     *
+     * The register is set by who is reading. They installed Claude Code or
+     * Codex themselves, so they are not the person who needs to be told what
+     * it is. Say what is true, say what fixes it, do not explain.
+     *
+     * And no pressure: whatever is already running keeps running. An offer
+     * that implies they are stuck until they comply is the school framing
+     * this file bans.
+     */
+    "signed-out": {
+      second: "Sign in and it is yours to use in here, working exactly as it does on its own.",
+      third: "Or leave it. What is already running carries on either way.",
+      action: "Help me sign in",
+      /** Named, because two engines mean two commands and an unlabelled pair
+       *  of them is a puzzle. */
+      commandFor: (name: string) => `Run this once, in a terminal, to sign in to ${name}.`,
+      copy: "Copy",
+      copied: "Copied",
+      /** The sign-in finishes in another window, on its own time. A button
+       *  that admits that beats a spinner that cannot know. */
+      recheck: "I have done it",
+      /** Everything on the list got signed in while the card was open. */
+      done: "You are signed in now, and I have connected it.",
+    },
   },
   flux: {
     key: {
@@ -318,6 +350,28 @@ export function foundAgentsLine(names: readonly string[]): string {
   const listed = joinNames(names);
   if (!listed) return "I have connected the engines that were already on this computer.";
   return `You already had ${listed} on this computer, so I have connected them.`;
+}
+
+/**
+ * The agents card on a machine where an engine is installed and signed out.
+ *
+ * Names it, for the same reason `foundAgentsLine` names things: a sentence
+ * about "an AI tool" that does not say which one is a sentence nobody can
+ * check, and this person put it there themselves so they will recognise it
+ * instantly.
+ *
+ * Says "you are not signed in", not "it is not working". Nothing is broken
+ * and nothing was installed wrong. There is simply nobody signed in to it,
+ * which is a true and unembarrassing thing to say to somebody who has done
+ * nothing wrong.
+ */
+export function signedOutAgentsLine(names: readonly string[]): string {
+  const listed = joinNames(names);
+  if (!listed) return "There is an AI tool on this computer that nobody is signed in to.";
+  // "signed in to it" reads as a mistake the moment there are two of them,
+  // and two is the ordinary case on a developer's machine.
+  const them = names.filter((name) => name.trim()).length > 1 ? "them" : "it";
+  return `You have ${listed} on this computer, and nobody is signed in to ${them} yet.`;
 }
 
 /** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */

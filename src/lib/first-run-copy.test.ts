@@ -9,6 +9,7 @@ import {
   clockLabel,
   foundAgentsLine,
   greetingLine,
+  signedOutAgentsLine,
   joinNames,
 } from "./first-run-copy";
 
@@ -55,6 +56,10 @@ const assembled: Array<{ path: string; text: string }> = [
   { path: "briefButtonLabel", text: briefButtonLabel(FIRST_RUN_BRIEF_TIME) },
   { path: "greetingLine", text: greetingLine("Sean") },
   { path: "greetingLine(blank)", text: greetingLine("  ") },
+  { path: "signedOutAgentsLine(one)", text: signedOutAgentsLine(["Claude Code"]) },
+  { path: "signedOutAgentsLine(two)", text: signedOutAgentsLine(["Claude Code", "Codex"]) },
+  { path: "signedOutAgentsLine(none)", text: signedOutAgentsLine([]) },
+  { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
 ];
 
 const everything = [...readable, ...assembled];

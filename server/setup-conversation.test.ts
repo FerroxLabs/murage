@@ -19,9 +19,13 @@ const FLUX_SAVED = { configured: true, conflict: false, looksValid: true };
  *  installed by the person, because they did not put it there. */
 const BUNDLED = { id: "fuigo", name: "Fuigo", installed: false };
 
+/** Installed, ready, and nobody signed in. The card must never claim it. */
+const CLAUDE_SIGNED_OUT = { id: "claude", name: "Claude Code", installed: true, signInCommand: "claude auth login" };
+
 const live = (patch: Partial<SetupLiveState> = {}): SetupLiveState => ({
   ownerName: "",
   agents: [BUNDLED],
+  signedOutAgents: [],
   flux: { configured: false, conflict: false, looksValid: false },
   bundledEngine: { ready: true },
   chiefInstanceId: "",
@@ -100,6 +104,63 @@ describe("what the Chief says on a machine that already had help on it", () => {
     const bare = plan(live({ ownerName: "Sean" }), [setupCardKey("hello", "welcome")]);
     expect(keys(bare.append)).toContain(setupCardKey("agents", "bare"));
     expect(keys(bare.append)).not.toContain(setupCardKey("agents", "found"));
+  });
+});
+
+describe("what the Chief says when an engine is here and nobody is signed in", () => {
+  const opened = [setupCardKey("hello", "welcome")];
+
+  it("does not claim it, and does not pretend the machine is empty", () => {
+    const cards = plan(
+      live({ ownerName: "Sean", agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] }),
+      opened,
+    ).append;
+    expect(keys(cards)).toContain(setupCardKey("agents", "signed-out"));
+    // "found" is the lie this whole card exists to stop.
+    expect(keys(cards)).not.toContain(setupCardKey("agents", "found"));
+    // ...and "bare-needs-key" would send somebody to buy a key when what is
+    // actually missing is a sign-in they can do for nothing.
+    expect(keys(cards)).not.toContain(setupCardKey("agents", "bare-needs-key"));
+  });
+
+  // THE ECONOMIC ONE, and the reason this variant outranks plain `bare`.
+  //
+  // A keyed Fuigo IS usable, so nothing here is broken and `bare` would not
+  // be a lie. But this person has a subscription sitting one command away on
+  // their own computer, and saying nothing quietly leaves them on a metered
+  // router while they pay a flat rate elsewhere. That is exactly the mistake
+  // 3c9770f1 reverted in `pickDefaultEngine`, arriving through another door.
+  it("speaks up even when something in the box already works", () => {
+    const cards = plan(
+      live({ ownerName: "Sean", agents: [BUNDLED], signedOutAgents: [CLAUDE_SIGNED_OUT] }),
+      opened,
+    ).append;
+    expect(keys(cards)).toContain(setupCardKey("agents", "signed-out"));
+    expect(keys(cards)).not.toContain(setupCardKey("agents", "bare"));
+  });
+
+  // ...but it stays quiet when something they installed is genuinely working.
+  // A second engine nobody signed into is noise, and the first run has no
+  // room for noise.
+  it("says nothing when an engine they installed is already working", () => {
+    const cards = plan(
+      live({
+        ownerName: "Sean",
+        agents: [BUNDLED, { id: "codex", name: "Codex", installed: true }],
+        signedOutAgents: [CLAUDE_SIGNED_OUT],
+      }),
+      opened,
+    ).append;
+    expect(keys(cards)).toContain(setupCardKey("agents", "found"));
+    expect(keys(cards)).not.toContain(setupCardKey("agents", "signed-out"));
+  });
+
+  it("settles once the step is satisfied, like every other card that asked", () => {
+    const signedIn = plan(
+      live({ ownerName: "Sean", agents: [BUNDLED], signedOutAgents: [] }),
+      [...opened, setupCardKey("agents", "signed-out")],
+    );
+    expect(signedIn.settle).toContain(setupCardKey("agents", "signed-out"));
   });
 });
 

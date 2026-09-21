@@ -61,7 +61,7 @@ const CLOSING_STEP: SetupStep = SETUP_STEPS[SETUP_STEPS.length - 1];
  */
 const ASK_VARIANTS: Record<SetupStep, readonly SetupCardVariant[]> = {
   hello: ["welcome"],
-  agents: ["found", "bare", "bare-needs-key"],
+  agents: ["found", "bare", "bare-needs-key", "signed-out"],
   flux: ["key"],
   apps: ["apps"],
   brief: ["brief"],
@@ -86,6 +86,10 @@ const CARD_COPY: Record<SetupCardVariant, { title: string; subtitle: string }> =
   bare: {
     title: "There is one in the box",
     subtitle: "Murage brought its own AI with it, so you are ready without installing anything.",
+  },
+  "signed-out": {
+    title: "You are not signed in to it yet",
+    subtitle: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
   },
   key: {
     title: "One key turns the rest on",
@@ -147,6 +151,24 @@ function variantForCurrentStep(step: SetupStep, view: SetupView): SetupCardVaria
       // in the box is already running" on a machine where it has nothing to
       // think with, which is every bare install before a key exists.
       if (view.agents.some((agent) => agent.installed)) return "found";
+      // An engine that is HERE and signed out beats both bare cards, and the
+      // ordering is an economic decision as much as an honest one.
+      //
+      // Above `bare-needs-key` is obvious: a sign-in is what is missing, not a
+      // key, and sending that person to buy something would be wrong.
+      //
+      // Above plain `bare` is the one worth stating. `bare` is reached with a
+      // keyed Fuigo running, which IS usable, so nothing is broken. But that
+      // person has a subscription sitting one command away on their own
+      // computer, and saying nothing would quietly leave them on a metered
+      // router while they pay for a flat rate elsewhere. That is the mistake
+      // 3c9770f1 reverted in `pickDefaultEngine`, arriving through a different
+      // door.
+      //
+      // Below `found`, though. If something usable really was found, a second
+      // engine nobody signed into is noise, and the first run has no room for
+      // noise.
+      if (view.signedOutAgents.length > 0) return "signed-out";
       return view.agents.length === 0 ? "bare-needs-key" : "bare";
     case "flux":
       return "key";

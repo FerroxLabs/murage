@@ -47,6 +47,7 @@ function view(statuses: Partial<Record<string, Status>> = {}): View {
     ownerName: "",
     engine: { ready: true },
     agents: [],
+    signedOutAgents: [],
     routines: { total: 0, briefId: null, briefRan: false },
     crewSize: 0,
     fluxReady: false,

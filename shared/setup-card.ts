@@ -40,6 +40,11 @@ export const SETUP_CARD_VARIANTS = [
    *  "it is what is talking to you now" is false on a machine with no key,
    *  no sign-in and no local model. */
   "bare-needs-key",
+  /** agents: an engine IS here, ready, and nobody is signed in to it. Its own
+   *  variant because all three of the others would be a lie about it: "found"
+   *  claims it is connected, "bare" claims there was nothing here, and
+   *  "bare-needs-key" claims a key is what is missing when a sign-in is. */
+  "signed-out",
   /** flux: the key card, offered. */
   "key",
   /** flux: they said not now, and local work carries on. */

@@ -75,10 +75,44 @@ export interface SetupInstanceReading {
   displayName?: string;
   driverKind?: string;
   enabled?: boolean;
-  snapshot: { state: string };
+  /** `authenticated` is TRI-STATE and every reader here treats it as one.
+   *  See `signedOut` below for why that matters more than it looks. */
+  snapshot: { state: string; authenticated?: boolean };
   /** What it can actually be asked to think with. Empty is the whole point:
    *  see `setupAgentsReading`. */
   models?: { default?: string };
+  /** The driver's own install descriptor. Only `signInCommand` is read, and
+   *  only to tell the person which command signs them in. */
+  install?: { signInCommand?: string };
+}
+
+/**
+ * This engine's driver ASKED whether anyone is signed in and was told no.
+ *
+ * `=== false`, never `!== true`, and the difference is the whole function.
+ * `authenticated` is undefined on every driver that does not probe, which is
+ * most of them, so `!== true` would call a working engine signed out. That
+ * mistake has already been made once in this codebase and it is recorded in
+ * `server/default-engine.ts`: filtering on it emptied the list on installs
+ * where engines work perfectly well, and a delegated teammate ended up with
+ * no engine at all (`server/unattended.test.ts` caught it).
+ *
+ * So this is deliberately narrow. It catches the drivers that genuinely went
+ * and looked — Claude Code and Codex both run a real sign-in probe — and
+ * nothing else. An engine that does not answer the question keeps the benefit
+ * of the doubt and stays in `setupAgentsReading`, exactly as it does today.
+ */
+function signedOut(instance: SetupInstanceReading): boolean {
+  return instance.snapshot.authenticated === false;
+}
+
+/** Everything the agents step asks of an engine EXCEPT whether anyone is
+ *  signed into it. Shared so the two readings below cannot drift apart and
+ *  start disagreeing about which engines they are even talking about. */
+function runnable(instance: SetupInstanceReading): boolean {
+  return instance.enabled !== false
+    && instance.snapshot.state === "available"
+    && (instance.models?.default ?? "").trim().length > 0;
 }
 
 /**
@@ -109,14 +143,46 @@ export interface SetupInstanceReading {
  */
 export function setupAgentsReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
   return instances
-    .filter((instance) =>
-      instance.enabled !== false
-      && instance.snapshot.state === "available"
-      && (instance.models?.default ?? "").trim().length > 0)
+    .filter((instance) => runnable(instance) && !signedOut(instance))
     .map((instance) => ({
       id: instance.instanceId,
       name: instance.displayName?.trim() || instance.instanceId,
       installed: instance.driverKind !== "fuigoAgent",
+    }));
+}
+
+/**
+ * Here, and ready, and nobody is signed in.
+ *
+ * THE DEFECT THIS EXISTS TO END. Every driver carries a STATIC model list that
+ * does not depend on auth, so a Claude Code that is installed and signed out
+ * answers `--version`, reports itself available, and hands over a full
+ * catalogue. It therefore satisfied every condition `setupAgentsReading` used
+ * to have. Three things followed, in order: the Chief said in writing "you
+ * already had Claude Code on this computer, so I have connected them", which
+ * was false; the agents step ticked, because `setupStepDone` counts this list;
+ * and on a machine with no Flux key it was the ONLY candidate `pickDefaultEngine`
+ * had, so the Chief was pointed at it. The first thing that person ever asked
+ * their assistant to do failed, after being told it was ready.
+ *
+ * The answer is not to hide these engines. Somebody who installed Codex knows
+ * what it is, and the gap between them and a working subscription is one
+ * command. So they are reported separately and OFFERED, which is also the
+ * honest economics: signing them back into something they already pay for is
+ * better for them than putting them on a metered router.
+ *
+ * `signInCommand` rides along because the driver is the only thing that knows
+ * it, and the card would otherwise have to hardcode per-engine copy — the
+ * exact thing `EngineInstall` exists to prevent.
+ */
+export function setupSignedOutReading(instances: readonly SetupInstanceReading[]): SetupAgentReading[] {
+  return instances
+    .filter((instance) => runnable(instance) && signedOut(instance))
+    .map((instance) => ({
+      id: instance.instanceId,
+      name: instance.displayName?.trim() || instance.instanceId,
+      installed: instance.driverKind !== "fuigoAgent",
+      ...(instance.install?.signInCommand ? { signInCommand: instance.install.signInCommand } : {}),
     }));
 }
 

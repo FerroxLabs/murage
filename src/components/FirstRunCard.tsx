@@ -14,12 +14,21 @@
 // is still there tomorrow, every action happens where the person is
 // standing, and nothing sends anybody to Settings.
 
-import { FIRST_RUN_COPY, foundAgentsLine } from "@/lib/first-run-copy";
+import { useState } from "react";
+
+import { FIRST_RUN_COPY, foundAgentsLine, signedOutAgentsLine } from "@/lib/first-run-copy";
 import type { Bot, Message } from "@/state/store";
 import { readSetupCard } from "../../shared/setup-card";
 import { FirstRunAppsCard } from "./FirstRunAppsCard";
 import { FirstRunBriefCard, FirstRunBriefRanCard, FirstRunMoreRoutinesCard } from "./FirstRunBriefCard";
-import { FirstRunBubble, FirstRunLine, useSetupView } from "./FirstRunChrome";
+import {
+  FIRST_RUN_CHIP,
+  FIRST_RUN_FOCUS,
+  FIRST_RUN_PRIMARY,
+  FirstRunBubble,
+  FirstRunLine,
+  useSetupView,
+} from "./FirstRunChrome";
 import { FirstRunFluxCard, FirstRunNoKeyCard } from "./FirstRunFluxCard";
 import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
@@ -39,6 +48,8 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
       return <FirstRunBareAgentsCard />;
     case "bare-needs-key":
       return <FirstRunBareAgentsCard needsKey />;
+    case "signed-out":
+      return <FirstRunSignedOutAgentsCard settled={settled} />;
     case "key":
       return <FirstRunFluxCard settled={settled} />;
     case "no-key":
@@ -101,6 +112,103 @@ function FirstRunBareAgentsCard({ needsKey = false }: { needsKey?: boolean }) {
     <FirstRunBubble>
       <FirstRunLine>{copy.body}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
+    </FirstRunBubble>
+  );
+}
+
+/**
+ * IT IS HERE, AND NOBODY IS SIGNED IN TO IT.
+ *
+ * The card that used not to exist. A signed-out engine still answers
+ * `--version` and still hands over its full model list, so it read as a
+ * working agent: the "found" card claimed we had connected it, the checklist
+ * ticked, and on a machine with no key it was the only candidate the selector
+ * had, so the Chief was pointed at an engine that died on the first thing it
+ * was ever asked to do.
+ *
+ * Why a COMMAND and not a button that does it. The sign-in is a device auth
+ * flow that opens a browser and waits on a code, and running it invisibly
+ * from inside the app would hide the one moment where the person has to prove
+ * who they are. This person installed Codex themselves, so the command is the
+ * help they actually want. `signInCommand` comes from the driver, which is
+ * the only thing that knows it, so nothing here is hardcoded per engine.
+ *
+ * "Check again" rather than polling: the sign-in happens in another window
+ * and finishes when it finishes. One honest button beats a spinner that
+ * cannot know.
+ */
+function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
+  const { view, refresh } = useSetupView();
+  const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState("");
+  const copy = FIRST_RUN_COPY.agents["signed-out"];
+
+  // The server decides WHICH card is owed; what it says is re-read live, so a
+  // sign-in finished in another window empties this list and the card stops
+  // asking for something that is already done.
+  const waiting = view?.signedOutAgents ?? [];
+  if (!view) return null;
+  if (waiting.length === 0) {
+    return (
+      <FirstRunBubble>
+        <FirstRunLine>{copy.done}</FirstRunLine>
+      </FirstRunBubble>
+    );
+  }
+
+  const commands = waiting
+    .map((agent) => ({ name: agent.name, command: agent.signInCommand }))
+    .filter((row): row is { name: string; command: string } => Boolean(row.command));
+
+  return (
+    <FirstRunBubble>
+      <FirstRunLine>{signedOutAgentsLine(waiting.map((agent) => agent.name))}</FirstRunLine>
+      <FirstRunLine>{copy.second}</FirstRunLine>
+      <FirstRunLine>{copy.third}</FirstRunLine>
+      {!settled && !shown && commands.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}
+            onClick={() => setShown(true)}
+          >
+            {copy.action}
+          </button>
+        </div>
+      )}
+      {shown && (
+        <div className="mt-3 space-y-2">
+          {commands.map((row) => (
+            <div key={row.name} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+              <p className="text-[13px] text-ink-secondary">{copy.commandFor(row.name)}</p>
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                <code className="select-all text-[13.5px] text-ink">{row.command}</code>
+                <button
+                  type="button"
+                  className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
+                  onClick={() => {
+                    void navigator.clipboard
+                      .writeText(row.command)
+                      .then(() => setCopied(row.name))
+                      // A clipboard the browser refused is not a failure worth
+                      // a red box: the command is on screen and selectable.
+                      .catch(() => setCopied(""));
+                  }}
+                >
+                  {copied === row.name ? copy.copied : copy.copy}
+                </button>
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
+            onClick={() => refresh()}
+          >
+            {copy.recheck}
+          </button>
+        </div>
+      )}
     </FirstRunBubble>
   );
 }

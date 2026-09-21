@@ -121,6 +121,10 @@ export interface SetupAgentReading {
   name: string;
   /** Found on this computer, rather than shipped inside Murage. */
   installed: boolean;
+  /** The command that signs this engine in, when its driver declares one.
+   *  Only ever set on a signed-out reading, and only so the card can name the
+   *  command rather than hardcode one per engine. */
+  signInCommand?: string;
 }
 
 /**
@@ -189,6 +193,15 @@ export interface SetupLiveState {
   ownerName: string;
   /** Engines this machine can run right now, bundled and found. */
   agents: readonly SetupAgentReading[];
+  /**
+   * Engines that are here and ready and that nobody is signed in to.
+   *
+   * SEPARATE FROM `agents`, AND IT MUST STAY SEPARATE. The agents step is done
+   * when `agents` is non-empty, so anything in this list would tick the step
+   * and let the Chief claim an engine that fails on first send. That was the
+   * defect. These are offered instead: see `setupSignedOutReading`.
+   */
+  signedOutAgents: readonly SetupAgentReading[];
   /** The Flux Router connection as the app's own credential policy reports
    *  it, plus whether the saved key is shaped like a key at all. The key
    *  itself never leaves the server. */
@@ -527,6 +540,10 @@ export interface SetupView {
   /** Engines this machine can run, bundled and found, so the Chief can open
    *  with an answer rather than a question. */
   agents: readonly SetupAgentReading[];
+  /** Engines that are here and that nobody is signed in to, so the Chief can
+   *  offer the sign-in instead of claiming them or pretending they are not
+   *  there. Never counted as an agent: see `SetupLiveState.signedOutAgents`. */
+  signedOutAgents: readonly SetupAgentReading[];
   /** Routines, and the morning brief's own state. */
   routines: SetupRoutineReading;
   /** Visible bots other than the Chief, for the "hire your first teammate"
@@ -566,6 +583,7 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     ownerName: live.ownerName,
     engine: live.bundledEngine,
     agents: live.agents,
+    signedOutAgents: live.signedOutAgents,
     routines: live.routines,
     crewSize: live.crewSize,
     fluxReady: fluxUsable(live),

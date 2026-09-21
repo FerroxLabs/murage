@@ -312,7 +312,7 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey } from "./flux-config.ts";
-import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading } from "./setup.ts";
+import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
 import { type EngineChoice, pickDefaultEngine } from "./default-engine.ts";
 import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
@@ -1776,9 +1776,16 @@ async function setupLiveState(): Promise<SetupLiveState> {
     }
   })();
   const flux = fluxCredentialStatus(readFluxConnectionState());
+  // ONE describe() for both readings. It probes the whole fleet, so calling it
+  // twice would double that work on every read of the setup view, and the two
+  // lists would be derived from two different moments: an engine could be
+  // signed out in one and signed in in the other, and the card would contradict
+  // the checklist.
+  const described = await registry.describe();
   return {
     ownerName: (cfg.profile?.name ?? "").trim(),
-    agents: setupAgentsReading(await registry.describe()),
+    agents: setupAgentsReading(described),
+    signedOutAgents: setupSignedOutReading(described),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps,
