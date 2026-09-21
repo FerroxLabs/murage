@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
-import { turnFailureBuzzes } from "./notify.ts";
+import { buildNotification, turnFailureBuzzes } from "./notify.ts";
 import { chiefDecision } from "./setup.ts";
 import { Store } from "./store.ts";
 
@@ -443,7 +443,7 @@ describe("a report that could not start because the Chief was mid-turn", () => {
   });
 });
 
-describe("one failure rings the person once", () => {
+describe("what one failure actually rings", () => {
   // This body contains no notify() and no buildNotification(), which is true
   // and was never the question. The report is delivered as a TURN, and a turn
   // that dies before it starts buzzes turn-failed from startTurn's own
@@ -478,5 +478,53 @@ describe("one failure rings the person once", () => {
     const body = index.slice(at, index.indexOf("\n}\n", at));
     expect(body).not.toContain("notify(");
     expect(body).not.toContain("buildNotification(");
+  });
+
+  // AND HERE IS WHAT STILL RINGS, which the commit that suppressed the
+  // dispatch buzz was read as having stopped. It did not, and these run
+  // buildNotification — the function the turn fold and the approval path both
+  // call — to say so rather than leaving it to be assumed either way.
+  //
+  // Both of these are deliberate. The first banner says a routine broke,
+  // before anybody has looked at it; the second says what the Chief found,
+  // and is the more useful of the two. What is NOT true is that the person
+  // hears about one failure exactly once.
+  const chiefBot = { id: "chief", name: "Chief", threadId: "t-incidents" };
+
+  it("still rings when the Chief's report lands, on top of the routine-failed banner", () => {
+    const done = buildNotification("done", chiefBot, "t-incidents", "Ada's brief failed: the engine is signed out");
+    expect(done).not.toBeNull();
+    expect(done!.kind).toBe("done");
+    expect(done!.title).toBe("Chief finished");
+    expect(done!.body).toContain("signed out");
+  });
+
+  it("still rings when the Chief asks for approval while working out what broke", () => {
+    const approval = buildNotification("approval", chiefBot, "t-incidents", "Run the sign-in check?", {
+      requestId: "r1",
+      messageId: "m1",
+    });
+    expect(approval).not.toBeNull();
+    expect(approval!.kind).toBe("approval");
+    expect(approval!.title).toBe("Chief needs approval");
+  });
+
+  it("goes quiet for both only when the person turned this bot's notifications off", () => {
+    const off = { ...chiefBot, notifications: false };
+    expect(buildNotification("done", off, "t-incidents", "what broke")).toBeNull();
+    expect(buildNotification("approval", off, "t-incidents", "may I?")).toBeNull();
+  });
+
+  it("does not claim in prose that one failure rings once", () => {
+    // The sentence this file used to carry, and the comment in the harness
+    // that repeated it. Both were read as a guarantee the code does not make.
+    // Read RAW, comments included: the claim was made in prose, and prose is
+    // exactly what a comment-stripped scan cannot see.
+    const policy = readFileSync(new URL("./team-incidents.ts", import.meta.url), "utf8");
+    const harness = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    expect(policy).not.toMatch(/raises no second banner/);
+    expect(harness).not.toMatch(/never raises a second banner/);
+    // and the words that replaced them say which banner is suppressed
+    expect(policy).toContain("Exactly one banner is");
   });
 });

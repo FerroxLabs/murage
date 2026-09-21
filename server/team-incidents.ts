@@ -176,15 +176,24 @@ export function routineIncidentMuteKeys(run: { routineId: string; threadId?: str
  * `unattended`, because nobody is at the keyboard and the report quotes a run
  * that just broke: the Chief's own tool calls are judged accordingly.
  *
- * And `unattended` is also what keeps the once-not-twice notification
- * invariant true, which is why this is a value the tests can hand to
+ * `unattended` is also the term that stops this turn's DISPATCH failure from
+ * buzzing, which is why it is a value the tests can hand to
  * `turnFailureBuzzes` rather than an object literal buried in the harness.
- * Without it, a dispatch failure of THIS turn buzzes turn-failed, on top of
+ * Without it, a turn that dies before it starts buzzes turn-failed on top of
  * the routine-failed banner the person already got for the same incident —
  * and a provider being down is both the commonest way this turn fails and a
- * leading cause of the routine failure it is reporting. The body of the
- * report says the module raises no second banner; this is the term that
- * makes that true. */
+ * leading cause of the routine failure it is reporting. Ringing somebody
+ * twice to say the same outage happened is the defect it closes.
+ *
+ * WHAT IT DOES NOT DO, and an earlier version of this comment said it did:
+ * make "one failure rings once" true in general. Exactly one banner is
+ * suppressed — this turn's own dispatch failure. A report that lands still
+ * emits the ordinary `done` notification, and an approval the Chief raises
+ * while writing it still uses the ordinary approval path. So the person can
+ * get two: the routine-failed banner before anybody has looked at the
+ * failure, and the Chief's conclusion once somebody has. That second one
+ * carries the diagnosis and is worth having; what it is not is silence.
+ * server/team-incidents.test.ts runs buildNotification for both. */
 export function teamIncidentTurnOptions(threadId: string): { threadId: string; unattended: true } {
   return { threadId, unattended: true };
 }

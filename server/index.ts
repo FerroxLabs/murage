@@ -5932,8 +5932,15 @@ function teamIncidentContext(threadId: string | null): { lastRequest: string | n
  * Doing nothing is a complete outcome here, not a failure: every caller has
  * ALREADY notified the owner by the time it gets here, so a workspace with no
  * Chief on duty is a workspace where the person has been told and there is
- * nobody else to tell. That is also what keeps the once-not-twice
- * notification invariant — this path never raises a second banner.
+ * nobody else to tell.
+ *
+ * This function raises no banner of its own, which is not the same as the
+ * failure ringing only once. The incident turn's own dispatch failure is
+ * suppressed (teamIncidentTurnOptions), but a report that LANDS emits the
+ * ordinary `done` notification from the turn fold like any other turn, and an
+ * approval the Chief raises on the way there rings as an approval. The person
+ * can therefore get the routine-failed banner and, later, the Chief's
+ * conclusion. That second one is the diagnosis, and is worth having.
  *
  * The whole body is guarded. This runs on the failure path, and an incident
  * report that throws would turn one broken routine into two. */
