@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -51,6 +51,7 @@ import {
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
+import { composerUploadsPending, subscribeComposerUploads, trackComposerUpload } from "@/lib/composer-uploads";
 import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -238,6 +239,19 @@ export function Composer({
   const desktopSurface = useDesktopSurface();
   const sendNoticeId = useId();
   useEffect(() => setSendNotice(null), [draftId]);
+  // An image intake still running for this thread. send() re-reads the live
+  // value rather than trusting this one, so it can never act on a stale
+  // render; this subscription exists to take the notice back down the moment
+  // the chip lands, instead of leaving a stale "still uploading" on screen.
+  const uploadsPending = useSyncExternalStore(
+    subscribeComposerUploads,
+    () => composerUploadsPending(threadId),
+    () => false,
+  );
+  useEffect(() => {
+    if (uploadsPending) return;
+    setSendNotice((prev) => (prev?.kind === "upload-pending" ? null : prev));
+  }, [uploadsPending]);
   const editText = useCallback(
     (next: string) => {
       markDraftEdited(draftId);
@@ -465,7 +479,10 @@ export function Composer({
   const removeAudioFile = () => { audioFileRef.current = null; setAudioFile(null); };
   // Auto mode belongs to one bot; a room has several, each with its own.
   const autoBot = group ? undefined : bot;
-  const pickFiles = async (picked: FileList | null) => {
+  // Tracked for its whole length, append included: an Enter that lands while
+  // this is running must be held, or the image it is fetching is attached to
+  // the draft AFTER this one.
+  const pickFiles = (picked: FileList | null) => trackComposerUpload(threadId, async () => {
     if (!picked?.length) return;
     const { attachments: added, notice } = await intakeFiles(Array.from(picked), {
       allowImages: engineSupportsImages,
@@ -477,7 +494,7 @@ export function Composer({
     // Keep file-specific failures beside the attachments. A successful
     // overlapping intake must not erase an earlier failure before it is read.
     if (notice) setAttachmentNotice(notice);
-  };
+  });
   const setMode = (mode: PermissionMode) => {
     if (!autoBot) return;
     // Turning Auto (or Full access, which includes it) on for a bot that
@@ -573,6 +590,19 @@ export function Composer({
           setSendNotice({ kind: "flux-key-failed" });
         }
       })();
+      return;
+    }
+    // AN IMAGE STILL UPLOADING IS PART OF THIS MESSAGE.
+    //
+    // Before the draft is composed and before it is cleared. `attachments`
+    // holds only the chips that have already landed, so sending mid-intake
+    // used to send the text without the picture and then hand the picture to
+    // the next draft — the person saw their image appear on the FOLLOWING
+    // message, with nothing to explain it. The live count is read here rather
+    // than the rendered one: an intake that finished microseconds ago must
+    // not be waited on, and one that started microseconds ago must be.
+    if (composerUploadsPending(threadId)) {
+      setSendNotice({ kind: "upload-pending" });
       return;
     }
     if (
@@ -942,7 +972,7 @@ export function Composer({
                 });
                 return;
               }
-              void (async () => {
+              void trackComposerUpload(threadId, async () => {
                 for (const file of imageFiles) {
                   try {
                     const attachment = await imageAttachmentFromFile(file, threadId);
@@ -954,7 +984,7 @@ export function Composer({
                     });
                   }
                 }
-              })();
+              });
               return;
             }
             // a wall of text becomes a chip instead of burying the input

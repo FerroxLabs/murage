@@ -15,16 +15,23 @@ import { messageSizeLabels } from "../../shared/message-limits";
  * before it could be sent, because a key that reaches send is a key in the
  * transcript, on disk, and in the next prompt a model reads. Saying nothing
  * would be worse than the paste: the person would think their key went
- * somewhere and have no idea where. */
+ * somewhere and have no idea where.
+ *
+ * `upload-pending` is Enter arriving before an attached image has finished
+ * uploading. Sending anyway used to hand the image to the NEXT draft, so the
+ * send is held and the reason is said out loud; it clears itself the moment
+ * the intake lands and the chip appears. */
 export type ComposerSendNoticeState =
   | { kind: "too-large"; sizeBytes: number }
   | { kind: "refused"; sizeBytes: number }
+  | { kind: "upload-pending" }
   | { kind: "flux-key-saved" }
   | { kind: "flux-key-failed" };
 
 export function composerSendNoticeText(notice: ComposerSendNoticeState): string {
   if (notice.kind === "flux-key-saved") return FIRST_RUN_COPY.pastedKey.saved;
   if (notice.kind === "flux-key-failed") return FIRST_RUN_COPY.pastedKey.failed;
+  if (notice.kind === "upload-pending") return t("composer.uploadPending");
   const { size, limit } = messageSizeLabels(notice.sizeBytes);
   return notice.kind === "too-large"
     ? t("composer.tooLarge", { size, limit })
@@ -32,9 +39,10 @@ export function composerSendNoticeText(notice: ComposerSendNoticeState): string 
 }
 
 /** A caught key is good news and a refused message is bad news, and they must
- *  not look the same. */
+ *  not look the same. Waiting on an upload is neither: nothing went wrong and
+ *  nothing was lost, so it reads as a status rather than an alarm. */
 function noticeIsFailure(notice: ComposerSendNoticeState): boolean {
-  return notice.kind !== "flux-key-saved";
+  return notice.kind !== "flux-key-saved" && notice.kind !== "upload-pending";
 }
 
 /** The inline explanation beside the composer. It is an alert, so a screen
