@@ -16,6 +16,8 @@
 //                     surface's (a live frame, not a deliverable)
 //                   | computer-exec-image  the computer surface called with a
 //                     shell command in its arguments, answering with a frame
+//                   | wrapped-tool-image  a custom MCP server's screenshot made
+//                     through a "use a tool" wrapper, answering with an image
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -506,6 +508,17 @@ function playComputerExecImageTurn() {
     rawInput: { command: "firefox", observe: true } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-exec", status: "completed",
     content: [{ type: "content", content: { type: "text", text: "exit 0" } }, { type: "content", content: { type: "image", data: SCREEN_PIXEL_PNG, mimeType: "image/png" } }] } } });
+}
+
+/** A custom MCP server's screenshot reached through a wrapper tool. The chip
+ * drops the server namespace — the person cares about the tool — so the
+ * retention decision must not be taken on the chip's name: `screenshot` alone
+ * looks like Murage's own screen surface, and this image is a deliverable. */
+function playWrappedToolImageTurn() {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-wimg", title: "use_tool",
+    rawInput: { tool_name: "mcp__omarchy-bridge__screenshot", tool_input: { window: "editor" } } } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-wimg", status: "completed",
+    content: [{ type: "content", content: { type: "image", data: ONE_PIXEL_PNG, mimeType: "image/png" } }] } } });
 }
 
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
@@ -1124,7 +1137,8 @@ function handle(msg: any) {
       } else if (mode === "interleave") playInterleaveTurn();
       else if (mode === "wrapped-tool") playWrappedToolTurn();
       else if (mode === "tool-image") playToolImageTurn();
-else if (mode === "computer-exec-image") playComputerExecImageTurn();
+      else if (mode === "computer-exec-image") playComputerExecImageTurn();
+      else if (mode === "wrapped-tool-image") playWrappedToolImageTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with

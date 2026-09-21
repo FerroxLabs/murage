@@ -166,6 +166,27 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     expect(images).toEqual([]);
   });
 
+  // The chip drops a tool's server namespace on purpose, so a custom server's
+  // `screenshot` reached through a wrapper arrived at the retention filter as
+  // the bare `screenshot` and was discarded as if it were Murage's own screen.
+  it("keeps a custom MCP server's screenshot reached through a wrapper tool", async () => {
+    process.env.FAKE_ACP_MODE = "wrapped-tool-image";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-wrapped-image", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // the chip still names the inner tool, not the wrapper and not the mount
+    const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
+    expect(started).toMatchObject({ title: "screenshot" });
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      alt: "screenshot",
+    });
+  });
+
   it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();

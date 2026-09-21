@@ -87,13 +87,19 @@ export function resolveToolLabel(title: unknown, rawInput: unknown): ToolLabel {
  * labelled "firefox" it stops looking like one, and the live screen frame it
  * answers with becomes a permanent file.
  *
- * Returns the name the engine called, never an argument it was called with,
- * or undefined when the update carries no name at all.
+ * The server namespace is kept, for the same reason. A chip drops it because
+ * the person cares about the tool, not the mount; but `screenshot` and
+ * `custom_server__screenshot` are two different tools, and only one of them is
+ * ours. Stripped to the leaf, a custom server's screenshot is mistaken for
+ * Murage's screen surface and thrown away.
+ *
+ * Returns the qualified name the engine called, never an argument it was
+ * called with, or undefined when the update carries no name at all.
  */
 export function resolveToolIdentity(title: unknown, rawInput: unknown): string | undefined {
   const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? (rawInput as Record<string, unknown>) : undefined;
   const inner = input?.tool_name ?? input?.toolName;
-  if (typeof inner === "string" && inner.trim()) return clean(bareToolName(inner), MAX_NAME) || clean(inner, MAX_NAME);
+  if (typeof inner === "string" && inner.trim()) return clean(inner, MAX_NAME);
   return typeof title === "string" && title.trim() ? clean(title, MAX_NAME) : undefined;
 }
 
