@@ -242,4 +242,41 @@ describe("it obeys the house copy rules", () => {
       .toContain(promise);
     expect.soft(reference("trust.md")).toContain(promise);
   });
+
+  // THE SKILL IS WHERE THE FALSE PROMISE WOULD COME BACK FROM.
+  //
+  // The apps card said "once you trust me with a kind of email, I can send
+  // those myself", and so did SKILL.md and trust.md, which are instructions
+  // the Chief reads and then repeats to the person in its own words. No such
+  // grant exists: a remembered approval is keyed by the whole tool name
+  // (`approvalKey`, server/auto-approve.ts) and every connected-app call the
+  // Chief makes arrives as one wrapper tool, so one grant covers reading and
+  // sending and every account at once.
+  //
+  // Fixing the card and leaving the skill would have put the same sentence
+  // back into the conversation from the other end, said by the assistant
+  // rather than printed on a card, which is worse: nobody can diff it.
+  it("never tells the Chief it can be granted less than one whole key", () => {
+    // The shape of the false promise: a kind of mail narrowed, and in the
+    // same sentence the Chief saying it will then act alone on that kind.
+    // Deliberately not a ban on the words: this skill legitimately talks
+    // about kinds of work as its OWN discipline, and trust.md has to be able
+    // to say out loud that no such switch exists in order to warn about it.
+    const narrower =
+      /\b(?:kind|kinds|type|types|sort|sorts|category|categories)\s+of\s+(?:e-?mail|mails?|message|messages)\b[^.]*\b(?:myself|on my own|without asking|and I (?:can|will) send)\b/i;
+    for (const [name, text] of [
+      ["SKILL.md", instructions],
+      ["trust.md", reference("trust.md")],
+      ["jobs.md", reference("jobs.md")],
+    ] as const) {
+      const hit = narrower.exec(text);
+      expect.soft(
+        hit ? `${name}: "${hit[0]}"` : null,
+        `${name} offers a grant the approval system cannot key`,
+      ).toBeNull();
+    }
+    // And it says out loud what a grant really covers, so the Chief has an
+    // honest answer when the person asks before saying yes.
+    expect(reference("trust.md")).toMatch(/keyed by the tool/i);
+  });
 });
