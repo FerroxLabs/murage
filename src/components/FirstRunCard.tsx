@@ -87,6 +87,13 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
       return <FirstRunFluxCard settled={settled} />;
     case "no-key":
       return <FirstRunNoKeyCard />;
+    // `jobs` and `do-it` ARE NOT WIRED YET, AND THE SERVER ALREADY EMITS
+    // THEM. W16 landed the contract half of the five-step flow: `chat` and
+    // `flow` are real steps, `setupConversationPlan` plans their cards, and
+    // the two components that render them are the renderer half of this
+    // release. Until they exist these fall to `default` and draw the step
+    // heading with nothing under it. This is the next piece of work on this
+    // branch, not an oversight.
     case "apps":
       return <FirstRunAppsCard settled={settled} />;
     case "brief":
