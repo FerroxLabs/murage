@@ -312,6 +312,50 @@ describe("the rest of the walk", () => {
       : /fuigo is unavailable/.test(view.engine.reason ?? "")).toBe(true);
   });
 
+  // THE SIGNUP THE HELLO STEP CARRIES, ON A REAL SERVER.
+  //
+  // The email that step collects goes to Sendlane, server-side, and the whole
+  // path already existed: POST /api/subscribe, server/sendlane.ts, and the
+  // renderer's own call in FirstRunHelloCard. W16 re-cut the steps AROUND it
+  // and the wiring had to survive that intact, so this walks the route the
+  // card calls rather than trusting that it is still there.
+  //
+  // This fixture has no Sendlane credentials and must not: a test that posted
+  // to a real list would be a test that mailed real people. Disabled is the
+  // interesting case anyway, because it is the one that used to be silent.
+  it("takes a signup without a credential in sight and without ever blocking", async () => {
+    const answered = await api("POST", "/api/subscribe", { email: "someone@example.com", name: "Someone" });
+    // 200 whatever happened downstream. Entry to the app has never been
+    // allowed to depend on a marketing list being reachable.
+    expect(answered.status).toBe(200);
+    expect(answered.body).toEqual({ ok: false, reason: "disabled" });
+
+    // And an address that is not an address is refused before anything leaves
+    // the machine, which is also a 200: it is not the person's problem.
+    const rubbish = await api("POST", "/api/subscribe", { email: "not-an-address" });
+    expect(rubbish.status).toBe(200);
+    expect(rubbish.body.ok).toBe(false);
+  });
+
+  it("still has the hello card calling that route, after the steps moved", async () => {
+    // A STRUCTURAL GUARD, NOT A COPY TEST. The re-cut moves cards between
+    // steps, and the one thing that must not be lost on the way is the call
+    // that puts an address on the list. Comments are stripped first, so this
+    // reads the code and not the paragraph above it explaining the code.
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/components/FirstRunHelloCard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+    expect(code, "the hello card stopped posting the signup").toContain('"/api/subscribe"');
+    // Server-side is the whole point: the key is a write credential for the
+    // account and an Electron renderer bundle is readable by anyone who
+    // installs the app. The renderer must never learn it exists.
+    expect(code).not.toMatch(/sendlane/i);
+  });
+
   it("never says a word the release forbids, on any card it put in the thread", async () => {
     for (const card of await setupCards()) {
       expect(card.title, card.key).not.toMatch(/—/);
