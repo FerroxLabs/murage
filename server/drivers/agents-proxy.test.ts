@@ -8,6 +8,7 @@ import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "agents-proxy.ts");
 const TOKEN = "test-comms-token";
@@ -52,6 +53,14 @@ let routinesResponse: unknown = {
 let lastRoutineRequestBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
+/** The harness's overflow cache, driven by the real class so the proxy's
+ * paging contract is exercised end to end rather than against a fake. */
+let toolResultCache = new ToolResults();
+let toolResultSaveStatus = 201;
+let savedToolResultBodies: any[] = [];
+/** What the stub returns from /api/internal/image-models — a JSON-returning
+ * tool, so an oversized one can be driven through jsonToolResult. */
+let imageModelsResponse: unknown = { connections: [], models: [] };
 let skillsResponse: unknown = {
   skills: [
     {
@@ -198,6 +207,32 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "GET" && req.url === "/api/internal/image-models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify(imageModelsResponse));
+    }
+    if (req.url?.startsWith("/api/internal/tool-result")) {
+      const owner = { botId: "bot-asker", threadId: "thread-asker-routine" };
+      if (req.method === "POST") {
+        let data = "";
+        req.on("data", (c) => (data += c));
+        req.on("end", () => {
+          const body = JSON.parse(data);
+          savedToolResultBodies.push(body);
+          if (toolResultSaveStatus !== 201) {
+            res.writeHead(toolResultSaveStatus, { "content-type": "application/json" });
+            return res.end(JSON.stringify({ error: "the harness refused to save" }));
+          }
+          res.writeHead(201, { "content-type": "application/json" });
+          res.end(JSON.stringify(toolResultCache.save(owner, body.text, body.truncated)));
+        });
+        return;
+      }
+      const query = new URL(req.url, "http://127.0.0.1");
+      const read = toolResultCache.read(owner, query.searchParams.get("id") ?? "", Number(query.searchParams.get("offset") ?? "0"));
+      res.writeHead(read ? 200 : 404, { "content-type": "application/json" });
+      return res.end(JSON.stringify(read ?? { error: "Saved result unavailable in this bot's conversation, expired, or offset out of range." }));
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -248,6 +283,7 @@ describe("agents-proxy MCP surface", () => {
       "resolve_image_reference",
       "generate_image",
       "web_search",
+      "tool_result_read",
       "list_bots",
       "ask_bot",
       "delegate_bot",
@@ -325,6 +361,183 @@ describe("agents-proxy MCP surface", () => {
     const data = JSON.parse(result.result.content[0].text);
     expect(data.untrusted).toBe(true); expect(data.results[0].url).toBe("https://example.com/source");
     expect(data.results[0].snippet).toContain("untrusted source text");
+  });
+
+  // ── oversized tool results ───────────────────────────────────────────
+  // The defect: every tools/call answer went to the engine at whatever length
+  // the harness produced, so one big reply could swamp the engine's context
+  // and the model's only way back to the detail was to rerun the action.
+
+  it("hands a short reply to the engine byte-for-byte and parks nothing", async () => {
+    savedToolResultBodies = [];
+    const previous = askResponse;
+    askResponse = { botName: "Helper", text: "s".repeat(2_000) };
+    try {
+      const result = await callTool("ask_bot", { bot_id: "bot-helper", message: "short please" });
+      expect(result.result.content[0].text).toBe(`Helper replied:\n${"s".repeat(2_000)}`);
+      expect(result.result.content[0].text).not.toContain("Large tool result");
+      expect(savedToolResultBodies).toEqual([]);
+    } finally { askResponse = previous; }
+  });
+
+  it("bounds an oversized reply and pages the rest back without rerunning the ask", async () => {
+    toolResultCache = new ToolResults();
+    savedToolResultBodies = [];
+    lastAskBody = null;
+    const previous = askResponse;
+    const huge = Array.from({ length: 60_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
+    askResponse = { botName: "Helper", text: huge };
+    try {
+      const first = await callTool("ask_bot", { bot_id: "bot-helper", message: "long please" });
+      const shown = first.result.content[0].text as string;
+      expect(shown.length).toBeLessThan(huge.length);
+      expect(shown).toContain("Large tool result");
+      expect(shown).toContain("Do not repeat an action just to retrieve its output.");
+      expect(savedToolResultBodies).toHaveLength(1);
+
+      const id = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      expect(id).not.toBeNull();
+      const askCallsBefore = lastAskBody;
+
+      const page = await callTool("tool_result_read", { id: id![1], offset: Number(id![2]) });
+      const pageText = page.result.content[0].text as string;
+      expect(page.result.isError).toBe(false);
+      // The page continues where the preview stopped: the retained copy is the
+      // whole reply including the "Helper replied:" line the tool built.
+      const retained = savedToolResultBodies[0].text as string;
+      expect(pageText.startsWith(retained.slice(Number(id![2]), Number(id![2]) + TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
+      expect(pageText).toContain("Read more with tool_result_read");
+      // Paging is a read of what was already produced — the peer is not asked again.
+      expect(lastAskBody).toBe(askCallsBefore);
+    } finally { askResponse = previous; }
+  });
+
+  it("refuses a made-up saved id instead of leaking another turn's result", async () => {
+    const bad = await callTool("tool_result_read", { id: "not-an-id" });
+    expect(bad.result.isError).toBe(true);
+    expect(bad.result.content[0].text).toContain("saved result id");
+    const missing = await callTool("tool_result_read", { id: "r-00000000-0000-4000-8000-000000000000" });
+    expect(missing.result.isError).toBe(true);
+    expect(missing.result.content[0].text).toContain("Saved result unavailable");
+  });
+
+  it("still delivers the work when the harness cannot park the overflow", async () => {
+    toolResultSaveStatus = 500;
+    savedToolResultBodies = [];
+    const previous = askResponse;
+    askResponse = { botName: "Helper", text: "t".repeat(60_000) };
+    try {
+      const result = await callTool("ask_bot", { bot_id: "bot-helper", message: "long please" });
+      const shown = result.result.content[0].text as string;
+      expect(result.result.isError).toBe(false);
+      expect(shown).toContain("could not be saved");
+      expect(shown).toContain("The original operation was not retried");
+      expect(shown).not.toContain("tool_result_read");
+      expect(shown.length).toBeLessThan(60_000);
+    } finally { toolResultSaveStatus = 201; askResponse = previous; }
+  });
+
+  // The tools/call wrapper has TWO exits — the value a tool returned and the
+  // error it threw — and every test above drives only the first. Unwrapping
+  // the catch arm alone therefore left the whole suite green, so half the
+  // named defect was held up by code review rather than by a test.
+  it("bounds an oversized THROWN error on the same tools/call path", async () => {
+    toolResultCache = new ToolResults();
+    savedToolResultBodies = [];
+    const previousStatus = searchStatus;
+    const previousResponse = searchResponse;
+    // api() turns a non-2xx body.error into a thrown Error, so this is the
+    // real catch arm of handle(), not a hand-built rejection.
+    const blown = Array.from({ length: 60_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
+    searchStatus = 500;
+    searchResponse = { error: blown };
+    try {
+      const result = await callTool("web_search", { query: "fixture research" });
+      const shown = result.result.content[0].text as string;
+      // A capped failure is still a failure: the flag must survive the bound.
+      expect(result.result.isError).toBe(true);
+      expect(shown.length).toBeLessThan(blown.length);
+      expect(shown).toContain("Large tool result");
+      expect(shown.startsWith(blown.slice(0, TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
+      expect(savedToolResultBodies).toHaveLength(1);
+
+      const notice = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      expect(notice).not.toBeNull();
+      const offset = Number(notice![2]);
+      const page = await callTool("tool_result_read", { id: notice![1], offset });
+      const retained = savedToolResultBodies[0].text as string;
+      expect((page.result.content[0].text as string).startsWith(retained.slice(offset, offset + TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
+    } finally { searchStatus = previousStatus; searchResponse = previousResponse; }
+  });
+
+  // PINNED DECISION, not an accident: most agents tools answer through
+  // jsonToolResult, and a JSON body past the cap reaches the engine as a
+  // syntactically INVALID fragment plus a plain-English notice.
+  //
+  // That is accepted here because (a) these tools declare no outputSchema and
+  // return MCP *text* content, so the consumer is the model, not a parser —
+  // nothing in Murage or in a driver calls JSON.parse on a tools/call result;
+  // (b) truncation breaks JSON wherever the cut lands, so moving the notice
+  // out of the payload could not make a 16k prefix of a 30k document parse —
+  // only re-wrapping every result in an envelope could, which changes the
+  // shape of results that fit the cap too; and (c) the payload stays
+  // RECOVERABLE IN FULL: preview + pages reassembles the retained bytes
+  // exactly, and the reassembly parses. That last property is the contract
+  // this test holds; if it ever breaks, the fragment really is a loss.
+  it("pins what an oversized JSON result looks like: invalid alone, exact when reassembled", async () => {
+    toolResultCache = new ToolResults();
+    savedToolResultBodies = [];
+    const previous = imageModelsResponse;
+    // No key/token-shaped field names: the parked copy is redacted, and this
+    // test asserts byte-exact reassembly of the original JSON.
+    imageModelsResponse = {
+      models: Array.from({ length: 300 }, (_, i) => ({
+        id: `model-${i}`, label: `Fixture image model number ${i}`, sizes: ["1024x1024", "1536x1024", "1024x1536"],
+        note: `Filler so this listing crosses the proxy cap and has to be bounded (${i}).`,
+      })),
+    };
+    try {
+      const whole = JSON.stringify(imageModelsResponse);
+      expect(whole.length).toBeGreaterThan(24_000);
+      const first = await callTool("list_image_models", {});
+      const shown = first.result.content[0].text as string;
+
+      // The pinned surprise: what the engine is handed is NOT parseable JSON.
+      expect(() => JSON.parse(shown)).toThrow();
+      expect(shown).toContain("Large tool result");
+      // It is nevertheless a byte-exact prefix of the real body, not a rewrite.
+      expect(whole.startsWith(shown.slice(0, TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
+
+      const notice = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      expect(notice).not.toBeNull();
+      const id = notice![1];
+      let offset = Number(notice![2]);
+      let reassembled = shown.slice(0, offset);
+      // Page to the end. Each page appends its own bracketed footer; the
+      // payload is what precedes it.
+      for (let guard = 0; guard < 20; guard++) {
+        const pageText = (await callTool("tool_result_read", { id, offset })).result.content[0].text as string;
+        const cut = pageText.lastIndexOf("\n\n[");
+        reassembled += pageText.slice(0, cut);
+        const footer = pageText.slice(cut);
+        if (footer.includes("End of retained result.")) break;
+        offset = Number(/and offset (\d+)/.exec(footer)![1]);
+      }
+      expect(reassembled).toBe(whole);
+      expect(JSON.parse(reassembled)).toEqual(imageModelsResponse);
+    } finally { imageModelsResponse = previous; }
+  });
+
+  // The pager is advertised as read-only to the engine. Nothing in server/
+  // CONSUMES readOnlyHint — it is a hint on the tool definition, not an
+  // enforced policy — but dropping it would silently downgrade what the
+  // driver tells the model about a tool that only ever reads.
+  it("advertises tool_result_read as a read-only, closed-schema tool", async () => {
+    const list = await rpc("tools/list");
+    const tool = list.result.tools.find((item: { name: string }) => item.name === "tool_result_read");
+    expect(tool.annotations.readOnlyHint).toBe(true);
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+    expect(tool.inputSchema.required).toEqual(["id"]);
   });
 
   it("reports a forced control disconnect and keeps the MCP tool surface usable", async () => {

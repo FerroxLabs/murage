@@ -8333,6 +8333,41 @@ describe("internal capability authority", () => {
     }
   });
 
+  it("parks an oversized tool result for its own turn only, and never for a neighbouring bot", async () => {
+    const owner = (await api("POST", "/api/bots", { name: "Tool result owner" })).body.bot;
+    const other = (await api("POST", "/api/bots", { name: "Tool result neighbour" })).body.bot;
+    try {
+      const { headers } = await startInternalFixtureTurn(owner.id, undefined, "__fixture_hold_authority__");
+      const text = "o".repeat(40_000);
+      const save = await fetch(`${BASE}/api/internal/tool-result`, { method: "POST", headers, body: JSON.stringify({ text, truncated: false }) });
+      expect(save.status).toBe(201);
+      const saved = await save.json() as { id: string; length: number; truncated: boolean };
+      expect(saved.id).toMatch(/^r-[0-9a-f-]{36}$/);
+      expect(saved.length).toBe(text.length);
+
+      const read = await fetch(`${BASE}/api/internal/tool-result?id=${saved.id}&offset=16000`, { headers });
+      expect(read.status).toBe(200);
+      const page = await read.json() as { text: string; offset: number; nextOffset: number; length: number };
+      expect(page.offset).toBe(16_000);
+      expect(page.text.length).toBe(16_000);
+      expect(page.length).toBe(text.length);
+
+      // An id is not a bearer token: another bot's live capability cannot read it.
+      const { headers: otherHeaders } = await startInternalFixtureTurn(other.id, undefined, "__fixture_hold_authority__");
+      expect((await fetch(`${BASE}/api/internal/tool-result?id=${saved.id}&offset=0`, { headers: otherHeaders })).status).toBe(404);
+      // Nor is a malformed id or an offset past the end.
+      expect((await fetch(`${BASE}/api/internal/tool-result?id=nope&offset=0`, { headers })).status).toBe(400);
+      expect((await fetch(`${BASE}/api/internal/tool-result?id=${saved.id}&offset=999999`, { headers })).status).toBe(404);
+      // And an unbounded body is refused rather than retained.
+      expect((await fetch(`${BASE}/api/internal/tool-result`, { method: "POST", headers, body: JSON.stringify({ text: "p".repeat(200_000) }) })).status).toBe(400);
+    } finally {
+      for (const bot of [owner, other]) {
+        await api("POST", `/api/bots/${bot.id}/interrupt`);
+        await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      }
+    }
+  });
+
   // R3-T3 (U-02): a terminal fake turn that writes a real report under the
   // managed task workspace's outputs/ without calling register_artifact.
   const outputFixture = async (name: string) => {
