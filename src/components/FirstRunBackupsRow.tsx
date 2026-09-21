@@ -1,15 +1,17 @@
 // PARKED, PENDING THE OWNER'S DECISION (W16, 0.1.58).
 //
-// it rode on the closing card. THIS ONE MATTERS MOST OF
-// THE FIVE: there is a standing rule that setup must end VERIFIED, because
-// configured is not protected and a backup has to actually run and verify
-// before setup is done. Dropping it quietly weakens that rule, so it is not
-// being dropped quietly. It is parked, in the open, on the morning list.
+// The closing card it rode on is not a step any more, so neither is this.
+// THIS ONE MATTERS MOST OF THE FIVE: there is a standing rule that setup must
+// end VERIFIED, because configured is not protected and a backup has to
+// actually run and verify before setup is done. Dropping it quietly weakens
+// that rule, so it is not being dropped quietly. It is parked, in the open,
+// on the morning list.
 //
-// Nothing renders this today: server/setup-conversation.ts never emits its
-// card variant. It stays in the tree, compiling and untouched otherwise, and
-// its step calls point at PARKED_CARD_STEP rather than at a step that no
-// longer exists. Whether it moves to another surface, returns later in the
+// Nothing renders this today: server/setup-conversation.ts never emits the
+// `next` variant that holds it, and `setup-conversation.test.ts` proves no
+// parked variant is planned from any state this flow can reach. It stays in
+// the tree, compiling and untouched otherwise, and its step calls point at
+// PARKED_CARD_STEP rather than at a step that no longer exists. Whether it moves to another surface, returns later in the
 // flow, or goes, is the owner's call and it has not been taken. Deleting
 // tested work on a guess is how you lose a week.
 //
