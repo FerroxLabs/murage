@@ -532,6 +532,50 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
   });
 
+  it("gives a custom server its own mount name when the owner's config.toml already declares one by that name", async () => {
+    const codexHome = join(scratch, "collision-codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    // the owner's own Fibery entry is a REMOTE server: merging a stdio
+    // command into it is "invalid configuration" and kills the turn, and its
+    // approval mode would silently un-card the bot's server
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      '[mcp_servers.fibery]\nurl = "https://mcp-eu-svc.fibery.io/mcp"\ndefault_tools_approval_mode = "auto"\n',
+    );
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "collision.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-mcp-collision",
+      text: "go",
+      integrations: {
+        custom: {
+          fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} },
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} },
+        },
+        browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+    const joined = argv.join(" ");
+
+    // the colliding server moves aside, and nothing is written into the
+    // owner's own table
+    expect(joined).toContain("mcp_servers.fibery_murage.command");
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.fibery."))).toBe(false);
+    // still no approval mode of its own: the moved server is carded, and it
+    // can no longer inherit "auto" from the owner's entry
+    expect(joined).not.toContain("mcp_servers.fibery_murage.default_tools_approval_mode");
+    // an unrelated custom name is untouched
+    expect(joined).toContain("mcp_servers.notes.command");
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.notes_murage."))).toBe(false);
+    // harness-owned mounts are never renamed — a bot's custom server cannot
+    // take one of their names (mcp-registry RESERVED_MCP_NAMES)
+    expect(joined).toContain("mcp_servers.browser.command");
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;

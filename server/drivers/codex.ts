@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
+import { codexConfigMcpServerNames, mountedMcpServerName } from "./codex-mcp-names.ts";
 import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -84,6 +85,17 @@ type AskFinish = (
   source?: "user" | "timeout" | "system",
   answers?: QuestionAnswer[],
 ) => void;
+
+const renamedMcpServers = new Set<string>();
+/** Said once per name, because the rename is deliberate: the model will see
+ * this server's tools under the new prefix, and someone reading the log needs
+ * to know the server was moved aside rather than lost. Carries names only —
+ * never the server's command, args or env. */
+function noteRenamedMcpServer(name: string, mountName: string): void {
+  if (renamedMcpServers.has(name)) return;
+  renamedMcpServers.add(name);
+  console.error(`codex: MCP server ${JSON.stringify(name)} is also declared in Codex's own config.toml — mounted as ${JSON.stringify(mountName)} so the two definitions do not merge`);
+}
 
 function mountMcpServer(
   appServerArgs: string[],
@@ -260,10 +272,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.browser) {
           mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
         }
+        // A custom server named like one in the owner's own config.toml would
+        // be MERGED with it by the `-c` override, not replace it: a stdio
+        // command over a remote `url` entry is "invalid configuration" and
+        // kills the turn before the model is asked, and any
+        // default_tools_approval_mode left in the owner's table silently
+        // un-cards the server that was mounted below with preApproved:false.
+        // Such a server gets a mount name of its own.
+        const declaredInCodexConfig = codexConfigMcpServerNames(env);
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
           if (name === "murage-memory") continue;
           if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
-          mountMcpServer(appServerArgs, env, name, server, false);
+          const mountName = mountedMcpServerName(name, declaredInCodexConfig);
+          if (mountName !== name) noteRenamedMcpServer(name, mountName);
+          mountMcpServer(appServerArgs, env, mountName, server, false);
         }
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
