@@ -34,6 +34,10 @@ import { CREDENTIAL_TARGETS, isCredentialTargetId } from "../../shared/credentia
 // relative to this file, which is what keeps the bundled proxy's anchoring
 // invariant (server/proxy-paths.ts) intact.
 import { searchHelp, helpTopics } from "../../shared/help-search.ts";
+// Pure too: an overflow limiter over the text a tool already returned. It
+// reads no path and no env, so it does not disturb the bundled proxy's
+// anchoring invariant either.
+import { boundedAgentResult } from "./agents-result.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
@@ -265,6 +269,19 @@ const TOOLS = [
       query: { type: "string", minLength: 1, maxLength: 4096, description: "The search query." },
       max_results: { type: "integer", minimum: 1, maximum: 10, description: "Maximum results, from 1 to 10. Defaults to 5." },
     } },
+  },
+  {
+    name: "tool_result_read",
+    description: "Read a missing portion of an oversized agents-tool result, using the saved id and next offset printed in that result's overflow notice. Returns at most 16,000 characters, only from this bot in this conversation. Use it only when the part you were shown is insufficient; do not page through a result by default. Saved results expire after one hour, on app restart, or under cache pressure. This never reruns the original action.",
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      properties: {
+        id: { type: "string", description: "Saved result id copied from the overflow notice." },
+        offset: { type: "integer", minimum: 0, description: "Character offset copied from the previous result's notice. Defaults to 0." },
+      },
+      required: ["id"],
+    },
   },
   {
     name: "list_bots",
@@ -536,6 +553,14 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
   if (!res.ok) throw new Error(String(body.error ?? `HTTP ${res.status}`));
   return body;
 }
+
+/** Bound what an agents tool hands back to the engine. Short results — the
+ * overwhelming majority — are returned exactly as they came. A 3-second cap on
+ * the save keeps a slow harness from adding latency to work that already
+ * succeeded; if it fails, the caller still gets the preview and a notice. */
+const capResult = (text: string) => boundedAgentResult(text, (retained, truncated) =>
+  api("/api/internal/tool-result", { method: "POST", signal: AbortSignal.timeout(3_000),
+    body: JSON.stringify({ text: retained, truncated }) }));
 
 function jsonRecord(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -982,6 +1007,17 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       text: `A confirmation card is now visible to the user for ${proposal}.${warningText}\n\n${status} End this turn and wait for the decision.`,
     };
   }
+  if (name === "tool_result_read") {
+    if (typeof args.id !== "string" || !/^r-[0-9a-f-]{36}$/.test(args.id)
+      || (args.offset !== undefined && (!Number.isSafeInteger(args.offset) || Number(args.offset) < 0))) {
+      return { text: "Use the saved result id and a non-negative integer offset from its notice.", isError: true };
+    }
+    const r = await api(`/api/internal/tool-result?id=${encodeURIComponent(args.id)}&offset=${args.offset ?? 0}`, { signal: AbortSignal.timeout(3_000) });
+    const text = String(r.text ?? "");
+    return { text: `${text}\n\n[${Number(r.nextOffset) < Number(r.length)
+      ? `Read more with tool_result_read id "${args.id}" and offset ${r.nextOffset}.`
+      : `End of retained result.${r.truncated ? " The original tail exceeded the storage limit and was omitted." : ""}`}]` };
+  }
   return { text: `Unknown tool: ${name}`, isError: true };
 }
 
@@ -1012,9 +1048,11 @@ async function handle(msg: Json) {
       if (!AVAILABLE_TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
       try {
         const { text, isError } = await callTool(name, (params.arguments ?? {}) as Json);
-        textResult(id, text, isError);
+        // tool_result_read is already bounded by the harness, and capping its
+        // own output would park a page of a page.
+        textResult(id, name === "tool_result_read" ? text : await capResult(text), isError);
       } catch (e) {
-        textResult(id, (e as Error).message, true);
+        textResult(id, await capResult((e as Error).message), true);
       }
       return;
     }

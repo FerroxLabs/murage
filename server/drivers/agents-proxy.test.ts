@@ -8,6 +8,7 @@ import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "agents-proxy.ts");
 const TOKEN = "test-comms-token";
@@ -52,6 +53,11 @@ let routinesResponse: unknown = {
 let lastRoutineRequestBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
+/** The harness's overflow cache, driven by the real class so the proxy's
+ * paging contract is exercised end to end rather than against a fake. */
+let toolResultCache = new ToolResults();
+let toolResultSaveStatus = 201;
+let savedToolResultBodies: any[] = [];
 let skillsResponse: unknown = {
   skills: [
     {
@@ -198,6 +204,28 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.url?.startsWith("/api/internal/tool-result")) {
+      const owner = { botId: "bot-asker", threadId: "thread-asker-routine" };
+      if (req.method === "POST") {
+        let data = "";
+        req.on("data", (c) => (data += c));
+        req.on("end", () => {
+          const body = JSON.parse(data);
+          savedToolResultBodies.push(body);
+          if (toolResultSaveStatus !== 201) {
+            res.writeHead(toolResultSaveStatus, { "content-type": "application/json" });
+            return res.end(JSON.stringify({ error: "the harness refused to save" }));
+          }
+          res.writeHead(201, { "content-type": "application/json" });
+          res.end(JSON.stringify(toolResultCache.save(owner, body.text, body.truncated)));
+        });
+        return;
+      }
+      const query = new URL(req.url, "http://127.0.0.1");
+      const read = toolResultCache.read(owner, query.searchParams.get("id") ?? "", Number(query.searchParams.get("offset") ?? "0"));
+      res.writeHead(read ? 200 : 404, { "content-type": "application/json" });
+      return res.end(JSON.stringify(read ?? { error: "Saved result unavailable in this bot's conversation, expired, or offset out of range." }));
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -248,6 +276,7 @@ describe("agents-proxy MCP surface", () => {
       "resolve_image_reference",
       "generate_image",
       "web_search",
+      "tool_result_read",
       "list_bots",
       "ask_bot",
       "delegate_bot",
@@ -325,6 +354,80 @@ describe("agents-proxy MCP surface", () => {
     const data = JSON.parse(result.result.content[0].text);
     expect(data.untrusted).toBe(true); expect(data.results[0].url).toBe("https://example.com/source");
     expect(data.results[0].snippet).toContain("untrusted source text");
+  });
+
+  // ── oversized tool results ───────────────────────────────────────────
+  // The defect: every tools/call answer went to the engine at whatever length
+  // the harness produced, so one big reply could swamp the engine's context
+  // and the model's only way back to the detail was to rerun the action.
+
+  it("hands a short reply to the engine byte-for-byte and parks nothing", async () => {
+    savedToolResultBodies = [];
+    const previous = askResponse;
+    askResponse = { botName: "Helper", text: "s".repeat(2_000) };
+    try {
+      const result = await callTool("ask_bot", { bot_id: "bot-helper", message: "short please" });
+      expect(result.result.content[0].text).toBe(`Helper replied:\n${"s".repeat(2_000)}`);
+      expect(result.result.content[0].text).not.toContain("Large tool result");
+      expect(savedToolResultBodies).toEqual([]);
+    } finally { askResponse = previous; }
+  });
+
+  it("bounds an oversized reply and pages the rest back without rerunning the ask", async () => {
+    toolResultCache = new ToolResults();
+    savedToolResultBodies = [];
+    lastAskBody = null;
+    const previous = askResponse;
+    const huge = Array.from({ length: 60_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
+    askResponse = { botName: "Helper", text: huge };
+    try {
+      const first = await callTool("ask_bot", { bot_id: "bot-helper", message: "long please" });
+      const shown = first.result.content[0].text as string;
+      expect(shown.length).toBeLessThan(huge.length);
+      expect(shown).toContain("Large tool result");
+      expect(shown).toContain("Do not repeat an action just to retrieve its output.");
+      expect(savedToolResultBodies).toHaveLength(1);
+
+      const id = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      expect(id).not.toBeNull();
+      const askCallsBefore = lastAskBody;
+
+      const page = await callTool("tool_result_read", { id: id![1], offset: Number(id![2]) });
+      const pageText = page.result.content[0].text as string;
+      expect(page.result.isError).toBe(false);
+      // The page continues where the preview stopped: the retained copy is the
+      // whole reply including the "Helper replied:" line the tool built.
+      const retained = savedToolResultBodies[0].text as string;
+      expect(pageText.startsWith(retained.slice(Number(id![2]), Number(id![2]) + TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
+      expect(pageText).toContain("Read more with tool_result_read");
+      // Paging is a read of what was already produced — the peer is not asked again.
+      expect(lastAskBody).toBe(askCallsBefore);
+    } finally { askResponse = previous; }
+  });
+
+  it("refuses a made-up saved id instead of leaking another turn's result", async () => {
+    const bad = await callTool("tool_result_read", { id: "not-an-id" });
+    expect(bad.result.isError).toBe(true);
+    expect(bad.result.content[0].text).toContain("saved result id");
+    const missing = await callTool("tool_result_read", { id: "r-00000000-0000-4000-8000-000000000000" });
+    expect(missing.result.isError).toBe(true);
+    expect(missing.result.content[0].text).toContain("Saved result unavailable");
+  });
+
+  it("still delivers the work when the harness cannot park the overflow", async () => {
+    toolResultSaveStatus = 500;
+    savedToolResultBodies = [];
+    const previous = askResponse;
+    askResponse = { botName: "Helper", text: "t".repeat(60_000) };
+    try {
+      const result = await callTool("ask_bot", { bot_id: "bot-helper", message: "long please" });
+      const shown = result.result.content[0].text as string;
+      expect(result.result.isError).toBe(false);
+      expect(shown).toContain("could not be saved");
+      expect(shown).toContain("The original operation was not retried");
+      expect(shown).not.toContain("tool_result_read");
+      expect(shown.length).toBeLessThan(60_000);
+    } finally { toolResultSaveStatus = 201; askResponse = previous; }
   });
 
   it("reports a forced control disconnect and keeps the MCP tool surface usable", async () => {

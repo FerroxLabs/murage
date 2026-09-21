@@ -382,6 +382,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -709,6 +710,10 @@ import { resolveCoordinationTarget } from "./coordination-target.ts";
 import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
 const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
 const internalCapabilities = new InternalCapabilities();
+/** Overflow parking for oversized agents-tool results, so the model can page
+ * back to a detail instead of rerunning the action. In memory, bounded, and
+ * scoped to the (bot, conversation) of the live capability. */
+const toolResults = new ToolResults();
 const coordinationSlots = new Map<string, () => void>();
 function coordinationHasCapacity(): boolean {
   return !backupRestartAdmission.held() && !providerConfigBusy && !providerBankDispatchFenced() && providerFleetReady && coordinationSlots.size < MAX_CONCURRENT_HANDOFFS;
@@ -10074,6 +10079,35 @@ const server = createServer(async (req, res) => {
         if (path === "/api/internal/connectors/request") return { ...body, botId: internalClaim.botId, threadId: internalClaim.threadId };
         return body;
       };
+      // ── oversized agents-tool overflow ────────────────────────────────
+      // The proxy parks the tail of a result too large to hand the engine and
+      // pages it back on request. Owner is the live capability's (bot, thread),
+      // never anything in the body, so one turn cannot read another's id.
+      //
+      // KNOWN GAP: a channel person's turn is refused above, before it gets
+      // here, because this path is not on that allowlist. The limiter still
+      // holds for those turns — the proxy falls back to the preview and says
+      // the tail could not be saved — but they cannot page back to it. Adding
+      // the path is safe on its own terms (it grants none of the three things
+      // that refusal names), and it was left out only because nothing in this
+      // suite can yet drive a channel principal through an internal route.
+      if (method === "POST" && path === "/api/internal/tool-result") {
+        const body = await readInternalBody();
+        if (typeof body.text !== "string" || !body.text || body.text.length > TOOL_RESULT_MAX_CHARS
+          || (body.truncated !== undefined && typeof body.truncated !== "boolean")) {
+          return json(res, 400, { error: "Expected bounded text and an optional truncated boolean." });
+        }
+        return json(res, 201, toolResults.save({ botId: internalClaim.botId, threadId: internalClaim.threadId }, body.text, body.truncated as boolean | undefined));
+      }
+      if (method === "GET" && path === "/api/internal/tool-result") {
+        const id = url.searchParams.get("id") ?? "";
+        const offset = Number(url.searchParams.get("offset") ?? "0");
+        if (!/^r-[0-9a-f-]{36}$/.test(id) || !Number.isSafeInteger(offset) || offset < 0) {
+          return json(res, 400, { error: "Expected a saved result id and a non-negative integer offset." });
+        }
+        const result = toolResults.read({ botId: internalClaim.botId, threadId: internalClaim.threadId }, id, offset);
+        return result ? json(res, 200, result) : json(res, 404, { error: "Saved result unavailable in this bot's conversation, expired, or offset out of range. Do not repeat an action to retrieve its output." });
+      }
       if (method === "GET" && path === "/api/internal/agents") {
         const self = url.searchParams.get("self");
         const sender = self ? store.bot(self) : null;
