@@ -5980,8 +5980,9 @@ function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; mu
       tool: { name: teamIncidentChip(incident), ok: false },
     });
     // teamIncidentTurnOptions, not an object literal: the shape of this turn
-    // is what keeps it from ringing the person a second time for the failure
-    // it is reporting, and that is policy, not wiring.
+    // is what keeps its own DISPATCH failure from ringing the person a second
+    // time for the outage it is reporting, and that is policy, not wiring. It
+    // is the only banner suppressed here — see the note on this function.
     dispatchTeamIncident({
       chiefId: chief.id,
       chiefName: chief.name,
