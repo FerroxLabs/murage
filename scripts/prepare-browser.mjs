@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync,
+  readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -106,9 +106,18 @@ export function verifyBrowserBundle(directory, target) {
 export async function releaseBytes(asset, cacheDirectory) {
   const cached = cacheDirectory && join(cacheDirectory, asset.asset);
   if (cached && existsSync(cached)) {
-    const bytes = readFileSync(cached);
-    verifyAssetBytes(bytes, asset);
-    return bytes;
+    try {
+      const bytes = readFileSync(cached);
+      verifyAssetBytes(bytes, asset);
+      return bytes;
+    } catch {
+      // A cache entry that fails verification is a MISS, not a dead end. It
+      // used to throw straight out of here, so one truncated or tampered
+      // archive wedged every later build until somebody deleted the file by
+      // hand. Fall through to the pinned download, which republishes the
+      // entry below. Nothing is deleted here: the atomic rename replaces it
+      // in place, and this build's deletes go through safeWipeSync.
+    }
   }
   const response = await fetch(asset.url, { signal: AbortSignal.timeout(600_000), redirect: "follow" });
   if (!response.ok) throw new Error(`Could not download ${asset.asset}: HTTP ${response.status}`);
@@ -123,7 +132,18 @@ export async function releaseBytes(asset, cacheDirectory) {
   verifyAssetBytes(bytes, asset);
   if (cached) {
     mkdirSync(cacheDirectory, { recursive: true });
-    writeFileSync(cached, bytes);
+    // Publish the entry atomically. A plain writeFileSync interrupted part
+    // way leaves a short file under the pinned name, and the next build
+    // reads it as an archive; the rename means the name either does not
+    // exist or names bytes that already passed verification.
+    const temporary = join(cacheDirectory, `.${asset.asset}.${process.pid}.tmp`);
+    try {
+      writeFileSync(temporary, bytes);
+      renameSync(temporary, cached);
+    } catch (error) {
+      rmSync(temporary, { force: true });
+      throw error;
+    }
   }
   return bytes;
 }
