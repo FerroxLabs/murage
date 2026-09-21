@@ -6,15 +6,35 @@ import { describe, expect, it, vi } from "vitest";
 // test, and neither is what these tests are about: what is being checked is
 // that the right card renders the right words and never renders a control
 // that could not work.
+// THE SETUP VIEW IS ANSWERABLE, because half of what these cards say is a
+// report about the machine and a card with no view says nothing at all. The
+// stub is one variable the tests set, so a card can be rendered against a
+// machine with six engines on it without a server.
+let setupReply: unknown = {};
 vi.mock("@/state/store", () => ({
-  api: async () => ({}),
+  api: async (path: string) => (path === "/api/setup" ? setupReply : {}),
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard } = await import("./FirstRunCard");
-const { FIRST_RUN_COPY } = await import("@/lib/first-run-copy");
+const { helloAnswerReady } = await import("./FirstRunHelloCard");
+const { FirstRunFluxConnect } = await import("./FirstRunFluxCard");
+const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
+const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
 const { setupCardKey } = await import("../../shared/setup-card");
+
+/** Put a machine behind the cards. `renderToStaticMarkup` runs no effects, so
+ *  the view has to be in the shared cache before the render, not after it. */
+async function machine(view: Record<string, unknown>): Promise<void> {
+  setupReply = { steps: [], agents: [], signedOutAgents: [], ownerName: "", ...view };
+  forgetSetupView();
+  await readSetupView(true);
+}
+
+/** A sentence as it looks once React has put it in the document. */
+const asHtml = (text: string) =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 
 type AnyMessage = Parameters<typeof FirstRunCard>[0]["message"];
 
@@ -72,11 +92,23 @@ describe("card one: hello", () => {
   const copy = FIRST_RUN_COPY.hello.welcome;
   it("asks for two things, offers a way past, and says detection is already running", () => {
     const markup = render("hello", "welcome");
-    expect(markup).toContain(copy.body);
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.lead);
     expect(markup).toContain(`aria-label="${copy.nameLabel}"`);
     expect(markup).toContain(`aria-label="${copy.emailLabel}"`);
     expect(markup).toContain(copy.skip);
     expect(markup).toContain(copy.detecting);
+  });
+
+  it("asks the approved question and says what each field is for", () => {
+    // The step that builds the owner's list, so its words are the ones that
+    // were signed off rather than a paraphrase of them. Both fields say what
+    // they are FOR: a field with no stated purpose is a field people skip.
+    expect(copy.heading).toBe("First, who am I working for?");
+    expect(copy.lead).toContain("Your name is what I call you.");
+    expect(copy.lead).toContain("how I reach you when you are away from this computer");
+    expect(copy.submit).toBe("Continue");
+    expect(copy.skip).toBe("Skip for now");
   });
 
   it("will not save until the email is one", () => {
@@ -84,26 +116,195 @@ describe("card one: hello", () => {
     // never reaches /api/config.
     expect(render("hello", "welcome")).toContain("disabled=\"\"");
   });
+
+  // THE DEFECT: Continue used to need only the email.
+  //
+  // So it lit up with the name box empty, and the profile that reached
+  // /api/config and then the signup carried an address and nobody's name. The
+  // approved flow is explicit that BOTH have to validate, and the way past an
+  // unfinished form is the Skip button beside it, not a half answer.
+  it("needs both a name and an email before Continue does anything", () => {
+    expect(helloAnswerReady("Sean", "sean@example.com")).toBe(true);
+    expect(helloAnswerReady("", "sean@example.com")).toBe(false);
+    expect(helloAnswerReady("   ", "sean@example.com")).toBe(false);
+    expect(helloAnswerReady("Sean", "")).toBe(false);
+    expect(helloAnswerReady("Sean", "sean@example")).toBe(false);
+    expect(helloAnswerReady("Sean", "not an address")).toBe(false);
+    // Whitespace around a real pair is a paste, not a refusal.
+    expect(helloAnswerReady("  Sean  ", "  sean@example.com  ")).toBe(true);
+  });
+
+  // SKIPPING SETS THE NAME TO "there", AND IT SETS IT ON SCREEN ONLY.
+  //
+  // The two sentences want opposite things from the same blank: the Chief's
+  // question a step later reads "What can I take off your plate, there?", and
+  // the greeting DROPS the clause rather than saying "Good to meet you,
+  // there." Both are only possible while the blank stays blank, which is why
+  // nothing writes a word the person never typed onto the owner profile.
+  it("calls a skipped person there, and still greets them without a name", () => {
+    expect(firstRunAddress("")).toBe("there");
+    expect(firstRunAddress("   ")).toBe("there");
+    expect(firstRunAddress(null)).toBe("there");
+    expect(firstRunAddress(undefined)).toBe("there");
+    expect(firstRunAddress("Sean")).toBe("Sean");
+    expect(firstRunAddress("  Sean  ")).toBe("Sean");
+    expect(greetingLine("")).toBe("Good to meet you. Right then.");
+    expect(greetingLine("")).not.toContain("there");
+  });
+});
+
+describe("card two: what is already here", () => {
+  const copy = FIRST_RUN_COPY.agents.detect;
+
+  it("draws a row for every runnable engine and collapses the rest", async () => {
+    await machine({
+      ownerName: "Sean",
+      agents: [
+        { id: "ollama", name: "generic", installed: true, localModel: { model: "qwen3:8b", host: "Ollama" } },
+        { id: "claude", name: "Claude Code", installed: true },
+      ],
+      signedOutAgents: [
+        { id: "codex", name: "Codex", installed: true },
+        { id: "gemini", name: "Gemini CLI", installed: true },
+      ],
+    });
+    const markup = render("detect", "found");
+    expect(markup).toContain(lookedAroundLine("Sean"));
+    expect(markup).toContain(copy.heading);
+    // Every runnable engine, named the way its owner names it.
+    expect(markup).toContain("qwen3:8b on Ollama");
+    expect(markup).toContain("Claude Code");
+    expect(markup).toContain(copy.localDetail);
+    // The signed-out pair is BEHIND the button, not on the page.
+    expect(markup).toContain("and 2 more on this computer");
+    expect(markup).not.toContain("Codex");
+    expect(markup).toContain(copy.closing);
+  });
+
+  // The wall this collapse exists to prevent is the owner's own machine, which
+  // has eighteen engines on it. What must never happen is the opposite
+  // mistake: hiding something that CAN think behind a button, so the person
+  // cannot see what is about to answer them.
+  it("never hides a runnable engine behind the button", async () => {
+    await machine({
+      agents: Array.from({ length: 6 }, (_, index) => ({ id: `e${index}`, name: `Engine ${index}`, installed: true })),
+    });
+    const markup = render("detect", "found");
+    for (let index = 0; index < 6; index += 1) expect.soft(markup).toContain(`Engine ${index}`);
+    expect(markup).not.toContain("more on this computer");
+  });
+
+  it("says nothing about a machine it cannot see", async () => {
+    // No view is not an empty machine, and a report built from a guess is a
+    // report that is wrong on half the machines it ships to.
+    setupReply = {};
+    forgetSetupView();
+    await readSetupView(true);
+    expect(render("detect", "found")).not.toContain(copy.heading);
+  });
 });
 
 describe("card three: the key", () => {
   const copy = FIRST_RUN_COPY.flux.key;
-  it("leads with routing, then the apps, then pictures and voice", () => {
+  it("leads with routing, then the apps, then the models and the media", async () => {
+    await machine({ agents: [{ id: "claude", name: "Claude Code", installed: true }] });
     const markup = render("flux", "key");
-    const routing = markup.indexOf(copy.body);
-    const apps = markup.indexOf(copy.second);
-    const media = markup.indexOf(copy.third);
-    expect(routing).toBeGreaterThan(-1);
-    expect(routing).toBeLessThan(apps);
-    expect(apps).toBeLessThan(media);
-    expect(markup).toContain(copy.recommendation);
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.lead);
+    // The order the rows are argued in is the order they appear in.
+    const at = (text: string) => markup.indexOf(text);
+    const places = copy.features.map((row) => at(row.title));
+    for (const place of places) expect.soft(place).toBeGreaterThan(-1);
+    expect([...places]).toEqual([...places].sort((a, b) => a - b));
+    expect(markup).toContain(copy.recommendationBonus);
   });
 
-  it("takes the key in a password field and offers a way to get one", () => {
+  // NO PRICE, NO FIGURE, NO PLAN COMPARISON. It is a ruling, and this is the
+  // rendered screen rather than the copy file: a number that arrived through a
+  // component rather than through FIRST_RUN_COPY would sail past the copy gate
+  // and land on the one screen it is banned from.
+  it("puts no money on the screen the company makes its money on", () => {
     const markup = render("flux", "key");
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain(copy.signup);
+    expect(markup).not.toMatch(/[$£€]\s?\d/);
+    expect(markup).not.toMatch(/\b(per month|a month|free|cheap|pricing|plan)\b/i);
+  });
+
+  // THE COMING-SOON ROW CARRIES ITS PILL ON SCREEN.
+  //
+  // This is the other half of the narrowed speech test. That test lets a row
+  // mention speaking out loud only when the row declares `coming-soon`, and
+  // the declaration is only worth anything if the person READS it. A row that
+  // bought the exemption in the data and rendered as though it worked today
+  // would be the shipped false claim arriving through the exemption door.
+  it("shows the coming soon row as coming soon", () => {
+    const markup = render("flux", "key");
+    const soon = copy.features.filter((row) => row.state === "coming-soon");
+    expect(soon.length).toBeGreaterThan(0);
+    for (const row of soon) {
+      expect.soft(markup, `${row.title} is not marked`).toContain(row.title);
+      expect.soft(markup).toContain(copy.comingSoon);
+      // The pill is beside the row it belongs to, not somewhere on the page.
+      expect.soft(markup.indexOf(copy.comingSoon)).toBeGreaterThan(markup.indexOf(row.title));
+    }
+  });
+
+  it("asks for the key only after it has opened the page that issues one", () => {
+    // The paste box is the SECOND screen. Asking somebody who has never heard
+    // of Flux Router to paste something they do not have, with the way to get
+    // one third in a row of three buttons, is the shape this replaces.
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.submit);
+    // React escapes the apostrophe in "computer's keychain" on its way into
+    // the markup, which is a fact about HTML rather than about the copy.
+    expect(markup).toContain(asHtml(copy.keyCaveat));
+    expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain(copy.connectHeading);
+  });
+
+  it("offers a blank machine nothing to carry on with, because it has nothing", async () => {
+    await machine({ nothingToThinkWith: true, ownerName: "Sean" });
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.headingBare);
+    expect(markup).toContain(lookedAroundLine("Sean").slice(0, 22));
+    expect(markup).toContain("found nothing I can think with");
     expect(markup).toContain(copy.dismiss);
+    expect(markup).not.toContain(copy.dismissLocal);
+    expect(markup).not.toContain(copy.heading);
+  });
+
+  it("offers a machine with an engine the local model it already has", async () => {
+    await machine({
+      nothingToThinkWith: false,
+      agents: [{ id: "ollama", name: "generic", installed: true, localModel: { model: "qwen3:8b", host: "Ollama" } }],
+    });
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.dismissLocal);
+    expect(markup).not.toContain(copy.headingBare);
+  });
+
+  it("takes the key on its own screen, with a way back that saves nothing", () => {
+    const markup = renderToStaticMarkup(createElement(FirstRunFluxConnect, {
+      value: "",
+      busy: false,
+      failure: "",
+      onChange: () => {},
+      onSubmit: () => {},
+      onAgain: () => {},
+      onCancel: () => {},
+    }));
+    expect(markup).toContain(copy.connectHeading);
+    expect(markup).toContain(copy.connectLead);
+    // A key is a secret even on the way in, and it is never re-displayed.
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain(`aria-label="${copy.fieldLabel}"`);
+    expect(markup).toContain(`placeholder="${copy.placeholder}"`);
+    expect(markup).toContain(asHtml(copy.connectCaveat));
+    expect(markup).toContain(copy.connectAgain);
+    expect(markup).toContain(copy.connectCancel);
+    // Connect is dead until there is something to connect with, so an empty
+    // box can never reach the keychain.
+    expect(markup).toMatch(/disabled=""[^>]*>Connect</);
   });
 
   it("says the not now card without a nudge to reconsider", () => {

@@ -16,7 +16,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
-import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, signedOutAgentsLine, stepHeadingFor } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, lookedAroundLine, signedOutAgentsLine, stepHeadingFor } from "@/lib/first-run-copy";
+import { firstRunDetection, type FirstRunEngineRow } from "@/lib/first-run-detect";
 import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
 import { sampleBrief } from "../../shared/brief-sample";
@@ -27,6 +28,7 @@ import {
   FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
   FIRST_RUN_PRIMARY,
+  FIRST_RUN_QUIET,
   FirstRunBubble,
   FirstRunLine,
   useSetupView,
@@ -126,6 +128,9 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
  */
 function FirstRunAgentsCard() {
   const { view } = useSetupView();
+  const [expanded, setExpanded] = useState(false);
+  const detect = FIRST_RUN_COPY.agents.detect;
+  const detection = firstRunDetection(view);
   if (!view) return null;
   const found = view.agents.filter((agent) => agent.installed);
   if (found.length === 0) return <FirstRunBareAgentsCard needsKey />;
@@ -140,10 +145,69 @@ function FirstRunAgentsCard() {
 
   return (
     <FirstRunBubble>
+      <FirstRunLine>{lookedAroundLine(view.ownerName)}</FirstRunLine>
+      <div className="mt-2 text-[15px] font-semibold text-ink">{detect.heading}</div>
+
       {local && <FirstRunLine>{localModelLine(local.model, local.host)}</FirstRunLine>}
       {rest.length > 0 && <FirstRunLine>{foundAgentsLine(rest)}</FirstRunLine>}
       <FirstRunLine>{FIRST_RUN_COPY.agents.found.second}</FirstRunLine>
+
+      {/* EVERYTHING RUNNABLE GETS A ROW, and then the rest collapses. On the
+          owner's own machine, which has eighteen engines on it, the detailed
+          list would otherwise be a wall in the first minute. */}
+      <ul className="mt-3 grid gap-1.5">
+        {detection.rows.map((row) => (
+          <FirstRunEngineRowView key={row.id} row={row} />
+        ))}
+      </ul>
+
+      {detection.collapsed.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? detect.hide : detection.moreLabel}
+          </button>
+          {expanded && (
+            <ul className="mt-1.5 grid gap-1.5">
+              {detection.collapsed.map((row) => (
+                <FirstRunEngineRowView key={row.id} row={row} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <FirstRunLine quiet>{detect.closing}</FirstRunLine>
     </FirstRunBubble>
+  );
+}
+
+/**
+ * One engine, said in three parts.
+ *
+ * The glyph is decorative and is marked so: the row already says in words
+ * everything the shape says, and a screen reader that announced "chip outline"
+ * before every engine would be reading out the decoration and burying the
+ * name. `FirstRunEngineIcon` is `local`, `cloud` or `off`, and the three are
+ * drawn rather than lettered because a first glance down the list should
+ * answer "how many of these are mine and on this machine" without reading.
+ */
+function FirstRunEngineRowView({ row }: { row: FirstRunEngineRow }) {
+  return (
+    <li className="flex items-start gap-2.5 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+      <span aria-hidden="true" className="mt-0.5 shrink-0 text-ink-secondary">
+        {row.icon === "local" ? "▢" : row.icon === "cloud" ? "☁" : "○"}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14px] font-medium text-ink">{row.title}</span>
+        <span className="block text-[13px] text-ink-secondary">{row.detail}</span>
+      </span>
+      <span className="shrink-0 text-[12.5px] text-ink-secondary">{row.tag}</span>
+    </li>
   );
 }
 
