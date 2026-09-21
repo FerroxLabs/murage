@@ -573,6 +573,22 @@ export interface SetupView {
   blocked: SetupStep[];
   next: SetupStep | null;
   steps: SetupStepView[];
+  /**
+   * The guided first run is happening in the Chief's thread right now.
+   *
+   * NOT `firstRun`, and the difference is the whole reason this exists.
+   * `firstRun` answers "has this install ever been set up", and one of the
+   * traces it reads is a saved owner name, so it goes false at step one by
+   * design. Anything that used it to decide whether the flow was STILL going
+   * got one step of truth and then a lie: the checklist vanished after the
+   * first answer, and nothing knew to keep looking for the next card.
+   *
+   * The server already had the honest answer and kept it to itself
+   * (`conversationLive`, server/setup-conversation.ts): the welcome card is
+   * in the thread, so the flow demonstrably started here and carries on until
+   * there is nothing left to do.
+   */
+  conversationLive?: boolean;
 }
 
 export function setupView(state: SetupState, live: SetupLiveState): SetupView {

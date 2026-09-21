@@ -154,6 +154,14 @@ export function firstRunRailVisible(
   if (!view) return false;
   if (rail.closed) return false;
   if (rail.requests > 0) return true;
+  // The server's own answer, when it has one. It knows the welcome card is in
+  // the thread, which is the only honest test of "this flow started here and
+  // is still going"; the latch below is a fallback for a view from a build
+  // that predates the field.
+  if (view.conversationLive === true) {
+    started = true;
+    return view.next !== null;
+  }
   if (firstRunActive(view)) {
     started = true;
     return true;

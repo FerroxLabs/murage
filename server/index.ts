@@ -2027,6 +2027,9 @@ async function driveSetup(view: SetupView): Promise<void> {
     console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
   }
   driveSetupConversation(view);
+  // Told to the client AFTER the cards are appended, so a view that carries
+  // `conversationLive` is a view whose thread is already up to date.
+  view.conversationLive = conversationLive(view, setupCardKeysInChiefThread(view));
 }
 
 // ── the routines the first run creates ─────────────────────────────────

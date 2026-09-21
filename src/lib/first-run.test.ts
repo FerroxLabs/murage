@@ -277,3 +277,37 @@ describe("how long the checklist stays on screen", () => {
     expect(firstRunRailVisible(view({ firstRun: true }), { closed: true, requests: 0 })).toBe(false);
   });
 });
+
+// THE FLOW STOPPED WHEN A STEP FINISHED ON ITS OWN.
+//
+// Only the setup routes drive the conversation and nothing polled, so the
+// flow moved when somebody pressed something and not otherwise. Connected
+// apps travel with the Flux Router key, so a person whose key already carries
+// Gmail reaches that step with it done and nothing to press. Reported as "it
+// stops after everything's connected".
+//
+// `conversationLive` is the server's own answer, from the welcome card being
+// in the thread. It is the only honest test of "started here and still
+// going", because `firstRun` goes false at step one by design.
+describe("the server's word on whether the flow is still going", () => {
+  const open = { closed: false, requests: 0 };
+  const view = (over: Record<string, unknown>) =>
+    ({ firstRun: false, next: "brief", steps: [], progress: { done: 4, total: 6 } , ...over }) as unknown as SetupView;
+
+  it("keeps the checklist up even when the client never saw firstRun", () => {
+    // The app was restarted part way through setup, so the very first read
+    // already said firstRun:false. The latch alone would never have fired.
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ conversationLive: true }), open)).toBe(true);
+  });
+
+  it("takes it down when the conversation has nothing left to do", () => {
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({ conversationLive: true, next: null }), open)).toBe(false);
+  });
+
+  it("does not mistake an old build's view for a live conversation", () => {
+    forgetFirstRunStarted();
+    expect(firstRunRailVisible(view({}), open)).toBe(false);
+  });
+});

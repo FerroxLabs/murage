@@ -101,8 +101,43 @@ const FRESH_MS = 4_000;
  */
 const listeners = new Set<(view: SetupView) => void>();
 
+/**
+ * WHILE THE CONVERSATION IS LIVE, KEEP ASKING.
+ *
+ * The flow only ever moved when somebody pressed something, because the only
+ * things that call `driveSetup` are the setup routes and nothing polled. That
+ * is fine while every finished step is finished BY an action, and it stops
+ * dead the moment one finishes on its own.
+ *
+ * Which is the ordinary case, not an edge: connected apps travel with the
+ * Flux Router key, so a person whose key already carries Gmail arrives at
+ * that step with it done and nothing to press. Reported exactly that way, "it
+ * stops after everything's connected". Nothing was broken; nobody was asking.
+ *
+ * One timer for the whole app, chained off each answer rather than a fixed
+ * interval, so a slow reply can never stack requests. It runs only while the
+ * SERVER says the first run is still going, and stops the moment there is
+ * nothing left to do. `GET /api/setup` is idempotent and the card driver is
+ * keyed on card identity, so an extra read costs a query and appends nothing.
+ */
+const POLL_MS = 3_000;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePoll(view: SetupView): void {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (view.conversationLive !== true || view.next === null) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void readSetupView(true);
+  }, POLL_MS);
+}
+
 function publish(view: SetupView): void {
   for (const listener of [...listeners]) listener(view);
+  schedulePoll(view);
 }
 
 export function readSetupView(force = false): Promise<SetupView | null> {
