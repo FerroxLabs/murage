@@ -194,6 +194,55 @@ describe("card two: what is already here", () => {
     expect(markup).not.toContain("more on this computer");
   });
 
+  // THE FLOW STOPPED HERE FOR EVERYBODY WITH AN ENGINE, WHICH IS MOST OF THEM.
+  //
+  // `detect` is settled by `nothingToThinkWith(live) || setupStepAnswered`.
+  // On any machine that has something, the first half is false, so the only
+  // road out is a recorded answer, and nothing in the renderer ever recorded
+  // one: `nextSetupStep` returned `detect` for ever and the Flux screen, the
+  // one the company makes its money on, was never shown to anybody. The words
+  // for the button existed and were sitting unused in the copy file.
+  //
+  // All three detection variants, because all three are the same step and any
+  // of them can be the last card a person is looking at.
+  it("gives every detection card a way on to the next step", async () => {
+    await machine({
+      ownerName: "Sean",
+      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      signedOutAgents: [],
+    });
+    expect(render("detect", "found"), "found").toContain(copy.action);
+
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [] });
+    expect(render("detect", "bare"), "bare").toContain(copy.action);
+
+    await machine({
+      ownerName: "Sean",
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    expect(render("detect", "signed-out"), "signed-out").toContain(copy.action);
+
+    // ...including the one where they went and signed in, which empties the
+    // list and settles nothing on its own.
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [] });
+    expect(render("detect", "signed-out"), "signed in already").toContain(copy.action);
+  });
+
+  // The Flux step borrows this card's words on a blank machine. It is not
+  // detection's report there, `detect` is already settled, and a second
+  // "show me the interesting part" above the key card would be a button that
+  // answers a step the person is not on.
+  it("puts no detection control on the Flux step's own opening", async () => {
+    await machine({ ownerName: "Sean", agents: [], signedOutAgents: [], nothingToThinkWith: true });
+    expect(render("flux", "bare-needs-key")).not.toContain(copy.action);
+  });
+
+  it("stops offering it once the step has been settled", async () => {
+    await machine({ ownerName: "Sean", agents: [{ id: "claude", name: "Claude Code", installed: true }] });
+    expect(render("detect", "found", { settled: true })).not.toContain(copy.action);
+  });
+
   it("says nothing about a machine it cannot see", async () => {
     // No view is not an empty machine, and a report built from a guess is a
     // report that is wrong on half the machines it ships to.

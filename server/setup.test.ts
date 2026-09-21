@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  SETUP_DETECT_ANSWER,
   SETUP_STEPS,
   type SetupLiveState,
   connectedAppsBlock,
@@ -242,6 +243,30 @@ describe("the setup checklist the server owns", () => {
 //
 // So these tests go through `setupAgentsReading`, which is where `runnable()`
 // lives, on real instance readings rather than on a hand-written agent list.
+// THE OTHER HALF OF THE DETECTION CONTROL, CHECKED WHERE IT LANDS.
+//
+// The card can only settle this step by recording an answer, and this is the
+// exact note it records. If the two ever come apart, the flow stops on screen
+// two for everybody with an engine on their machine, which is most installs.
+describe("what the detection card's one button does to the checklist", () => {
+  it("settles detection and moves the flow on to the Flux step", () => {
+    const found = live({ ownerName: "Sean", agents: [BUNDLED, { id: "claude", name: "Claude Code", installed: true }] });
+    const list = checklist();
+    expect(nextSetupStep(list.read(found)), "detection was already settled before it was read").toBe("detect");
+
+    const after = list.answer("detect", SETUP_DETECT_ANSWER, found);
+    expect(after.steps.detect.done).toBe(true);
+    expect(nextSetupStep(after)).toBe("flux");
+  });
+
+  it("is a real note, because an empty one settles nothing", () => {
+    // `setupStepAnswered` wants a non-empty note that was not then skipped.
+    // A blank constant would compile, render and record, and leave the flow
+    // exactly where it was.
+    expect(SETUP_DETECT_ANSWER.trim().length).toBeGreaterThan(0);
+  });
+});
+
 describe("a machine with nothing to think with", () => {
   const instance = (over: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
     snapshot: { state: "available" },

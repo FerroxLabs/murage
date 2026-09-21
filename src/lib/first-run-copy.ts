@@ -236,6 +236,9 @@ export const FIRST_RUN_COPY = {
        */
       closing: "That is enough for me to answer you. It is not enough for me to do the interesting part.",
       action: "Show me the interesting part",
+      /** The one control on this card could not record that the report had
+       *  been read. Said where it happened, and the button stays. */
+      failure: "That did not go through. Press it again whenever you like.",
     },
     found: {
       second: "They answer to you in here now, and they still work exactly as they did on their own.",

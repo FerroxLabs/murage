@@ -440,6 +440,18 @@ export function fluxKeyLooksValid(key: string | null | undefined): boolean {
   return !FOREIGN_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
+/**
+ * What the renderer records when the person has read the detection report
+ * and pressed on.
+ *
+ * A constant rather than a sentence typed at the call site, because a test
+ * that hand-feeds its own note is a test that proves a state the app cannot
+ * reach. `detect` is settled by an EVENT — the report was read — and this is
+ * the only thing in the product that produces it, so a fixture built from it
+ * is a fixture the button really writes.
+ */
+export const SETUP_DETECT_ANSWER = "detection read";
+
 /** A step counts as answered when a non-empty note was recorded for it and
  *  it was not subsequently passed over. */
 export function setupStepAnswered(recorded: SetupStepState): boolean {
