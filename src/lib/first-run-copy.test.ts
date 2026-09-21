@@ -44,8 +44,16 @@ function walk(value: unknown, path: string, into: Array<{ path: string; text: st
 
 const strings: Array<{ path: string; text: string }> = [];
 walk(FIRST_RUN_COPY, "FIRST_RUN_COPY", strings);
-// Slugs are wire identifiers, not copy. Everything else on a row is read out.
-const readable = strings.filter((entry) => !entry.path.endsWith(".slug") && !entry.path.endsWith(".template"));
+// Slugs, template names and row ids are wire identifiers and nobody reads
+// them. Everything else on a row is read out loud by somebody's eyes.
+//
+// `.id` earns its place here rather than being an oversight: the Flux row
+// keyed `voice` is a React key and a stable handle for the row, and a rule
+// about what a person may be TOLD has no business failing because of the word
+// an array is keyed by. What the person actually reads is `title` and `body`,
+// and both of those stay in the walk.
+const IDENTIFIER = /\.(slug|template|id)$/;
+const readable = strings.filter((entry) => !IDENTIFIER.test(entry.path));
 
 const assembled: Array<{ path: string; text: string }> = [
   { path: "foundAgentsLine(one)", text: foundAgentsLine(["Claude Code"]) },
@@ -196,15 +204,79 @@ describe("first run copy: the things the flow promises", () => {
   // every string a person can read during the first run, plus every sentence
   // the module assembles at render time. A hand-picked list of fields is a
   // list that goes stale the first time somebody adds a field.
+  // AND NARROWED, ONCE, ON A RULING, TO THE ROW THAT ADMITS IT IS NOT READY.
+  //
+  // The owner: "voice mode is coming so you can have it as coming soon and
+  // then we flick it over when it's available." Deleting the test to make room
+  // for that row is the move this branch has regretted four times, so it is
+  // not deleted and it is not loosened by hand. The exemption is DERIVED from
+  // the data: a row is allowed to mention speech only when it declares, in the
+  // copy itself, either that it is not live yet or that it is transcription.
+  //
+  // The property this now asserts is the stronger one: a row that mentions
+  // speech is either marked coming-soon, or it is transcription. Writing "talk
+  // to me" onto an unmarked row still fails. Writing it onto the transcription
+  // row still fails, because a row that claims to be transcription may not
+  // then promise an answer out loud.
   const SPEECH = /\b(voice|speaks?|spoken|read (?:it )?aloud|out loud|text to speech|talk to me|talk back|speak to you)\b/i;
+  /** What a row claiming to be TRANSCRIPTION may never say. You talk, it
+   *  types; the key has no synthesis endpoint of any kind. */
+  const SYNTHESIS = /\b(voice|speaks?|spoken|read (?:it )?aloud|text to speech|talk to me|talk back|speak to you)\b/i;
+
+  const features = FIRST_RUN_COPY.flux.key.features;
+  const declared = new Set(
+    features.flatMap((row, index) =>
+      row.state === "coming-soon" || row.speech === "transcription"
+        ? [`FIRST_RUN_COPY.flux.key.features[${index}].title`, `FIRST_RUN_COPY.flux.key.features[${index}].body`]
+        : [],
+    ),
+  );
 
   it("never sells speech anywhere in the first run", () => {
     for (const { path, text } of everything) {
+      if (declared.has(path)) continue;
       const hit = SPEECH.exec(text);
       expect.soft(
         hit ? `${path}: "${hit[0]}" in "${text}"` : null,
         "sells speech on a key that cannot synthesise it",
       ).toBeNull();
+    }
+  });
+
+  it("lets a row mention speech only by declaring which kind it is", () => {
+    // The exemption is not a list anybody edits. It is the `state` and
+    // `speech` fields on the row, which the card RENDERS: a coming-soon row
+    // carries the pill, so a row cannot buy itself the exemption without also
+    // telling the person it is not ready.
+    const speaking = features.filter((row) => SPEECH.test(`${row.title} ${row.body}`));
+    expect(speaking.length).toBeGreaterThan(0);
+    for (const row of speaking) {
+      expect.soft(
+        row.state === "coming-soon" || row.speech === "transcription",
+        `"${row.title}" mentions speech without saying whether it is transcription or not built yet`,
+      ).toBe(true);
+    }
+  });
+
+  it("will not let a transcription row promise an answer out loud", () => {
+    // Flux Router transcribes at POST /v1/audio/transcriptions and has no
+    // synthesis endpoint at all. "You talk, it types" is the whole claim, and
+    // a row that quietly grew into "talk to me" would be the shipped false
+    // claim arriving through the exemption door.
+    for (const row of features.filter((one) => one.speech === "transcription")) {
+      expect.soft(`${row.title} ${row.body}`, `"${row.title}" promises speech back`).not.toMatch(SYNTHESIS);
+      expect.soft(row.state, `"${row.title}" is transcription, which works today`).toBe("live");
+    }
+  });
+
+  it("keeps every Flux claim to something that stops working without the key", () => {
+    // Routines, teams and memory are NOT Flux features. Memory is built into
+    // Murage, any enabled engine with `extractMemory` is eligible, and
+    // routines contain zero Flux references. That mistake has been made five
+    // times. The test is "does this stop working without the key".
+    for (const row of features) {
+      expect.soft(`${row.title} ${row.body}`, `"${row.title}" claims something Flux does not do`)
+        .not.toMatch(/\b(routine|routines|memory|remembers?|team|teammate|crew)\b/i);
     }
   });
 

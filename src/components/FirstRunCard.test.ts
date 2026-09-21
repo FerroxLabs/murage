@@ -19,6 +19,7 @@ vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: (
 
 const { FirstRunCard } = await import("./FirstRunCard");
 const { helloAnswerReady } = await import("./FirstRunHelloCard");
+const { FirstRunFluxConnect } = await import("./FirstRunFluxCard");
 const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");
 const { FIRST_RUN_COPY, firstRunAddress, greetingLine, lookedAroundLine } = await import("@/lib/first-run-copy");
 const { setupCardKey } = await import("../../shared/setup-card");
@@ -30,6 +31,10 @@ async function machine(view: Record<string, unknown>): Promise<void> {
   forgetSetupView();
   await readSetupView(true);
 }
+
+/** A sentence as it looks once React has put it in the document. */
+const asHtml = (text: string) =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 
 type AnyMessage = Parameters<typeof FirstRunCard>[0]["message"];
 
@@ -201,22 +206,105 @@ describe("card two: what is already here", () => {
 
 describe("card three: the key", () => {
   const copy = FIRST_RUN_COPY.flux.key;
-  it("leads with routing, then the apps, then pictures and transcription", () => {
+  it("leads with routing, then the apps, then the models and the media", async () => {
+    await machine({ agents: [{ id: "claude", name: "Claude Code", installed: true }] });
     const markup = render("flux", "key");
-    const routing = markup.indexOf(copy.body);
-    const apps = markup.indexOf(copy.second);
-    const media = markup.indexOf(copy.third);
-    expect(routing).toBeGreaterThan(-1);
-    expect(routing).toBeLessThan(apps);
-    expect(apps).toBeLessThan(media);
-    expect(markup).toContain(copy.recommendation);
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.lead);
+    // The order the rows are argued in is the order they appear in.
+    const at = (text: string) => markup.indexOf(text);
+    const places = copy.features.map((row) => at(row.title));
+    for (const place of places) expect.soft(place).toBeGreaterThan(-1);
+    expect([...places]).toEqual([...places].sort((a, b) => a - b));
+    expect(markup).toContain(copy.recommendationBonus);
   });
 
-  it("takes the key in a password field and offers a way to get one", () => {
+  // NO PRICE, NO FIGURE, NO PLAN COMPARISON. It is a ruling, and this is the
+  // rendered screen rather than the copy file: a number that arrived through a
+  // component rather than through FIRST_RUN_COPY would sail past the copy gate
+  // and land on the one screen it is banned from.
+  it("puts no money on the screen the company makes its money on", () => {
     const markup = render("flux", "key");
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain(copy.signup);
+    expect(markup).not.toMatch(/[$£€]\s?\d/);
+    expect(markup).not.toMatch(/\b(per month|a month|free|cheap|pricing|plan)\b/i);
+  });
+
+  // THE COMING-SOON ROW CARRIES ITS PILL ON SCREEN.
+  //
+  // This is the other half of the narrowed speech test. That test lets a row
+  // mention speaking out loud only when the row declares `coming-soon`, and
+  // the declaration is only worth anything if the person READS it. A row that
+  // bought the exemption in the data and rendered as though it worked today
+  // would be the shipped false claim arriving through the exemption door.
+  it("shows the coming soon row as coming soon", () => {
+    const markup = render("flux", "key");
+    const soon = copy.features.filter((row) => row.state === "coming-soon");
+    expect(soon.length).toBeGreaterThan(0);
+    for (const row of soon) {
+      expect.soft(markup, `${row.title} is not marked`).toContain(row.title);
+      expect.soft(markup).toContain(copy.comingSoon);
+      // The pill is beside the row it belongs to, not somewhere on the page.
+      expect.soft(markup.indexOf(copy.comingSoon)).toBeGreaterThan(markup.indexOf(row.title));
+    }
+  });
+
+  it("asks for the key only after it has opened the page that issues one", () => {
+    // The paste box is the SECOND screen. Asking somebody who has never heard
+    // of Flux Router to paste something they do not have, with the way to get
+    // one third in a row of three buttons, is the shape this replaces.
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.submit);
+    // React escapes the apostrophe in "computer's keychain" on its way into
+    // the markup, which is a fact about HTML rather than about the copy.
+    expect(markup).toContain(asHtml(copy.keyCaveat));
+    expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain(copy.connectHeading);
+  });
+
+  it("offers a blank machine nothing to carry on with, because it has nothing", async () => {
+    await machine({ nothingToThinkWith: true, ownerName: "Sean" });
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.headingBare);
+    expect(markup).toContain(lookedAroundLine("Sean").slice(0, 22));
+    expect(markup).toContain("found nothing I can think with");
     expect(markup).toContain(copy.dismiss);
+    expect(markup).not.toContain(copy.dismissLocal);
+    expect(markup).not.toContain(copy.heading);
+  });
+
+  it("offers a machine with an engine the local model it already has", async () => {
+    await machine({
+      nothingToThinkWith: false,
+      agents: [{ id: "ollama", name: "generic", installed: true, localModel: { model: "qwen3:8b", host: "Ollama" } }],
+    });
+    const markup = render("flux", "key");
+    expect(markup).toContain(copy.heading);
+    expect(markup).toContain(copy.dismissLocal);
+    expect(markup).not.toContain(copy.headingBare);
+  });
+
+  it("takes the key on its own screen, with a way back that saves nothing", () => {
+    const markup = renderToStaticMarkup(createElement(FirstRunFluxConnect, {
+      value: "",
+      busy: false,
+      failure: "",
+      onChange: () => {},
+      onSubmit: () => {},
+      onAgain: () => {},
+      onCancel: () => {},
+    }));
+    expect(markup).toContain(copy.connectHeading);
+    expect(markup).toContain(copy.connectLead);
+    // A key is a secret even on the way in, and it is never re-displayed.
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain(`aria-label="${copy.fieldLabel}"`);
+    expect(markup).toContain(`placeholder="${copy.placeholder}"`);
+    expect(markup).toContain(asHtml(copy.connectCaveat));
+    expect(markup).toContain(copy.connectAgain);
+    expect(markup).toContain(copy.connectCancel);
+    // Connect is dead until there is something to connect with, so an empty
+    // box can never reach the keychain.
+    expect(markup).toMatch(/disabled=""[^>]*>Connect</);
   });
 
   it("says the not now card without a nudge to reconsider", () => {
