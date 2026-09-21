@@ -2473,6 +2473,51 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
   });
 });
 
+// An MCP tool's image used to die in the tool_result branch: the driver read
+// the block only for its ok flag, so the bytes never reached the
+// assistant_image pipeline that retains, attaches and files them.
+describe("ClaudeDriver MCP tool-result images", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+
+  const create = async () => {
+    instance = await ClaudeDriver.create({
+      instanceId: "claude-tool-images",
+      displayName: "Claude Tool Images",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+  });
+
+  it("surfaces a custom MCP tool's image and withholds the computer surface's frame", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      threadId: "t-mcp-image",
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      alt: "mcp__omarchy__screenshot",
+    });
+    // Both chips still complete: the image is folded in beside them, not
+    // instead of them.
+    expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "tool")).toHaveLength(2);
+  });
+});
+
 // Probed on macOS, Ubuntu 24.04 and Windows Server 2025 on 2026-09-20, spawned
 // with plain pipes and no TERM — the conditions Murage runs a CLI under.
 describe("the sign-in command Murage hands people", () => {

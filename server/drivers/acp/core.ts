@@ -36,6 +36,7 @@ import {
 import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
 import { resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
 import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
+import { extractMcpImages } from "../../mcp-tool-images.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -1029,6 +1030,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
         const STDERR_DIAGNOSTIC_CHARS = 256 * 1024;
         const asks = new Map<string, AcpAskFinish>();
+        // A tool_call_update need not repeat the call's title, and whether an
+        // image in its output is a deliverable or one of Murage's own screen
+        // frames turns on the tool's name. Kept from the opening tool_call and
+        // dropped when the terminal update consumes it.
+        const toolNames = new Map<string, string>();
         let nextId = 1;
         let sessionId: string | null = null;
         let promptStartedAt: number | null = null;
@@ -1499,6 +1505,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // Engines that route every call through a wrapper ("use a tool")
               // put the real tool in the arguments. Name that, not the wrapper.
               const label = resolveToolLabel(u.title, u.rawInput);
+              if (typeof u.toolCallId === "string" && toolNames.size < 512) toolNames.set(u.toolCallId, label.name);
               emit({
                 ...base(threadId, turnId),
                 type: "item.started",
@@ -1523,6 +1530,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ok: u.status !== "failed",
                   detail,
                 });
+                // Only the chip was ever read out of this update. An image in
+                // the tool's output had no route at all: not the message, not
+                // Files. ACP wraps each output part as {type:"content",…}, and
+                // engines that pass the raw MCP result put it in `rawOutput`.
+                const toolName = typeof u.toolCallId === "string" ? toolNames.get(u.toolCallId) : undefined;
+                if (typeof u.toolCallId === "string") toolNames.delete(u.toolCallId);
+                for (const image of extractMcpImages(u.content ?? u.rawOutput, toolName)) {
+                  emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: image.data, alt: toolName });
+                }
               }
               break;
             }

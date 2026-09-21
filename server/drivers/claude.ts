@@ -49,6 +49,7 @@ import {
   type QuestionSpec,
 } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
+import { extractMcpImages } from "../mcp-tool-images.ts";
 import { providerCloseDeadlineMs } from "./child-teardown.ts";
 import {
   classifyError,
@@ -1299,6 +1300,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (session.child.exitCode === null && !session.closing) armIdle(threadId);
       };
       const currentTurnId = () => session.turn?.turnId ?? turnId;
+      // A tool_result names only the id it answers, and whether an image it
+      // carries is a deliverable or one of Murage's own screen frames turns
+      // on the tool's name. Remembered from the tool_use block and dropped
+      // as the result consumes it, so nothing accumulates across a turn.
+      const toolNameByUse = new Map<string, string>();
 
       const handleLine = (line: string) => {
         let o: any;
@@ -1365,6 +1371,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
+                if (typeof b.id === "string" && typeof b.name === "string" && toolNameByUse.size < 512) toolNameByUse.set(b.id, b.name);
                 emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", itemId: b.id, title: b.name });
               }
             }
@@ -1385,6 +1392,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
                 emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error });
+                // The chip above was all this branch ever read. An image the
+                // tool answered with was dropped here, never reaching the
+                // attachment pipeline that has always been waiting for it.
+                const toolName = typeof b.tool_use_id === "string" ? toolNameByUse.get(b.tool_use_id) : undefined;
+                if (typeof b.tool_use_id === "string") toolNameByUse.delete(b.tool_use_id);
+                for (const image of extractMcpImages(b.content, toolName)) {
+                  emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_image", data: image.data, alt: toolName });
+                }
               }
             }
             break;

@@ -36,6 +36,7 @@ import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
+import { extractMcpImages } from "../mcp-tool-images.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import {
   codexNoAnswers,
@@ -609,6 +610,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 itemId: item.id,
                 ok: item.status !== "failed" && item.status !== "declined",
               });
+              // `imageGeneration` above was the only raster this driver kept.
+              // An MCP tool's own image came back inside `result` and was read
+              // for nothing but the ok flag. Qualify the tool with its server
+              // so Murage's own screen surfaces keep the preview path they
+              // already have instead of becoming files.
+              if (item.type === "mcpToolCall") {
+                const tool = typeof item.tool === "string" ? item.tool : typeof item.name === "string" ? item.name : undefined;
+                const qualified = tool && typeof item.server === "string" ? `${item.server}__${tool}` : tool;
+                for (const image of extractMcpImages(item.result, qualified)) {
+                  emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: image.data, alt: qualified });
+                }
+              }
             } else if (item.type === "reasoning") {
               emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
             }

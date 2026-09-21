@@ -103,6 +103,10 @@ const turnResult = () => ({ turn: { id: nativeTurnId, status: "inProgress", item
 // two UTF-8 bytes: the text alone is one KiB over the limit.
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
+// 1x1 rasters for the MCP tool-result image fixture: one from a custom
+// server (a deliverable), one from Murage's own computer surface (not).
+const FIXTURE_TOOL_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const FIXTURE_SCREEN_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
 // Markers count only on the prompt's last line (the current request): the
 // harness replays earlier messages into a fresh process's prompt, and an old
@@ -398,6 +402,20 @@ process.stdin.on("data", (chunk) => {
         }
         if (fixtureRequested(promptText, "__fixture_oversize_open_frame__")) {
           process.stdout.write(`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"itemId":"big","delta":"${fixtureOversizeText()}`);
+          break;
+        }
+        // An MCP tool answering with an image, MCP-native shape, alongside
+        // Murage's own computer surface — whose frame must not be retained.
+        if (fixtureRequested(promptText, "__fixture_mcp_tool_image__")) {
+          notify("item/completed", {
+            item: { id: "mcp1", type: "mcpToolCall", status: "completed", server: "omarchy", tool: "screenshot",
+              result: { content: [{ type: "text", text: "captured" }, { type: "image", data: FIXTURE_TOOL_IMAGE, mimeType: "image/png" }] } },
+          });
+          notify("item/completed", {
+            item: { id: "mcp2", type: "mcpToolCall", status: "completed", server: "computer", tool: "screenshot",
+              result: { content: [{ type: "image", data: FIXTURE_SCREEN_IMAGE, mimeType: "image/png" }] } },
+          });
+          finishTurn();
           break;
         }
         if (fixtureRequested(promptText, "__fixture_large_frame__")) {
