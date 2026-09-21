@@ -102,7 +102,10 @@ describe("first run copy: the house rules", () => {
   it("never sells on price", () => {
     // Money in any form: the adjectives, the nouns, and the figures. The
     // first run says what the thing does, never what it costs.
-    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
+    // `pay` was missing, and "Any OpenAI-style service you already pay for"
+    // was live on the no-key branch of a blank machine for the whole of this
+    // release. A rule with a hole in it is not a rule; it is the hole.
+    const banned = /\b(cheap\w*|discount\w*|wholesale|afford\w*|budget\w*|spend\w*|cost\w*|pric\w*|pay\w*|paid|token\w*|free|dollars?|cents?|per month|save money|value for money)\b/i;
     for (const { path, text } of everything) {
       const hit = banned.exec(text);
       expect.soft(hit ? `${path}: ${hit[0]} in "${text}"` : null).toBeNull();
@@ -137,6 +140,30 @@ describe("first run copy: the house rules", () => {
     for (const { path, text } of everything) {
       const hit = banned.exec(text);
       expect.soft(hit ? `${path}: ${hit[0]}` : null).toBeNull();
+    }
+  });
+
+  // THE CEILING THAT WAS STATED AT THE TOP OF THE FILE AND ASSERTED NOWHERE.
+  //
+  // "Three sentences is the ceiling for a card body" has been in the rule
+  // list the whole time with nothing behind it, which is how a rule that
+  // lives only in a comment ends: everything else on the list got a test and
+  // this one got a promise. It applies to every string, not just the fields
+  // named `body`, because the renderer sets `second` and `third` and a row's
+  // `why` as their own lines and a person reads them the same way. Four
+  // sentences on a card is the paragraph this flow was re-cut to get rid of.
+  function sentences(text: string): number {
+    return text
+      // A decimal point, a version and a time are not ends of sentences: an
+      // end is punctuation with whitespace or nothing after it.
+      .split(/[.!?]+(?=\s|$)/)
+      .filter((part) => part.trim().length > 0).length;
+  }
+
+  it("keeps every line to the three sentence ceiling", () => {
+    for (const { path, text } of everything) {
+      const count = sentences(text);
+      expect.soft(count > 3 ? `${path}: ${count} sentences in "${text}"` : null).toBeNull();
     }
   });
 

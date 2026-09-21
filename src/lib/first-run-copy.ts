@@ -332,9 +332,13 @@ export const FIRST_RUN_COPY = {
        * in first-run-copy.test.ts.
        */
       heading: "Get the right answer faster.",
+      // Five sentences, on the card the whole release leads with, under a
+      // rule that has said "three is the ceiling" since the file was written.
+      // Nothing was asserting it. The words are unchanged; the two-word
+      // sentences that were doing the work of one clause are now one clause.
       lead:
-        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask. "
-        + "Big job, big model. Quick job, quick model. You just get the answer.",
+        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask: "
+        + "big job, big model, quick job, quick model. You just get the answer.",
       /**
        * THE SECOND OPENING, ON A MACHINE WHERE DETECTION NEVER RAN.
        *
@@ -347,7 +351,7 @@ export const FIRST_RUN_COPY = {
       headingBare: "Your bots need a brain first.",
       leadBare:
         "Murage came with an engine. It did not come with anything to think with, and there is nothing on "
-        + "this computer I can use. One connection fixes that. It is the same one your apps run through.",
+        + "this computer I can use. One connection fixes that, and it is the same one your apps run through.",
       /** The card's own two corners. */
       cardTitle: "Flux Router",
       cardAccount: "Your account",
@@ -520,7 +524,12 @@ export const FIRST_RUN_COPY = {
        * flow that does not exist yet.
        */
       bodyBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
-      secondBare: "Any OpenAI-style service you already pay for will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
+      // "Any OpenAI-style service you already PAY for" was the one money
+      // word left in the flow, on the one branch a blank machine reaches by
+      // declining the key. The banned-word regex had every other spelling of
+      // money and not that one. What matters about the service is that they
+      // already have it, not what they hand over for it.
+      secondBare: "Any OpenAI-style service you already use will do, and so will a model running on this computer. Add either one under Models in Settings and I will pick it up from there.",
     },
   },
   /**
