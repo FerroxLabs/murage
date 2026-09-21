@@ -462,6 +462,10 @@ export function FirstRunDayResultView({
     <FirstRunBubble>
       <div className="text-[17px] font-semibold text-ink">{result.header}</div>
       <FirstRunLine quiet>{result.provenance}</FirstRunLine>
+      {/* Connected and NOT read, said out loud. Somebody who has just handed
+          over Gmail and Calendar for this job will otherwise assume the
+          screen under it came out of them. */}
+      {result.unread && <FirstRunLine quiet>{result.unread}</FirstRunLine>}
 
       <Eyebrow>{result.riskEyebrow}</Eyebrow>
       {result.risk ? (

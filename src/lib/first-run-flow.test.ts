@@ -212,17 +212,40 @@ describe("the day and the brief result", () => {
     expect(dayResult(FIRST_RUN_JOB_SHAPES.day, items, READY).header).toBe("Today");
   });
 
-  it("says where it read from, and claims no source it does not have", () => {
-    expect(dayResult(FIRST_RUN_JOB_SHAPES.brief, items, READY).provenance)
-      .toBe("From your 4 lines, plus your calendar and your mail.");
-    expect(dayResult(FIRST_RUN_JOB_SHAPES.day, items, machine({ fluxReady: true, connected: ["googlecalendar"] })).provenance)
-      .toBe("From your 4 lines, plus your calendar.");
-    // Nothing connected: the lines are the whole of it, and it says so.
-    expect(dayResult(FIRST_RUN_JOB_SHAPES.brief, items, machine()).provenance)
-      .toBe("From your 4 lines.");
-    // The day job never reaches for mail, so connected mail is not its source.
-    expect(dayResult(FIRST_RUN_JOB_SHAPES.day, items, READY).provenance)
-      .toBe("From your 4 lines, plus your calendar.");
+  /**
+   * THE DEFECT: THE BRIEF NAMED SOURCES IT NEVER OPENED.
+   *
+   * `provenance` appended "plus your calendar and your mail" on connectivity
+   * alone, while every field beside it is `parseLines` over what the person
+   * typed. The `brief` job demands BOTH grants before it will run, so the
+   * claim was loudest exactly where it was false. The provenance now names
+   * the one source there is, on every machine.
+   */
+  it("says where it read from, and it is only ever the lines", () => {
+    for (const world of [
+      READY,
+      machine(),
+      machine({ fluxReady: true, connected: ["googlecalendar"] }),
+      machine({ connected: [...SETUP_JOB_APPS] }),
+    ]) {
+      for (const job of [FIRST_RUN_JOB_SHAPES.brief, FIRST_RUN_JOB_SHAPES.day]) {
+        const line = dayResult(job, items, world).provenance;
+        expect(line).toBe("From your 4 lines.");
+        expect(line, "a source this screen never opened is named in the provenance")
+          .not.toMatch(/calendar|mail/i);
+      }
+    }
+  });
+
+  // Connected and unread is not the same as unconnected, and the screen is
+  // not allowed to stay quiet about the difference either.
+  it("names a connected source as one it did not read, and only when it has one", () => {
+    expect(dayResult(FIRST_RUN_JOB_SHAPES.brief, items, READY).unread)
+      .toBe("I have not read your calendar and your mail for this one. Everything here comes from what you gave me.");
+    expect(dayResult(FIRST_RUN_JOB_SHAPES.day, items, READY).unread)
+      .toBe("I have not read your calendar for this one. Everything here comes from what you gave me.");
+    expect(dayResult(FIRST_RUN_JOB_SHAPES.day, items, machine({ connected: ["gmail"] })).unread).toBeNull();
+    expect(dayResult(FIRST_RUN_JOB_SHAPES.brief, items, machine()).unread).toBeNull();
   });
 
   it("says one line as one line", () => {

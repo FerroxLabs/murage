@@ -754,8 +754,24 @@ export const FIRST_RUN_COPY = {
         fromLines: "From your",
         linesOne: "line",
         linesMany: "lines",
+        /**
+         * THE SOURCES THIS SCREEN DID NOT READ, NAMED AS SUCH.
+         *
+         * The provenance line used to read "From your 4 lines, plus your
+         * calendar and your mail" whenever those two were connected, and not
+         * one field on the screen came from either of them: the risk, Fixed
+         * and "Someone is waiting" are all `parseLines` over what the person
+         * typed. Naming a grant the screen never touched, on the release
+         * whose whole rule is that nothing is claimed that was not read, is
+         * the worst possible place to do it.
+         *
+         * Connecting them is also not nothing, so they are still named. They
+         * are named as what they are: connected, and not read for this one.
+         */
+        notRead: "I have not read",
         plusCalendar: "your calendar",
         plusMail: "your mail",
+        notReadTail: "for this one. Everything here comes from what you gave me.",
         riskEyebrow: "The one that will slip",
         /**
          * WHY THERE ARE TWO VERSIONS OF THE DEADLINE REASON.
