@@ -26,3 +26,50 @@ export type SystemVoicePlatform = (typeof SYSTEM_VOICE_PLATFORMS)[number];
 export function platformHasSystemVoices(platform: string | undefined): boolean {
   return SYSTEM_VOICE_PLATFORMS.includes(platform as SystemVoicePlatform);
 }
+
+/** What the Voice settings card offers on this machine, as data.
+ *
+ * The gate and the WORDS were both inline in src/components/VoiceSettings.tsx,
+ * and that put the thing W10' actually got wrong — offering a Windows owner
+ * "Built-in Mac voices", or telling them the engine is macOS-only — inside a
+ * React component this node-environment suite cannot render. The only test
+ * that could be written there read the component's source for those strings,
+ * which stays green for any spelling the regex happens to miss and cannot run
+ * the branch at all.
+ *
+ * So the decision is here, as a function, and the component renders what it
+ * returns. Platform in, copy out, no React.
+ */
+export interface SystemVoiceOffer {
+  /** whether the built-in engine may be chosen at all on this platform */
+  available: boolean;
+  /** the engine button's label */
+  label: string;
+  /** where the voices come from, for the sentence above the buttons */
+  source: string;
+  /** the sentence itself, for the provider currently selected */
+  sentence: string;
+  /** the disabled button's tooltip, when it is disabled */
+  unavailableHint: string;
+}
+
+export const SYSTEM_VOICE_UNAVAILABLE_HINT = "Built-in voices are available on macOS and Windows";
+
+export function systemVoiceOffer(
+  platform: string | undefined,
+  provider: "elevenlabs" | "system",
+): SystemVoiceOffer {
+  const available = platformHasSystemVoices(platform);
+  // A Windows owner is never offered "Mac voices", and neither owner is told
+  // the voices come from the machine they are not using.
+  const windows = platform === "win32";
+  const label = windows ? "Built-in Windows voices" : "Built-in Mac voices";
+  const source = windows ? "this PC" : "this Mac";
+  const sentence =
+    provider === "system"
+      ? available
+        ? ` the voices are the ones already installed on ${source}.`
+        : " built-in voices are unavailable here. Switch to ElevenLabs to keep using voice."
+      : " the ElevenLabs key is shared by the workspace.";
+  return { available, label, source, sentence, unavailableHint: SYSTEM_VOICE_UNAVAILABLE_HINT };
+}

@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
+import { MAX_CONCURRENT_BOT_THREADS } from "./independent-thread-runs.ts";
 import {
   drainDelegations,
   findDelegationReceipt,
@@ -1158,23 +1160,96 @@ describe("a busy teammate with a free thread", () => {
 });
 
 describe("the harness answers that question the way it dispatches", () => {
-  // server/index.ts boots a server on import, so this is read as source, with
-  // comments stripped first: a test on this branch once matched a sentence in
-  // a comment and so enforced a claim the code did not make.
-  const index = (() => {
-    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    return source.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-  })();
+  // This used to read server/index.ts as TEXT and check that three
+  // identifiers appeared inside `handoffCanStartNow`. Three identifiers being
+  // present cannot tell a mirrored condition from an inverted one, and cannot
+  // see WHICH thread the predicate asks about — which is the half that was
+  // wrong before (`bot.busy`, the union over every thread). The predicate now
+  // lives in server/handoff-admission.ts and is RUN here, over recorded
+  // collaborators. Only the wiring is still read from the source.
 
-  it("mirrors all three of startTurn's admission conditions, and is wired to the bus", () => {
-    const at = index.indexOf("function handoffCanStartNow(");
-    expect(at, "handoffCanStartNow has been renamed or removed").toBeGreaterThan(-1);
-    const body = index.slice(at, index.indexOf("\n}\n", at));
+  /** The target: one bot, one main thread, one task thread for the human
+   *  principal the handoff arrives under. */
+  const admission = (over: Partial<HandoffAdmission> = {}): HandoffAdmission & { asked: string[] } => {
+    const asked: string[] = [];
+    return {
+      asked,
+      bot: () => ({ threadId: "t-main" }),
+      handoffThread: () => "t-handoff",
+      threadBusy: (_botId, threadId) => {
+        asked.push(threadId);
+        return false;
+      },
+      groupTurnActive: () => false,
+      runningThreads: () => 0,
+      maxThreads: MAX_CONCURRENT_BOT_THREADS,
+      ...over,
+    };
+  };
+
+  // THE DEFECT, run. `bot.busy` was true whenever ANY of the bot's threads was
+  // running, so a teammate mid-routine in a detached task thread refused a
+  // handoff its handoff thread could have taken.
+  it("admits a target that is busy on a DIFFERENT thread", () => {
+    const deps = admission({ threadBusy: (_botId, threadId) => threadId === "t-other" });
+    expect(handoffCanStart(deps, "target", "t-source")).toBe(true);
+  });
+
+  it("refuses a target already running on the thread this handoff would use", () => {
+    const deps = admission({ threadBusy: (_botId, threadId) => threadId === "t-handoff" });
+    expect(handoffCanStart(deps, "target", "t-source")).toBe(false);
+  });
+
+  it("asks about the handoff's own thread, not the bot's main one", () => {
+    const deps = admission();
+    handoffCanStart(deps, "target", "t-source");
+    expect(deps.asked).toEqual(["t-handoff"]);
+  });
+
+  it("falls back to the bot's main thread when the principal has no task of its own yet", () => {
+    const deps = admission({ handoffThread: () => undefined });
+    handoffCanStart(deps, "target", "t-source");
+    expect(deps.asked).toEqual(["t-main"]);
+  });
+
+  it("refuses a target mid-turn in a room", () => {
+    expect(handoffCanStart(admission({ groupTurnActive: () => true }), "target", "t-source")).toBe(false);
+  });
+
+  it("refuses at startTurn's concurrent-thread ceiling, and admits one below it", () => {
+    expect(handoffCanStart(admission({ runningThreads: () => MAX_CONCURRENT_BOT_THREADS }), "target", "t-source")).toBe(false);
+    expect(handoffCanStart(admission({ runningThreads: () => MAX_CONCURRENT_BOT_THREADS - 1 }), "target", "t-source")).toBe(true);
+  });
+
+  it("answers 'not now' rather than throwing when the source thread's principal is unreadable", () => {
+    const deps = admission({ handoffThread: () => { throw new Error("unreadable principal"); } });
+    expect(() => handoffCanStart(deps, "target", "t-source")).not.toThrow();
+    expect(handoffCanStart(deps, "target", "t-source")).toBe(false);
+  });
+
+  it("refuses a bot the roster no longer has", () => {
+    expect(handoffCanStart(admission({ bot: () => null }), "gone", "t-source")).toBe(false);
+  });
+
+  // The one thing the predicate cannot prove about itself: that the harness
+  // hands it the real collaborators and puts it on the bus. server/index.ts
+  // boots a server on import, so this is read as source with comments
+  // stripped — a test on this branch once matched a sentence in a comment and
+  // so enforced a claim the code did not make.
+  it("is wired to the real thread, room and ceiling checks, and onto the comms bus", () => {
+    const index = (() => {
+      const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+      return source.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    })();
+    const at = index.indexOf("const handoffAdmission: HandoffAdmission = {");
+    expect(at, "the handoff admission collaborators have been renamed or removed").toBeGreaterThan(-1);
+    const body = index.slice(at, index.indexOf("\n};\n", at));
     expect(body).toContain("directThreadBusy(botId, threadId)");
     expect(body).toContain("activeGroupTurnForBot(botId)");
     expect(body).toContain("MAX_CONCURRENT_BOT_THREADS");
     // and the thread it asks about is the one runDelegatedTurn picks
     expect(body).toContain("humanTask(store, botId, threadHumanPrincipal(sourceThreadId))");
+    expect(index).toContain("handoffCanStart(handoffAdmission, botId, sourceThreadId)");
     expect(index).toContain("canStartHandoff: handoffCanStartNow");
   });
 });

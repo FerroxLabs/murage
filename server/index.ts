@@ -383,7 +383,7 @@ import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, routineIncidentMuteKeys, teamIncidentChip, teamIncidentText, teamIncidentTurnOptions, type TeamIncident } from "./team-incidents.ts";
+import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, drainWaitingTeamIncidents, routineIncidentMuteKeys, teamIncidentChip, teamIncidentDispatchDeferred, teamIncidentText, teamIncidentTurnOptions, waitForFreeTurn, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
@@ -1051,6 +1051,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 }
 
 import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
+import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
 import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
@@ -3412,6 +3413,7 @@ const watchdog = new TurnWatchdog({
         drainQueuedSends();
         drainConnectorResumes();
         drainSecretResumes();
+        drainTeamIncidents();
       }
     };
     const release = setTimeout(releaseOwnership, 6_000);
@@ -4708,6 +4710,7 @@ const unstartedRoomTurnReleaseDeps = {
     drainQueuedSends();
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
   },
 };
 
@@ -5830,6 +5833,7 @@ async function startTurn(
           drainQueuedSends();
           drainConnectorResumes();
           drainSecretResumes();
+          drainTeamIncidents();
         }
         return;
       }
@@ -5882,6 +5886,7 @@ async function startTurn(
       drainQueuedSends();
       drainConnectorResumes();
       drainSecretResumes();
+      drainTeamIncidents();
     }
   })();
   return userMessage;
@@ -5937,8 +5942,15 @@ function teamIncidentContext(threadId: string | null): { lastRequest: string | n
  * Doing nothing is a complete outcome here, not a failure: every caller has
  * ALREADY notified the owner by the time it gets here, so a workspace with no
  * Chief on duty is a workspace where the person has been told and there is
- * nobody else to tell. That is also what keeps the once-not-twice
- * notification invariant — this path never raises a second banner.
+ * nobody else to tell.
+ *
+ * This function raises no banner of its own, which is not the same as the
+ * failure ringing only once. The incident turn's own dispatch failure is
+ * suppressed (teamIncidentTurnOptions), but a report that LANDS emits the
+ * ordinary `done` notification from the turn fold like any other turn, and an
+ * approval the Chief raises on the way there rings as an approval. The person
+ * can therefore get the routine-failed banner and, later, the Chief's
+ * conclusion. That second one is the diagnosis, and is worth having.
  *
  * The whole body is guarded. This runs on the failure path, and an incident
  * report that throws would turn one broken routine into two. */
@@ -5978,22 +5990,62 @@ function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; mu
       tool: { name: teamIncidentChip(incident), ok: false },
     });
     // teamIncidentTurnOptions, not an object literal: the shape of this turn
-    // is what keeps it from ringing the person a second time for the failure
-    // it is reporting, and that is policy, not wiring.
-    void startTurn(chief.id, teamIncidentText(incident, count), teamIncidentTurnOptions(incidents.threadId))
-      .catch((error) => {
-        // The Chief being busy is the common case and is not worth a banner —
-        // the chip above is already durable in its incidents thread.
-        const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
-        store.appendMessage(incidents.threadId, {
-          role: "bot",
-          kind: "activity",
-          tool: { name: `error: this incident could not reach ${chief.name} — ${why}`, ok: false },
-        });
-      });
+    // is what keeps its own DISPATCH failure from ringing the person a second
+    // time for the outage it is reporting, and that is policy, not wiring. It
+    // is the only banner suppressed here — see the note on this function.
+    dispatchTeamIncident({
+      chiefId: chief.id,
+      chiefName: chief.name,
+      threadId: incidents.threadId,
+      text: teamIncidentText(incident, count),
+    });
   } catch {
     // never make the failure we are reporting worse than it already is
   }
+}
+
+interface WaitingTeamIncident {
+  chiefId: string;
+  chiefName: string;
+  /** the Chief's "Team incidents" thread — never the broken one */
+  threadId: string;
+  text: string;
+}
+
+/** Incidents whose report could not start because the Chief was mid-turn.
+ * In memory with the ledger, and for the same reason: a restart is a fresh
+ * start, and each of these already left a durable chip in the thread. */
+let waitingTeamIncidents: WaitingTeamIncident[] = [];
+
+function dispatchTeamIncident(incident: WaitingTeamIncident): void {
+  void startTurn(incident.chiefId, incident.text, teamIncidentTurnOptions(incident.threadId)).catch((error) => {
+    // A refusal for CAPACITY is not a failure of the report. This used to
+    // write a chip and give up, so a burst of failures — a crash loop, one
+    // provider outage taking three routines down at 07:00 — left every
+    // incident after the first unprocessed by anybody. It waits instead, and
+    // the turn.completed fold re-dispatches it.
+    if (teamIncidentDispatchDeferred(error)) {
+      const next = waitForFreeTurn(waitingTeamIncidents, incident);
+      if (next.length > waitingTeamIncidents.length) {
+        waitingTeamIncidents = next;
+        return;
+      }
+      // the queue is full: the storm is already described by what is in it
+    }
+    const why = redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 120);
+    store.appendMessage(incident.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `error: this incident could not reach ${incident.chiefName} — ${why}`, ok: false },
+    });
+  });
+}
+
+function drainTeamIncidents(): void {
+  if (waitingTeamIncidents.length === 0) return;
+  const plan = drainWaitingTeamIncidents(waitingTeamIncidents, (chiefId) => store.bot(chiefId)?.busy === true);
+  waitingTeamIncidents = plan.waiting;
+  for (const incident of plan.dispatch) dispatchTeamIncident(incident);
 }
 
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
@@ -6727,27 +6779,20 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
 // shape every comms entry point uses (ask_bot, delegate_bot).
 /** Delegation admission, asking the question the dispatch will ask.
  *
- * `runDelegatedTurn` runs the handoff on ONE thread — the target's task for
- * this source thread's human principal, its main thread otherwise — and
- * `startTurn` admits it on exactly three conditions. Admission used to test
- * `bot.busy` instead, which is the union over all of the bot's threads, so a
- * teammate busy on a routine in a detached task thread refused handoffs its
- * free threads could have taken. This mirrors the three real conditions so
- * admission and dispatch can no longer disagree.
- *
- * Throwing is not an option on the drain path, and an unreadable principal
- * means "not now", which is where a busy target already ends up. */
+ * The predicate itself — and the reason it is the delegation's own thread it
+ * asks about rather than `bot.busy` — is server/handoff-admission.ts, where a
+ * test can run it. This is the four collaborators it runs over. */
+const handoffAdmission: HandoffAdmission = {
+  bot: (botId) => store.bot(botId),
+  handoffThread: (botId, sourceThreadId) => humanTask(store, botId, threadHumanPrincipal(sourceThreadId))?.threadId,
+  threadBusy: (botId, threadId) => directThreadBusy(botId, threadId),
+  groupTurnActive: (botId) => activeGroupTurnForBot(botId) !== null,
+  runningThreads: (botId) => directRuns.forBot(botId).length,
+  maxThreads: MAX_CONCURRENT_BOT_THREADS,
+};
+
 function handoffCanStartNow(botId: string, sourceThreadId: string): boolean {
-  const profile = store.bot(botId);
-  if (!profile) return false;
-  let threadId: string;
-  try {
-    threadId = humanTask(store, botId, threadHumanPrincipal(sourceThreadId))?.threadId ?? profile.threadId;
-  } catch {
-    return false;
-  }
-  if (directThreadBusy(botId, threadId) || activeGroupTurnForBot(botId)) return false;
-  return directRuns.forBot(botId).length < MAX_CONCURRENT_BOT_THREADS;
+  return handoffCanStart(handoffAdmission, botId, sourceThreadId);
 }
 
 const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity, canStartHandoff: handoffCanStartNow };
@@ -7208,7 +7253,7 @@ async function runGroupMemberTurn(
             store.setActivity(bot.id, "idle");
             retryDelegationsWaitingOn(bot.id);
           }
-          drainQueuedSends();drainConnectorResumes();drainSecretResumes();
+          drainQueuedSends();drainConnectorResumes();drainSecretResumes();drainTeamIncidents();
         },
       });
       pendingRoomStops.get(threadId)?.cancel();
@@ -7441,6 +7486,7 @@ async function runGroupMemberTurn(
     drainQueuedSends();
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
     return false;
   }
   if (outcome === "timed_out") {
@@ -8686,6 +8732,7 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "turn.completed") {
     drainConnectorResumes();
     drainSecretResumes();
+    drainTeamIncidents();
   }
 });
 
@@ -8926,6 +8973,7 @@ async function reloadProviders() {
   drainQueuedSends();
   drainConnectorResumes();
   drainSecretResumes();
+  drainTeamIncidents();
 }
 
 // Config writes rebuild the whole provider registry. Keep the read-modify-write

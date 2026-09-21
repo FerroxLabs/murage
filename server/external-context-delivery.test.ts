@@ -2,7 +2,6 @@
 // whole provider session. These tests pin the replacement — deliver the
 // message, keep the session — and the accounting that makes it safe.
 import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -171,15 +170,26 @@ describe("task delivery accounting", () => {
     expect(task?.lastInstanceId).toBeUndefined();
   });
 
+  // A SECOND Store over the same data dir, which is what a restart is.
+  //
+  // This used to read bots.json and assert on the parsed JSON. That checks
+  // that the field was written; it does not check that a restarted process
+  // reads it back, and reading it back is the whole claim in the name. The
+  // debt is consumed through `consumeTaskExternalUpdates` on the NEW store,
+  // so the load path and the accounting are both executed here.
   it("persists the debt across a restart", () => {
     const bot = store.createBot();
     store.recordTaskExternalUpdate(bot.id, bot.threadId, "m1");
-    const persisted = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")) as Array<{
-      id: string;
-      tasks?: Array<{ threadId: string; externalUpdates?: string[] }>;
-    }>;
-    expect(persisted.find((b) => b.id === bot.id)?.tasks?.find((t) => t.threadId === bot.threadId)?.externalUpdates)
-      .toEqual(["m1"]);
+    store.recordTaskExternalUpdate(bot.id, bot.threadId, "m2");
+
+    const restarted = new Store(selection);
+    const task = restarted.taskByThread(bot.id, bot.threadId);
+    expect(task?.externalUpdates).toEqual(["m1", "m2"]);
+
+    // and the reloaded debt is a working debt, not just a field that survived
+    restarted.consumeTaskExternalUpdates(bot.id, bot.threadId, ["m1"]);
+    expect(restarted.taskByThread(bot.id, bot.threadId)?.externalUpdates).toEqual(["m2"]);
+    expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.externalUpdates).toEqual(["m2"]);
   });
 
   it("drops exactly what a dispatch carried and leaves a later arrival owed", () => {

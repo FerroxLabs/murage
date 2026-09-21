@@ -1,17 +1,28 @@
-// When a bot's run breaks, somebody on the team hears about it.
+// When a bot BELOW the Chief breaks, somebody on the team hears about it.
 //
-// Today a broken run reaches the OWNER and stops there: a failed routine
-// buzzes a notification and leaves a routine.run card, a dispatch failure
-// buzzes turn-failed. Both are true and neither is help. Nobody on the team
-// is told, so nothing on the team responds, and the work sits until the
-// person opens the desktop — which for a 7am routine means the morning is
-// already gone.
+// Before this, a broken run reached the OWNER and stopped there: a failed
+// routine buzzed a notification and left a routine.run card, a dispatch
+// failure buzzed turn-failed. Both are true and neither is help. Nobody on
+// the team was told, so nothing on the team responded, and the work sat until
+// the person opened the desktop — which for a 7am routine means the morning
+// is already gone.
 //
 // The team already has the role for this. Murage's org chart has one
 // workspace Chief and section leads under it, and `canReach` in store.ts is
 // the single predicate that says who may coordinate whom. So a broken run is
 // delivered to that bot as a turn of its own, in one "Team incidents" thread,
 // with what broke, where, and what the thread last said.
+//
+// WHAT THIS DOES NOT COVER, AND IT IS THE COMMON CASE ON A FRESH INSTALL:
+// the workspace Chief's own runs. There is nobody above the Chief, so
+// `chiefForBrokenBot` returns nobody for it — and the first routine most
+// people ever have, the first run's 07:00 Morning brief, is scheduled on
+// exactly that bot (server/index.ts, POST /api/setup/routine, `botId:
+// chief.id`). For that one routine this module changes nothing: the person's
+// routine-failed banner is still the whole of the delivery. The escalation
+// begins when there is a team under the Chief. team-incidents.test.ts runs
+// the real election and the real predicate over it, so this is a recorded
+// fact rather than a description of one.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO: retry. Upstream pairs this with a
 // `retry_thread` tool and a `mayRetry` flag, and that flag only changes the
@@ -165,15 +176,24 @@ export function routineIncidentMuteKeys(run: { routineId: string; threadId?: str
  * `unattended`, because nobody is at the keyboard and the report quotes a run
  * that just broke: the Chief's own tool calls are judged accordingly.
  *
- * And `unattended` is also what keeps the once-not-twice notification
- * invariant true, which is why this is a value the tests can hand to
+ * `unattended` is also the term that stops this turn's DISPATCH failure from
+ * buzzing, which is why it is a value the tests can hand to
  * `turnFailureBuzzes` rather than an object literal buried in the harness.
- * Without it, a dispatch failure of THIS turn buzzes turn-failed, on top of
+ * Without it, a turn that dies before it starts buzzes turn-failed on top of
  * the routine-failed banner the person already got for the same incident —
  * and a provider being down is both the commonest way this turn fails and a
- * leading cause of the routine failure it is reporting. The body of the
- * report says the module raises no second banner; this is the term that
- * makes that true. */
+ * leading cause of the routine failure it is reporting. Ringing somebody
+ * twice to say the same outage happened is the defect it closes.
+ *
+ * WHAT IT DOES NOT DO, and an earlier version of this comment said it did:
+ * make "one failure rings once" true in general. Exactly one banner is
+ * suppressed — this turn's own dispatch failure. A report that lands still
+ * emits the ordinary `done` notification, and an approval the Chief raises
+ * while writing it still uses the ordinary approval path. So the person can
+ * get two: the routine-failed banner before anybody has looked at the
+ * failure, and the Chief's conclusion once somebody has. That second one
+ * carries the diagnosis and is worth having; what it is not is silence.
+ * server/team-incidents.test.ts runs buildNotification for both. */
 export function teamIncidentTurnOptions(threadId: string): { threadId: string; unattended: true } {
   return { threadId, unattended: true };
 }
@@ -235,4 +255,67 @@ export function teamIncidentText(incident: TeamIncident, count: TeamIncidentCoun
     ].join("\n"),
   );
   return lines.join("\n");
+}
+
+// ── delivery, when the Chief is mid-turn ───────────────────────────────────
+//
+// The incident report is a TURN, and a turn is admitted on one thread at a
+// time. So the second failure inside one minute — a crash loop, a provider
+// outage taking three routines down together, a morning where four things
+// break at 07:00 — arrives at an incidents thread that is already working,
+// `startTurn` refuses it with 409, and the original code wrote an error chip
+// and gave up. The chip was true ("could not reach Chief — this thread or its
+// group is already working") and useless: the incident it described was never
+// processed by anybody, and the only thing that had happened was the banner
+// the person got before the report was even attempted.
+//
+// A refusal for CAPACITY is not a failure of the report. It waits, and the
+// harness re-dispatches it when the Chief's next turn completes — the same
+// shape server/index.ts already uses for connector and secret resumes.
+
+/** Was this dispatch refused because the Chief is working right now?
+ *
+ * Both of `startTurn`'s capacity refusals say "already working" — the thread
+ * or its group, and the three-thread ceiling. Everything else (no such bot, a
+ * fenced provider bank, a closed automation budget) is a real failure and
+ * belongs on a chip, because retrying it would only produce the same refusal
+ * on every future turn. */
+export function teamIncidentDispatchDeferred(error: unknown): boolean {
+  return /already working/i.test(error instanceof Error ? error.message : String(error));
+}
+
+/** How many incidents may be waiting for a free turn at once.
+ *
+ * Small, because this is a queue of things to SAY about failures, and the
+ * mute (five per key per hour) already stops a single crash loop from filling
+ * it. When it is full the NEWEST is dropped rather than the oldest: the first
+ * failures of a storm are the ones that explain it, and a Chief reading the
+ * twentieth report of the same outage learns nothing the first did not say. */
+export const MAX_WAITING_TEAM_INCIDENTS = 20;
+
+export function waitForFreeTurn<T>(waiting: readonly T[], incident: T): T[] {
+  return waiting.length >= MAX_WAITING_TEAM_INCIDENTS ? [...waiting] : [...waiting, incident];
+}
+
+/** Which waiting incidents this drain may dispatch, and which keep waiting.
+ *
+ * At most one per Chief: they all land in that Chief's one incidents thread,
+ * so a second would be refused by the same rule that deferred it, and order
+ * is preserved for each Chief so the first failure is still reported first. */
+export function drainWaitingTeamIncidents<T extends { chiefId: string }>(
+  waiting: readonly T[],
+  busy: (chiefId: string) => boolean,
+): { dispatch: T[]; waiting: T[] } {
+  const dispatch: T[] = [];
+  const held: T[] = [];
+  const taken = new Set<string>();
+  for (const incident of waiting) {
+    if (taken.has(incident.chiefId) || busy(incident.chiefId)) {
+      held.push(incident);
+      continue;
+    }
+    taken.add(incident.chiefId);
+    dispatch.push(incident);
+  }
+  return { dispatch, waiting: held };
 }

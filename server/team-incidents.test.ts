@@ -3,19 +3,27 @@
 // These pin the policy half of team incidents: who hears about a broken run,
 // how often, and what the report says. The harness half (creating the
 // incidents thread, starting the Chief's turn) is in server/index.ts.
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { readFileSync, rmSync } from "node:fs";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { turnFailureBuzzes } from "./notify.ts";
+import { DATA_DIR } from "./config.ts";
+import type { ModelSelection } from "./contracts.ts";
+import { buildNotification, turnFailureBuzzes } from "./notify.ts";
+import { chiefDecision } from "./setup.ts";
+import { Store } from "./store.ts";
 
 import {
+  MAX_WAITING_TEAM_INCIDENTS,
   TEAM_INCIDENT_MUTE_AFTER,
   TeamIncidentLedger,
   chiefForBrokenBot,
+  drainWaitingTeamIncidents,
   routineIncidentMuteKeys,
+  teamIncidentDispatchDeferred,
   teamIncidentTurnOptions,
   teamIncidentChip,
   teamIncidentText,
+  waitForFreeTurn,
   type TeamIncident,
   type TeamIncidentBot,
 } from "./team-incidents.ts";
@@ -47,6 +55,75 @@ describe("who hears about a broken run", () => {
   it("nobody, for the workspace Chief itself — there is nothing above it", () => {
     const roster = [chief("chief"), lead("sales-lead", "Sales")];
     expect(chiefForBrokenBot(roster, chief("chief"))).toBeNull();
+  });
+
+  // WHOSE ROUTINE IS THE 07:00 BRIEF?
+  //
+  // The clause above reads as an edge case beside the four that escalate. On
+  // a fresh install it is the ORDINARY case, and this runs the real seating
+  // path to say so rather than asserting it from hand-written records: the
+  // first bot a blank machine creates is elected workspace Chief the first
+  // time setup is opened (chiefDecision + setChiefOfStaff), and the first
+  // run's Morning brief is created with `botId: chief.id`. So the single most
+  // likely scheduled failure in the product — the first routine most people
+  // ever have, on the first morning they have it — escalates to nobody, and
+  // the person's banner is the whole of the delivery.
+  //
+  // That is correct, and it is not what "a routine that breaks at 7am reaches
+  // somebody on the team" says. Recorded as a fact so the next person to read
+  // that sentence is arguing with a test.
+  describe("the first-run Chief's own routine, on the roster a blank machine builds", () => {
+    const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
+    let store: Store;
+
+    beforeEach(() => {
+      rmSync(DATA_DIR, { recursive: true, force: true });
+      store = new Store(selection);
+    });
+
+    /** Exactly what opening setup does on a blank machine: the oldest visible
+     *  bot is elected, at workspace scope. */
+    const seatTheChief = (): string => {
+      const decision = chiefDecision(undefined, store.bots);
+      expect(decision.kind).toBe("elect");
+      const botId = decision.kind === "none" ? "" : decision.botId;
+      store.setChiefOfStaff(botId, decision.kind === "elect" ? decision.section : null, "workspace");
+      return botId;
+    };
+
+    it("escalates to nobody, because the Chief is the top of the org chart", () => {
+      const first = store.createBot({ name: "Chief" });
+      const chiefId = seatTheChief();
+      expect(chiefId).toBe(first.id);
+      expect(store.workspaceChief()?.id).toBe(first.id);
+      // the bot the brief is scheduled on, asked of the real predicate
+      expect(chiefForBrokenBot(store.bots, store.bot(chiefId)!)).toBeNull();
+    });
+
+    it("still escalates to nobody once the person has hired a team", () => {
+      const first = store.createBot({ name: "Chief" });
+      const chiefId = seatTheChief();
+      // no section, which is what the Add-a-bot button makes: the Chief's
+      // own team, and the one roster edge that needs no lead
+      store.createBot({ name: "Ada" });
+      store.createBot({ name: "Bo" });
+      expect(chiefId).toBe(first.id);
+      expect(chiefForBrokenBot(store.bots, store.bot(chiefId)!)).toBeNull();
+      // and the team below it escalates normally, which is the case that
+      // makes the Chief's own silence easy to miss
+      const ada = store.bots.find((bot) => bot.name === "Ada")!;
+      expect(chiefForBrokenBot(store.bots, ada)?.id).toBe(chiefId);
+    });
+
+    it("is the bot the first run's Morning brief is scheduled on", () => {
+      // The route is in server/index.ts, which boots a server on import, so
+      // this one is read from the source with comments stripped.
+      const route = index.slice(index.indexOf('path === "/api/setup/routine"'));
+      const body = route.slice(0, route.indexOf("setupAction"));
+      expect(body).toContain("const chiefBotId = setup.chiefBotId();");
+      expect(body).toContain("botId: chief.id");
+      expect(body).toContain('template === "brief"');
+    });
   });
 
   it("nobody, when no workspace Chief is elected and the bot has no lead", () => {
@@ -263,15 +340,110 @@ describe("a failed routine is where this is wired in", () => {
     // An attended turn here would let the Chief's own tool calls run under
     // whatever grant the person left switched on.
     expect(teamIncidentTurnOptions("t-incidents")).toEqual({ threadId: "t-incidents", unattended: true });
-    const at = index.indexOf("function reportTeamIncident(");
-    expect(at, "reportTeamIncident has been renamed or removed").toBeGreaterThan(-1);
+    const at = index.indexOf("function dispatchTeamIncident(");
+    expect(at, "dispatchTeamIncident has been renamed or removed").toBeGreaterThan(-1);
     const body = index.slice(at, index.indexOf("\n}\n", at));
-    expect(body).toContain("teamIncidentText(incident, count)");
-    expect(body).toContain("teamIncidentTurnOptions(incidents.threadId)");
+    expect(body).toContain("teamIncidentTurnOptions(incident.threadId)");
+    expect(index.slice(index.indexOf("function reportTeamIncident("))).toContain("teamIncidentText(incident, count)");
+  });
+
+  it("re-dispatches what was deferred wherever a settled turn releases queued work", () => {
+    // The drain itself is RUN below. This is the one thing it cannot show
+    // about itself: that every place the harness already releases work queued
+    // behind a settled turn releases a waiting incident too. There are eight
+    // — the turn.completed fold and seven fallbacks for turns that never emit
+    // one (a dispatch failure, a room turn that never started, a killed turn,
+    // the grace timeout). Missing any of them strands the incident until some
+    // other turn happens to finish.
+    const lines = index.split("\n");
+    const settles = lines
+      .map((line, at) => ({ line, at }))
+      .filter(({ line }) => line.includes("drainSecretResumes();"));
+    expect(settles.length, "the settle-drain sites have moved").toBeGreaterThanOrEqual(8);
+    for (const { line, at } of settles) {
+      expect(`${line}\n${lines[at + 1] ?? ""}`, `line ${at + 1} releases queued work but not a waiting incident`)
+        .toContain("drainTeamIncidents();");
+    }
+    // and one of them is the turn.completed fold itself: the drain that runs
+    // when a turn ends the ordinary way, which is when the Chief's incidents
+    // thread actually becomes free.
+    const fold = index
+      .split("bus.subscribe(")
+      .find((block) => block.includes('event.type === "turn.completed"') && block.includes("drainConnectorResumes();"));
+    expect(fold, "the turn.completed drain fold has moved").toBeTruthy();
+    expect(fold!.slice(0, fold!.indexOf("\n});"))).toContain("drainTeamIncidents();");
   });
 });
 
-describe("one failure rings the person once", () => {
+// ── a burst of failures ────────────────────────────────────────────────────
+//
+// The report is a TURN, and a turn is admitted on one thread at a time. The
+// second failure inside a minute therefore meets an incidents thread that is
+// already working. That used to write an error chip and give up, so every
+// incident after the first went unprocessed by anybody — which is the case
+// this whole module exists for: a crash loop, or one provider outage taking
+// three 07:00 routines down together.
+
+describe("a report that could not start because the Chief was mid-turn", () => {
+  it("knows both of startTurn's capacity refusals from a real failure", () => {
+    // the two 409s startTurn throws when the bot has no free turn
+    expect(teamIncidentDispatchDeferred(new Error("this thread or its group is already working"))).toBe(true);
+    expect(teamIncidentDispatchDeferred(new Error("this bot is already working on three threads"))).toBe(true);
+    // and everything that retrying cannot fix
+    expect(teamIncidentDispatchDeferred(new Error("no such bot"))).toBe(false);
+    expect(teamIncidentDispatchDeferred(new Error("Engine setup is finishing. Try again shortly."))).toBe(false);
+    expect(teamIncidentDispatchDeferred("this thread or its group is already working")).toBe(true);
+  });
+
+  it("waits for a free turn instead of being dropped", () => {
+    expect(waitForFreeTurn([], { chiefId: "chief" })).toEqual([{ chiefId: "chief" }]);
+    expect(waitForFreeTurn([{ chiefId: "chief" }], { chiefId: "chief" }))
+      .toEqual([{ chiefId: "chief" }, { chiefId: "chief" }]);
+  });
+
+  it("drops the NEWEST when the queue is full, because the first failures explain the storm", () => {
+    let waiting: Array<{ chiefId: string; n: number }> = [];
+    for (let n = 0; n < MAX_WAITING_TEAM_INCIDENTS + 5; n += 1) {
+      waiting = waitForFreeTurn(waiting, { chiefId: "chief", n });
+    }
+    expect(waiting).toHaveLength(MAX_WAITING_TEAM_INCIDENTS);
+    expect(waiting[0]!.n).toBe(0);
+    expect(waiting.at(-1)!.n).toBe(MAX_WAITING_TEAM_INCIDENTS - 1);
+  });
+
+  it("dispatches one per Chief per drain, oldest first, and keeps the rest", () => {
+    const waiting = [
+      { chiefId: "chief", n: 1 },
+      { chiefId: "chief", n: 2 },
+      { chiefId: "sales-lead", n: 3 },
+    ];
+    const plan = drainWaitingTeamIncidents(waiting, () => false);
+    // a second report to the same Chief would be refused by the same rule
+    expect(plan.dispatch).toEqual([{ chiefId: "chief", n: 1 }, { chiefId: "sales-lead", n: 3 }]);
+    expect(plan.waiting).toEqual([{ chiefId: "chief", n: 2 }]);
+  });
+
+  it("leaves a Chief who is still working alone, and does not lose its place", () => {
+    const waiting = [{ chiefId: "chief", n: 1 }, { chiefId: "sales-lead", n: 2 }];
+    const plan = drainWaitingTeamIncidents(waiting, (chiefId) => chiefId === "chief");
+    expect(plan.dispatch).toEqual([{ chiefId: "sales-lead", n: 2 }]);
+    expect(plan.waiting).toEqual([{ chiefId: "chief", n: 1 }]);
+  });
+
+  it("empties over successive drains rather than stalling behind the first", () => {
+    let waiting = [{ chiefId: "chief", n: 1 }, { chiefId: "chief", n: 2 }, { chiefId: "chief", n: 3 }];
+    const order: number[] = [];
+    for (let drain = 0; drain < 3; drain += 1) {
+      const plan = drainWaitingTeamIncidents(waiting, () => false);
+      order.push(...plan.dispatch.map((incident) => incident.n));
+      waiting = plan.waiting;
+    }
+    expect(order).toEqual([1, 2, 3]);
+    expect(waiting).toEqual([]);
+  });
+});
+
+describe("what one failure actually rings", () => {
   // This body contains no notify() and no buildNotification(), which is true
   // and was never the question. The report is delivered as a TURN, and a turn
   // that dies before it starts buzzes turn-failed from startTurn's own
@@ -306,5 +478,53 @@ describe("one failure rings the person once", () => {
     const body = index.slice(at, index.indexOf("\n}\n", at));
     expect(body).not.toContain("notify(");
     expect(body).not.toContain("buildNotification(");
+  });
+
+  // AND HERE IS WHAT STILL RINGS, which the commit that suppressed the
+  // dispatch buzz was read as having stopped. It did not, and these run
+  // buildNotification — the function the turn fold and the approval path both
+  // call — to say so rather than leaving it to be assumed either way.
+  //
+  // Both of these are deliberate. The first banner says a routine broke,
+  // before anybody has looked at it; the second says what the Chief found,
+  // and is the more useful of the two. What is NOT true is that the person
+  // hears about one failure exactly once.
+  const chiefBot = { id: "chief", name: "Chief", threadId: "t-incidents" };
+
+  it("still rings when the Chief's report lands, on top of the routine-failed banner", () => {
+    const done = buildNotification("done", chiefBot, "t-incidents", "Ada's brief failed: the engine is signed out");
+    expect(done).not.toBeNull();
+    expect(done!.kind).toBe("done");
+    expect(done!.title).toBe("Chief finished");
+    expect(done!.body).toContain("signed out");
+  });
+
+  it("still rings when the Chief asks for approval while working out what broke", () => {
+    const approval = buildNotification("approval", chiefBot, "t-incidents", "Run the sign-in check?", {
+      requestId: "r1",
+      messageId: "m1",
+    });
+    expect(approval).not.toBeNull();
+    expect(approval!.kind).toBe("approval");
+    expect(approval!.title).toBe("Chief needs approval");
+  });
+
+  it("goes quiet for both only when the person turned this bot's notifications off", () => {
+    const off = { ...chiefBot, notifications: false };
+    expect(buildNotification("done", off, "t-incidents", "what broke")).toBeNull();
+    expect(buildNotification("approval", off, "t-incidents", "may I?")).toBeNull();
+  });
+
+  it("does not claim in prose that one failure rings once", () => {
+    // The sentence this file used to carry, and the comment in the harness
+    // that repeated it. Both were read as a guarantee the code does not make.
+    // Read RAW, comments included: the claim was made in prose, and prose is
+    // exactly what a comment-stripped scan cannot see.
+    const policy = readFileSync(new URL("./team-incidents.ts", import.meta.url), "utf8");
+    const harness = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    expect(policy).not.toMatch(/raises no second banner/);
+    expect(harness).not.toMatch(/never raises a second banner/);
+    // and the words that replaced them say which banner is suppressed
+    expect(policy).toContain("Exactly one banner is");
   });
 });
