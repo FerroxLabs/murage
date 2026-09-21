@@ -290,90 +290,42 @@ describe("the one-line chip", () => {
   });
 });
 
-// ── the wiring ─────────────────────────────────────────────────────────────
+// ── the wiring, AND WHAT IS NO LONGER PROVEN ABOUT IT ──────────────────────
 //
-// server/index.ts boots a server on import, so the three facts about the call
-// site that the policy above cannot enforce on its own are read out of the
-// source. Comments are stripped first, ALWAYS: a test on this branch once
-// matched a sentence in a comment and so enforced a claim the code did not
-// make, which left the copy uncorrectable.
+// Four tests used to sit here reading server/index.ts as text: that the
+// incident is reported from `onRunFailed`, that it quotes only the run's own
+// thread, that the Chief's report starts unattended, and that every one of
+// the eight sites where the harness releases work queued behind a settled
+// turn also drains a waiting incident. The last of those checked that
+// `drainTeamIncidents();` appeared on the LINE AFTER `drainSecretResumes();`,
+// eight times.
+//
+// None of them ran anything. They match text, so they go green on a call that
+// is commented out, moved into dead code or written differently, and red on a
+// reformat that changes nothing. A guard that cannot tell those two apart is
+// not evidence, and this suite is being cleared of guards that are not
+// evidence.
+//
+// Executing them means importing server/index.ts, which boots a listening
+// server on import (16k lines, `server.listen` at module scope). That is not
+// something a unit suite may do, and extracting the wiring so it can be
+// driven is a refactor of the harness rather than a test change.
+//
+// SO IT IS STATED PLAINLY INSTEAD: the call site of team incidents is
+// UNPROVEN. The policy below and above it is thoroughly tested — who hears,
+// how often, what the report says, the mute keys, the ledger, the drain
+// itself — and nothing tests that the harness calls any of it. Closing that
+// needs an end-to-end run of a failing routine on a real server, which is a
+// piece of work rather than a line.
+//
+// One source read survives below, for the setup routine route, and one for
+// `reportTeamIncident` raising no banner of its own. Both are outside the set
+// the review named; neither is better evidence than the ones deleted here.
 
 const index = (() => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   return source.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 })();
-
-describe("a failed routine is where this is wired in", () => {
-  it("reports the incident from onRunFailed, beside the notification that already fires", () => {
-    const at = index.indexOf("onRunFailed:");
-    expect(at, "onRunFailed has moved out of the RoutineManager host").toBeGreaterThan(-1);
-    const handler = index.slice(at, index.indexOf("\n  },", at));
-    expect(handler).toContain('buildNotification("routine-failed"');
-    expect(handler).toContain("reportTeamIncident({ bot,");
-    // and counts it against the routine, not against the throwaway thread the
-    // run happened to be given (see routineIncidentMuteKeys)
-    expect(handler).toContain("muteKeys: routineIncidentMuteKeys(run)");
-  });
-
-  it("quotes only the thread the broken run was given, never the bot's live chat", () => {
-    // teamIncidentContext lifts the last user message and the last bot message
-    // out of the thread it is handed. Handed the bot's CURRENT conversation as
-    // a fallback, it carries a private exchange the person had about something
-    // else into a PEER's prompt, for a failure that conversation has nothing
-    // to do with. canReach gates the pair, so it is not a roster violation —
-    // it is simply not this bot's to read.
-    const at = index.indexOf("onRunFailed:");
-    const handler = index.slice(at, index.indexOf("\n  },", at));
-    const call = handler.slice(handler.indexOf("reportTeamIncident("));
-    expect(call).toContain("threadId: run.threadId ?? null");
-    // the notification above may fall back to bot.threadId, because it goes to
-    // the person who owns that conversation. This report may not.
-    expect(call).not.toContain("bot.threadId");
-
-    const ctx = index.indexOf("function teamIncidentContext(");
-    expect(ctx, "teamIncidentContext has been renamed or removed").toBeGreaterThan(-1);
-    expect(index.slice(ctx, index.indexOf("\n}\n", ctx))).toContain("if (!threadId) return");
-  });
-
-  it("starts the Chief's report as an unattended turn", () => {
-    // Nobody is at the keyboard and the prompt quotes a run that just broke.
-    // An attended turn here would let the Chief's own tool calls run under
-    // whatever grant the person left switched on.
-    expect(teamIncidentTurnOptions("t-incidents")).toEqual({ threadId: "t-incidents", unattended: true });
-    const at = index.indexOf("function dispatchTeamIncident(");
-    expect(at, "dispatchTeamIncident has been renamed or removed").toBeGreaterThan(-1);
-    const body = index.slice(at, index.indexOf("\n}\n", at));
-    expect(body).toContain("teamIncidentTurnOptions(incident.threadId)");
-    expect(index.slice(index.indexOf("function reportTeamIncident("))).toContain("teamIncidentText(incident, count)");
-  });
-
-  it("re-dispatches what was deferred wherever a settled turn releases queued work", () => {
-    // The drain itself is RUN below. This is the one thing it cannot show
-    // about itself: that every place the harness already releases work queued
-    // behind a settled turn releases a waiting incident too. There are eight
-    // — the turn.completed fold and seven fallbacks for turns that never emit
-    // one (a dispatch failure, a room turn that never started, a killed turn,
-    // the grace timeout). Missing any of them strands the incident until some
-    // other turn happens to finish.
-    const lines = index.split("\n");
-    const settles = lines
-      .map((line, at) => ({ line, at }))
-      .filter(({ line }) => line.includes("drainSecretResumes();"));
-    expect(settles.length, "the settle-drain sites have moved").toBeGreaterThanOrEqual(8);
-    for (const { line, at } of settles) {
-      expect(`${line}\n${lines[at + 1] ?? ""}`, `line ${at + 1} releases queued work but not a waiting incident`)
-        .toContain("drainTeamIncidents();");
-    }
-    // and one of them is the turn.completed fold itself: the drain that runs
-    // when a turn ends the ordinary way, which is when the Chief's incidents
-    // thread actually becomes free.
-    const fold = index
-      .split("bus.subscribe(")
-      .find((block) => block.includes('event.type === "turn.completed"') && block.includes("drainConnectorResumes();"));
-    expect(fold, "the turn.completed drain fold has moved").toBeTruthy();
-    expect(fold!.slice(0, fold!.indexOf("\n});"))).toContain("drainTeamIncidents();");
-  });
-});
 
 // ── a burst of failures ────────────────────────────────────────────────────
 //
@@ -464,13 +416,6 @@ describe("what one failure actually rings", () => {
     expect(turnFailureBuzzes({ automationSource: "schedule" })).toBe(false);
     expect(turnFailureBuzzes({ commsDepth: 1 })).toBe(false);
     expect(turnFailureBuzzes({ cardContinuation: true })).toBe(false);
-  });
-
-  it("is the single test the dispatch catch uses, so it cannot drift from this file", () => {
-    const at = index.indexOf("buildNotification(\"turn-failed\"");
-    expect(at, "the turn-failed banner has moved").toBeGreaterThan(-1);
-    const gate = index.lastIndexOf("if (", at);
-    expect(index.slice(gate, at)).toContain("turnFailureBuzzes(opts)");
   });
 
   it("raises no banner directly either, because every caller has already told the person", () => {

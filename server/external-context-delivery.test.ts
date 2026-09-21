@@ -1,7 +1,7 @@
 // W13: a delegated teammate's reply used to cost the delegating bot its
 // whole provider session. These tests pin the replacement — deliver the
 // message, keep the session — and the accounting that makes it safe.
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -247,41 +247,23 @@ describe("task delivery accounting", () => {
   });
 });
 
-// The wiring, pinned at the source. A unit test of the plan cannot see the
-// call site, and the call site is where the defect actually lived.
-// Comments are stripped first: this must match code, never prose. Only
-// whole-line comments are removed, so a URL's "//" is never mistaken for one.
-function codeOf(path: string): string {
-  return readFileSync(new URL(path, import.meta.url), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
-}
-
-describe("server/index.ts wiring", () => {
-  const code = codeOf("./index.ts");
-
-  it("queues the delegated reply's own id rather than resetting the task", () => {
-    const fn = code.slice(code.indexOf("function markTaskContextExternallyUpdated"));
-    const body = fn.slice(0, fn.indexOf("\n}\n") + 3);
-    expect(body).toContain("recordTaskExternalUpdate");
-    expect(body).not.toContain("resumeCursors");
-    expect(body).not.toContain("lastInstanceId");
-  });
-
-  it("hands the plan to the turn prompt and consumes it at dispatch", () => {
-    expect(code).toContain("planExternalDelivery({");
-    expect(code).toContain("withExternalDelivery(");
-    expect(code).toContain("store.consumeTaskExternalUpdates(bot.id, threadId, externalDelivery.consumedIds)");
-  });
-
-  // The plan can only be honest if the call site tells it what its replay
-  // really carries, and that has to be the SAME list the replay is built
-  // from. Anything else (an empty list, a hand-rolled second filter) is the
-  // assumption finding 8 was about, wearing a parameter.
-  it("tells the plan exactly which ids its branch replay carries", () => {
-    expect(code).toContain("branchReplay: rewound || fresh ? { carriedIds: replayedMessages.map((m) => m.id) } : null");
-    expect(code).toContain("let transcript = replayedMessages.map(");
-  });
-});
+// THE WIRING, AND WHAT IS NO LONGER PROVEN ABOUT IT.
+//
+// Three tests used to sit here reading server/index.ts as text. One of them
+// pinned a 95-character source line including its whitespace:
+//
+//   branchReplay: rewound || fresh ? { carriedIds: replayedMessages.map((m) => m.id) } : null
+//
+// A guard that a formatter can break, and that a rewrite preserving the exact
+// behaviour would also break, is not evidence about behaviour. Nor is the
+// reverse: all three went green on the same expressions sitting in dead code.
+//
+// The plan is executed thoroughly above, including through a real Store and a
+// real restart, and including the delegation-failure chip that no replay can
+// carry. What the call site does with it is UNPROVEN: that
+// `markTaskContextExternallyUpdated` queues the reply's own id rather than
+// resetting the task, that the plan is handed to the turn prompt and consumed
+// at dispatch, and that the ids it is told about are the SAME list the replay
+// is built from. That last one is finding 8 itself, so the gap is a real one
+// and it is stated rather than papered over. Executing it means importing
+// server/index.ts, which boots a listening server on import.

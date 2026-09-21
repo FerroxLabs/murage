@@ -1231,25 +1231,21 @@ describe("the harness answers that question the way it dispatches", () => {
     expect(handoffCanStart(admission({ bot: () => null }), "gone", "t-source")).toBe(false);
   });
 
-  // The one thing the predicate cannot prove about itself: that the harness
-  // hands it the real collaborators and puts it on the bus. server/index.ts
-  // boots a server on import, so this is read as source with comments
-  // stripped — a test on this branch once matched a sentence in a comment and
-  // so enforced a claim the code did not make.
-  it("is wired to the real thread, room and ceiling checks, and onto the comms bus", () => {
-    const index = (() => {
-      const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-      return source.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-    })();
-    const at = index.indexOf("const handoffAdmission: HandoffAdmission = {");
-    expect(at, "the handoff admission collaborators have been renamed or removed").toBeGreaterThan(-1);
-    const body = index.slice(at, index.indexOf("\n};\n", at));
-    expect(body).toContain("directThreadBusy(botId, threadId)");
-    expect(body).toContain("activeGroupTurnForBot(botId)");
-    expect(body).toContain("MAX_CONCURRENT_BOT_THREADS");
-    // and the thread it asks about is the one runDelegatedTurn picks
-    expect(body).toContain("humanTask(store, botId, threadHumanPrincipal(sourceThreadId))");
-    expect(index).toContain("handoffCanStart(handoffAdmission, botId, sourceThreadId)");
-    expect(index).toContain("canStartHandoff: handoffCanStartNow");
-  });
+  // WHAT IS NO LONGER PROVEN, AND WHY IT IS BETTER SAID THAN FAKED.
+  //
+  // A test used to sit here reading server/index.ts as text and checking that
+  // `handoffAdmission` was built from `directThreadBusy`,
+  // `activeGroupTurnForBot`, `MAX_CONCURRENT_BOT_THREADS` and the thread
+  // `runDelegatedTurn` picks, and that `handoffCanStart` was called with it
+  // and put on the comms bus.
+  //
+  // It ran nothing. It matched text, so it went green on a call that had been
+  // commented out, moved into dead code or written differently, and red on a
+  // rename that changed nothing. Executing it means importing server/index.ts,
+  // which boots a listening server on import, so it cannot be driven from a
+  // unit suite without extracting the wiring first.
+  //
+  // `handoffCanStart` itself is tested thoroughly above, against every
+  // collaborator answering every way. That the harness hands it the REAL
+  // collaborators, and that the predicate is on the bus at all, is UNPROVEN.
 });
