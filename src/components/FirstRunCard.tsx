@@ -137,6 +137,7 @@ function FirstRunAgentsCard() {
  */
 function FirstRunSampleBriefCard() {
   const { view } = useSetupView();
+  const [whole, setWhole] = useState(false);
   const copy = FIRST_RUN_COPY.flux["sample-brief"];
   const html = useMemo(
     () => artifactPreviewHtml(renderBriefHtml(sampleBrief(view?.ownerName ?? ""))),
@@ -145,18 +146,59 @@ function FirstRunSampleBriefCard() {
   if (!view) return null;
 
   return (
-    <FirstRunBubble>
-      <FirstRunLine>{copy.body}</FirstRunLine>
-      <FirstRunLine>{copy.second}</FirstRunLine>
-      <iframe
-        title={copy.frameTitle}
-        sandbox=""
-        referrerPolicy="no-referrer"
-        srcDoc={html}
-        className="mt-3 h-[26rem] w-full rounded-xl border border-hairline/40 bg-white"
-      />
-      <FirstRunLine quiet>{copy.third}</FirstRunLine>
-    </FirstRunBubble>
+    // FULL WIDTH, AND NOT A BUBBLE.
+    //
+    // This card used to sit inside `FirstRunBubble`, which caps at 88% of a
+    // 42rem column, with the brief in a 26rem frame. Seen on a real machine
+    // that meant about a third of a page, cut off mid-sentence, with no way
+    // to reach the rest and the key card arriving directly underneath. The
+    // owner's words were that it "jumps past it", and the screenshot showed
+    // why: there was nothing there to stop at.
+    //
+    // The row is wrapped in `className="contents"` (ChatView), so this root
+    // is a direct child of the transcript's `flex w-full flex-col`. A `w-full`
+    // element with no max-width therefore spans the whole column, which is
+    // the only way out of the bubble that does not involve editing the four
+    // places that cap one.
+    //
+    // The Chief still SPEAKS in a bubble, because that is speech. What it
+    // hands over is a document, and a document gets the width of the page.
+    <div className="w-full">
+      <FirstRunBubble>
+        <FirstRunLine>{copy.body}</FirstRunLine>
+        <FirstRunLine>{copy.second}</FirstRunLine>
+      </FirstRunBubble>
+
+      <figure className="mt-3 w-full overflow-hidden rounded-2xl border border-hairline/50 bg-card">
+        <figcaption className="flex items-center justify-between gap-3 border-b border-hairline/40 px-4 py-2.5">
+          <span className="text-[12.5px] font-semibold uppercase tracking-[0.12em] text-ink-secondary">
+            {copy.sheetLabel}
+          </span>
+          <button
+            type="button"
+            className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
+            aria-expanded={whole}
+            onClick={() => setWhole((open) => !open)}
+          >
+            {whole ? copy.showLess : copy.showAll}
+          </button>
+        </figcaption>
+        <iframe
+          title={copy.frameTitle}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={html}
+          // Tall enough that the first decision is never cut in half, and an
+          // expanded height that clears the whole example rather than a
+          // guess at it.
+          className={`w-full bg-white ${whole ? "h-[82rem]" : "h-[40rem]"}`}
+        />
+      </figure>
+
+      <FirstRunBubble>
+        <FirstRunLine quiet>{copy.third}</FirstRunLine>
+      </FirstRunBubble>
+    </div>
   );
 }
 

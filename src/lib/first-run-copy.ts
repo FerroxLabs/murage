@@ -141,6 +141,11 @@ export const FIRST_RUN_COPY = {
       second: "The day in it is made up. The shape of it is real, and so is the one you would get.",
       third: "Yours arrives at a time you pick, and it learns what matters to you as we go.",
       frameTitle: "An example morning brief",
+      /** The sheet is labelled so it reads as a thing that was handed over
+       *  rather than as more of the same conversation. */
+      sheetLabel: "An example brief",
+      showAll: "Show the whole thing",
+      showLess: "Show less",
     },
     key: {
       title: "One key worth having",
