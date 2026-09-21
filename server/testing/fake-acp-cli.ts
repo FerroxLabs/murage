@@ -14,6 +14,8 @@
 //                   | tool-image  two completed tool calls whose output carries
 //                     an image: a custom MCP server's, and the computer
 //                     surface's (a live frame, not a deliverable)
+//                   | computer-exec-image  the computer surface called with a
+//                     shell command in its arguments, answering with a frame
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -493,6 +495,17 @@ function playToolImageTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-screen", title: "mcp__computer__screenshot" } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-screen", status: "completed",
     content: [{ type: "content", content: { type: "image", data: SCREEN_PIXEL_PNG, mimeType: "image/png" } }] } } });
+}
+
+/** Murage's own computer surface, reached through ACP with a shell command in
+ * its arguments (`computer_exec`). The chip deliberately reads as the command
+ * — that is what a person wants to see — but the frame the call answers with
+ * is still a live screen preview, not a deliverable. */
+function playComputerExecImageTurn() {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-exec", title: "mcp__computer__computer_exec",
+    rawInput: { command: "firefox", observe: true } } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-exec", status: "completed",
+    content: [{ type: "content", content: { type: "text", text: "exit 0" } }, { type: "content", content: { type: "image", data: SCREEN_PIXEL_PNG, mimeType: "image/png" } }] } } });
 }
 
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
@@ -1111,6 +1124,7 @@ function handle(msg: any) {
       } else if (mode === "interleave") playInterleaveTurn();
       else if (mode === "wrapped-tool") playWrappedToolTurn();
       else if (mode === "tool-image") playToolImageTurn();
+else if (mode === "computer-exec-image") playComputerExecImageTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with

@@ -76,6 +76,27 @@ export function resolveToolLabel(title: unknown, rawInput: unknown): ToolLabel {
   return summary ? { name, summary } : { name };
 }
 
+/**
+ * The tool that actually ran, for decisions a chip's wording must not steer.
+ *
+ * `resolveToolLabel` is a DISPLAY helper and deliberately does not answer this
+ * question: a call carrying `command` is shown as its shell command, because
+ * the command is the useful thing for a person to read. Anything that has to
+ * classify the tool — retention, admission, gating — must not read that.
+ * An ACP `computer_exec` running `firefox` is still Murage's computer surface;
+ * labelled "firefox" it stops looking like one, and the live screen frame it
+ * answers with becomes a permanent file.
+ *
+ * Returns the name the engine called, never an argument it was called with,
+ * or undefined when the update carries no name at all.
+ */
+export function resolveToolIdentity(title: unknown, rawInput: unknown): string | undefined {
+  const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? (rawInput as Record<string, unknown>) : undefined;
+  const inner = input?.tool_name ?? input?.toolName;
+  if (typeof inner === "string" && inner.trim()) return clean(bareToolName(inner), MAX_NAME) || clean(inner, MAX_NAME);
+  return typeof title === "string" && title.trim() ? clean(title, MAX_NAME) : undefined;
+}
+
 const MAX_FAILURE = 4000;
 
 /** ACP hands a failed tool's reason back in one of three shapes depending on

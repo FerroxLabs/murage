@@ -148,6 +148,24 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     });
   });
 
+  // Retention was being decided on the chip's name, and the chip shows a
+  // shell command in place of the tool for any call that carries one. A
+  // `computer_exec` running `firefox` therefore stopped matching the screen
+  // surface it is, and its live frame became a permanent Files artifact.
+  it("withholds the computer surface's frame even when the chip reads as the shell command", async () => {
+    process.env.FAKE_ACP_MODE = "computer-exec-image";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-custom-computer-exec", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // the chip still says what it ran — that part is the point of the label
+    const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
+    expect(started).toMatchObject({ title: "firefox" });
+
+    const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
+    expect(images).toEqual([]);
+  });
+
   it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();
