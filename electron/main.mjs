@@ -609,6 +609,56 @@ function receiveDesktopSurfaceSecret(message) {
   return true;
 }
 
+/**
+ * The secret, including on a run where we did not fork the harness.
+ *
+ * THE BUG THIS FIXES. `desktopSurfaceSecret` arrives over the utility-process
+ * channel, and that channel only exists when the PACKAGED app forked the
+ * harness itself (`startServerPackaged`, guarded by `app.isPackaged`). Start
+ * the harness separately, which is how the app is run in development and
+ * against a built bundle, and this process never receives one. Every
+ * credential handler then refuses with "Desktop authorization is not ready.
+ * Try again shortly." forever, because nothing is ever going to make it
+ * ready. Connecting Flux Router was impossible on that run.
+ *
+ * The renderer already had exactly this problem and already solved it this
+ * way: see the long note in src/lib/live-events.ts. It asks the harness for
+ * the secret over `/api/desktop-secret`. Main had simply never been given the
+ * same fallback, so the renderer believed it was the desktop while this
+ * process could not prove it.
+ *
+ * This opens nothing, and deliberately does not rely on an environment flag
+ * to be safe. Two independent structural locks stand in front of it:
+ *
+ *   We refuse to ask at all once packaged, so a shipped app uses the forked
+ *   child's channel and nothing else.
+ *
+ *   The route itself 404s whenever the harness is a packaged utility child
+ *   (`devDesktopSecretOffered`, server/sse-visibility.ts:66, which is false
+ *   whenever `parentPort` exists or MURAGE_DESKTOP_PARENT is set). So even if
+ *   the first lock were removed, a shipped harness would refuse to answer.
+ *
+ * Awaited at each gate rather than at boot: in development the harness may
+ * still be starting when the window opens, and a one-shot attempt at launch
+ * would fail and leave the process permanently unauthorized again.
+ */
+async function ensureDesktopSurfaceSecret() {
+  if (desktopSurfaceSecret) return desktopSurfaceSecret;
+  if (app.isPackaged) return "";
+  try {
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/desktop-secret`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return "";
+    const body = await response.json().catch(() => null);
+    if (typeof body?.secret === "string" && body.secret) desktopSurfaceSecret = body.secret;
+  } catch {
+    // The harness is not up yet, or does not offer the handshake. Either way
+    // the caller reports "not ready", which is now true rather than forever.
+  }
+  return desktopSurfaceSecret;
+}
+
 let CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
 let restoredConnections = null;
 function configureRestoredDesktopConnections() {
@@ -3046,7 +3096,7 @@ const CREDENTIAL_PATCH = {
 // Private harness routes gated by the per-launch commit token that only this
 // process holds, in addition to the desktop surface proof.
 async function modelProviderCommitRequest(route, { method = "POST", body, failure }) {
-  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
     method,
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` },
@@ -3079,7 +3129,7 @@ const providerBankReconciliation = createProviderBankReconciliation({
 });
 
 ipcMain.handle("flux-connection:mutate", async (_event, input) => {
-  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
   return mutateFluxCredentials(input, {
     packaged: app.isPackaged,
@@ -3112,7 +3162,7 @@ ipcMain.handle("composio:claim-legacy", async () => {
 });
 
 ipcMain.handle("model-provider:mutate", async (_event, input) => {
-  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
   return mutateProviderCredentials(input, {
     packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument, createId: randomUUID,
@@ -3135,7 +3185,7 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
     // cannot receive credentials from Electron at boot. Keep its established
     // local config path there; Slack and production always use the encrypted store.
     const secretStorage = encryptedOnly ? "?secretStorage=external" : "";
-    if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Wait and retry saving the credential.");
+    if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Wait and retry saving the credential.");
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
       method: "PUT",
       headers: {
