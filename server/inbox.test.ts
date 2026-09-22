@@ -395,3 +395,72 @@ it("does not let a tab for requests fill up with things that happened", () => {
   expect(counts.approvals + counts.questions + counts.connections).toBe(0);
   expect(listInbox(db, { view: "routines" }, access, now).total, "they are still reported").toBe(2);
 });
+
+// THE CREDENTIAL NOTHING ELSE IN THE PRODUCT IS LOOKING FOR.
+//
+// A connector is checked while somebody watches it being authorized and
+// never again. The only code that creates one is an endpoint the bot POSTs
+// to, and the live re-check is polled by the card while it is on screen.
+// Nothing sweeps in the background.
+//
+// So a token that dies three weeks after it was connected, during a run at
+// three in the morning, leaves ONE trace anywhere: the error on that run.
+// Before this it reached the owner as a line of grey text on a routine row
+// that deliberately never badges, which is another way of saying it did not
+// reach him.
+it("raises a dead credential that only the runs know about", () => {
+  const { db } = fixture(), T0 = 1_758_500_000_000, HOUR = 3_600_000, now = T0 + 9 * HOUR;
+  runRow(db, "moss", "Gmail triage", 0, T0 + 5 * HOUR, true, DEAD_TOKEN);
+  runRow(db, "moss", "Inbox sweep", 0, T0 + 6 * HOUR, true, DEAD_TOKEN);
+
+  const page = listInbox(db, { view: "connections" }, morning, now);
+  expect(page.restore, "one row, naming everything stopped behind it").toMatchObject([
+    { routines: ["Inbox sweep", "Gmail triage"], bots: ["Moss (Secretary)"] },
+  ]);
+  expect(page.connections, "and it is a number he can act on").toBe(1);
+  expect(page.decisions, "in the umbrella too, or the parts stop summing").toBe(1);
+  expect(page.approvals + page.questions + page.connections).toBe(page.decisions);
+});
+
+it("stops asking the moment a run works again", () => {
+  // It clears ITSELF, which is why it is allowed to badge at all and the
+  // signed-out activity row is not. The verdict is the last run.
+  const { db } = fixture(), T0 = 1_758_500_000_000, HOUR = 3_600_000, now = T0 + 9 * HOUR;
+  runRow(db, "moss", "Gmail triage", 0, T0 + 5 * HOUR, true, DEAD_TOKEN);
+  expect(listInbox(db, {}, morning, now).decisions).toBe(1);
+  runRow(db, "moss", "Gmail triage", 1, T0 + 6 * HOUR, false, "Sorted");
+  const after = listInbox(db, {}, morning, now);
+  expect(after.decisions, "reconnected, so nothing is owed").toBe(0);
+  expect(after.restore).toBeUndefined();
+});
+
+// THE TWO NEGATIVE CONTROLS, AND THE FIRST ONE IS THE EXPENSIVE ONE.
+it("does not ask twice for the same dead connection", () => {
+  // The morning fixture already carries both a pending connector card and a
+  // routine failing on the same dead Gmail. Wiring this counted it twice and
+  // that test went from three owed things to four. This is a LAST RESORT
+  // detector: when something is already asking, it says nothing.
+  const { db } = fixture(), T0 = 1_758_500_000_000, HOUR = 3_600_000, now = T0 + 9 * HOUR;
+  runRow(db, "moss", "Gmail triage", 0, T0 + 5 * HOUR, true, DEAD_TOKEN);
+  put(db, { id: "reconnect", at: T0 + 8 * HOUR, kind: "connector",
+    connector: { resumeKey: "gmail-resume", slug: "gmail", status: "pending" } }, "moss");
+  const page = listInbox(db, {}, morning, now);
+  expect(page.connections, "the card is the ask; this stays quiet behind it").toBe(1);
+  expect(page.decisions).toBe(1);
+  expect(page.restore).toBeUndefined();
+});
+
+it("never raises provider weather, however long it lasts", () => {
+  // Rule 2, and the reason the cause is read before anything is raised. A
+  // provider having a bad week needs patience, not the owner, and a badge
+  // that means "wait" is the badge this redesign exists to remove.
+  const { db } = fixture(), T0 = 1_758_500_000_000, HOUR = 3_600_000, now = T0 + 9 * HOUR;
+  for (let index = 0; index < 12; index += 1) {
+    runRow(db, "dax", "RWA night watch", index, T0 + index * 1_800_000, true, OVERLOAD);
+  }
+  const page = listInbox(db, {}, morning, now);
+  expect(page.decisions, "twelve failures and nothing owed").toBe(0);
+  expect(page.restore).toBeUndefined();
+  expect(listInbox(db, { view: "routines" }, morning, now).routines, "still reported, loudly")
+    .toMatchObject([{ routineName: "RWA night watch", verdict: "stuck", cause: "upstream" }]);
+});

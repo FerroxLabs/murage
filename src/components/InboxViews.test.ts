@@ -188,3 +188,35 @@ describe("when the nothing-here panel belongs on screen", () => {
     }
   });
 });
+
+// "EVERYTHING IS CONNECTED", OVER A ROW SAYING A LOGIN HAS DIED.
+//
+// The dead credential raised from routine failures has no message under it,
+// so it is not in the card list the empty panel reads. The same shape of
+// mistake as the routines tab: a purpose-built row the emptiness test does
+// not know about.
+describe("the nothing-here panel and the rows that are not items", () => {
+  const one = [{}];
+
+  it("stays away when a connection has been raised", () => {
+    expect(inboxShowsEmpty("connections", [], [], one)).toBe(false);
+    expect(inboxShowsEmpty("decisions", [], [], one)).toBe(false);
+  });
+
+  it("still appears when there is genuinely nothing", () => {
+    // The control. A panel that never appears is as wrong as one that always
+    // does: "Everything is connected" is the sentence somebody needs when it
+    // is true.
+    expect(inboxShowsEmpty("connections", [], [], [])).toBe(true);
+    expect(inboxShowsEmpty("decisions", [], [], [])).toBe(true);
+  });
+
+  it("leaves the routines tab reading its own rollup", () => {
+    // Routines is the one view that ignores this entirely: its emptiness is
+    // the rollup's, and a raised connection must not make an empty routines
+    // list look full. The server sends `restore` only to connections and
+    // decisions, so the other tabs never meet it at all.
+    expect(inboxShowsEmpty("routines", [], [], one)).toBe(true);
+    expect(inboxShowsEmpty("routines", [], one, [])).toBe(false);
+  });
+});

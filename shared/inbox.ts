@@ -68,8 +68,8 @@ export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "mi
 // be a second thing to keep in step. If a VALUE is ever needed on the client,
 // move the declarations into their own shared module rather than making this
 // a runtime import.
-import type { RoutineRollup } from "../server/inbox-rollup.ts";
-export type { RoutineRollup };
+import type { ConnectionToRestore, RoutineRollup } from "../server/inbox-rollup.ts";
+export type { ConnectionToRestore, RoutineRollup };
 
 export interface InboxLink { threadId: string; messageId: string; runId?: string; artifactId?: string }
 export interface InboxItem {
@@ -110,6 +110,13 @@ export interface InboxPage {
   approvals: number;
   /** Judgements wanted, with nothing drafted yet. */
   questions: number;
+  /** A CONNECTION THAT ONLY THE RUNS KNOW IS DEAD. Present on the views that
+   *  can act on it. Nothing re-checks a connector once it is connected, so a
+   *  token that expires between uses is visible nowhere else in the product;
+   *  this reads it out of the failures it caused. Counted in `connections`
+   *  and in `decisions`, and it clears itself, because the verdict is the
+   *  last run: one successful run and it is gone. */
+  restore?: ConnectionToRestore[];
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of

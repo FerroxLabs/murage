@@ -244,7 +244,10 @@ export function rollUpRoutineRuns(
 export interface ConnectionToRestore {
   /** Stable enough to key a list on, and to carry a read mark later. */
   id: string;
-  /** Routine names this has stopped, in the order they broke. */
+  /** Routine names this has stopped, MOST RECENTLY AFFECTED FIRST, because
+   *  that is the order `rollUpRoutineRuns` returns and this walks it once.
+   *  It used to say "in the order they broke", which is the opposite end of
+   *  the same list and was never what the code did. */
   routines: string[];
   /** Distinct bots affected, so the row can say "three bots" honestly. */
   bots: string[];
@@ -252,34 +255,37 @@ export interface ConnectionToRestore {
   since: number;
   /** One sentence naming what a person has to do. */
   detail: string;
+  /** The most recent run this stopped, so the row is not a dead end. There
+   *  is no connector card to open (that is the whole reason this exists), so
+   *  the run carrying the error is the only thing there is to show. */
+  link?: { threadId: string; messageId: string };
 }
 
-// NOT WIRED YET, AND SAYING SO HERE BECAUSE A TESTED EXPORT LOOKS DELIVERED.
+// WIRED INTO THE CONNECTIONS AND DECISIONS VIEWS, AS A ROW OF ITS OWN.
 //
-// listInbox() rolls the runs up and returns them for the Routines view; it
-// does not call this, so nothing this function finds reaches the Inbox. The
-// dead credential it exists for is usually ALSO reported as its own
-// `connector` / `secret` / auth-required `activity` message, and those do
-// land in Connections and do badge — so the Inbox is not blind to it. What
-// is missing is the case where the only evidence is 401s in routine run
-// errors, and today that surfaces only as "Stopped, needs reconnecting" on
-// the routine's own row, which never badges.
+// It is deliberately NOT an InboxItem. There is no message underneath it, so
+// it has no read mark, no snooze and nothing to open, and giving it the item
+// shape would have meant inventing all three. It is a purpose-built row, the
+// same as the routine rows.
 //
-// TWO HONEST WAYS TO FINISH IT, and they differ in more than effort:
-//   - raise it as a synthesized Connections item, which means an Inbox row
-//     with no message behind it and therefore no read mark, no snooze and no
-//     "open the source" — a new shape the item model does not have; or
-//   - delete this and rely on the connector/secret path, accepting that a
-//     credential that dies silently is found a day later.
-// That is the owner's call, not a thing to settle by leaving it half done.
+// IT IS A LAST RESORT, NOT A SECOND OPINION. listInbox raises it only when no
+// connection is already owed. The morning fixture carries both a pending
+// connector card and a routine failing on the same dead Gmail, and wiring
+// this without that rule counted one dead credential twice.
 //
-// It also merges every connection cause into ONE row. Rule 3 says one cause
-// one row, and the runs do not carry WHICH connection died, so one row is
-// the most honest available answer rather than the stated rule.
+// AND IT IS ALLOWED TO BADGE, which the signed-out `activity` row is not,
+// for one reason: it clears itself. The verdict is the last run, so one
+// successful run and this returns nothing. A row that cannot reach zero is
+// how the badge became unreadable in the first place.
+//
+// It still merges every connection cause into ONE row. Rule 3 says one cause
+// one row, and a run error says "401 unauthorized" while naming no
+// connector, so one row is the most honest answer the evidence supports.
 export function connectionsToRestore(rollups: readonly RoutineRollup[]): ConnectionToRestore[] {
   const routines: string[] = [];
   const bots = new Set<string>();
   let since = Number.POSITIVE_INFINITY;
+  let link: { threadId: string; messageId: string } | undefined;
 
   for (const rollup of rollups) {
     // ONLY `connection`. Not `upstream`, which fixes itself, and not
@@ -288,6 +294,9 @@ export function connectionsToRestore(rollups: readonly RoutineRollup[]): Connect
     routines.push(rollup.routineName);
     bots.add(rollup.botLabel);
     since = Math.min(since, rollup.failingSince ?? rollup.lastAt);
+    // The first one wins: rollups arrive most recent first, so this is the
+    // freshest evidence of the fault.
+    link ??= rollup.link;
   }
 
   if (routines.length === 0) return [];
@@ -299,5 +308,6 @@ export function connectionsToRestore(rollups: readonly RoutineRollup[]): Connect
     detail: routines.length === 1
       ? `A connection ${routines[0]} depends on is no longer authorized.`
       : `A connection ${routines.length} routines depend on is no longer authorized.`,
+    ...(link ? { link } : {}),
   }];
 }

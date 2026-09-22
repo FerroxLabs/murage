@@ -131,8 +131,17 @@ export function inboxCardItems(view: InboxView, items: readonly InboxItem[]): re
  *  were suppressed its card list is always empty and the panel would have
  *  printed "your routines have not run yet" underneath four routines that
  *  plainly had. Its emptiness is the rollup's. */
-export function inboxShowsEmpty(view: InboxView, cards: readonly unknown[], routines: readonly unknown[]): boolean {
-  return view === "routines" ? routines.length === 0 : cards.length === 0;
+export function inboxShowsEmpty(
+  view: InboxView,
+  cards: readonly unknown[],
+  routines: readonly unknown[],
+  restore: readonly unknown[] = [],
+): boolean {
+  if (view === "routines") return routines.length === 0;
+  // A dead credential raised from routine failures has no message under it,
+  // so it is not in `cards`. Without this, the one row that says a login has
+  // died would sit underneath "Everything is connected."
+  return cards.length === 0 && restore.length === 0;
 }
 
 /** "9 min", "4 hours", "3 days". A request that has been waiting since
@@ -205,6 +214,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   const chooseView = (next: InboxView) => { setView(next); setPage(0); };
   const list = inboxCardItems(view, result?.items ?? []);
   const routineRows = result?.routines ?? [];
+  const restoreRows = result?.restore ?? [];
   // The live card for each waiting request on this page, keyed by message id.
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
@@ -262,12 +272,32 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     {/* Routines draws its own list, so its emptiness is the rollup's, not
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
-    {!busy && result && inboxShowsEmpty(view, list, routineRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {!busy && result && inboxShowsEmpty(view, list, routineRows, restoreRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
     {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
         The owner's thirty six rows were four routines. A run that failed and
         then ran again fine says "Recovered" and asks for nothing; a routine
         that is still down says so and names why. Nothing here is counted:
         see INBOX_VIEWS. */}
+    {/* A CONNECTION THAT ONLY THE RUNS KNOW IS DEAD.
+        Nothing re-checks a connector once it is connected, so a token that
+        expires between uses is invisible everywhere else in the product.
+        This is read out of the failures it caused, so it is a row of its own
+        rather than an item: there is no message under it to open, read or
+        snooze. The run carrying the error is the only evidence there is, so
+        that is what it offers. */}
+    {restoreRows.length > 0 && (
+      <ul className="mb-3 space-y-2" aria-label="Connections to restore">
+        {restoreRows.map(row => (
+          <li key={row.id} className="rounded-xl border border-warning/40 bg-warning/5 p-3 text-[13px]">
+            <p className="font-medium text-ink">{row.detail}</p>
+            <p className="mt-1 text-ink-secondary">
+              Stopped: {row.routines.join(", ")}. {row.bots.length === 1 ? row.bots[0] : `${row.bots.length} bots`} cannot carry on until it is reconnected.
+            </p>
+            {row.link && <button className={`${button} mt-2`} onClick={() => onOpen(row.link!)}>Open the run that failed</button>}
+          </li>
+        ))}
+      </ul>
+    )}
     {view === "routines" && routineRows.length > 0 && (
       <ul className="mb-3 space-y-2" aria-label="Routines">
         {routineRows.map(routine => (

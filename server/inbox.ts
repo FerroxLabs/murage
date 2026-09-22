@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
 import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { type RoutineRunFact, rollUpRoutineRuns } from "./inbox-rollup.ts";
+import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
 
 /** The two status lists as SQL literals. Built from the shared constants so
  *  the query, the counts and the tabs cannot drift: a status added in one
@@ -318,14 +318,53 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // the badge quiet rather than crying wolf, and the row itself still shows
   // as unread once the list is open.
   const toReadCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE to_read=1 AND read_version IS NULL AND ${live}`).get(allowed, now)?.n ?? 0);
+  // THE DEAD CREDENTIAL NOTHING ELSE IN THE SYSTEM IS LOOKING FOR.
+  //
+  // A connector is checked when somebody is watching it being authorized and
+  // never again: the only caller that creates one is an endpoint the bot
+  // POSTs to, and the live re-check is polled by the card while it is on
+  // screen. Nothing sweeps in the background. So a token that dies three
+  // weeks after it was connected, during an unattended run at three in the
+  // morning, leaves exactly one trace anywhere in this product: the error on
+  // that run. `connectionsToRestore` reads it, and is the only thing that
+  // does.
+  //
+  // Computed once and shared, because `routines` wants the same rollup and
+  // this runs on the view the sidebar polls.
+  const rollups = view === "routines" || view === "connections" || decisions
+    ? rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now), now)
+    : null;
+  // AND IT ASKS ONLY WHEN NOBODY ELSE IS ASKING.
+  //
+  // This is a LAST RESORT detector, not a second opinion. When a connector
+  // card is already sitting at 'pending' the owner is already being told to
+  // reconnect something, and raising this as well counts one dead Gmail
+  // twice: the existing morning fixture has both, and went from three owed
+  // things to four the moment this was wired.
+  //
+  // The suppression is deliberately coarse because the evidence is. A run
+  // error says "401 unauthorized" and names no connector, so there is no
+  // slug to match against the card; and this raises ONE row for every
+  // connection cause anyway. Coarse evidence, coarse rule, and it errs
+  // towards asking once rather than twice.
+  const restore = rollups && connectionCount === 0 ? connectionsToRestore(rollups) : [];
   return { items: rows.map(row => item(row, access)), total, page, pageSize,
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
-    decisions: decisionCount, toRead: toReadCount,
-    approvals: approvalCount, questions: questionCount, connections: connectionCount,
+    // IT IS ADDED TO BOTH OR IT IS ADDED TO NEITHER. The three segment counts
+    // sum to the umbrella, and that invariant is the one this Inbox has
+    // already broken once: a number in `connections` that is missing from
+    // `decisions` puts a badge on a tab the sidebar total cannot explain.
+    decisions: decisionCount + restore.length, toRead: toReadCount,
+    approvals: approvalCount, questions: questionCount, connections: connectionCount + restore.length,
     // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
     // owner's thirty six rows were four routines; the tab says "one line per
     // routine, not per run" and this is that sentence kept in data.
-    ...(view === "routines" ? { routines: rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now), now) } : {}) };
+    ...(view === "routines" && rollups ? { routines: rollups } : {}),
+    // Not an InboxItem, deliberately. There is no message under it, so it has
+    // no read mark, no snooze and nothing to open: giving it the item shape
+    // would mean inventing all three. It is a purpose-built row, exactly like
+    // the routine rows above it.
+    ...(restore.length > 0 ? { restore } : {}) };
 }
 
 /** State updates cannot change source status, approve requests or run tools. */
