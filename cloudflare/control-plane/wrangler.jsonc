@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "murage-control-plane",
   "main": "src/index.ts",
-  "account_id": "0c92969a82eb9e173b013a7e7a02333d",
+  "account_id": "b83123326a4b9ad76831b9cb9365b33b",
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
@@ -14,11 +14,19 @@
   ],
   "vars": {
     "BETTER_AUTH_URL": "https://accounts.murage.ai",
-    "EMAIL_FROM": "noreply@murage.com",
+    "EMAIL_FROM": "noreply@murage.ai",
     "ALLOWED_ORIGINS": "",
-    "CLOUDFLARE_ACCOUNT_ID": "0c92969a82eb9e173b013a7e7a02333d",
-    "CLOUDFLARE_ZONE_ID": "bae08399bb6f96eb7266c65ac0057eee",
-    "COMPANION_HOST_SUFFIX": "murage.com",
+    "CLOUDFLARE_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
+    "CLOUDFLARE_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
+    // ONE DOMAIN. This block used to mix murage.ai (the route and the auth
+    // URL) with murage.com (the sender and the companion hosts), which meant
+    // Cloudflare's send_email binding would have been asked to send from a
+    // zone this account does not hold. `murage.com` appeared NOWHERE else in
+    // the product — not in the app, the server or electron — and no control
+    // plane had ever been deployed, so no companion endpoint existed on it to
+    // break. The shipped app hardcodes https://accounts.murage.ai as its
+    // default announcements endpoint, so .ai is the one that is load bearing.
+    "COMPANION_HOST_SUFFIX": "murage.ai",
     // Which Sendlane list the onboarding signup lands on. A list id is
     // configuration, not a secret, so it sits here in plaintext; the two write
     // credentials for that account are secrets below and have no default.
@@ -36,14 +44,14 @@
     {
       "binding": "DB",
       "database_name": "murage-control-plane",
-      "database_id": "8a7c34ed-5428-4ae2-8722-fef2fe9bf160",
+      "database_id": "5b7763a9-6674-451e-a5ba-4ba49ab30014",
       "migrations_dir": "migrations"
     }
   ],
   "send_email": [
     {
       "name": "EMAIL",
-      "allowed_sender_addresses": ["noreply@murage.com"]
+      "allowed_sender_addresses": ["noreply@murage.ai"]
     }
   ],
   "triggers": {
