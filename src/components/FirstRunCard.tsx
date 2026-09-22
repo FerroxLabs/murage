@@ -462,6 +462,15 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
   // sign-in finished in another window empties this list and the card stops
   // asking for something that is already done.
   const waiting = view?.signedOutAgents ?? [];
+  // WHAT THERE IS TO CARRY ON WITH, WHICH IS NOT THE SAME QUESTION AS WHAT IS
+  // INSTALLED. `copy.third` says "what is already running carries on either
+  // way", and on a machine whose only engine is the signed-out one there is
+  // nothing running to carry on: `agents` is already filtered by `runnable()`,
+  // so an empty list IS that machine. The same reading as `canCarryOn` in
+  // FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard`, for the same
+  // reason: a sentence of reassurance that is false is worse than no
+  // reassurance, because the next thing they ask for fails.
+  const canCarryOn = (view?.agents.length ?? 0) > 0;
   if (!view) return null;
   if (waiting.length === 0) {
     return (
@@ -484,7 +493,7 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
     <FirstRunBubble>
       <FirstRunLine>{signedOutAgentsLine(waiting.map((agent) => agent.name))}</FirstRunLine>
       <FirstRunLine>{copy.second}</FirstRunLine>
-      <FirstRunLine>{copy.third}</FirstRunLine>
+      <FirstRunLine>{canCarryOn ? copy.third : copy.thirdBare}</FirstRunLine>
       {!settled && !shown && commands.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button

@@ -328,6 +328,57 @@ describe("card two: what is already here", () => {
     expect(render("detect", "signed-out"), "signed in already").toContain(copy.action);
   });
 
+  /**
+   * THE DEFECT: "WHAT IS ALREADY RUNNING CARRIES ON" SAID TO A MACHINE WHERE
+   * NOTHING IS RUNNING.
+   *
+   * `agents["signed-out"].third` was rendered unconditionally. It is written
+   * for somebody whose signed-out Codex sits BESIDE a working engine, where
+   * leaving it really does cost them nothing. On a machine whose only engine
+   * is the signed-out one, `view.agents` is empty, nothing can answer, and
+   * the card told that person their assistant was working while the next
+   * thing they asked it for was going to fail. Same shape as the claim this
+   * card was built to end.
+   *
+   * `agents` is already filtered by `runnable()` on the server, so an empty
+   * list IS "nothing is running" and no second reading is needed. The guard
+   * is `view.agents.length > 0`, which is what `canCarryOn` in
+   * FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard` already read.
+   */
+  const signedOut = FIRST_RUN_COPY.agents["signed-out"];
+
+  it("never tells a machine with nothing running that something carries on", async () => {
+    await machine({
+      ownerName: "Sean",
+      nothingToThinkWith: false,
+      agents: [],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    const markup = render("detect", "signed-out");
+    expect(markup, "nothing is running here and the card said something was")
+      .not.toContain(asHtml(signedOut.third));
+    // AND IT STILL SAYS SOMETHING. Deleting the line would pass the assertion
+    // above and leave the card two sentences long with no answer to "what
+    // happens if I leave it", so the replacement is required, not optional.
+    expect(markup, "the false line was removed and nothing took its place")
+      .toContain(asHtml(signedOut.thirdBare));
+    // The rest of the card is untouched: this is one sentence, not a variant.
+    expect(markup).toContain(asHtml(signedOut.second));
+    expect(markup).toContain(copy.action);
+  });
+
+  it("still tells a machine that has an engine that it carries on", async () => {
+    await machine({
+      ownerName: "Sean",
+      nothingToThinkWith: false,
+      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
+    });
+    const markup = render("detect", "signed-out");
+    expect(markup, "a machine that really does carry on lost the line").toContain(asHtml(signedOut.third));
+    expect(markup).not.toContain(asHtml(signedOut.thirdBare));
+  });
+
   // THE CARD THAT USED TO BE THE FLUX STEP'S OPENING ON A BLANK MACHINE.
   //
   // This test used to say "puts no detection control on the Flux step's own

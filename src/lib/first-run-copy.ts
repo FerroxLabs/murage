@@ -300,6 +300,25 @@ export const FIRST_RUN_COPY = {
     "signed-out": {
       second: "Sign in and it is yours to use in here, working exactly as it does on its own.",
       third: "Or leave it. What is already running carries on either way.",
+      /**
+       * THE SAME REASSURANCE ON A MACHINE WITH NOTHING RUNNING IS A LIE.
+       *
+       * `third` is written for somebody whose signed-out Codex sits beside a
+       * working engine: leaving it costs them nothing because something else
+       * is answering. On a machine whose ONLY engine is the signed-out one,
+       * `view.agents` is empty, nothing is answering, and "what is already
+       * running carries on either way" tells that person their assistant is
+       * working when the next thing they ask it to do will fail. That is the
+       * exact defect this whole card exists to end: a screen claiming a
+       * capability the machine does not have.
+       *
+       * So the reading is `view.agents.length > 0`, the same one `canCarryOn`
+       * in FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard` already
+       * take, and this is what is said instead. It stays a no-pressure line
+       * rather than becoming a demand, because the school framing is banned
+       * here too; what it drops is the false comfort.
+       */
+      thirdBare: "There is nothing else running on this computer, so nothing carries on without it. Signing in is the one thing that puts me to work.",
       action: "Help me sign in",
       /** Named, because two engines mean two commands and an unlabelled pair
        *  of them is a puzzle. */
