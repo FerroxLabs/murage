@@ -12,6 +12,7 @@ import { parse as parseYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
+import { quietChildPipes } from "../../child-pipe-quiet.mjs";
 import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
@@ -404,6 +405,25 @@ async function fetchHermesAcpModels(
     } catch {
       return resolve([]);
     }
+    // THIS PROBE ENDED THE OWNER'S SERVER ON 2026-09-22 AT 05:43:42Z.
+    //
+    // It is the one place in the drivers that spawns raw instead of going
+    // through `spawnCli`, and `spawnCli` is where the stdin guard lives
+    // (server/procs.ts) — put there by somebody who hit this same class on
+    // Windows and reasoned it through correctly. Bypassing that helper
+    // bypassed the guard with it.
+    //
+    // `send` below writes to this child's stdin from inside the stdout
+    // handler, chaining initialize → authenticate → session/new. If the CLI
+    // goes away mid-chain the write gets EPIPE, the pipe emits `'error'` with
+    // nobody listening, and the harness exits — taking every bot, the
+    // browser, memory, tools and the phone with it, over a MODEL CATALOGUE
+    // PROBE that nothing was waiting on. The owner was not even using this
+    // engine; the probe runs on a timer.
+    //
+    // The `writable` check and the write callback further down do not prevent
+    // it and never could. See child-pipe-quiet.mjs.
+    quietChildPipes(child);
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
