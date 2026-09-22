@@ -249,3 +249,62 @@ it("turns a morning of routine runs into one row per routine, and badges only wh
   // pays to compute it.
   expect(listInbox(db, { view: "decisions" }, morning, now).routines).toBeUndefined();
 });
+
+// THE BADGE SAID ONE AND EVERY TAB SAID NONE.
+//
+// `decisions` counts everything owed. The three tabs under it count by
+// SEGMENT. Those two facts only agree while every owed thing has a segment
+// one of the three tabs can show, and a routine run did not: a room goal
+// coming back `needs-input` is parked by routines.ts at status 'waiting'
+// with "The team needs your input" on it, which is owed, and it carried the
+// segment 'routine', which is not counted anywhere.
+//
+// So the sidebar said one thing was waiting, Approvals said none, Decisions
+// said none, Connections said none, and the only way to reach it was to
+// scroll the umbrella. That is the defect the whole redesign exists to
+// remove, rebuilt out of arithmetic.
+//
+// There was a test for this. It added up a hand-written page object whose
+// numbers I had chosen to sum, so it could never have failed. This one runs
+// the real query against a real row.
+it("counts nothing under an umbrella no tab can lift", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  put(db, { id: "run", at: now - 60_000, kind: "routine.run",
+    routineRun: { runId: "r1", routineName: "Morning digest", status: "waiting", goalStatus: "needs-input" } });
+  const page = listInbox(db, {}, access, now);
+  expect(page.decisions, "the run is owed").toBe(1);
+  expect(page.approvals + page.questions + page.connections, "and reachable by a tab").toBe(page.decisions);
+  expect(page.items[0]).toMatchObject({ segment: "question", kind: "routine", decision: true });
+  // It is still one of its routine's runs: the rollup follows the kind, not
+  // the refined segment, so the Routines list does not lose a run to it, and
+  // the row it lands in can still be opened.
+  expect(listInbox(db, { view: "routines" }, access, now).routines).toMatchObject([
+    { routineName: "Morning digest", runs: 1, failed: 0, verdict: "waiting", link: { threadId: "thread", messageId: "run" } },
+  ]);
+});
+
+it("counts a channel goal that stopped to ask, by the same rule", () => {
+  const { db } = fixture();
+  put(db, { id: "goal", at: 1_699_999_940_000, kind: "goal.run",
+    goalRun: { runId: "g1", goal: "Ship it", status: "needs-input", coordinatorBotId: "b", coordinatorName: "Kessler", turnCount: 1, maxTurns: 9 } });
+  const page = listInbox(db, {}, access, 1_700_000_000_000);
+  expect(page.decisions).toBe(1);
+  expect(page.approvals + page.questions + page.connections).toBe(page.decisions);
+});
+
+// THE NEGATIVE CONTROL, AND IT IS THE OWNER'S OWN RULE.
+//
+// If this passed by making every routine run owed, the badge would fill with
+// the thirty five rows he asked to be rid of. A run that merely ran, failed,
+// or is retrying asks for NOTHING, however badly it went.
+it("still refuses to let a routine that merely ran ask for anything", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  put(db, { id: "ok", at: now - 120_000, kind: "routine.run", routineRun: { runId: "r1", routineName: "Digest", status: "completed", summary: "Sent" } });
+  put(db, { id: "bad", at: now - 60_000, kind: "routine.run", routineRun: { runId: "r2", routineName: "Digest", status: "failed", error: "529 overloaded" } });
+  const page = listInbox(db, {}, access, now);
+  expect(page.decisions, "neither of them is owed").toBe(0);
+  expect(page.approvals + page.questions + page.connections).toBe(0);
+  const routines = listInbox(db, { view: "routines" }, access, now).routines;
+  expect(routines, "both are still runs of the same routine").toMatchObject([{ runs: 2, failed: 1, verdict: "stuck" }]);
+  expect(routines![0].verdict).not.toBe("waiting");
+});

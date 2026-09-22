@@ -17,7 +17,8 @@
 import { describe, expect, it } from "vitest";
 
 import en from "@/locales/en.json";
-import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY } from "./Inbox";
+import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, owedWaitingLine, waitedFor } from "./Inbox";
+import type { InboxItem } from "../../shared/inbox";
 import { INBOX_BADGED_SEGMENTS } from "../../shared/inbox";
 
 const byValue = Object.fromEntries(INBOX_VIEWS.map(entry => [entry.value, entry]));
@@ -52,10 +53,22 @@ describe("which Inbox lists are allowed to show a number", () => {
     expect(INBOX_VIEWS[0]?.label).toBe("Needs you");
   });
 
-  it("breaks the umbrella into parts that sum to it", () => {
-    const page = { decisions: 5, approvals: 2, questions: 1, connections: 2 } as never;
-    const part = (value: string) => byValue[value]!.count!(page);
-    expect(part("approvals") + part("questions") + part("connections")).toBe(part("decisions"));
+  it("reads each tab's number off its own field, and no other", () => {
+    // WHAT THIS TEST IS NOT. It used to claim it proved the three parts sum
+    // to the umbrella, using a page object whose four numbers were written
+    // here to sum. It could not have failed, and it did not: a routine run
+    // whose goal came back needing input was counted in `decisions` and in
+    // no segment at all, so the badge said one and all three tabs said none.
+    //
+    // THE SUM IS A PROPERTY OF THE QUERY, so it is proved where the query
+    // is: "counts nothing under an umbrella no tab can lift" in
+    // server/inbox.test.ts, against real rows. All this can honestly check
+    // is that no tab is quietly reading a neighbour's field.
+    const page = { decisions: 9, approvals: 4, questions: 3, connections: 2 } as never;
+    expect(byValue.decisions!.count!(page)).toBe(9);
+    expect(byValue.approvals!.count!(page)).toBe(4);
+    expect(byValue.questions!.count!(page)).toBe(3);
+    expect(byValue.connections!.count!(page)).toBe(2);
   });
 });
 
@@ -98,5 +111,56 @@ describe("what each list says for itself", () => {
     // umbrella; the LABEL is his word, and the two must not swap by accident.
     expect(byValue.questions?.label).toBe("Decisions");
     expect(en, "the tab labels are literals here, not lookups").toBeTruthy();
+  });
+});
+
+// ONE LINE PER ROUTINE, AND THEN THIRTY SIX LINES UNDERNEATH IT.
+//
+// The rolled-up rows were added ABOVE the item list and the item list was
+// never told to stand down, so the Routines tab rendered four summary lines
+// followed by every run they summarised. The tab's own sentence promises
+// "one line per routine, not per run" three inches above the thirty six.
+describe("which lists get a card per row", () => {
+  const items = [{ id: "a" }, { id: "b" }] as unknown as InboxItem[];
+
+  it("draws no per-run cards under the rolled-up routines", () => {
+    expect(inboxCardItems("routines", items)).toEqual([]);
+  });
+
+  it("draws them everywhere else", () => {
+    // The negative control. Suppressing the cards on any other view would
+    // empty a list the owner came to act on, which is a worse defect than
+    // the one above.
+    for (const { value } of INBOX_VIEWS) {
+      if (value === "routines") continue;
+      expect(inboxCardItems(value, items), `${value} must still render its rows`).toHaveLength(2);
+    }
+  });
+});
+
+describe("how long a thing has been waiting", () => {
+  it("says it in a unit a person reads without arithmetic", () => {
+    expect(waitedFor(9 * 60_000)).toBe("9 min");
+    expect(waitedFor(60 * 60_000)).toBe("1 hour");
+    expect(waitedFor(5 * 60 * 60_000)).toBe("5 hours");
+    expect(waitedFor(4 * 24 * 60 * 60_000)).toBe("4 days");
+    // It said "Waiting 6231 min for your approval", which is Tuesday.
+    expect(waitedFor(4 * 24 * 60 * 60_000)).not.toMatch(/min/);
+  });
+
+  it("names what is wanted from the segment, not from the title", () => {
+    // It chose its noun by searching the TITLE for the word "Question", so a
+    // dead login read "waiting for your approval" and so did a routine that
+    // had stopped to ask something.
+    const at = 1_000_000, now = at + 9 * 60_000;
+    const row = (segment: string, title: string) => ({ at, segment, title }) as unknown as InboxItem;
+    expect(owedWaitingLine(row("approval", "Approval requested"), now)).toBe("Waiting 9 min for your approval.");
+    expect(owedWaitingLine(row("question", "Morning digest"), now)).toBe("Waiting 9 min for your answer.");
+    expect(owedWaitingLine(row("connection", "Connection setup"), now))
+      .toBe("Stopped 9 min ago, and it stays stopped until you reconnect it.");
+    // No em dashes, and never the vendor's name: the release is gated on both.
+    for (const segment of ["approval", "question", "connection"]) {
+      expect(owedWaitingLine(row(segment, "x"), now)).not.toMatch(/[\u2014\u2013]/);
+    }
   });
 });

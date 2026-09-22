@@ -102,10 +102,54 @@ export function routineRunLine(routine: RoutineRollup): string {
 export function routineVerdictLine(routine: RoutineRollup): string {
   if (routine.verdict === "ok") return "OK";
   if (routine.verdict === "recovered") return "Recovered";
+  // The one routine state that is owed, and it says so in the words of the
+  // thing the owner has to do. It is still not counted on the tab: he finds
+  // it under Decisions, where everything owed is counted once.
+  if (routine.verdict === "waiting") return "Waiting on your answer";
   if (routine.cause === "connection") return "Stopped, needs reconnecting";
   if (routine.stalled) return "Waiting on the AI provider";
   if (routine.cause === "upstream") return "Retrying";
   return "Not recovering";
+}
+
+/** ONE LINE PER ROUTINE MEANS NO SECOND LIST UNDERNEATH IT.
+ *
+ *  The rolled-up rows were added above the item list and the item list was
+ *  left alone, so the Routines tab drew four summary lines and then every
+ *  one of the thirty six runs they summarised. The tab's own copy promises
+ *  "one line per routine, not per run" three inches above the thirty six.
+ *
+ *  Routines is the only view that owns a purpose-built list, so it is the
+ *  only view whose cards are suppressed. Everything else renders its rows. */
+export function inboxCardItems(view: InboxView, items: readonly InboxItem[]): readonly InboxItem[] {
+  return view === "routines" ? [] : items;
+}
+
+/** "9 min", "4 hours", "3 days". A request that has been waiting since
+ *  Tuesday said "Waiting 6231 min for your approval", which is a number
+ *  nobody converts in their head and therefore a number that says nothing
+ *  about whether it is urgent. */
+export function waitedFor(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+/** What an owed row says about how long it has been owed.
+ *
+ *  It used to appear on the umbrella only, so moving to Approvals — the tab
+ *  built to make approvals easier to find — LOST the line that says how long
+ *  one has been sitting there. And it chose its noun by searching the title
+ *  for the word "Question", so a dead Gmail login read "waiting for your
+ *  approval" and a routine asking a question read the same. The segment
+ *  already knows which of the three it is. */
+export function owedWaitingLine(item: InboxItem, now: number): string {
+  const waited = waitedFor(now - item.at);
+  if (item.segment === "connection") return `Stopped ${waited} ago, and it stays stopped until you reconnect it.`;
+  if (item.segment === "approval") return `Waiting ${waited} for your approval.`;
+  return `Waiting ${waited} for your answer.`;
 }
 
 export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
@@ -149,7 +193,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     } finally { changing.current = false; }
   };
   const chooseView = (next: InboxView) => { setView(next); setPage(0); };
-  const list = result?.items ?? [];
+  const list = inboxCardItems(view, result?.items ?? []);
   // The live card for each waiting request on this page, keyed by message id.
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
@@ -212,7 +256,11 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
             <span className="font-medium text-ink">{routine.routineName}</span>
             <span className="text-ink-secondary">{routine.botLabel}</span>
             <span className="flex-1 text-ink-secondary">{routineRunLine(routine)}</span>
-            <span className={routine.verdict === "stuck" ? "font-medium text-danger" : "text-ink-secondary"}>{routineVerdictLine(routine)}</span>
+            <span className={routine.verdict === "stuck" ? "font-medium text-danger" : routine.verdict === "waiting" ? "font-medium text-warning" : "text-ink-secondary"}>{routineVerdictLine(routine)}</span>
+            {/* Without this the summary is a dead end: collapsing thirty six
+                rows into four is only an improvement if the four still lead
+                back to the run they summarise. */}
+            {routine.link && <button className={button} onClick={() => onOpen(routine.link!)}>Open latest run</button>}
           </li>
         ))}
       </ul>
@@ -227,7 +275,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
         return <li key={item.id} className="rounded-xl border border-hairline/50 bg-inset p-4" data-inbox-id={item.id}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-secondary"><span>{item.sourceLabel}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time></div>
-        {view === "decisions" && <p className="mt-2 text-[12px] text-ink-secondary">Waiting {Math.max(0, Math.floor((Date.now() - item.at) / 60000))} min for your {item.title.includes("Question") ? "answer" : "approval"}.</p>}
+        {INBOX_OWED_VIEWS.includes(view) && <p className="mt-2 text-[12px] text-ink-secondary">{owedWaitingLine(item, Date.now())}</p>}
         {headline && <p className="mt-2 text-[12px] text-ink-secondary">{item.title}</p>}
         <h2 className="mt-1 break-words text-[15px] font-medium">{headline || item.title}</h2>
         <div className="mt-2 flex flex-wrap gap-2 text-[12px]"><span className="rounded bg-control px-2 py-1">{statusLabel(item.status)}</span><span className="rounded bg-control px-2 py-1">{item.read ? "Read" : "Unread"}</span>

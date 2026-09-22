@@ -101,10 +101,19 @@ export interface RoutineRunFact {
   botLabel: string;
   /** When it ran. */
   at: number;
-  /** True when this run did not complete its work. */
+  /** True when this run did not complete its work. A run PARKED ON A
+   *  QUESTION is not one of these: it has not failed, it is waiting. */
   failed: boolean;
   /** The failure message, when it failed. */
   detail?: string | null;
+  /** The run stopped and is waiting on an answer from the owner
+   *  (`goalStatus: "needs-input"`, which routines.ts parks at 'waiting').
+   *  This is the ONE routine state that is owed, and it is owed because the
+   *  run is asking, not because it went wrong. */
+  owed?: boolean;
+  /** Where to open this run. Optional so the rules can be tested against a
+   *  bare list of runs with no workspace behind them. */
+  link?: { threadId: string; messageId: string };
 }
 
 export type RoutineVerdict =
@@ -113,7 +122,12 @@ export type RoutineVerdict =
   /** Some runs failed and a LATER one succeeded. Rule 1: not an event. */
   | "recovered"
   /** The most recent run failed and nothing has succeeded since. */
-  | "stuck";
+  | "stuck"
+  /** The most recent run STOPPED TO ASK SOMETHING. The only routine state
+   *  that is owed, and the only one that outranks "stuck": a routine nobody
+   *  can rescue is bad news, and a routine waiting on a one-line answer is
+   *  bad news the owner can end in a second. */
+  | "waiting";
 
 export interface RoutineRollup {
   routineKey: string;
@@ -132,6 +146,10 @@ export interface RoutineRollup {
    *  expect to wait. It changes how the row READS and nothing else: it never
    *  badges, because waiting is still the only available action. */
   stalled: boolean;
+  /** Where the most recent run is, so ONE LINE PER ROUTINE can still be
+   *  opened. Without this the rollup would be a dead end and the only way
+   *  back to a run would be the per-run list this replaced. */
+  link?: { threadId: string; messageId: string };
 }
 
 /**
@@ -163,8 +181,14 @@ export function rollUpRoutineRuns(
     // RULE 1. The verdict is decided by the LAST run, not by the count. A
     // routine that failed twelve times and then worked is a routine that
     // works; one that worked twelve times and then broke is broken.
+    //
+    // A run that is ASKING is checked first and separately. It is not a
+    // failure and must not be described as one: "Not recovering" over a
+    // routine that is waiting on a one-line answer from the owner sends him
+    // looking for a breakage that does not exist.
     let verdict: RoutineVerdict = "ok";
-    if (latest.failed) verdict = "stuck";
+    if (latest.owed === true) verdict = "waiting";
+    else if (latest.failed) verdict = "stuck";
     else if (failed.length > 0) verdict = "recovered";
 
     let cause: FailureCause | null = null;
@@ -195,10 +219,11 @@ export function rollUpRoutineRuns(
       failingSince,
       stalled: verdict === "stuck" && cause !== null && recoversUnaided(cause)
         && now - (failingSince ?? latest.at) >= stalledAfterMs,
+      ...(latest.link ? { link: latest.link } : {}),
     });
   }
 
-  const rank: Record<RoutineVerdict, number> = { stuck: 0, recovered: 1, ok: 2 };
+  const rank: Record<RoutineVerdict, number> = { waiting: 0, stuck: 1, recovered: 2, ok: 3 };
   return rollups.sort((a, b) => rank[a.verdict] - rank[b.verdict] || b.lastAt - a.lastAt);
 }
 
@@ -229,6 +254,28 @@ export interface ConnectionToRestore {
   detail: string;
 }
 
+// NOT WIRED YET, AND SAYING SO HERE BECAUSE A TESTED EXPORT LOOKS DELIVERED.
+//
+// listInbox() rolls the runs up and returns them for the Routines view; it
+// does not call this, so nothing this function finds reaches the Inbox. The
+// dead credential it exists for is usually ALSO reported as its own
+// `connector` / `secret` / auth-required `activity` message, and those do
+// land in Connections and do badge — so the Inbox is not blind to it. What
+// is missing is the case where the only evidence is 401s in routine run
+// errors, and today that surfaces only as "Stopped, needs reconnecting" on
+// the routine's own row, which never badges.
+//
+// TWO HONEST WAYS TO FINISH IT, and they differ in more than effort:
+//   - raise it as a synthesized Connections item, which means an Inbox row
+//     with no message behind it and therefore no read mark, no snooze and no
+//     "open the source" — a new shape the item model does not have; or
+//   - delete this and rely on the connector/secret path, accepting that a
+//     credential that dies silently is found a day later.
+// That is the owner's call, not a thing to settle by leaving it half done.
+//
+// It also merges every connection cause into ONE row. Rule 3 says one cause
+// one row, and the runs do not carry WHICH connection died, so one row is
+// the most honest available answer rather than the stated rule.
 export function connectionsToRestore(rollups: readonly RoutineRollup[]): ConnectionToRestore[] {
   const routines: string[] = [];
   const bots = new Set<string>();

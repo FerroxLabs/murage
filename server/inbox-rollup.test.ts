@@ -248,3 +248,52 @@ describe("the owner's actual morning, end to end", () => {
     expect(rollups.filter((entry) => entry.verdict === "recovered")).toHaveLength(2);
   });
 });
+
+// A ROUTINE THAT STOPPED TO ASK IS NOT A ROUTINE THAT BROKE.
+//
+// Rule 4 is right about the thirty five rows it was written for: a run that
+// failed, retried or ran on a timer asks for nothing. It is not right about
+// a run whose goal came back needing input. routines.ts parks that one at
+// status 'waiting' with "The team needs your input" on it and says so in its
+// own words: "a team asking the human a question is still waiting on them".
+//
+// Before this, that run arrived here as `failed: true` with no message, so
+// the rules called it stuck on an unknown cause and the row said "Not
+// recovering" — sending the owner to look for a breakage over a routine that
+// was one sentence away from carrying on.
+describe("a routine that is waiting on the owner", () => {
+  it("says what it is waiting for, and outranks the ones that are merely broken", () => {
+    const rollups = rollUpRoutineRuns([
+      run({ at: T0 - 2 * HOUR, failed: true, detail: OVERLOAD }),
+      run({ at: T0 - HOUR, owed: true, link: { threadId: "t", messageId: "m" } }),
+      run({ routineKey: "other", routineName: "Inbox sweep", at: T0 - 30 * 60 * 1000, failed: true, detail: DEAD_TOKEN }),
+    ], T0);
+    expect(rollups[0]).toMatchObject({ routineKey: "rwa-night-watch", verdict: "waiting", cause: null, stalled: false });
+    expect(rollups[0]!.link, "the summary has to lead back to the run").toEqual({ threadId: "t", messageId: "m" });
+    // It is not a failure, so it is not counted as one inside its own row.
+    expect(rollups[0]!.failed).toBe(1);
+    expect(rollups[1], "a dead token is still worse news than an unanswered question is old")
+      .toMatchObject({ routineKey: "other", verdict: "stuck", cause: "connection" });
+  });
+
+  it("asks for nothing through the connections channel", () => {
+    // THE NEGATIVE CONTROL FOR RULE 4. `connectionsToRestore` is the only
+    // thing in the module allowed to raise anything. A run waiting on an
+    // answer is already counted once, as a decision, by the query in
+    // server/inbox.ts. Raising it here too would ask the owner twice.
+    const rollups = rollUpRoutineRuns([run({ at: T0 - HOUR, owed: true })], T0);
+    expect(rollups[0]!.verdict).toBe("waiting");
+    expect(connectionsToRestore(rollups)).toEqual([]);
+  });
+
+  it("goes back to being news the moment it is answered", () => {
+    // The verdict is the LAST run, here as everywhere. An answered question
+    // followed by a clean run is a routine that works.
+    const rollups = rollUpRoutineRuns([
+      run({ at: T0 - 2 * HOUR, owed: true }),
+      run({ at: T0 - HOUR }),
+    ], T0);
+    expect(rollups[0]).toMatchObject({ verdict: "ok", cause: null });
+    expect(rollups[0]!.verdict).not.toBe("waiting");
+  });
+});

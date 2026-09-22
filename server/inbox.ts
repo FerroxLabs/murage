@@ -84,7 +84,7 @@ const SOURCE = `WITH raw AS (
       WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection'
       WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END
       WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'
-      ELSE 'result' END AS segment
+      ELSE 'result' END AS kind_segment
   FROM messages m
   WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))
     AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity','text')
@@ -108,7 +108,27 @@ const SOURCE = `WITH raw AS (
     -- lists live there too, and are spliced in below so SQL and TypeScript
     -- cannot drift apart.
     CASE WHEN status IN (${DECISION_SQL}) THEN 1 ELSE 0 END AS decision,
-    CASE WHEN status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS to_read
+    CASE WHEN status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS to_read,
+    -- A RUN THAT HAS STOPPED AND IS ASKING IS NOT A NOTIFICATION.
+    --
+    -- Rule 4 says a routine run never asks, and that is right about the
+    -- thirty five rows it was written for: a run that failed, retried, or
+    -- ran on a timer is news. It is NOT right about a run whose goal came
+    -- back needs-input. routines.ts parks that run at status 'waiting'
+    -- with "The team needs your input" on it, and says so in its own words:
+    -- "a team asking the human a question is still waiting on them".
+    --
+    -- Kept kind-derived and then overridden HERE, rather than in raw,
+    -- because status does not exist until this layer.
+    --
+    -- WHY IT HAS TO BE A COUNTED SEGMENT. decisions counts everything
+    -- owed. If an owed run stayed segment 'routine' it would be inside that
+    -- number and inside no tab that can show it: the badge would say three,
+    -- the three tabs would add to two, and the missing one would be
+    -- unreachable except by scrolling the umbrella. That is the defect this
+    -- whole redesign exists to remove, reintroduced by arithmetic.
+    CASE WHEN kind_segment='routine' AND status IN (${DECISION_SQL}) THEN 'question'
+      ELSE kind_segment END AS segment
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
@@ -130,21 +150,27 @@ const ROUTINE_ROW_LIMIT = 2_000;
  *  owner's head, and the alternative (matching loosely) would merge two real
  *  routines that happen to share a name across bots. */
 function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["threads"], now: number): RoutineRunFact[] {
-  const rows = db.prepare(SOURCE + `SELECT thread_id, title, summary, status, at FROM items
-    WHERE segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
+  const rows = db.prepare(SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision FROM items
+    WHERE kind_segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
     .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as
-    Array<{ thread_id: string; title: string; summary: string; status: string; at: number }>;
+    Array<{ thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number }>;
   return rows.map(row => ({
     routineKey: `${row.thread_id}:${row.title}`,
     routineName: text(row.title, 120),
     botLabel: text(threads.find(thread => thread.threadId === row.thread_id)?.label ?? "", 100),
     at: row.at,
     // Anything that is not a clean finish is a failure for the rules'
-    // purposes. Being generous here is the safe direction: a run wrongly
-    // counted as failed shows up inside a row that already exists, while one
-    // wrongly counted as clean can make a stuck routine read as recovered.
-    failed: row.status !== "completed",
+    // purposes, EXCEPT a run that stopped to ask something. Being generous
+    // here is the safe direction: a run wrongly counted as failed shows up
+    // inside a row that already exists, while one wrongly counted as clean
+    // can make a stuck routine read as recovered. A run that is waiting on
+    // the owner is the one case where "failed" is not generous but wrong —
+    // it would print "Not recovering" over a routine that is one answer away
+    // from carrying on.
+    failed: row.status !== "completed" && row.decision !== 1,
+    owed: row.decision === 1,
     detail: row.summary,
+    link: { threadId: row.thread_id, messageId: row.message_id },
   }));
 }
 
@@ -208,7 +234,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
       OR (?='decisions' AND decision=1)
       OR (?='questions' AND decision=1 AND segment='question')
       OR (?='connections' AND decision=1 AND segment='connection')
-      OR (?='routines' AND segment='routine')
+      OR (?='routines' AND kind_segment='routine')
       OR (?='to-read' AND to_read=1)
       OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)

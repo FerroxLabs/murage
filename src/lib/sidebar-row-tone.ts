@@ -3,12 +3,22 @@
 // A faint fill plus a hairline border was too quiet to find at a glance. The
 // selected row now carries a gold edge in the warning token (#fbbf24 dark,
 // #8a6100 light — both clear of the panel ground), doubled by an inset shadow
-// so the edge thickens without the box growing. Gold is deliberately none of
-// the other row signals: a team lead's outline is blue, the Chief keeps its
-// orange tint underneath, and the one amber mark means a bot is waiting on
-// the owner (sidebar-attention.ts). Unread used to be an orange dot here; it
-// is the name's weight now, because a mark that fires on unread is on nearly
-// every row and therefore means nothing.
+// so the edge thickens without the box growing. A team lead's outline is
+// blue and the Chief keeps its orange tint underneath. Unread used to be an
+// orange dot here; it is the name's weight now, because a mark that fires on
+// unread is on nearly every row and therefore means nothing.
+//
+// THIS SHARES A HUE WITH "WAITING FOR YOU" AND THAT IS NOT YET DECIDED.
+// An earlier version of this comment claimed gold was deliberately none of
+// the other row signals. It is not: sidebarMarkRowClass backs a waiting row
+// with bg-warning/10 and the selected edge is --color-warning too. They
+// differ by PROPERTY rather than by colour — an edge against a fill, and
+// only the waiting row carries a dot and says "Waiting for you" out loud —
+// so they are told apart today. Claiming they were different colours was
+// simply wrong, and a comment asserting a safety property the code does not
+// have is worse than no comment at all. If the two are ever separated
+// properly, the SELECTED edge is the one to move: the waiting amber is
+// load-bearing and the selection is not.
 import type { botRole } from "@/lib/bot-role";
 
 export const SIDEBAR_SELECTED_ROW = "border-warning shadow-[inset_0_0_0_1px_var(--color-warning)]";
