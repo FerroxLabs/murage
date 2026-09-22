@@ -216,3 +216,42 @@ describe("ProviderRegistry", () => {
     expect(registry.get("a")).toBeNull();
   });
 });
+
+// BOOT PAID THE SUM OF EVERY ENGINE'S DISCOVERY, ONE AT A TIME.
+//
+// `driver.create` can spawn a native CLI and wait for it to list its models.
+// Loading was a serial loop, and the HTTP server does not listen until it
+// returns, so the owner's window took the total. Measured on his install:
+// `fuigo models` alone ran for over nine seconds, `hermes` for five, with
+// `opencode models` and a full `zsh -l -i` behind them.
+//
+// Order is pinned alongside, because that is what made this worth being
+// careful about: callers read `entries()` and `instances()` in order, and the
+// first entry is load-bearing for engine selection. Concurrency must not
+// reshuffle the fleet.
+describe("loading the fleet", () => {
+  const slowDriver = (kind: string, delayMs: number) => {
+    const fake = makeFakeDriver();
+    const driver = { ...fake.driver, driverKind: kind } as typeof fake.driver;
+    const create = driver.create.bind(driver);
+    driver.create = async (options: Parameters<typeof driver.create>[0]) => {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      return create(options);
+    };
+    return driver;
+  };
+
+  it("discovers every engine at once, and still records them in configuration order", async () => {
+    const registry = new ProviderRegistry([slowDriver("slow-a", 120), slowDriver("slow-b", 120), slowDriver("slow-c", 120)]);
+    const started = Date.now();
+    await registry.load({
+      first: { driver: "slow-a" }, second: { driver: "slow-b" }, third: { driver: "slow-c" },
+    } as never);
+    const elapsed = Date.now() - started;
+
+    // Serially this is 360ms; together it is one 120ms wait. The bound is
+    // generous on purpose — it is proving "not the sum", not a stopwatch.
+    expect(elapsed, `three 120ms engines took ${elapsed}ms — that is the sum, not the slowest`).toBeLessThan(300);
+    expect(registry.entries().map(entry => entry.instanceId)).toEqual(["first", "second", "third"]);
+  });
+});

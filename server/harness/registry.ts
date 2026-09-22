@@ -65,24 +65,38 @@ export class ProviderRegistry {
     this.driversByKind = new Map(drivers.map((d) => [d.driverKind, d]));
   }
 
+  /** ONE ENGINE AT A TIME WAS COSTING THE WHOLE BOOT.
+   *
+   * `driver.create` can spawn a native CLI and wait for it to enumerate its
+   * models — the comment below has always said so. This was a serial loop, so
+   * boot paid the SUM of every configured engine's discovery before the HTTP
+   * server would accept its first connection. Measured on the owner's install:
+   * `fuigo models` 9s, `hermes` 5s, `opencode models` 2s, plus the rest, and
+   * the window did not open until the last of them answered.
+   *
+   * The instances are independent — each one only writes its own key — so they
+   * are discovered CONCURRENTLY and then recorded in the original config
+   * order. Insertion order into `byId` is deliberately unchanged, because
+   * callers read `entries()` and `instances()` in order and the first entry is
+   * load-bearing for selection. Boot now costs the SLOWEST engine, not the
+   * sum. Measured 2026-09-22. */
   async load(configs: InstanceConfigMap) {
-    for (const [instanceId, entry] of Object.entries(configs)) {
+    const resolve = async ([instanceId, entry]: [string, InstanceConfigMap[string]]): Promise<[string, RegistryEntry]> => {
       const driver = this.driversByKind.get(entry.driver);
       // Disabled is an admission barrier, not merely metadata on an already
       // constructed adapter. Factory/catalog discovery can spawn native CLIs.
       if (entry.enabled === false) {
-        this.byId.set(instanceId, {
+        return [instanceId, {
           instanceId,
           shadow: {
             instanceId, driverKind: entry.driver, displayName: entry.displayName,
             cli: cliOfRaw(entry.config), shadow: true, disabled: true,
             reason: "This engine is disabled. Enable it before starting new work.",
           },
-        });
-        continue;
+        }];
       }
       if (!driver) {
-        this.byId.set(instanceId, {
+        return [instanceId, {
           instanceId,
           shadow: {
             instanceId,
@@ -92,8 +106,7 @@ export class ProviderRegistry {
             shadow: true,
             reason: `unknown driver "${entry.driver}" — kept as configured, unavailable here`,
           },
-        });
-        continue;
+        }];
       }
       try {
         const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
@@ -110,10 +123,10 @@ export class ProviderRegistry {
           config,
         });
         const decorated = decorateMemoryInstance(live);
-        this.byId.set(instanceId, { instanceId, live: decorated });
         this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
+        return [instanceId, { instanceId, live: decorated }];
       } catch (e) {
-        this.byId.set(instanceId, {
+        return [instanceId, {
           instanceId,
           shadow: {
             instanceId,
@@ -123,8 +136,12 @@ export class ProviderRegistry {
             shadow: true,
             reason: e instanceof Error ? e.message : String(e),
           },
-        });
+        }];
       }
+    };
+    // Discovered together, recorded in configuration order.
+    for (const [instanceId, resolved] of await Promise.all(Object.entries(configs).map(resolve))) {
+      this.byId.set(instanceId, resolved);
     }
   }
 
