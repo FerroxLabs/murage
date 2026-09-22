@@ -1340,3 +1340,50 @@ describe("customMcpServers", () => {
     expect(Object.keys(out)).toEqual(["keeper"]);
   });
 });
+
+// WHAT SURVIVES CLEARING A COMPOSIO KEY.
+//
+// The owner's connected apps vanished on 2026-09-22 and the suspected cause
+// was this: `POST /api/config` answers a patch carrying `composio.apiKey: ""`
+// by writing `{ apiKey: "", sessionId: "" }` (server/index.ts). That is right
+// for somebody clearing a key they typed in, and it looked destructive for a
+// brokered user who never had one.
+//
+// It is not, and the reading is worth keeping because it is the reason no
+// guard was added. Composio grants hang off `composio.userId`, which that
+// patch does not name; `saveConfig` merges a section with `Object.assign`
+// rather than replacing it, so an unnamed field is carried forward. And
+// `sessionId` is only ever spent against `apiBase()` with the project key
+// (server/composio.ts) — the brokered path never reads it. A managed user
+// therefore loses nothing here, and refusing the wipe for them would leave a
+// stale session pointing at a key that is gone, which is worse.
+//
+// The real cause of the vanishing apps was the server crash; this was a trap
+// found while looking for it. So what is locked below is the property the
+// whole reading rests on, not a guard against a defect that was not there:
+// clearing the key must not take the user with it. Swap that `Object.assign`
+// for a replace and this goes red.
+describe("clearing a Composio key", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(file, { force: true });
+    vi.stubEnv("COMPOSIO_API_KEY", undefined);
+  });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+
+  it("keeps the user the connected apps are granted to", () => {
+    saveConfig({ composio: { apiKey: "ak_owner", userId: "user_owner", sessionId: "sess_owner" } });
+    // Byte for byte what the config route writes for an emptied key.
+    saveConfig({ composio: { apiKey: "", sessionId: "" } });
+    expect(loadConfig().composio).toEqual({ apiKey: "", userId: "user_owner", sessionId: "" });
+  });
+
+  it("clears the session with the key it belonged to", () => {
+    // The other half, so the test above cannot be satisfied by a merge that
+    // simply refuses to clear anything.
+    saveConfig({ composio: { apiKey: "ak_owner", userId: "user_owner", sessionId: "sess_owner" } });
+    saveConfig({ composio: { apiKey: "", sessionId: "" } });
+    expect(loadConfig().composio?.sessionId).toBe("");
+  });
+});
