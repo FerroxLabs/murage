@@ -1818,22 +1818,34 @@ export function assertSkillProcedureEvidence(context:SkillProcedureContext,evide
   const db=database();
   if(evidence.length>64)throw new Error("PROCEDURE_EVIDENCE_UNAVAILABLE");
   const allowed=new Set(context.allowedScopeIds),seen=new Set<string>();
+  // PREPARED ONCE, NOT ONCE PER NODE. `visit` recurses over transitive
+  // provenance up to 256 nodes and used to call db.prepare() five times
+  // inside that recursion, so a single call could compile well over a
+  // thousand statements. Under a profile of a real store it was 62% of the
+  // server's entire busy CPU. The statements are identical every time; only
+  // the bound parameters differ.
+  const tombstoned=db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type=? AND target_id=? AND (revision IS NULL OR revision=?)");
+  const sourceRow=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=? AND s.revision=? AND s.state='active'");
+  const sourceIsIdentity=db.prepare("SELECT 1 FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE e.source_id=? AND e.source_revision=? AND (r.kind='character-canon' OR d.partition='identity')");
+  const recordRow=db.prepare("SELECT r.*,d.partition,(SELECT max(version) FROM memory_records WHERE id=r.id) AS latest_version FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.id=? AND r.version=?");
+  const recordSources=db.prepare("SELECT e.source_id,e.source_revision,s.scope_id FROM memory_evidence e LEFT JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?");
+  const recordParents=db.prepare("SELECT d.parent_id,d.parent_version,r.scope_id FROM memory_derivations d LEFT JOIN memory_records r ON r.id=d.parent_id AND r.version=d.parent_version WHERE d.child_id=? AND d.child_version=?");
   const visit=(item:SkillProcedureEvidence,provenanceOnly=false):void=>{
     const key=`${item.kind}:${item.id}:${item.revision}:${provenanceOnly}`;if(seen.has(key))return;
     if(seen.size>=256)throw new Error("PROCEDURE_EVIDENCE_LIMIT");seen.add(key);
-    if(!allowed.has(item.scopeId)||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type=? AND target_id=? AND (revision IS NULL OR revision=?)").get(item.kind,item.id,item.revision))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
+    if(!allowed.has(item.scopeId)||tombstoned.get(item.kind,item.id,item.revision))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
     if(item.kind==="source"){
-      const row=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=? AND s.revision=? AND s.state='active'").get(item.id,item.revision);
-      if(!row||row.scope_id!==item.scopeId||["identity","character-canon","personality"].includes(String(row.kind))||db.prepare("SELECT 1 FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE e.source_id=? AND e.source_revision=? AND (r.kind='character-canon' OR d.partition='identity')").get(item.id,item.revision))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
+      const row=sourceRow.get(item.id,item.revision);
+      if(!row||row.scope_id!==item.scopeId||["identity","character-canon","personality"].includes(String(row.kind))||sourceIsIdentity.get(item.id,item.revision))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
       return;
     }
-    const row=db.prepare("SELECT r.*,d.partition,(SELECT max(version) FROM memory_records WHERE id=r.id) AS latest_version FROM memory_records r LEFT JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.id=? AND r.version=?").get(item.id,item.revision);
+    const row=recordRow.get(item.id,item.revision);
     // Ancestors explain how the owner corrected a claim; they are never
     // emitted as current claims. Only selected top-level evidence is current.
     if(!row||row.scope_id!==item.scopeId||row.kind==="character-canon"||row.partition==="identity"||
       (provenanceOnly?!["active","superseded","archived"].includes(String(row.state)):row.state!=="active"||row.version!==row.latest_version))throw new Error("PROCEDURE_EVIDENCE_REVOKED");
-    const sources=db.prepare("SELECT e.source_id,e.source_revision,s.scope_id FROM memory_evidence e LEFT JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?").all(item.id,item.revision);
-    const parents=db.prepare("SELECT d.parent_id,d.parent_version,r.scope_id FROM memory_derivations d LEFT JOIN memory_records r ON r.id=d.parent_id AND r.version=d.parent_version WHERE d.child_id=? AND d.child_version=?").all(item.id,item.revision);
+    const sources=recordSources.all(item.id,item.revision);
+    const parents=recordParents.all(item.id,item.revision);
     // The desktop-authorized correction/approval path can create an exact
     // owner statement with no captured source. Its authority is the record,
     // whereas an unsupported model inference still cannot supply evidence.
