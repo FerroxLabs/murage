@@ -385,15 +385,17 @@ test.describe("an engine nobody is signed in to", () => {
     await screenIsUsable(app, "a signed-out engine · the detection report");
   });
 
-  // ── OPEN DEFECT, RECORDED AS ONE ───────────────────────────────────────
+  // ── DEFECT FOUND HERE, FIXED, MARKER OFF ───────────────────────────────
   //
-  // `test.fail()` because this is the product, not the spec. The check below
-  // is the one this case exists for, it is correct, and it does not pass
-  // today; marking it expected-to-fail keeps the run honest in both
-  // directions — the suite stays green on a known defect, and the moment
-  // somebody fixes it this test fails for passing and has to be looked at.
+  // This was written `test.fail()` against the product as it stood, which is
+  // the only reason it was found: the suite stayed green on a known defect
+  // instead of being quietly edited to match it. The fix landed the same day
+  // and this reported "Expected to fail, but passed" on the lane box, which
+  // is the marker doing exactly its job. It is a plain test now and the
+  // history stays, because this is the third time a first-run card has been
+  // caught claiming a capability the machine did not have.
   //
-  // WHAT IS WRONG. `FIRST_RUN_COPY.agents["signed-out"].third` reads "Or
+  // WHAT WAS WRONG. `FIRST_RUN_COPY.agents["signed-out"].third` read "Or
   // leave it. What is already running carries on either way." It is rendered
   // unconditionally (`FirstRunSignedOutAgentsCard`, src/components/FirstRunCard.tsx),
   // and it is written for somebody whose signed-out Codex sits beside a
@@ -403,15 +405,12 @@ test.describe("an engine nobody is signed in to", () => {
   // will fail. That is the same shape as the defect this card exists to end:
   // a screen claiming a capability the machine does not have.
   //
-  // THE FIX IS ONE LINE AND IT IS ALREADY WRITTEN TWICE NEXT DOOR.
+  // THE FIX WAS ONE LINE AND IT WAS ALREADY WRITTEN TWICE NEXT DOOR.
   // `canCarryOn` in FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard`
-  // both read `view.agents.length > 0` for exactly this reason. The card
-  // needs the same reading and a second sentence for the machine where
-  // nothing is running.
+  // both read `view.agents.length > 0` for exactly this reason, so the card
+  // took the same reading plus `thirdBare` for the machine where nothing is
+  // running (1cad6faf).
   test("does not tell a person with nothing running that it carries on", async ({ app }) => {
-    // Marked inside the body, which is the form that marks THIS test: a bare
-    // `test.fail()` in a describe marks every test that follows it.
-    test.fail();
     await chiefHasSpoken(app);
     await signOutTheOnlyEngine();
     await harness("POST", "/api/setup/answer", { step: "hello", answer: OWNER });
