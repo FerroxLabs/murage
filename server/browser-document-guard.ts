@@ -2,6 +2,8 @@
 // reset it. Capture listeners run before page handlers on future documents.
 // A guard is installed before every mediated action, including new tabs.
 import WebSocket from "ws";
+
+import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 const WORLD = "murage-protected-document-v1";
 const SOURCE = `(() => {
   if(globalThis.__murageGuard) return;
@@ -84,5 +86,8 @@ export class BrowserDocumentGuard {
     }
     return protectedDocument;
   }
-  close(){this.socket?.removeAllListeners();this.socket?.terminate();this.fail();}
+  // Same defect as the relay's `resetStream`, and the same fix. This guard
+  // opens with a 5s handshakeTimeout, so "closed before connected" is a state
+  // it reaches by design rather than by accident.
+  close(){closeSocketQuietly(this.socket);this.fail();}
 }

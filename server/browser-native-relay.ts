@@ -10,8 +10,10 @@ import { ensureBrowserSandboxAccess } from "./browser-sandbox.ts";
 import { BrowserDocumentGuard } from "./browser-document-guard.ts";
 import type { AgentBrowserSpec } from "./browser-engine.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
+import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 
 export type BrowserFrame = { seq: number; data: string; width: number; height: number };
+
 export interface NativeBrowser {
   protected(armed?: boolean): Promise<boolean>;
   request(method: string, params?: Record<string, unknown>): Promise<unknown>;
@@ -96,7 +98,9 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
       const events = browserInputEvents(event);
       for (const item of events) socket.send(JSON.stringify(item));
     },
-    resetStream() { const old = socket; socket = undefined; old?.removeAllListeners(); old?.terminate(); },
+    // The teardown that ended the owner's server mid-conversation in 0.1.57.
+    // See browser-socket-teardown.ts for the crash and why the order matters.
+    resetStream() { const old = socket; socket = undefined; closeSocketQuietly(old); },
     async close() {
       closing = true;
       guard.close();
