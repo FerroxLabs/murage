@@ -308,3 +308,82 @@ it("still refuses to let a routine that merely ran ask for anything", () => {
   expect(routines, "both are still runs of the same routine").toMatchObject([{ runs: 2, failed: 1, verdict: "stuck" }]);
   expect(routines![0].verdict).not.toBe("waiting");
 });
+
+// THE ORIGINAL COMPLAINT, MADE WORSE BY THE THING BUILT TO FIX IT.
+//
+// The Inbox had four tabs: Needs you, To read, Results, All. The redesign
+// replaced them with Approvals / Decisions / Connections / Routines /
+// Results and DELETED "To read" without asking where its contents went.
+//
+// They went nowhere. An engine that is not signed in arrives as a failed
+// `activity` row: it needs the owner's hands, which is the definition of a
+// connection, but it is a log line with nothing on it to resolve, so it is
+// 'failed' and never 'pending'. Connections asked for owed, Results asks for
+// neither owed nor news, and To read no longer existed. A dead login was
+// reachable only by scrolling All.
+//
+// That is the thirty sixth item. The one he could act on, invisible.
+it("puts a dead login in the tab a person would look in for it", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  put(db, { id: "a1", at: now - 60_000, kind: "activity", card: null, tool: { ok: 0, authRequired: 1, name: "error: not signed in" } });
+  const page = listInbox(db, { view: "connections" }, access, now);
+  expect(page.total, "Connections is where somebody goes to find this").toBe(1);
+  expect(page.items[0]).toMatchObject({ segment: "connection", title: "Sign in needed" });
+
+  // AND IT STILL DOES NOT BADGE, which is the half that is easy to get
+  // wrong. There is nothing on an activity row to resolve, so a count that
+  // included it could never come down again: it would sit on the sidebar
+  // for ever and teach him to ignore the number. The list is where you look;
+  // the count is what is waiting on you.
+  const counts = listInbox(db, {}, access, now);
+  expect(counts.connections, "shown, not counted").toBe(0);
+  expect(counts.decisions).toBe(0);
+  expect(counts.approvals + counts.questions + counts.connections).toBe(counts.decisions);
+});
+
+it("says it once however many times it happens", () => {
+  // RULE 3, for the kind of row that produces the most copies of itself: a
+  // signed-out engine writes one of these every time a turn tries to use it.
+  const { db } = fixture(), now = 1_700_000_000_000;
+  for (let index = 0; index < 20; index += 1) {
+    put(db, { id: `a${index}`, at: now - (20 - index) * 60_000, kind: "activity", card: null,
+      tool: { ok: 0, authRequired: 1, name: `error: attempt ${index}` } });
+  }
+  const page = listInbox(db, { view: "connections" }, access, now);
+  expect(page.total, "twenty attempts, one sentence").toBe(1);
+  expect(page.items[0].duplicates).toBe(20);
+});
+
+it("leaves a request that expired where the approval used to be", () => {
+  // "Kessler has a pending approval and I cannot find it. There is no
+  // indication of where to look or whether it has expired." A missed request
+  // is 'missed', which is news and not owed, so it was in no tab either.
+  const { db } = fixture(), now = 1_700_000_000_000;
+  put(db, { id: "live", at: now - 30_000 });
+  put(db, { id: "gone", at: now - 60_000, card: { requestId: "old", title: "Send the invoice?", options: [], tool: "Bash", expired: 1, unattended: 1 } });
+  const page = listInbox(db, { view: "approvals" }, access, now);
+  expect(page.total).toBe(2);
+  // Owed first: a request that expired last week must not sit above one that
+  // is waiting now just because the list is sorted by time.
+  expect(page.items.map(row => row.status)).toEqual(["pending", "missed"]);
+  expect(page.approvals, "and only the live one is counted").toBe(1);
+});
+
+// THE NEGATIVE CONTROL FOR ALL THREE.
+//
+// Each of the above is satisfied by loosening a filter, and loosening the
+// wrong one turns Approvals back into the undifferentiated list this
+// replaced. Routine runs and finished work are not requests and must not
+// appear in any of the three, however they ended.
+it("does not let a tab for requests fill up with things that happened", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  put(db, { id: "run", at: now - 60_000, kind: "routine.run", card: null, routineRun: { runId: "r1", routineName: "Digest", status: "failed", error: "529 overloaded" } });
+  put(db, { id: "weather", at: now - 50_000, kind: "activity", card: null, tool: { ok: 0, providerError: { kind: "overloaded" }, name: "error: 529" } });
+  for (const view of ["approvals", "questions", "connections"] as const) {
+    expect(listInbox(db, { view }, access, now).total, `${view} must stay a list of requests`).toBe(0);
+  }
+  const counts = listInbox(db, {}, access, now);
+  expect(counts.decisions).toBe(0);
+  expect(counts.approvals + counts.questions + counts.connections).toBe(0);
+  expect(listInbox(db, { view: "routines" }, access, now).total, "they are still reported").toBe(2);
+});

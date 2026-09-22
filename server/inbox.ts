@@ -44,6 +44,14 @@ const SOURCE = `WITH raw AS (
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)
       WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)
       WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')
+      -- RULE 3, WHERE THE GROUPING ALREADY HAPPENS. An engine that is not
+      -- signed in writes one of these every time a turn tries to use it, and
+      -- they were keyed by message id, so twenty attempts were twenty rows
+      -- saying the same sentence. One key per thread per cause makes them one
+      -- row carrying the count.
+      WHEN 'activity' THEN CASE
+        WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection'
+        ELSE m.id END
       ELSE m.id END) AS source_key,
     CASE m.kind
       WHEN 'options' THEN CASE
@@ -63,7 +71,14 @@ const SOURCE = `WITH raw AS (
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')
-      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file' ELSE 'Provider needs attention' END AS title,
+      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'
+      -- A provider having a bad morning and an engine that is not signed in
+      -- are not the same news, and only one of them is anybody's job.
+      WHEN 'activity' THEN CASE
+        WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'
+        WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'
+        ELSE 'Provider needs attention' END
+      ELSE 'Provider needs attention' END AS title,
     -- WHICH OF THE FIVE LISTS THIS BELONGS IN.
     --
     -- The kind column says what SHAPE the message is. This says what it
@@ -128,7 +143,31 @@ const SOURCE = `WITH raw AS (
     -- unreachable except by scrolling the umbrella. That is the defect this
     -- whole redesign exists to remove, reintroduced by arithmetic.
     CASE WHEN kind_segment='routine' AND status IN (${DECISION_SQL}) THEN 'question'
-      ELSE kind_segment END AS segment
+      ELSE kind_segment END AS segment,
+    -- WHAT A SEGMENT TAB SHOWS, WHICH IS NOT THE SAME AS WHAT IT COUNTS.
+    --
+    -- The three tabs filtered on decision=1, and two kinds of thing that
+    -- belong to them are not owed and never can be:
+    --
+    --   An ENGINE THAT IS NOT SIGNED IN arrives as a failed activity. It
+    --   needs the owner's hands, which is the definition of a connection,
+    --   but it is a log line with nothing on it to resolve, so it can only
+    --   ever be 'failed'. It was therefore in no tab at all: Connections
+    --   asked for owed, results asks for neither owed nor news, and the
+    --   to-read list that used to carry it lost its tab in this redesign.
+    --   A dead login reachable only by scrolling "All" is THE original
+    --   complaint, made worse by the thing built to fix it.
+    --
+    --   A REQUEST THAT EXPIRED UNATTENDED is 'missed' for the same reason,
+    --   and "I cannot tell whether it expired or where to look" was reported
+    --   on the same evening.
+    --
+    -- So the tab shows both and counts only the first. The count stays
+    -- exactly "what is waiting on you", so the three still sum to the
+    -- umbrella and nothing can badge for ever with no way to clear it; the
+    -- LIST is the place a person goes to look, and it has to hold everything
+    -- of that kind or they will look in it and conclude it is not there.
+    CASE WHEN status IN (${DECISION_SQL}) OR status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS owed_or_over
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
@@ -230,10 +269,10 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // connection.
   const predicate = `${decisions ? "COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
     (?='all'
-      OR (?='approvals' AND decision=1 AND segment='approval')
+      OR (?='approvals' AND owed_or_over=1 AND segment='approval')
       OR (?='decisions' AND decision=1)
-      OR (?='questions' AND decision=1 AND segment='question')
-      OR (?='connections' AND decision=1 AND segment='connection')
+      OR (?='questions' AND owed_or_over=1 AND segment='question')
+      OR (?='connections' AND owed_or_over=1 AND segment='connection')
       OR (?='routines' AND kind_segment='routine')
       OR (?='to-read' AND to_read=1)
       OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
@@ -247,7 +286,9 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   const params = [allowed, view, view, view, view, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
     JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
   const total = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS total FROM items WHERE ${predicate}`).get(...params)?.total ?? 0);
-  const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];
+  // Owed first. A tab that holds both must not float a request that expired
+  // last week above one that is waiting now.
+  const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY decision DESC,at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];
   // Counts describe the visible page's filter, not hidden audiences. Reading
   // a request never removes it from the decisions count, because reading is
   // not answering; reading DOES clear it from the to-read count, because
