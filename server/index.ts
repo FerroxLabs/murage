@@ -475,6 +475,22 @@ import {
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
+import { installServerChildCrashObserver } from "./server-child-crash.mjs";
+
+// FIRST STATEMENT IN THE FILE, AND IT SHOULD STAY FIRST. This process holds
+// every bot, the memory, the tools, the browser and the phone, and twice on
+// 2026-09-22 it died without leaving a word about why. The observer below does
+// not stop it dying — `uncaughtExceptionMonitor` cannot, by construction, and
+// swallowing an unknown fault would keep a corrupted server answering health
+// checks. It writes one redacted line synchronously on the way out. See
+// server-child-crash.mjs.
+//
+// The honest limit of "first": ES modules evaluate every import before this
+// line runs, so a fault thrown while one of the modules above is still
+// initialising happens before there is an observer to see it. Everything from
+// the lease acquisition and store construction below — which is where boot
+// actually does work that can fail — is covered.
+installServerChildCrashObserver();
 
 const PORT = Number(process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.MURAGE_WEBHOOK_PORT || PORT + 1);
