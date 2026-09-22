@@ -203,6 +203,10 @@ type SkillRecordingPayload = {
       };
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
+      /** Whether the engine is alive, and whether it is coming back. A dead
+       *  server presents as a dozen broken features; this is how the renderer
+       *  can tell the difference and say which. */
+      onServerLifecycle(cb: (state: { state: "running" | "restarting" | "failed"; since: number | null; attempt: number }) => void): () => void;
       companionAccount?: {
         state(): Promise<CompanionAccountState>;
         requestCode(email: string): Promise<CompanionAccountState>;

@@ -126,6 +126,24 @@ contextBridge.exposeInMainWorld("muragebox", {
     ipcRenderer.on("desktop:capabilities-changed", handler);
     return () => ipcRenderer.removeListener("desktop:capabilities-changed", handler);
   },
+  /**
+   * WHETHER THE ENGINE IS ALIVE, AND WHETHER IT IS COMING BACK.
+   *
+   * A dead server is indistinguishable, from inside the app, from a dozen
+   * broken features: bots stop mid-turn, memory stops answering, tools go
+   * quiet, the browser reports itself unavailable and a new message cannot be
+   * queued. On 2026-09-22 the owner and his Chief of Staff spent an hour
+   * diagnosing nine separate subsystems. There was one fault, and the window
+   * looked perfectly healthy throughout.
+   *
+   * `state` is "running", "restarting" or "failed". The renderer's job is to
+   * say which, so this can never again be mistaken for nine bugs.
+   */
+  onServerLifecycle: (cb) => {
+    const handler = (_event, state) => cb(state);
+    ipcRenderer.on("server-lifecycle:state", handler);
+    return () => ipcRenderer.removeListener("server-lifecycle:state", handler);
+  },
   /** The companion sidecar: the one part of this app that listens off the
    * machine, so it runs as its own process and is off until switched on.
    * Every call answers with the whole state, so the panel never has to

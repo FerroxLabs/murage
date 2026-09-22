@@ -11,6 +11,7 @@ import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
@@ -246,6 +247,10 @@ function Shell() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* ABOVE everything, and not dismissible while the engine is down. A
+          dead server is indistinguishable from a dozen broken features from
+          in here, and that cost the owner an hour on 2026-09-22. */}
+      <ServerLifecycleBanner />
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
