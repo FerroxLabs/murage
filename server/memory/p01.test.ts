@@ -58,3 +58,31 @@ it("rejects dangling memory references without trusting archive foreign-key sett
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,'absent','bot','b',0,'granted','{}')").run(randomUUID());
   expect(() => inspectInstallationDatabase(db)).toThrow("DATABASE_SCHEMA_UNSUPPORTED");
 });
+
+// THE SWEEP IS FOR FILES FROM ELSEWHERE, NOT FOR EVERY APP START.
+//
+// `PRAGMA foreign_key_check` walks every reference in the database. On the
+// owner's 312MB store that is 1.86 seconds, and it ran on EVERY open — almost
+// always to conclude that a database this installation wrote itself, with
+// PRAGMA foreign_keys=ON set on the connection, has the references that
+// setting already guarantees. Roughly two seconds of every app start, for a
+// verdict that was never going to be anything else, and which could only fail
+// closed on a live store if it ever did say otherwise.
+//
+// It stays where a file's history is unknown or its schema is being rewritten.
+it("sweeps references for an archive, and not for an already-current database", () => {
+  const db = database();
+  db.exec("PRAGMA foreign_keys=OFF");
+  db.prepare("INSERT INTO memory_scope_bindings VALUES(?,'absent','bot','b',0,'granted','{}')").run(randomUUID());
+
+  // The archive/restore path still refuses it, by default and when asked.
+  expect(() => validateMemorySchema(db)).toThrow("INVALID_MEMORY_REFERENCE");
+  expect(() => validateMemorySchema(db, { references: true })).toThrow("INVALID_MEMORY_REFERENCE");
+  expect(() => inspectInstallationDatabase(db)).toThrow("DATABASE_SCHEMA_UNSUPPORTED");
+
+  // Opening a database already at the current schema does not pay for it. The
+  // structural checks still run: this is a narrower check, not a skipped one.
+  expect(() => validateMemorySchema(db, { references: false })).not.toThrow();
+  expect(() => migrateMemorySchema(db)).not.toThrow();
+  db.exec("PRAGMA foreign_keys=ON");
+});

@@ -124,8 +124,25 @@ function expectedSchema(version: number) {
   } finally { db.close(); }
 }
 
-/** Read-only archive validation. Never executes schema supplied by an archive. */
-export function validateMemorySchema(db: DatabaseSync): Set<string> {
+/** Read-only archive validation. Never executes schema supplied by an archive.
+ *
+ * `references` controls the FULL-FILE foreign key sweep. It is the one check
+ * here that is not proportional to the schema: `PRAGMA foreign_key_check`
+ * walks every reference in the database, measured at 1.86s on a real 312MB
+ * store, while every other check in this function costs single-digit
+ * milliseconds. It ran on EVERY database open, including the overwhelmingly
+ * common one where the schema is already current and nothing is going to be
+ * rewritten — around two seconds of every app start, spent re-proving what
+ * `PRAGMA foreign_keys=ON` (set in database()) already enforces on every
+ * write this installation makes.
+ *
+ * So it is spent where it can still buy something: a schema rewrite, and any
+ * file that came from outside this installation — restore, merge, archive,
+ * downgrade. Those keep the sweep, and it defaults to on, so a new caller
+ * gets the strict behaviour unless it opts out on purpose. A boolean is
+ * evaluated lazily as a callback when the decision depends on the meta row,
+ * which this function only trusts after it has validated its shape. */
+export function validateMemorySchema(db: DatabaseSync, options: { references?: boolean | (() => boolean) } = {}): Set<string> {
   const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
   const memoryRows = rows.filter(row => row.name.startsWith("memory_") || row.tbl_name.startsWith("memory_"));
   if (!memoryRows.length) return new Set(); // private.7 legacy archive
@@ -141,7 +158,8 @@ export function validateMemorySchema(db: DatabaseSync): Set<string> {
   }
   const meta = db.prepare("SELECT * FROM memory_meta").all();
   if (meta.length !== 1 || meta[0].schema_version !== version || !/^[a-f0-9-]{36}$/.test(String(meta[0].installation_id))) throw new Error("INVALID_MEMORY_META");
-  if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("INVALID_MEMORY_REFERENCE");
+  const sweep = options.references ?? true;
+  if ((typeof sweep === "function" ? sweep() : sweep) && db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("INVALID_MEMORY_REFERENCE");
   for (const [table,column,kind] of [
     ["memory_scopes","audience","array"], ["memory_scope_bindings","intent","object"],
     ["memory_source_versions","payload","object"], ["memory_disclosures","record_versions","array"],
@@ -185,7 +203,9 @@ function snapshotBeforeMigration(db: DatabaseSync, path: string) {
 export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "active" = "off", options: MigrateMemoryOptions = {}) {
   const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get();
   if (exists) {
-    validateMemorySchema(db);
+    // Structure, meta and row shapes on every open; the whole-file reference
+    // sweep only when this open is actually going to rewrite the schema.
+    validateMemorySchema(db, { references: () => db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version !== MEMORY_SCHEMA_VERSION });
     if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version === MEMORY_SCHEMA_VERSION) return;
     // Fail closed: without the copy the upgrade would be irreversible for a 0.1.53 reinstall.
     if (options.snapshotPath) snapshotBeforeMigration(db, options.snapshotPath);
