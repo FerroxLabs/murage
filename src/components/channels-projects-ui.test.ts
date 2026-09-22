@@ -210,7 +210,14 @@ describe("archiving a channel", () => {
 
   it("archives from the row menu too, above the line from Delete", () => {
     const menu = SIDEBAR.slice(SIDEBAR.indexOf("function RoomContextMenu("), SIDEBAR.indexOf("function NewRoomPanel("));
-    expect(menu.indexOf("Archive")).toBeLessThan(menu.indexOf("Delete Channel"));
+    // The label is built from `conversationNoun(group)` now, because a row
+    // under the PROJECTS heading used to offer "Delete Channel". This is a
+    // source-text guard and it went red on the rename rather than on any
+    // change to the ordering it exists for, which is the known weakness of
+    // reading a file instead of rendering it.
+    const deleteLabel = menu.indexOf("`Delete ${noun}`");
+    expect(deleteLabel, "the delete item must still be findable").toBeGreaterThan(-1);
+    expect(menu.indexOf("Archive")).toBeLessThan(deleteLabel);
   });
 });
 
@@ -267,6 +274,49 @@ describe("three nouns on the surface", () => {
   it("keeps memory types, context stacking and approvals off these screens", () => {
     for (const [, source] of LANE_FILES) {
       expect(visibleWords(source).filter((text) => /context stack|memory scope|approval mode/i.test(text))).toEqual([]);
+    }
+  });
+});
+
+// A PROJECT MUST NOT BE OFFERED "DELETE CHANNEL".
+//
+// The sidebar already drew a different icon for a project, so it knew. The
+// context menu only ever asked whether the row was a bot chat, so a row
+// sitting under the PROJECTS heading offered "Rename Channel" and "Delete
+// Channel". The app disagreed with itself in the two places a person looks
+// hardest: the heading a thing sits under, and the menu that can delete it.
+//
+// This calls the function rather than reading the file, which is the
+// difference between pinning the behaviour and pinning the spelling.
+describe("what a conversation is called", () => {
+  it("calls each of the three by its own name", async () => {
+    const { conversationNoun } = await import("@/lib/conversation-noun");
+    expect(conversationNoun({ dm: "bot-1" })).toBe("chat");
+    expect(conversationNoun({ channelProject: { goal: "Ship 0.1.58" } })).toBe("project");
+    expect(conversationNoun({})).toBe("channel");
+  });
+
+  it("calls a project a project even though every project is a channel", async () => {
+    // The order inside the function is load-bearing. Asked the other way
+    // round, a project answers "channel" and the defect returns.
+    const { conversationNoun } = await import("@/lib/conversation-noun");
+    expect(conversationNoun({ channelProject: { goal: "Ship 0.1.58" }, memberIds: ["a", "b"] } as never)).toBe("project");
+  });
+
+  it("puts the noun into every label the menu shows", async () => {
+    const { conversationNoun } = await import("@/lib/conversation-noun");
+    for (const [group, expected] of [
+      [{ dm: "bot-1" }, "chat"],
+      [{ channelProject: { goal: "g" } }, "project"],
+      [{}, "channel"],
+    ] as const) {
+      const noun = conversationNoun(group);
+      expect(noun).toBe(expected);
+      // The four places it is spent, in the sentence case they now share.
+      expect(`Rename ${noun}`).toBe(`Rename ${expected}`);
+      expect(`Delete ${noun}`).toBe(`Delete ${expected}`);
+      expect(`Save ${noun} name`).toBe(`Save ${expected} name`);
+      expect(`Cancel ${noun} rename`).toBe(`Cancel ${expected} rename`);
     }
   });
 });

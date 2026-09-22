@@ -108,6 +108,7 @@ import {
   sidebarSectionAttention,
   type SidebarMark,
 } from "@/lib/sidebar-attention";
+import { conversationNoun } from "@/lib/conversation-noun";
 import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } from "@/lib/sidebar-selection";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -478,8 +479,7 @@ function GroupListItem({
     .map((id) => state.bots.find((b) => b.id === id))
     .filter((b): b is Bot => Boolean(b));
   const last = group.messages.at(-1);
-  const isProject = Boolean(group.channelProject);
-  const RowIcon = isProject ? Target : Users;
+  const RowIcon = conversationNoun(group) === "project" ? Target : Users;
   const mark = sidebarGroupMark(group);
   const markLabel = sidebarMarkLabel(mark);
   return (
@@ -592,7 +592,8 @@ function RoomContextMenu({
   }, [onClose]);
 
   if (!group) return null;
-  const isBotChat = Boolean(group.dm);
+  const noun = conversationNoun(group);
+  const isBotChat = noun === "chat";
   const saveRename = () => {
     const name = nextRename(group.name, draft);
     if (name) dispatch({ type: "patchGroup", groupId: group.id, patch: { name } });
@@ -630,7 +631,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={saveRename}
-            aria-label={isBotChat ? "Save chat name" : "Save channel name"}
+            aria-label={`Save ${noun} name`}
             title="Save"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -639,7 +640,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={onClose}
-            aria-label={isBotChat ? "Cancel chat rename" : "Cancel channel rename"}
+            aria-label={`Cancel ${noun} rename`}
             title="Cancel"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -655,7 +656,7 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <Pencil size={16} className="text-ink-secondary" />
-          {isBotChat ? "Rename chat" : "Rename Channel"}
+          {`Rename ${noun}`}
         </button>
       )}
       {!isBotChat && (
@@ -704,7 +705,7 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
       >
         <Trash2 size={16} />
-        {isBotChat ? "Delete chat" : "Delete Channel"}
+        {`Delete ${noun}`}
       </button>
     </div>,
     document.body,
