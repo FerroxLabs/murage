@@ -35,6 +35,24 @@ If you cannot recommend, you have not checked enough. Check more before the
 brief, or leave the item out until you can. A list of options is a failure to
 do the job.
 
+### What goes first, above every decision
+
+A source you could not read. A login that has gone returns nothing rather
+than failing, so a broken morning and a quiet one produce the same brief, and
+the quiet one is the lie. Say it plainly, once, with what it has stopped and
+since when: "Gmail has been disconnected since Sunday, so nothing below
+covers your mail." Everything else in the brief is written over that gap
+until it is fixed.
+
+### What never appears here
+
+A routine that failed. Failing is not deciding, and most failures have
+already fixed themselves by the time anyone reads this: a run that failed and
+then ran fine is nothing, and a provider being busy overnight is nothing. If
+routines are stopped by something a person must fix, that is the connection
+above, named once, not a list of runs. Counting them is worse still. Nobody
+can act on "twelve runs failed".
+
 ## Today
 
 An edit of the day, not a copy of it. Three things earn a line:
