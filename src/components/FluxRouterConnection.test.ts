@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { FLUX_SIGNUP_URL, FluxRouterConnection, fluxActionError, serverSentence, type FluxRouterConnectionProps } from "./FluxRouterConnection";
+import { FLUX_ACCOUNT_URL, FLUX_SIGNUP_URL, FluxRouterConnection, fluxActionError, serverSentence, type FluxRouterConnectionProps } from "./FluxRouterConnection";
 
 const render = (props: Partial<FluxRouterConnectionProps> = {}) => renderToStaticMarkup(createElement(FluxRouterConnection, {
   configured: false,
@@ -112,5 +112,32 @@ describe("a refused Flux Router change says why", () => {
     expect(card).not.toMatch(/catch\s*\{/);
     expect(card).toMatch(/catch \(cause\) \{\n\s+setError\(fluxActionError\(kind, cause\)\);/);
     expect(card).toContain('catch (cause) { setError(fluxActionError("select", cause)); }');
+  });
+});
+
+// THE CARD MUST NOT SELL WHAT THEY ALREADY BOUGHT.
+//
+// It said "Connected · key saved", offered Replace, Test and Disconnect, and
+// underneath invited the owner to SIGN UP for the thing he was already paying
+// for. He photographed it and asked why. The same door serves both people;
+// only the sentence on it, and where it leads, changes.
+describe("the outbound Flux Router link", () => {
+  it("sends a connected owner to their own usage, not to the sign-up form", () => {
+    const html = render({ configured: true });
+    expect(html).toContain(`href="${FLUX_ACCOUNT_URL}"`);
+    expect(html).toContain("Check your Flux Router usage");
+    expect(html, "nobody with a saved key should be asked to sign up").not.toContain("Sign up for Flux Router");
+    expect(html).not.toContain(`href="${FLUX_SIGNUP_URL}"`);
+  });
+  it("still sends somebody with no key to sign up", () => {
+    const html = render({ configured: false });
+    expect(html).toContain(`href="${FLUX_SIGNUP_URL}"`);
+    expect(html).toContain("Sign up for Flux Router");
+    expect(html).not.toContain(`href="${FLUX_ACCOUNT_URL}"`);
+  });
+  it("does not promise usage before the card knows whether a key is saved", () => {
+    const html = render({ configured: null });
+    expect(html).toContain("Loading connection…");
+    expect(html).not.toContain("Check your Flux Router usage");
   });
 });

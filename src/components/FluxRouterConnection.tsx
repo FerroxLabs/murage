@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, Route } from "lucide-react";
 
 export const FLUX_SIGNUP_URL = "https://fluxrouter.ai/auth/sign-up";
+/** Where somebody who ALREADY has a key wants to go: their own balance and
+ *  spend. The signed-in home, not the sign-up form. */
+export const FLUX_ACCOUNT_URL = "https://fluxrouter.ai/home/api-keys";
 
 /** Electron wraps a rejection from the main process in its own channel text
  * ("Error invoking remote method '…': Error: …"). The same refusal arrives
@@ -115,7 +118,13 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
     </div>}
     {disconnecting && <div className="mt-3 rounded-lg bg-card p-3 text-[13px] text-ink"><p>Disconnect Flux Router? Bots using Flux models will need another model connection.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void act("disconnect")}>{busy === "disconnect" ? "Disconnecting…" : "Disconnect Flux Router"}</button><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setDisconnecting(false)}>Keep connected</button></div></div>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Test connection checks the model catalog only. It does not send a model request or verify that a model can answer.</p>
-    <a href={FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={`mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] font-medium text-accent hover:underline ${focus}`}>Sign up for Flux Router<ExternalLink size={13} aria-hidden="true" /></a>
+    {/* THE LINK HAS TO KNOW WHETHER THEY ALREADY DID THIS.
+        The card says "Connected · key saved" and offers Replace, Test and
+        Disconnect, and then invited the owner to sign up for the thing he was
+        already signed up for and paying for. The same door serves both people;
+        only the sentence on it changes, and it changes on the one fact the
+        card already knows. */}
+    <a href={configured ? FLUX_ACCOUNT_URL : FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={`mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] font-medium text-accent hover:underline ${focus}`}>{configured ? "Check your Flux Router usage" : "Sign up for Flux Router"}<ExternalLink size={13} aria-hidden="true" /></a>
     {notice && <p role="status" className="mt-2 text-[12px] leading-relaxed text-success">{notice}</p>}
     {/* The server's sentence can be long and can carry a bot's name, so it
         wraps rather than stretching the card or being clipped by it. */}
