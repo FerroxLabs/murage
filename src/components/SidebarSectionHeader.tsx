@@ -1,4 +1,4 @@
-import { BookOpen, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, GripVertical, Loader2 } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
 
 import { cn } from "@/lib/cn";
@@ -64,6 +64,10 @@ export function SidebarSectionHeader({
           <span className="truncate text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
             {name}
           </span>
+          {/* A closed section follows the same rule its rows do: a count, in
+              colour, for the one thing waiting on you. Unread loses its badge
+              and working turns a ring instead of holding a coloured dot —
+              both are still counted in the label below. */}
           {attention && attention.waiting > 0 && (
             <span
               aria-hidden="true"
@@ -72,21 +76,12 @@ export function SidebarSectionHeader({
               {attention.waiting}
             </span>
           )}
-          {attention && attention.unread > 0 && (
-            <span
-              aria-hidden="true"
-              className="min-w-4 rounded-full bg-accent/15 px-1 text-center text-[9px] font-semibold leading-4 text-accent"
-            >
-              {attention.unread}
-            </span>
-          )}
           {attention && attention.working > 0 && (
-            <span
+            <Loader2
               aria-hidden="true"
-              className="flex size-4 items-center justify-center"
-            >
-              <span className="size-1.5 animate-pulse rounded-full bg-success" />
-            </span>
+              size={11}
+              className="shrink-0 animate-spin text-ink-secondary"
+            />
           )}
           <span className="h-px flex-1 bg-hairline/40" />
           {attentionLabel && <span className="sr-only">{attentionLabel}</span>}

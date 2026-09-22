@@ -20,7 +20,7 @@ vi.mock("@/lib/analytics", () => ({
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview,
-  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase } =
+  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -379,3 +379,65 @@ describe("sidebar menus, dialogs and rows say what they are", async () => {
     expect(stacked.match(/aria-hidden="true"/g)?.length).toBe(2);
   });
 });
+
+describe("a dot in the sidebar means one thing", () => {
+  const html = (mark: Parameters<typeof SidebarRowMark>[0]["mark"]) =>
+    renderToStaticMarkup(createElement(SidebarRowMark, { mark }));
+
+  it("draws an amber dot for one thing waiting, and a count for more", () => {
+    const one = html({ kind: "waiting", count: 1 });
+    expect(one).toContain('data-sidebar-mark="waiting"');
+    expect(one).toContain("bg-warning");
+    // One thing waiting is a dot, not the number 1.
+    expect(one).not.toContain(">1<");
+
+    const many = html({ kind: "waiting", count: 4 });
+    expect(many).toContain("4");
+    expect(many).toContain("text-warning");
+  });
+
+  it("turns a ring for working, with no dot and no number", () => {
+    const working = html({ kind: "working" });
+    expect(working).toContain('data-sidebar-mark="working"');
+    expect(working).toContain("animate-spin");
+    // Motion, not colour: nothing here is amber, accent or success.
+    expect(working).not.toContain("bg-warning");
+    expect(working).not.toContain("bg-accent");
+    expect(working).not.toContain("bg-success");
+    // and it never carries a count: working resolves by itself.
+    expect(working).not.toMatch(/>\s*\d+\s*</);
+  });
+
+  it("draws nothing at all for unread, and nothing for nothing", () => {
+    expect(html({ kind: "unread" })).toBe("");
+    expect(html({ kind: "none" })).toBe("");
+  });
+});
+
+// WHAT IS NOT PROVEN HERE, SAID OUT LOUD.
+//
+// Four checks stood here and read `Sidebar.tsx` AS TEXT, asserting that
+// `BotListItem` contained `const mark = sidebarBotMark(bot);` and no longer
+// contained `rounded-full bg-accent"`. One of them pinned the shape of an
+// `aria-label` expression with a regex over source whitespace.
+//
+// They are deleted, and `816c3377` earlier on this same branch is why: it
+// removed seven tests of exactly this shape from `server/index.ts` with the
+// reason that they "go green on a call sitting in dead code and red on a
+// reformat that changes nothing, which is the wrong way round in both
+// directions". Re-adding four of them the same day would be re-adding a
+// defect somebody had already argued out.
+//
+// So this is the honest state. PROVEN, by rendering: `SidebarRowMark` draws
+// an amber dot with a count for waiting, a ring with no number for working,
+// and nothing at all for unread or for nothing (above); and a collapsed
+// section badges waiting alone (SidebarSectionHeader.test.ts). PROVEN, as
+// pure functions: the whole mark ladder, the waiting count, the accessible
+// label, the name weight and the row tint (sidebar-attention.test.ts).
+//
+// NOT PROVEN ANYWHERE IN VITEST: that `BotListItem` and `GroupListItem`
+// actually mount that component and spend those classes. Both are unexported
+// and need the store provider, so this suite cannot render them. That wiring
+// is covered only by the first-run human specs, which drive the real
+// renderer — and if it is ever worth pinning properly, the way is to render
+// the row, not to read the file that draws it.

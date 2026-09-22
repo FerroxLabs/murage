@@ -4,8 +4,11 @@
 // selected row now carries a gold edge in the warning token (#fbbf24 dark,
 // #8a6100 light — both clear of the panel ground), doubled by an inset shadow
 // so the edge thickens without the box growing. Gold is deliberately none of
-// the other row signals: unread is an orange accent dot, a team lead's
-// outline is blue, and the Chief keeps its orange tint underneath.
+// the other row signals: a team lead's outline is blue, the Chief keeps its
+// orange tint underneath, and the one amber mark means a bot is waiting on
+// the owner (sidebar-attention.ts). Unread used to be an orange dot here; it
+// is the name's weight now, because a mark that fires on unread is on nearly
+// every row and therefore means nothing.
 import type { botRole } from "@/lib/bot-role";
 
 export const SIDEBAR_SELECTED_ROW = "border-warning shadow-[inset_0_0_0_1px_var(--color-warning)]";

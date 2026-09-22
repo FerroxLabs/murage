@@ -99,7 +99,15 @@ import {
   userSectionName,
   type SectionDropPlace,
 } from "@/lib/sidebar-layout";
-import { sidebarSectionAttention } from "@/lib/sidebar-attention";
+import {
+  sidebarBotMark,
+  sidebarGroupMark,
+  sidebarMarkLabel,
+  sidebarMarkNameClass,
+  sidebarMarkRowClass,
+  sidebarSectionAttention,
+  type SidebarMark,
+} from "@/lib/sidebar-attention";
 import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } from "@/lib/sidebar-selection";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -381,6 +389,45 @@ export function sidebarGroupPreview(group: Group, bots: Bot[]): string {
   return last.from ? `${last.from.name}: ${text}` : text;
 }
 
+/** The one mark a sidebar row may draw.
+ *
+ *  Colour is spent on a single meaning: amber means this row is waiting on
+ *  you, and nothing else in the list is amber. A working row turns a thin
+ *  ring instead — motion resolves itself, so it never carries a number — and
+ *  an unread row says so with the weight of its name (see
+ *  `sidebarMarkNameClass`), not with a dot. Every mark is decoration here;
+ *  the row's own accessible name carries `sidebarMarkLabel`. */
+export function SidebarRowMark({ mark }: { mark: SidebarMark }) {
+  if (mark.kind === "waiting") {
+    return mark.count > 1 ? (
+      <span
+        data-sidebar-mark="waiting"
+        aria-hidden="true"
+        className="min-w-4 shrink-0 rounded-full bg-warning/15 px-1 text-center text-[10px] font-semibold leading-4 text-warning"
+      >
+        {mark.count}
+      </span>
+    ) : (
+      <span
+        data-sidebar-mark="waiting"
+        aria-hidden="true"
+        className="size-2 shrink-0 rounded-full bg-warning"
+      />
+    );
+  }
+  if (mark.kind === "working") {
+    return (
+      <Loader2
+        data-sidebar-mark="working"
+        aria-hidden="true"
+        size={12}
+        className="shrink-0 animate-spin text-ink-secondary"
+      />
+    );
+  }
+  return null;
+}
+
 /** Room avatar: 2–3 overlapping embers in the same 56px slot a bot gets. */
 function StackedEmbers({ members, density }: { members: Bot[]; density: SidebarDensity }) {
   const iconOnly = density === "icons";
@@ -433,6 +480,8 @@ function GroupListItem({
   const last = group.messages.at(-1);
   const isProject = Boolean(group.channelProject);
   const RowIcon = isProject ? Target : Users;
+  const mark = sidebarGroupMark(group);
+  const markLabel = sidebarMarkLabel(mark);
   return (
     <div className="group relative">
     <button
@@ -459,12 +508,17 @@ function GroupListItem({
         sidebarGroupRowTone(selected),
       )}
       title={density === "icons" ? group.name : undefined}
-      aria-label={density === "icons" ? group.name : undefined}
+      aria-label={
+        density === "icons" ? [group.name, markLabel].filter(Boolean).join(" · ") : undefined
+      }
     >
       <StackedEmbers members={members} density={density} />
+      {/* Unread and working lost their dot, not their meaning: the row still
+          says which it is, it just no longer competes for the eye. */}
+      {density !== "icons" && markLabel && <span className="sr-only">{markLabel}</span>}
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink">
+          <span className={cn("flex min-w-0 items-center gap-1.5 text-[15px]", sidebarMarkNameClass(mark))}>
             <RowIcon size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <span className="truncate">{group.name}</span>
           </span>
@@ -472,11 +526,11 @@ function GroupListItem({
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-[13px] text-ink-secondary">{sidebarGroupPreview(group, state.bots)}</span>
-          {group.unread && <span className="size-2 shrink-0 rounded-full bg-accent" />}
+          <SidebarRowMark mark={mark} />
         </div>
       </div>
-      {density === "icons" && group.unread && (
-        <span className="absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
+      {density === "icons" && mark.kind === "waiting" && (
+        <span aria-hidden="true" className="absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-warning" />
       )}
     </button>
     {/* This menu used to live behind a right-click and Shift+F10 alone. A
@@ -1208,6 +1262,8 @@ function BotListItem({
   const rowPreview = botRole(bot) === "member" || selected || bot.unread || bot.busy || bot.activity === "waiting-on-you"
     ? sidebarBotPreview(bot)
     : "";
+  const mark = sidebarBotMark(bot);
+  const markLabel = sidebarMarkLabel(mark);
   const rowClass = cn(
     "relative flex w-full items-center rounded-xl border text-left",
     iconOnly
@@ -1219,6 +1275,9 @@ function BotListItem({
     // Role colour at rest (Chief orange, leader blue); the open row gets the
     // gold selected edge from sidebar-row-tone whatever its role.
     sidebarBotRowTone(botRole(bot), selected),
+    // The tinted row that backs the amber dot. Waiting only: it is the one
+    // state in this list that is allowed to be coloured.
+    sidebarMarkRowClass(mark),
   );
   const body = (
     <>
@@ -1238,7 +1297,9 @@ function BotListItem({
       </span>
       <div className={cn("pointer-events-none relative z-10 min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
+          {/* Unread is the weight of this name now — it no longer gets a dot,
+              because the dot belongs to "waiting on you" alone. */}
+          <span className={cn("flex min-w-0 items-center gap-1.5 truncate text-[15px]", sidebarMarkNameClass(mark))}>
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
             {bot.sidebarHidden && <EyeOff size={12} className="shrink-0 text-ink-secondary" aria-label="Hidden from sidebar" />}
             <RenameTitle
@@ -1280,9 +1341,7 @@ function BotListItem({
             {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
             <span className="truncate">{rowPreview}</span>
           </span>
-          {bot.unread && (
-            <span className="size-2 shrink-0 rounded-full bg-accent" />
-          )}
+          <SidebarRowMark mark={mark} />
         </div>
       </div>
     </>
@@ -1351,14 +1410,19 @@ function BotListItem({
         {!renaming && <button
           type="button"
           data-sidebar-select={bot.id}
-          aria-label={iconOnly ? bot.name : [bot.name, botRole(bot) !== "member" ? BOT_ROLE_BADGE[botRole(bot)] : "", rowPreview].filter(Boolean).join(" · ")}
+          // Only "waiting on you" is drawn in colour now, so waiting, working
+          // and unread all have to reach a screen reader through this name.
+          aria-label={(iconOnly
+            ? [bot.name, markLabel]
+            : [bot.name, botRole(bot) !== "member" ? BOT_ROLE_BADGE[botRole(bot)] : "", markLabel, rowPreview]
+          ).filter(Boolean).join(" · ")}
           aria-pressed={selected}
           className="absolute inset-0 z-0 rounded-xl bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         />}
         {body}
       </div>
-      {iconOnly && bot.unread && (
-        <span className="pointer-events-none absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
+      {iconOnly && mark.kind === "waiting" && (
+        <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-warning" />
       )}
       {/* Every action in the bot menu used to live behind onContextMenu alone.
           A touch device fires no `contextmenu` event, so on a phone the menu —

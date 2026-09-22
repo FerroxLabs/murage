@@ -41,6 +41,50 @@ describe("SidebarSectionHeader", () => {
     expect(html).toContain("1 working");
   });
 
+  it("gives a closed section a count for waiting and a badge for nothing else", () => {
+    const html = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, {
+        name: "Bot Chats",
+        collapsed: true,
+        attention: { waiting: 2, unread: 5, working: 3 },
+        onToggle: () => {},
+        reorderable: false,
+        dragging: false,
+      }),
+    );
+
+    // The one count that is drawn, in the one colour that means "you".
+    expect(html).toContain("bg-warning/15");
+    expect(html).toMatch(/text-warning[^>]*>2</);
+    // Unread's badge is gone: five unread chats no longer draw a number.
+    expect(html).not.toContain("bg-accent/15");
+    expect(html).not.toContain(">5<");
+    // Working turns instead of holding a coloured dot, and never numbers itself.
+    expect(html).toContain("animate-spin");
+    expect(html).not.toContain("bg-success");
+    expect(html).not.toContain(">3<");
+    // …and all three still reach a screen reader.
+    expect(html).toContain("2 waiting for you, 5 unread, 3 working");
+  });
+
+  it("draws nothing when a closed section is only unread", () => {
+    const html = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, {
+        name: "Work",
+        collapsed: true,
+        attention: { waiting: 0, unread: 4, working: 0 },
+        onToggle: () => {},
+        reorderable: false,
+        dragging: false,
+      }),
+    );
+
+    expect(html).not.toContain("bg-warning/15");
+    expect(html).not.toContain("animate-spin");
+    expect(html).not.toContain(">4<");
+    expect(html).toContain("4 unread");
+  });
+
   it("offers a team's instructions editor from its header, and only where a team was given one", () => {
     const withEditor = renderToStaticMarkup(
       createElement(SidebarSectionHeader, {
