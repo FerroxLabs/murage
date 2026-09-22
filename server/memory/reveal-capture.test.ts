@@ -6,7 +6,7 @@ import { appendMessage } from "../message-db.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { writeBotIdentity, readBotIdentity } from "./identity.ts";
-import { captureBotReveals, pendingBotRevealJobs } from "./reveal-capture.ts";
+import { captureBotReveals, pendingBotRevealJobs, revealRetryAt } from "./reveal-capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { forgetMemory } from "./forget.ts";
@@ -95,4 +95,35 @@ it("stages review-mode disclosure as a candidate without activating private cont
   closeDatabase();
   expect(reveals()).toHaveLength(0);
   expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(rows[0].id)).toEqual({state:"candidate"});
+});
+
+// 25,164 RECEIPTS, ALL SAYING THE SAME THING, EVERY SIXTY SECONDS.
+//
+// `reveal-source-ineligible` is a verdict about a job's own immutable source
+// and the shape of the roster. On the owner's store that verdict had been
+// reached 25,164 times and was being re-reached every minute for every one of
+// them, for as long as the app ran, with more added on every bot turn. Over
+// eleven minutes it completed six and added a hundred and twenty-six.
+//
+// Backing off is not giving up: the job is still retried. What must not
+// happen is a genuinely transient failure inheriting a stuck job's patience,
+// so a change of reason puts it back to a minute.
+it("waits longer each time the same verdict comes back, and starts over when it changes", () => {
+  const at = Date.parse("2026-09-22T12:00:00Z");
+  vi.setSystemTime(at);
+  const minutes = (r: { retryAt: number }) => Math.round((r.retryAt - at) / 60_000);
+
+  let saved: Parameters<typeof revealRetryAt>[0] = { cursor: "", status: "pending", retryAt: 0 };
+  const steps: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    saved = { ...saved, reason: "reveal-source-ineligible", ...revealRetryAt(saved, "reveal-source-ineligible") };
+    steps.push(minutes(saved));
+  }
+  expect(steps).toEqual([1, 2, 4, 8, 16, 32, 60, 60]);
+
+  // A different reason is a different situation.
+  const fresh = revealRetryAt(saved, "reveal-source-budget");
+  expect(fresh.attempts).toBe(1);
+  expect(Math.round((fresh.retryAt - at) / 60_000)).toBe(1);
+  vi.useRealTimers();
 });

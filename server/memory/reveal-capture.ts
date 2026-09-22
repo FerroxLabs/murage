@@ -7,7 +7,20 @@ import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import type { MemoryRoster } from "./policy.ts";
 
-type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string};
+type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
+/** A minute, doubling while the SAME reason keeps coming back, up to an hour.
+ *  The owner's store held 25,164 reveal receipts parked on
+ *  `reveal-source-ineligible` — a verdict about the job's own immutable
+ *  source and the shape of the roster, which a minute's wait was never going
+ *  to change — and every one of them came back around every sixty seconds,
+ *  for as long as the app ran, with more added on every bot turn. Nothing is
+ *  abandoned here: the job is still retried, just not fourteen hundred times
+ *  a day to be told the same thing. A DIFFERENT reason resets the clock, so a
+ *  genuinely transient failure never inherits a stuck job's patience. */
+export const revealRetryAt=(saved:Receipt,reason:string)=>{
+  const attempts=saved.reason===reason?(saved.attempts??0)+1:1;
+  return {attempts,retryAt:Date.now()+Math.min(60_000*2**(attempts-1),3_600_000)};
+};
 const receiptId=(jobId:string)=>`reveal-capture:${jobId}`;
 function receipt(db:DatabaseSync,jobId:string):Receipt {
   const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(receiptId(jobId));
@@ -17,15 +30,34 @@ function persist(db:DatabaseSync,jobId:string,scope:string,value:Receipt){
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','reveal-capture',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
     .run(receiptId(jobId),scope,JSON.stringify(value));
 }
+/** How many job rowids one polling visit may look at. The neighbouring
+ *  pollers (pendingMemoryConsolidationJobs, pendingProcedureReviews) are
+ *  bounded the same way and for the same reason. */
+const REVEAL_SCAN_WINDOW=4096;
+let revealScanCursor=0;
 /** Startup discovery includes completed capture jobs whose callback was interrupted.
- * No parallel queue/store: existing jobs plus bounded processing metadata. */
+ * No parallel queue/store: existing jobs plus bounded processing metadata.
+ *
+ * BOUNDED, AND IN ROWID ORDER ON PURPOSE. This ran once a second and was
+ * unbounded: `ORDER BY j.rowid LIMIT 1` over every completed capture job made
+ * SQLite pick the status index and then materialise every match into a temp
+ * b-tree to sort it, so it could not stop at the first row. On a real store
+ * (53k completed jobs, 25k reveal bindings to JSON-extract) that was 669ms
+ * per visit, forever. `NOT INDEXED` makes it walk the table in rowid order
+ * instead, which IS the order asked for, so the sort disappears and the scan
+ * stops at the first hit: 3-6ms. The window then bounds the miss case, where
+ * nothing in range is eligible. Measured 2026-09-22. */
 export function pendingBotRevealJobs(limit=1):string[]{
-  return database().prepare(`SELECT j.id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
+  const db=database(),until=revealScanCursor+REVEAL_SCAN_WINDOW;
+  const rows=db.prepare(`SELECT j.id FROM memory_jobs j NOT INDEXED JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
     LEFT JOIN memory_scope_bindings b ON b.id='reveal-capture:'||j.id
-    WHERE j.stage='capture' AND j.status='complete' AND s.state='active' AND s.kind='text'
+    WHERE j.rowid>? AND j.rowid<=? AND j.stage='capture' AND j.status='complete' AND s.state='active' AND s.kind='text'
     AND s.speaker NOT IN ('owner','tool','harness') AND s.speaker NOT LIKE 'person:%'
     AND (b.id IS NULL OR (json_extract(b.intent,'$.status')='pending' AND json_extract(b.intent,'$.retryAt')<=?))
-    ORDER BY j.rowid LIMIT ?`).all(Date.now(),Math.min(4,Math.max(1,Math.trunc(limit)||1))).map(row=>String(row.id));
+    ORDER BY j.rowid LIMIT ?`).all(revealScanCursor,until,Date.now(),Math.min(4,Math.max(1,Math.trunc(limit)||1)));
+  const last=Number(db.prepare("SELECT max(rowid) AS last FROM memory_jobs").get()?.last??0);
+  revealScanCursor=until>=last?0:until;
+  return rows.map(row=>String(row.id));
 }
 function sourceFor(jobId:string,roster:MemoryRoster){
   const db=database(),source=db.prepare(`SELECT s.*,v.payload,j.cursor,length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS bytes
@@ -66,7 +98,7 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
   if(saved.status==="complete")return {status:"unchanged" as const};
   const ineligible=(reason:string)=>{
     const source=db.prepare("SELECT s.scope_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").get(jobId);
-    if(source)persist(db,jobId,String(source.scope_id),{...saved,status:"pending",retryAt:Date.now()+60000,reason});
+    if(source)persist(db,jobId,String(source.scope_id),{...saved,status:"pending",reason,...revealRetryAt(saved,reason)});
     return {status:"deferred" as const,reason};
   };
   let observed:ReturnType<typeof sourceFor>;
@@ -75,7 +107,7 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
   if(!initial)return ineligible("reveal-source-ineligible");
   const learning=readMemoryLearning(db);
   const defer=(reason:string)=>{
-    persist(db,jobId,String(initial!.source.scope_id),{...saved,status:"pending",retryAt:Date.now()+60000,reason});
+    persist(db,jobId,String(initial!.source.scope_id),{...saved,status:"pending",reason,...revealRetryAt(saved,reason)});
     return {status:"deferred" as const,reason};
   };
   if(signal.aborted||!learning.automaticFacts)return defer("reveal-learning-disabled-or-cancelled");
