@@ -121,3 +121,70 @@ it("coalesces authorized conversations into their shared private bot target audi
   const review=JSON.parse(String(rows[0].intent));expect(review.scopeId).toBe("private-target");expect(review.evidence).toHaveLength(3);
   expect(intent(String(triggers[0].id)).scopeId).toBe(firstScope);expect(intent(String(triggers[1].id)).scopeId).toBe(secondScope);
 });
+
+// A QUEUE THAT CANNOT MOVE MUST NOT COST ANYTHING.
+//
+// The owner's server burned two thirds of a CPU core continuously, for as
+// long as it ran, while nothing at all was happening. Ninety-one procedure
+// reviews sat deferred with reason PROCEDURE_MODEL_UNAVAILABLE, forty-four of
+// them carrying the maximum sixty-four pieces of evidence. Once a second the
+// idle poll picked one, hydrated every piece, walked each one's transitive
+// provenance (up to 256 nodes, five SQL statements compiled per node), and
+// only THEN asked whether there was an evaluator to hand the result to. There
+// wasn't, and never would be, so it deferred for sixty seconds and did it
+// again. Two snapshots of the real store eleven minutes apart both read
+// ninety-one deferred: the queue was not draining, it was a treadmill.
+//
+// The question "is there an evaluator" needs no snapshot and costs three
+// config reads. These pin that it is asked FIRST — and that a review which
+// already HAS a receipt is still allowed through, because that work is done
+// and only needs publishing.
+// AND IT STILL HAS TO BE FOUND AND PARKED.
+//
+// The first version of this fix also stopped `pendingProcedureReviews` from
+// offering a review while no evaluator existed. That is cheaper still, and it
+// is wrong: B34's Q14 scenario pins that with no model selected BOTH reviews
+// are discovered and come to rest as deferred/PROCEDURE_MODEL_UNAVAILABLE
+// with attempts 0, and the memory status endpoint lists them as unstarted. A
+// review nobody ever picks up stays "pending" and is never listed. The saving
+// was never in skipping the review; it was in not hydrating its evidence.
+it("still finds a review when no evaluator can run it, so it can be parked and listed",()=>{
+  settle();settle();
+  const shut:ProcedureReviewHost={...host(),evaluatorAvailable:()=>({ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"})};
+  expect(pendingProcedureReviews(4,shut)).toHaveLength(1);
+});
+
+it("never hydrates evidence for work no evaluator can take",async()=>{
+  settle();
+  const h=host(),id=await expand(h);
+  let hydrated=0;
+  const shut:ProcedureReviewHost={...h,
+    canReadEvidence:(review,evidence)=>{hydrated++;return review===evidence;},
+    evaluatorAvailable:()=>({ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"})};
+  await processProcedureReview(id,shut,signal());
+  expect(hydrated,"the cheap question has to be asked before the expensive one").toBe(0);
+  // The shape B34's Q14 scenario waits for, spelled out here too.
+  expect(intent(id).status).toBe("deferred");
+  expect(intent(id).reason).toBe("PROCEDURE_MODEL_UNAVAILABLE");
+  expect(intent(id).snapshot).toBeUndefined();
+  expect(intent(id).attempts ?? 0).toBe(0);
+});
+
+// A TRIGGER IS DISCOVERY, NOT EVALUATION.
+//
+// Gating the whole of processProcedureReview on "is there an evaluator" also
+// gated the trigger that EXPANDS into the review rows, so with no model
+// selected the queue stayed empty instead of parked: B34's Q14 scenario sat
+// waiting for two reviews and saw `rv=0` until it timed out. The rows a
+// trigger creates carry no trigger of their own, so they meet the gate on
+// their next visit — which is where the saving was always meant to come from.
+it("expands a trigger into reviews even with no evaluator, then parks those reviews",async()=>{
+  settle();
+  const shut:ProcedureReviewHost={...host(),evaluatorAvailable:()=>({ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"})};
+  const id=await expand(shut);
+  expect(id,"the trigger still has to produce a review row").toBeTruthy();
+
+  await processProcedureReview(id,shut,signal());
+  expect(intent(id).status).toBe("deferred");
+  expect(intent(id).reason).toBe("PROCEDURE_MODEL_UNAVAILABLE");
+});

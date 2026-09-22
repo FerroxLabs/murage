@@ -19,6 +19,7 @@ export interface ProcedureHostOptions {
   };
   evaluate?: ProcedureReviewHost["evaluate"];
   automaticFailureRetry?:boolean;
+  evaluatorAvailable?:ProcedureReviewHost["evaluatorAvailable"];
   evaluationReadiness?:ProcedureReviewHost["evaluationReadiness"];
   onPublished?:(snapshot:ProcedureReviewSnapshot,receipt:ProcedureEvaluationReceipt,current:{revision:string;sha256:string})=>void;
 }
@@ -137,6 +138,7 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
       return Boolean(context && context.scopeId === snapshot.target.scopeId && evidenceCurrent(context, handles(snapshot)) && host.isTargetCurrent(snapshot.target));
     },
     get evaluate() { return options.evaluate; },
+    get evaluatorAvailable(){return options.evaluatorAvailable;},
     get evaluationReadiness(){return options.evaluationReadiness;},
     wasPublished(snapshot, receipt) {
       if (snapshot.target.kind === "memory-policy") return false;

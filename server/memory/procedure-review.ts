@@ -48,6 +48,11 @@ export function validateProcedureEvaluationReceipt(snapshot:ProcedureReviewSnaps
 }
 export interface ProcedureReviewHost {
   automaticFailureRetry?:boolean;
+  /** Is there an evaluator at all — asked WITHOUT a snapshot, so it can be
+   *  asked before any evidence is hydrated. See the note in
+   *  memory/procedure-evaluator.ts: asking the snapshot-shaped question
+   *  first is what made an unrunnable queue cost a permanent CPU core. */
+  evaluatorAvailable?():{ready:true}|{ready:false;reason:string};
   evaluationReadiness?(snapshot:ProcedureReviewSnapshot):{ready:true}|{ready:false;reason:string};
   /** Host resolves only authorized immutable task pins, never model-selected targets. */
   resolveTargets(trigger:ProcedureReviewTrigger):ProcedureReviewTarget[];
@@ -196,6 +201,17 @@ export async function processProcedureReview(id:string,host:ProcedureReviewHost,
     let intent=read(db,id);if(!intent||["complete","cancelled"].includes(intent.status))return undefined;
     if(intent.status==="running"&&(intent.expiresAt??0)>Date.now())return undefined;
     if(intent.snapshot&&intent.receipt&&host.wasPublished?.(intent.snapshot,intent.receipt)){save(db,{...intent,status:"complete",reason:"accepted"});return undefined;}
+    // Before hydration, not after it. Two exemptions, both load-bearing:
+    // an evaluated review still holds its receipt and must be allowed through
+    // to PUBLISH, and a TRIGGER is discovery rather than evaluation — it is
+    // what expands into the review rows in the first place, and gating it
+    // left the queue empty instead of parked (B34 Q14 caught exactly that).
+    // The rows a trigger creates carry no trigger of their own, so they meet
+    // this gate on their next visit and come to rest here.
+    if(!intent.receipt&&!intent.trigger){
+      const open=host.evaluatorAvailable?.();
+      if(open&&!open.ready){save(db,{...intent,status:"deferred",reason:open.reason,retryAfter:Date.now()+60000});return undefined;}
+    }
     // Unstarted work can be reauthorized against current grants. Evaluated
     // snapshots keep their original fences and can never inherit a new grant.
     if(!intent.snapshot&&!intent.receipt){

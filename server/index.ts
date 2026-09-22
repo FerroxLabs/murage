@@ -1687,6 +1687,13 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
     MURAGE_HARNESS_URL:`http://127.0.0.1:${PORT}`,MURAGE_MEMORY_TOKEN:internalToken(botId,threadId,generation,"memory")}};
 }
 let memoryMigrationCursor: string | undefined;
+/** The notebook migration is a STARTUP migration and has to be able to end.
+ *  It walks the roster one bot per call and reports where to resume; at the
+ *  last bot it reports no cursor at all, which assigned `undefined` back to
+ *  the cursor and started the whole walk again a second later. It had been
+ *  re-walking all 31 bots every 31 seconds for the life of the process. A
+ *  restart still rescans, which is what the migration's own note promises. */
+let memoryMigrationDone = false;
 let memoryIdleLane = 0;
 let procedureReviews: ReturnType<typeof createProcedureReviewHost> | undefined;
 let procedureEvolution:ReturnType<typeof createProcedureEvaluator>|undefined;
@@ -1732,8 +1739,12 @@ const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,s
   }finally{fluxMediaRequests--;}
 },onIdleConsolidation:async(signal)=>{
   if(providerConfigBusy||providerBankDispatchFenced())return;
-  const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
-  memoryMigrationCursor = migrated.nextCursor;
+  if(!memoryMigrationDone){
+    const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
+    memoryMigrationCursor = migrated.nextCursor;
+    // `paused` means memory is off, not that the walk finished.
+    if(!migrated.nextCursor && !migrated.paused) memoryMigrationDone = true;
+  }
   syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
   const selected=memoryExtractorInstanceId();
   const [revealJob]=pendingBotRevealJobs(1);
@@ -6302,6 +6313,7 @@ procedureReviews = createProcedureReviewHost({
   routines: () => routines,
   automaticFailureRetry:false,
   evaluate:(snapshot,signal)=>procedureEvolution!.evaluate(snapshot,signal),
+  evaluatorAvailable:()=>procedureEvolution?.available()??{ready:false,reason:"PROCEDURE_CORPUS_ADMISSION_REQUIRED"},
   evaluationReadiness:snapshot=>procedureEvolution?.readiness(snapshot)??{ready:false,reason:"PROCEDURE_CORPUS_ADMISSION_REQUIRED"},
   onPublished:(snapshot,receipt,current)=>procedureEvolution?.published(snapshot,receipt,current),
   validateEvidence: (context, evidence) => {

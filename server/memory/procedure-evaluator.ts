@@ -45,11 +45,26 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
     if(!grant||grant.schema!==1||grant.currentRevision!==snapshot.target.baseRevision||grant.currentSeedHash!==procedureCandidateHash(instruction)||grant.modelIdentity!==model()||grant.corpusDigest!==corpusDigest||grant.policyRevision!==current.policyRevision||grant.deletionEpoch!==current.deletionEpoch||grant.learningRevision!==current.learningRevision||!grant.evidence.every(item=>options.host.canReadEvidence(grant.scopeId,item.scopeId,item)))return;
     return grant;
   };
-  const readiness=(snapshot:ProcedureReviewSnapshot):{ready:true}|{ready:false;reason:string}=>{
+  /** The half of readiness that needs no snapshot: is there an evaluator at
+   *  all. Split out because it is three config reads, while the caller that
+   *  used to reach `readiness` had first hydrated up to 64 evidence items and
+   *  walked each one's transitive provenance. On a machine with no procedure
+   *  model that made a queue of deferred reviews cost a permanent CPU core:
+   *  each pass validated everything, asked this question last, heard "no",
+   *  and re-deferred for a minute. Ask it first, and the queue costs nothing
+   *  while it cannot move. Measured 2026-09-22 on a real 312MB store. */
+  const available=():{ready:true}|{ready:false;reason:string}=>{
     try{
       if(!model())return {ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"};
       if(options.workerReady&&!options.workerReady())return {ready:false,reason:"GEPA_RESOURCE_UNAVAILABLE"};
       if(readMemoryLearning(database()).dailyCostUsd!==null)return {ready:false,reason:"GEPA_COST_AUTHORITY_REQUIRED"};
+      return {ready:true};
+    }catch{return {ready:false,reason:"PROCEDURE_INSTRUCTION_UNAVAILABLE"};}
+  };
+  const readiness=(snapshot:ProcedureReviewSnapshot):{ready:true}|{ready:false;reason:string}=>{
+    const open=available();
+    if(!open.ready)return open;
+    try{
       if(!grantFor(snapshot,seed(snapshot)))return {ready:false,reason:"PROCEDURE_CORPUS_ADMISSION_REQUIRED"};
       return {ready:true};
     }catch{return {ready:false,reason:"PROCEDURE_INSTRUCTION_UNAVAILABLE"};}
@@ -127,6 +142,6 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
       const snapshot=readProcedureReviewSnapshot(reviewId,options.host);if(!grantFor(snapshot,seed(snapshot)))throw Error("PROCEDURE_PREVIEW_CHANGED");wakeProcedureReview(reviewId);return {authorized:true as const,reviewId};
     }catch{throw Object.assign(Error("PROCEDURE_PREVIEW_CHANGED"),{status:409});}
   };
-  return {status,preview,authorize,retry,readiness,evaluate,published};
+  return {status,preview,authorize,retry,available,readiness,evaluate,published};
 }
 export type ProcedureEvaluatorBridge=ReturnType<typeof createProcedureEvaluator>;
