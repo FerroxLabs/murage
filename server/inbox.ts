@@ -62,7 +62,28 @@ const SOURCE = `WITH raw AS (
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')
-      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file' ELSE 'Provider needs attention' END AS title
+      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file' ELSE 'Provider needs attention' END AS title,
+    -- WHICH OF THE FIVE LISTS THIS BELONGS IN.
+    --
+    -- The kind column says what SHAPE the message is. This says what it
+    -- costs the owner to ignore it, which is the only question the Inbox is
+    -- sorted on.
+    --
+    -- The split inside 'options' is the one the owner asked for: a card
+    -- carrying a TOOL is permission to perform a specific, already drafted
+    -- act ("send these four emails"), and everything else of that shape is a
+    -- question wanting a judgement ("should this become a routine?"). They
+    -- read the same in a list and are nothing alike to answer.
+    --
+    -- An 'activity' row that is a missing login or an unfinished setup is a
+    -- CONNECTION, not provider news: it needs the owner's hands and no
+    -- amount of waiting fixes it. A provider simply erroring is news.
+    CASE m.kind
+      WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END
+      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection'
+      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END
+      WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'
+      ELSE 'result' END AS segment
   FROM messages m
   WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))
     AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity','text')
@@ -92,7 +113,7 @@ const SOURCE = `WITH raw AS (
 ) `;
 interface Row {
   source_key: string; thread_id: string; message_id: string; at: number; kind: string; json: string;
-  status: string; title: string; summary: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; copies: number;
+  status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; copies: number;
 }
 function scope(access: InboxAccess) {
   if (access.owner !== true) reject(404, "Inbox is unavailable.");
@@ -105,7 +126,9 @@ function item(row: Row, access: InboxAccess): InboxItem {
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
   const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
-  return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, status: row.status,
+  const segment = (["approval", "question", "connection", "routine", "result"] as const)
+    .find(value => value === row.segment) ?? "result";
+  return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, segment, status: row.status,
     decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
@@ -113,7 +136,7 @@ function item(row: Row, access: InboxAccess): InboxItem {
 }
 function queryValues(query: InboxQuery) {
   const view = query.view ?? "decisions", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
-  if (!["decisions", "to-read", "results", "all"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
+  if (!["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
     || (query.query !== undefined && (typeof query.query !== "string" || query.query.length > 200))
     || (query.includeSnoozed !== undefined && typeof query.includeSnoozed !== "boolean")) reject(400, "Invalid Inbox query.");
   return { view, page, pageSize, search: (query.query ?? "").trim().toLowerCase() };
@@ -133,8 +156,27 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // decision-shaped thing in the whole list.
   //
   // An expired card is dropped, because nothing is waiting on it any more.
+  // THE FIVE LISTS, PLUS THE TWO THE SPLIT REPLACED.
+  //
+  // `approvals`, `decisions` and `connections` are the three things that
+  // genuinely require the owner, and they are filtered on `segment` AND on a
+  // decision being owed — a connector row that is already connected is not a
+  // request, it is history. `routines` is everything a routine did, owed or
+  // not, because a run is a notification; the caller rolls those up.
+  //
+  // `decisions` STILL MEANS EVERYTHING OWED, and the three segment views are
+  // how that total is broken down rather than a replacement for it. The
+  // sidebar badge asks for `decisions` by name; narrowing it here would have
+  // left that number silently missing every approval and every dead
+  // connection.
   const predicate = `${decisions ? "COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
-    (?='all' OR (?='decisions' AND decision=1) OR (?='to-read' AND to_read=1)
+    (?='all'
+      OR (?='approvals' AND decision=1 AND segment='approval')
+      OR (?='decisions' AND decision=1)
+      OR (?='questions' AND decision=1 AND segment='question')
+      OR (?='connections' AND decision=1 AND segment='connection')
+      OR (?='routines' AND segment='routine')
+      OR (?='to-read' AND to_read=1)
       OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
@@ -143,7 +185,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // being asked, and the checkbox brings them back; what snooze must never do
   // is make a decision look ANSWERED, and it does not: the item keeps its
   // pending status and returns the moment the snooze expires.
-  const params = [allowed, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
+  const params = [allowed, view, view, view, view, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
     JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
   const total = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS total FROM items WHERE ${predicate}`).get(...params)?.total ?? 0);
   const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];
@@ -152,7 +194,19 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // not answering; reading DOES clear it from the to-read count, because
   // there reading is the whole action.
   const live = "(snoozed_until IS NULL OR snoozed_until<=?)";
-  const decisionCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND ${live}`).get(allowed, now)?.n ?? 0);
+  // ONE COUNT PER THING THAT CAN BE ASKED OF A PERSON, AND NONE FOR THE REST.
+  //
+  // Routines and results are never counted here, and that is the point of the
+  // whole redesign: the owner's badge said thirty six because it counted
+  // things that happened. A number he cannot act on is a number he stops
+  // reading, and then the one he could act on is invisible inside it.
+  const segmentCount = (segment: string) => Number(db.prepare(SOURCE
+    + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND segment=? AND ${live}`).get(allowed, segment, now)?.n ?? 0);
+  const approvalCount = segmentCount("approval");
+  const questionCount = segmentCount("question");
+  const connectionCount = segmentCount("connection");
+  const decisionCount = Number(db.prepare(SOURCE
+    + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND ${live}`).get(allowed, now)?.n ?? 0);
   // Never opened, rather than "not current". The read mark is a hash of the
   // message computed in JS, and SQL cannot recompute it, so an item that was
   // read and has since changed is counted as read here. Erring that way keeps
@@ -161,7 +215,8 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   const toReadCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE to_read=1 AND read_version IS NULL AND ${live}`).get(allowed, now)?.n ?? 0);
   return { items: rows.map(row => item(row, access)), total, page, pageSize,
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
-    decisions: decisionCount, toRead: toReadCount };
+    decisions: decisionCount, toRead: toReadCount,
+    approvals: approvalCount, questions: questionCount, connections: connectionCount };
 }
 
 /** State updates cannot change source status, approve requests or run tools. */
