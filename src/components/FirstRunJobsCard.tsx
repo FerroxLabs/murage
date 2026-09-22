@@ -217,6 +217,28 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
   const [busy, setBusy] = useState("");
   const [failure, setFailure] = useState("");
   const [acted, setActed] = useState(false);
+  /**
+   * `acted` COVERS THE GAP BETWEEN THE PRESS AND THE SERVER, AND NOTHING MORE.
+   *
+   * THE DEFECT. It was written true when a job was chosen and never written
+   * false, so `done` was a ONE-WAY LATCH and every row below stayed
+   * `disabled` for the life of the card. That is release block #2 again, one
+   * layer down: the server's own latch was fixed by giving the plan an
+   * `unsettle` list, and this copy of it sits in component state where
+   * `unsettle` cannot reach. The owner hit it on a clean install — the card
+   * reported `settled: false`, the checklist reported `chat.done: false`,
+   * both were telling the truth, and the rows still did nothing. No request
+   * was made, so there was nothing in the log to find either.
+   *
+   * The server is the authority on whether the question is still open, and it
+   * says so by unsettling this card. So when it does, the local latch goes
+   * with it. `answerSetupStep` drops the cached view, so `settled` turns true
+   * within one read of the press and this never re-opens a card that was
+   * genuinely answered.
+   */
+  useEffect(() => {
+    if (!settled) setActed(false);
+  }, [settled]);
   const done = acted || settled;
 
   const choose = async (id: FirstRunJobId, viaEscape: boolean) => {
