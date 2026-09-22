@@ -9,7 +9,7 @@ import type { OptionCardData } from "@/state/store";
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { InboxRequestAnswer, inlineAnswerKind, requestHeadline, requestOpen } = await import("./InboxRequest");
-const { Inbox, botNameFromSource } = await import("./Inbox");
+const { Inbox, botNameFromSource, INBOX_VIEWS } = await import("./Inbox");
 
 const question: OptionCardData = {
   title: "Question needs an answer",
@@ -90,10 +90,13 @@ describe("the Inbox's own view tabs", () => {
 
   it("fills the selected tab so it cannot be mistaken for the others", () => {
     const html = markup();
-    // one filled chip, three plain ones
+    // One filled chip and the rest plain. COUNTED FROM `INBOX_VIEWS`, not
+    // pinned to a number: this assertion said "three" and went red when the
+    // list grew to seven, which taught nothing except that the list had
+    // grown.
     expect(html.match(/text-accent-ink/g)).toHaveLength(1);
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
-    expect(html.match(/aria-pressed="false"/g)).toHaveLength(3);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(INBOX_VIEWS.length - 1);
     // the filled chip is the selected one, not some other control
     const selected = html.match(/<button[^>]*aria-pressed="true"[^>]*>/)![0];
     expect(selected).toMatch(/\bbg-accent\b/);
@@ -103,5 +106,61 @@ describe("the Inbox's own view tabs", () => {
     expect(html.match(/<button[^>]*aria-pressed="false"[^>]*>/)![0]).toMatch(/\bbg-control\b/);
     // the old selected style was a tint on a grey control — invisible
     expect(html).not.toContain("bg-accent/10");
+  });
+});
+
+// THE SAME MISTAKE, TWICE, A FILE APART.
+//
+// The tab test above already records it: `bg-control bg-accent` leaves the
+// winner to stylesheet order. That was found and fixed for the TABS, and the
+// identical composition sat untouched in this file's approval buttons —
+// `${button} bg-accent text-accent-ink` over a base that already carried
+// `bg-control text-ink`. `bg-control` won there too, so the owner opened his
+// Inbox to an Allow once button rendered as a dim grey slab beside a healthy
+// looking Deny, and reported it as a button that did not work. It was never
+// disabled.
+//
+// Knowing about a bug in one place does not fix it in another. This pins the
+// shape rather than the colour, so the next person who reaches for
+// `${base} bg-something` here has to see it fail.
+describe("the two answers a person can give from the Inbox", () => {
+  const markup = () => renderToStaticMarkup(createElement(InboxRequestAnswer, {
+    threadId: "t1",
+    card: { requestId: "r1", title: "Approval requested", subtitle: "rm -rf nothing", options: [], tool: "Bash" } as OptionCardData,
+    botName: "Kessler (Ops Manager)",
+    onSettled: () => {},
+  }));
+
+  it("fills the answer it wants, and never lets two backgrounds fight", () => {
+    const html = markup();
+    const allow = html.match(/<button[^>]*>\s*Allow once/)![0];
+    const deny = html.match(/<button[^>]*>\s*Deny/)![0];
+
+    // The primary action is FILLED, and carries exactly one background.
+    expect(allow, "Allow once must be the filled control").toMatch(/\bbg-accent\b/);
+    expect(allow, "two backgrounds means stylesheet order decides which one paints")
+      .not.toMatch(/\bbg-control\b/);
+    expect(allow).toMatch(/text-accent-ink/);
+    expect(allow, "the ink must not fight either").not.toMatch(/\btext-ink\b/);
+
+    // Deny is a real control in the colour of what it does, and outlined:
+    // two filled buttons side by side make somebody choose between two shouts.
+    expect(deny).toMatch(/text-danger/);
+    expect(deny).not.toMatch(/\bbg-accent\b/);
+    expect(deny, "outlined, not filled").toMatch(/bg-transparent/);
+  });
+
+  it("does not disable the answer it is asking for", () => {
+    // It only ever LOOKED disabled. Pinning this means a future `disabled=`
+    // added for a good reason has to be defended in a test rather than
+    // discovered by the owner.
+    //
+    // The attribute, not the substring: the class list carries
+    // `disabled:opacity-50`, so a regex for a bare `disabled` matches every
+    // button on the panel and reports a defect that is not there. The first
+    // version of this check did exactly that.
+    const allow = markup().match(/<button[^>]*>\s*Allow once/)![0];
+    expect(allow).not.toMatch(/disabled=""/);
+    expect(allow, "the guard has to be able to see a real one").toMatch(/disabled:opacity-50/);
   });
 });

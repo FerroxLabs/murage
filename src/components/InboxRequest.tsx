@@ -48,8 +48,41 @@ export function requestHeadline(card: OptionCardData | undefined | null): string
   return questionsForCard(card)[0]?.question.trim() ?? "";
 }
 
+// SHAPE ONLY. NO COLOUR.
+//
+// THE DEFECT THIS SPLIT FIXES. This constant used to carry
+// `border-hairline/50 bg-control text-ink` too, and each variant appended its
+// own colour on top: `${button} bg-accent text-accent-ink`. Tailwind
+// utilities of the same kind have the SAME specificity, so the winner is
+// decided by the order the rules appear in the stylesheet, not by the order
+// they appear in the class attribute. `bg-control` won, and the primary
+// action — the one that says Allow once — rendered as a dim grey slab that
+// reads as disabled. It was never disabled. It just looked dead, which is
+// worse than ugly: it teaches somebody that the button does not work, on the
+// one control in this panel that has to be pressed.
+//
+// Deny escaped only by luck: `text-danger` happened to win its own coin toss
+// against `text-ink`.
+//
+// So the base holds layout, shape and focus, and every variant brings its own
+// background, text and border. Nothing overlaps, so nothing can be decided by
+// stylesheet order.
 const button =
-  "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
+  "min-h-10 rounded-lg border px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
+
+/** The answer this panel exists to collect. Solid, and the only filled
+ *  control here, so the eye lands on it before it reads anything. */
+const buttonPrimary = `${button} border-accent bg-accent text-accent-ink hover:brightness-110`;
+
+/** Refusing is a real answer and gets a real control, in the colour of what
+ *  it does, but it is outlined rather than filled: two solid buttons side by
+ *  side make the person choose between two shouts. */
+const buttonDanger = `${button} border-danger/50 bg-transparent text-danger hover:bg-danger/10`;
+
+// No quiet variant is declared here on purpose: this panel has exactly two
+// answers and both of them are decisions. If a third, neutral control is ever
+// added, give it its own full set rather than appending a colour to `button`,
+// which is the mistake above.
 
 /** Answer a waiting request without leaving the Inbox. `onSettled` lets the
  * list refresh from the server rather than guess the new state. */
@@ -107,14 +140,14 @@ export function InboxRequestAnswer({
       {error && <p role="alert" className="mb-2 text-[12px] text-danger">{error}</p>}
       <div className="flex flex-wrap gap-2">
         <button
-          className={`${button} bg-accent text-accent-ink hover:brightness-110`}
+          className={buttonPrimary}
           disabled={busy}
           onClick={() => void respond({ behavior: "allow" })}
         >
           Allow once
         </button>
         <button
-          className={`${button} border-danger/40 text-danger`}
+          className={buttonDanger}
           disabled={busy}
           onClick={() => void respond({ behavior: "deny", message: "Denied by the user." })}
         >
