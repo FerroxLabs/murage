@@ -67,7 +67,12 @@ const SOURCE = `WITH raw AS (
     CASE m.kind WHEN 'options' THEN CASE
       WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'
       WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'
-      WHEN json_extract(m.json,'$.card.expired')=1 THEN 'Question expired'
+      -- Expired is checked before the tool, so every expired card called
+      -- itself a question. Under a tab named Approvals that reads as though
+      -- the wrong row arrived, and "whether it has expired" was the exact
+      -- thing reported as impossible to tell.
+      WHEN json_extract(m.json,'$.card.expired')=1 THEN
+        CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')

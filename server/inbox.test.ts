@@ -367,6 +367,14 @@ it("leaves a request that expired where the approval used to be", () => {
   // is waiting now just because the list is sorted by time.
   expect(page.items.map(row => row.status)).toEqual(["pending", "missed"]);
   expect(page.approvals, "and only the live one is counted").toBe(1);
+  // It says which one it is, in the tab it is sitting in. Every expired card
+  // used to call itself a question because expiry is tested before the tool.
+  expect(page.items.map(row => row.title)).toEqual(["Approval requested", "Approval expired"]);
+  // The control: a card with nothing to run is still a question when it
+  // expires. The fix was to stop calling BOTH of them questions, not to
+  // start calling both of them approvals.
+  put(db, { id: "asked", at: now - 90_000, card: { requestId: "ask", title: "Which account?", options: ["Work"], expired: 1, unattended: 1 } });
+  expect(listInbox(db, { view: "questions" }, access, now).items.map(row => row.title)).toEqual(["Question expired"]);
 });
 
 // THE NEGATIVE CONTROL FOR ALL THREE.

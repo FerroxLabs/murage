@@ -279,7 +279,10 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         {headline && <p className="mt-2 text-[12px] text-ink-secondary">{item.title}</p>}
         <h2 className="mt-1 break-words text-[15px] font-medium">{headline || item.title}</h2>
         <div className="mt-2 flex flex-wrap gap-2 text-[12px]"><span className="rounded bg-control px-2 py-1">{statusLabel(item.status)}</span><span className="rounded bg-control px-2 py-1">{item.read ? "Read" : "Unread"}</span>
-          {item.duplicates > 1 && <span className="px-1 py-1 text-ink-secondary">{item.duplicates} matching receipts</span>}
+          {/* "Receipts" is the right word for the same request delivered
+              twice. It is the wrong word for an engine that failed to sign in
+              twenty times, which now arrives as one row carrying the count. */}
+          {item.duplicates > 1 && <span className="px-1 py-1 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
           {view !== "decisions" && item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
         </div>
         {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
