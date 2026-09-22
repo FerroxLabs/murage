@@ -154,6 +154,9 @@ describe("control-plane migrations and health", () => {
       CLOUDFLARE_ZONE_ID: env.CLOUDFLARE_ZONE_ID,
       COMPANION_HOST_SUFFIX: env.COMPANION_HOST_SUFFIX,
       CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN,
+      SENDLANE_LIST_ID: env.SENDLANE_LIST_ID,
+      SENDLANE_API_KEY: env.SENDLANE_API_KEY,
+      SENDLANE_HASH_KEY: env.SENDLANE_HASH_KEY,
       BETTER_AUTH_SECRET: "too-short",
     };
     const request = new Request(`${BASE_URL}/healthz`);

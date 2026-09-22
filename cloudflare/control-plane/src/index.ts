@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { subscribeToAnnouncements, type SendlaneFetch } from "./announcements";
 import { accountSession, createAuth } from "./auth";
 import { readConfig, type ControlPlaneConfig } from "./config";
 import { errorResponse, HTTPError, json, preflight, secureResponse, withBoundedRequestBody } from "./http";
@@ -67,6 +68,7 @@ async function route(
   config: ControlPlaneConfig,
   requestId: string,
   cloudflareFetch: CloudflareFetch,
+  sendlaneFetch: SendlaneFetch,
 ) {
   const url = new URL(request.url);
   if (request.method === "OPTIONS") return preflight(request, config);
@@ -76,6 +78,13 @@ async function route(
     if (limited) return limited;
     const response = await createAuth(env, ctx, config, requestId).handler(request);
     return canonicalAuthResponse(response);
+  }
+
+  // Unauthenticated on purpose: the caller is somebody's first run, before any
+  // account exists. Answered before `createAuth`, which a signup needs nothing
+  // from.
+  if (request.method === "POST" && url.pathname === "/v1/announcements/subscribe") {
+    return subscribeToAnnouncements(request, env, sendlaneFetch, requestId);
   }
 
   const auth = createAuth(env, ctx, config, requestId);
@@ -135,7 +144,10 @@ async function route(
   return errorResponse(404, "not_found");
 }
 
-export function createWorker(cloudflareFetch: CloudflareFetch = fetch) {
+export function createWorker(
+  cloudflareFetch: CloudflareFetch = fetch,
+  sendlaneFetch: SendlaneFetch = fetch,
+) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const requestId = crypto.randomUUID();
@@ -158,7 +170,7 @@ export function createWorker(cloudflareFetch: CloudflareFetch = fetch) {
         }
         const boundedRequest = await withBoundedRequestBody(request);
         return secureResponse(
-          await route(boundedRequest, env, ctx, config, requestId, cloudflareFetch),
+          await route(boundedRequest, env, ctx, config, requestId, cloudflareFetch, sendlaneFetch),
           request,
           config,
           requestId,

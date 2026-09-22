@@ -18,10 +18,19 @@
     "ALLOWED_ORIGINS": "",
     "CLOUDFLARE_ACCOUNT_ID": "0c92969a82eb9e173b013a7e7a02333d",
     "CLOUDFLARE_ZONE_ID": "bae08399bb6f96eb7266c65ac0057eee",
-    "COMPANION_HOST_SUFFIX": "murage.com"
+    "COMPANION_HOST_SUFFIX": "murage.com",
+    // Which Sendlane list the onboarding signup lands on. A list id is
+    // configuration, not a secret, so it sits here in plaintext; the two write
+    // credentials for that account are secrets below and have no default.
+    "SENDLANE_LIST_ID": "37"
   },
   "secrets": {
-    "required": ["BETTER_AUTH_SECRET", "CLOUDFLARE_API_TOKEN"]
+    "required": [
+      "BETTER_AUTH_SECRET",
+      "CLOUDFLARE_API_TOKEN",
+      "SENDLANE_API_KEY",
+      "SENDLANE_HASH_KEY"
+    ]
   },
   "d1_databases": [
     {

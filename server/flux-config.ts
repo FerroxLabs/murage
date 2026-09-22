@@ -10,7 +10,7 @@
 import { loadConfig } from "./config.ts";
 
 /** Config first, then env, so a packaged build can be pointed at a different
- *  key without a rebuild — the same order `sendlaneCredentials()` uses.
+ *  key without a rebuild — the same order `announcementsBaseUrl()` uses.
  *  Returns null rather than throwing: no key simply means Flux routing is
  *  unavailable, and a malformed config.json must not take the server down. */
 export function fluxKey(env: NodeJS.ProcessEnv = process.env): string | null {

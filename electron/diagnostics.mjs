@@ -35,8 +35,6 @@ export const CREDENTIAL_ENV_NAMES = [
   "MURAGE_FLUX_AMBIENT_KEY",
   "MURAGE_FLUX_CONNECTION_ALIASES",
   "COMPOSIO_API_KEY",
-  "SENDLANE_API_KEY",
-  "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
   "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN",
   // Browser capability files and app-owned state paths are private even

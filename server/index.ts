@@ -123,7 +123,7 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
-import { sendlaneStartupNotice, subscribe } from "./sendlane.ts";
+import { announcementsStartupNotice, subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
   cleanupStaleAttachmentPartials,
@@ -15520,12 +15520,12 @@ const server = createServer(async (req, res) => {
 
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "POST" && path === "/api/subscribe") {
-      // Fire-and-report: the renderer does not wait on Sendlane, and a failure
-      // here must never stop someone entering the app.
+      // Fire-and-report: the renderer does not wait on the signup, and a
+      // failure here must never stop someone entering the app.
       const payload = (await readBody(req)) as { email?: string; name?: string } | null;
       const result = await subscribe(String(payload?.email ?? ""), payload?.name);
       if (!result.ok && result.reason === "upstream") {
-        console.error(`sendlane subscribe failed (status ${result.status ?? "network"})`);
+        console.error(`announcement signup failed (status ${result.status ?? "network"})`);
       }
       return json(res, 200, { ok: result.ok, reason: result.reason ?? null });
     }
@@ -16214,12 +16214,12 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
   //
-  // Without credentials `subscribe()` returns "disabled" and the route below
+  // With nowhere to post `subscribe()` returns "disabled" and the route below
   // logs only "upstream", so a build that collects nothing said nothing. This
-  // is the one line that makes that visible, and it names the variables rather
-  // than any value.
-  const sendlaneNotice = sendlaneStartupNotice();
-  if (sendlaneNotice) console.warn(sendlaneNotice);
+  // is the one line that makes that visible. It names an environment variable,
+  // never a value — and there is no longer a credential on this side to name.
+  const signupNotice = announcementsStartupNotice();
+  if (signupNotice) console.warn(signupNotice);
   // Warm the skill index while nobody is waiting.
   //
   // It is built lazily by whichever request needs it first, and all three of

@@ -25,6 +25,10 @@ tool output.
 - D1-backed generation/lease claims, recovery by stable opaque tunnel name, and
   retryable partial cleanup. Cloudflare API credentials and raw connector
   tokens are never written to D1 or logs.
+- The onboarding announcement signup, and the Sendlane write credentials it
+  needs. These used to live in the desktop app, where `asar: true` made them
+  readable by everyone who installed it; they are Worker secrets now and a
+  desktop build carries only this Worker's URL.
 
 The D1 schema is pinned in `migrations/`. `0001_better_auth_1_7_1.sql` was
 generated from the exact Better Auth configuration. `0002_installations.sql`
@@ -33,7 +37,9 @@ recipient-scoped OTP limiter whose keys are HMACs rather than email addresses,
 plus an authenticated installation-creation limiter. `0004` adds managed
 endpoint resource IDs, lifecycle state, generation leases, redacted error
 codes, and installation-scoped action limits. `0005` adds the cleanup-attempt
-counter used for scheduled retry backoff. Endpoint rows deliberately do not
+counter used for scheduled retry backoff. `0006` adds the announcement-signup
+limiter, whose keys are HMACs of the address and of the caller rather than
+either in plaintext. Endpoint rows deliberately do not
 cascade away with a hard installation deletion: losing the tunnel and DNS IDs
 would make operator cleanup impossible.
 
@@ -49,6 +55,7 @@ would make operator cleanup impossible.
 | `DELETE` | `/v1/installations/:id` | owning account bearer |
 | `GET` | `/v1/installations/self` | installation credential |
 | `GET`, `POST`, `DELETE` | `/v1/installations/self/endpoint` | installation credential |
+| `POST` | `/v1/announcements/subscribe` | none |
 
 Installation registration requires a stable `clientInstanceId`, a display
 `name`, and a `platform` of `darwin`, `windows`, or `linux`; `appVersion` is
@@ -66,6 +73,38 @@ signed-in desktop can rotate ahead of time. `/v1/installations/self` rejects
 expired credentials and records both credential use and installation
 `lastSeenAt`. Rotations are serialized with a one-minute cooldown, so concurrent
 requests cannot both return credentials while one invalidates the other.
+
+### Announcement signup contract
+
+`POST /v1/announcements/subscribe` takes `{ "email": "…", "name": "…" }` — the
+name is optional, any other field is `400 invalid_request` — and answers
+`{ "ok": true }` once the address is on the list. It is unauthenticated because
+the caller is somebody's first run, before any account exists, which also makes
+it the one public write into the owner's mailing list. The address is validated
+here rather than trusted from the client, and two limits apply before anything
+reaches Sendlane: three attempts per address per 15 minutes, and ten per caller
+IP per hour. An exhausted limit is `429 rate_limited` and never reaches
+Sendlane. A blank name is omitted rather than sent, because Sendlane leaves
+omitted fields intact and an empty string would wipe a name the record has.
+
+`SENDLANE_API_KEY` and `SENDLANE_HASH_KEY` are required secrets with no
+default: they are write credentials for the whole Sendlane account, they are
+never logged or echoed, and they go into the form body of the
+`list-subscriber-add` call and nowhere else. A Worker without them answers
+`503 announcements_unconfigured` on every signup and logs the missing names —
+it never pretends to have collected an address. `wrangler deploy` also refuses
+while a name in `secrets.required` is unset.
+
+`SENDLANE_LIST_ID` is a plaintext `var` and defaults to `37`, which is Murage's
+own list. A list id is configuration, not a secret; a value that is not a
+number is treated as unconfigured rather than guessed at.
+
+Sendlane's legacy v1 API answers an HTML error page instead of JSON when it is
+unhappy, including under concurrency, and does it with a `200`. Any HTML body
+is therefore a retryable failure, retried up to three times with backoff. A
+non-HTML 4xx is a deliberate rejection and is not retried. A signup that does
+not succeed is `502 announcements_upstream`; the desktop turns every failure
+into a logged line and never blocks entry to the app on it.
 
 ### Managed endpoint contract
 
@@ -179,8 +218,17 @@ Before a production deployment, an operator must:
    keeps new hosted onboarding hidden until it is healthy; an already signed-in
    user remains visible so cleanup and recovery are not stranded.
 
+9. Add `SENDLANE_API_KEY` and `SENDLANE_HASH_KEY` with `wrangler secret put`,
+   and set `SENDLANE_LIST_ID` in `vars` if the signup should not land on list
+   `37`. Rotate both keys once: they shipped inside every packaged desktop
+   build before this endpoint existed, so they must be treated as disclosed.
+   Until they are set, `POST /v1/announcements/subscribe` answers
+   `503 announcements_unconfigured` and logs the missing names.
+
 The control-plane API token is never handed to a desktop. A desktop receives
 only its tunnel connector token, which can run that one remotely managed tunnel.
 The public companion service still enforces its own pairing and application
-authentication; the tunnel is transport, not user authentication. This control
-plane does not collect marketing consent.
+authentication; the tunnel is transport, not user authentication. The
+announcement signup is the one place this control plane touches marketing
+consent, and it keeps nothing about it: the address goes to Sendlane, and only
+an HMAC of it stays here, in the spam limiter, for at most 24 hours.

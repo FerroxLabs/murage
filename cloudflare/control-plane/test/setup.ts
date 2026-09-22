@@ -17,6 +17,7 @@ beforeAll(async () => {
 afterEach(async () => {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM otp_recipient_rate_limits"),
+    env.DB.prepare("DELETE FROM announcement_rate_limits"),
     env.DB.prepare("DELETE FROM control_action_rate_limits"),
     env.DB.prepare("DELETE FROM installation_action_rate_limits"),
     env.DB.prepare("DELETE FROM installation_endpoints"),

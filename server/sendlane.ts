@@ -1,120 +1,132 @@
-// Sendlane list subscription for the onboarding signup.
+// The onboarding signup, as the desktop now performs it: one POST to the
+// control plane, carrying an address and a name and nothing else.
 //
-// This runs server-side on purpose. The API key is a write credential for the
-// whole account; shipping it to the renderer would publish it, since an
-// Electron renderer bundle is readable by anyone who installs the app.
+// THE CREDENTIAL IS GONE FROM HERE, AND CANNOT COME BACK.
 //
-// Legacy v1 API. Base is api.sendlane.com (www.sendlane.com redirects and
-// breaks). Auth is form-encoded `api` + `hash` in the POST body, not a header.
-// `list-subscriber-add` updates rather than duplicating, so a retry or a repeat
-// signup is safe and never clears fields we did not send.
+// This module used to call api.sendlane.com directly with SENDLANE_API_KEY and
+// SENDLANE_HASH_KEY. It ran server-side, which was the right instinct and the
+// wrong conclusion: `electron-builder.yml` packs the app with `asar: true`,
+// and an ASAR is an ARCHIVE, NOT ENCRYPTION. Anything inside it — harness code,
+// config, an env baked into the build — is readable by everyone who installs
+// Murage, and those two keys are write credentials for the whole Sendlane
+// account. Server-side of the renderer is not the same thing as server-side of
+// the customer.
+//
+// So the keys live as Worker secrets on the control plane
+// (cloudflare/control-plane/src/announcements.ts), the list id lives there as
+// configuration, and the desktop holds a URL. There is deliberately no config
+// field and no environment variable on this side that could hold a Sendlane
+// key: the only knob is which control plane to post to, so a fork can point at
+// its own Worker without ever handling Murage's credentials.
 import { loadConfig } from "./config.ts";
 
-const BASE = "https://api.sendlane.com/api/v1";
+/** The hosted control plane (cloudflare/control-plane/wrangler.jsonc). A URL,
+ *  not a secret, so it is safe to ship and safe to default — which is the
+ *  whole reason a packaged build can no longer be silently unable to collect
+ *  anything. */
+export const DEFAULT_ANNOUNCEMENTS_BASE_URL = "https://accounts.murage.ai";
+export const ANNOUNCEMENTS_SUBSCRIBE_PATH = "/v1/announcements/subscribe";
 
-export interface SendlaneCredentials {
-  apiKey: string;
-  hashKey: string;
-  listId: string;
+/** Is this process the harness Electron embeds?
+ *
+ * `process.parentPort` is supplied by exactly one runtime — an Electron
+ * `utilityProcess` child — and `electron/main.mjs` forks the harness that way
+ * from `startServerOn`, which is guarded by `app.isPackaged`. The same
+ * structural test `sse-visibility.ts` uses, for the same reason: it is a fact
+ * about how the process was launched, not a claim its environment makes about
+ * itself. */
+function embeddedInDesktopApp(env: NodeJS.ProcessEnv): boolean {
+  return (process as NodeJS.Process & { parentPort?: unknown }).parentPort !== undefined
+    || env.MURAGE_DESKTOP_PARENT === "1";
+}
+
+/** An exact origin and nothing else — no path, no query, no credentials in the
+ *  URL. HTTPS, or HTTP on loopback so a contributor can run the Worker with
+ *  `wrangler dev`. The same rule `normalizeControlPlaneURL` applies in
+ *  electron/control-plane-client.mjs. */
+function normalizeBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return "";
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (
+    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
+    || url.username || url.password || url.pathname !== "/" || url.search || url.hash
+  ) {
+    return "";
+  }
+  return url.origin;
 }
 
 /**
- * Murage's own list.
+ * Where a signup is posted, or null when this build does not collect.
  *
- * A LIST ID IS CONFIGURATION, NOT A SECRET, and that is the whole reason it
- * gets a default while `apiKey` and `hashKey` never will. Those two are write
- * credentials for the entire Sendlane account; this is a number that says
- * which of that account's lists the onboarding signup lands on. Owner's
- * ruling, 2026-09-21: "List ID 37 is Murage's list."
+ * Config first, then env, so a fork can be pointed at its own Worker without a
+ * rebuild — the same order `fluxKey()` uses. An override that is present but
+ * unusable DISABLES the signup rather than quietly falling back to Murage's
+ * own control plane: somebody who typed a URL meant that URL, and posting
+ * their users' addresses to our list instead would be the worst possible
+ * reading of a typo.
  *
- * Defaulting it removes one of the three ways a packaged build could be
- * silently misconfigured, and removes the one that would be WORST: credentials
- * present, list id absent or wrong, so every address is either dropped on the
- * floor or posted to somebody else's list. A build still cannot run without
- * real credentials, because both keys stay required.
- *
- * An explicit `sendlane.listId` in config, or `SENDLANE_LIST_ID` in the
- * environment, still wins. This is a default, not a constant.
+ * With no override at all, only the packaged desktop gets the hosted default.
+ * A dev run and a test fixture collect nothing, on purpose: the signup writes
+ * to a real mailing list, and `someone@example.com` has no business on it.
  */
-export const SENDLANE_DEFAULT_LIST_ID = "37";
-
-/** Config first, then env, then the default list, so a packaged build can be
- *  pointed at a different list without a rebuild. Absent credentials disable
- *  the feature: a fork with no Sendlane account should not throw on every
- *  signup. Disabled is no longer SILENT, though — see `sendlaneStartupNotice`. */
-export function sendlaneCredentials(
-  env: NodeJS.ProcessEnv = process.env,
-): SendlaneCredentials | null {
-  let cfg: { sendlane?: { apiKey?: string; hashKey?: string; listId?: string } } = {};
+export function announcementsBaseUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  let cfg: { sendlane?: { baseUrl?: string } } = {};
   try {
     cfg = loadConfig() as typeof cfg;
   } catch {
     // a malformed config must not take signup down with it
   }
-  const apiKey = (cfg.sendlane?.apiKey ?? env.SENDLANE_API_KEY ?? "").trim();
-  const hashKey = (cfg.sendlane?.hashKey ?? env.SENDLANE_HASH_KEY ?? "").trim();
-  const listId = (cfg.sendlane?.listId ?? env.SENDLANE_LIST_ID ?? "").trim() || SENDLANE_DEFAULT_LIST_ID;
-  if (!apiKey || !hashKey) return null;
-  return { apiKey, hashKey, listId };
-}
-
-/**
- * The names of the credentials this build is missing. NAMES ONLY, never
- * values: nothing in this module may print a secret, and a diagnostic that
- * echoed one would put a write credential for the whole marketing account
- * into a log file and a support bundle.
- */
-export function sendlaneMissing(env: NodeJS.ProcessEnv = process.env): readonly string[] {
-  return sendlaneCredentials(env) ? [] : ["SENDLANE_API_KEY", "SENDLANE_HASH_KEY"];
+  const override = (cfg.sendlane?.baseUrl ?? env.MURAGE_ANNOUNCEMENTS_URL ?? "").trim();
+  if (override) return normalizeBaseUrl(override) || null;
+  return embeddedInDesktopApp(env) ? DEFAULT_ANNOUNCEMENTS_BASE_URL : null;
 }
 
 /**
  * WHY THIS EXISTS, AND WHY IT IS AT STARTUP RATHER THAN PER SIGNUP.
  *
- * `subscribe()` answers `{ ok: false, reason: "disabled" }` when no credentials
- * are configured, and the `/api/subscribe` route logs only `reason ===
- * "upstream"`. So "disabled" was logged NOWHERE. A packaged build shipped
- * without credentials therefore collected zero addresses, for ever, without a
- * single line anywhere saying so — and this signup is the thing that builds
- * the list.
+ * `subscribe()` answers `{ ok: false, reason: "disabled" }` when this build
+ * has nowhere to post, and the `/api/subscribe` route logs only `reason ===
+ * "upstream"`. So "disabled" was logged NOWHERE, and a build that collected
+ * nothing said nothing about it.
  *
- * Once, at startup, server-side:
- *   - once, because a line per signup is noise nobody reads, and the condition
- *     it reports cannot change without a restart anyway;
- *   - server-side, because the renderer must learn nothing whatsoever about
- *     this credential. It is not told whether one exists, and it does not need
- *     to be: the signup is fire-and-report either way, and a failure here has
- *     never been allowed to block entry to the app.
+ * It no longer names a credential, because this side holds none. It names the
+ * one thing that can now be wrong here: an override that is not a usable
+ * origin. A packaged build with no override cannot reach this state at all.
  *
  * Returns the sentence rather than printing it, so the condition can be tested
  * without a server and without capturing console output.
  */
-export function sendlaneStartupNotice(env: NodeJS.ProcessEnv = process.env): string | null {
-  const missing = sendlaneMissing(env);
-  if (missing.length === 0) return null;
-  return `Sendlane is not configured (${missing.join(", ")}), so onboarding signups are recorded nowhere. `
-    + "Nobody who gives their email during the first run will reach the list until this build has credentials.";
-}
-
-/** Sendlane answers with an HTML error page instead of JSON when it is unhappy,
- *  including under concurrency. Treat any HTML body as a retryable failure. */
-function isHtml(body: string): boolean {
-  const head = body.slice(0, 200).toLowerCase();
-  return head.includes("<!doctype") || head.includes("<html") || head.includes("server error");
+export function announcementsStartupNotice(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (announcementsBaseUrl(env) !== null) return null;
+  const override = (env.MURAGE_ANNOUNCEMENTS_URL ?? "").trim();
+  return override
+    ? "MURAGE_ANNOUNCEMENTS_URL is not an exact https origin, so onboarding signups are recorded nowhere. "
+      + "Nobody who gives their email during the first run will reach the list until it is a URL like "
+      + `${DEFAULT_ANNOUNCEMENTS_BASE_URL}.`
+    : "Onboarding signups are recorded nowhere: this build has no announcements endpoint. "
+      + `A packaged build uses ${DEFAULT_ANNOUNCEMENTS_BASE_URL}; set MURAGE_ANNOUNCEMENTS_URL to collect from here.`;
 }
 
 export interface SubscribeResult {
   ok: boolean;
-  /** "disabled" when no credentials are configured — not an error. */
+  /** "disabled" when this build has no announcements endpoint — not an error. */
   reason?: "disabled" | "invalid-email" | "upstream";
   status?: number;
 }
 
 /**
- * Add or update one contact on the configured list.
+ * Put one address on the announcement list, through the control plane.
  *
- * Never throws. Signup must not be able to block someone from entering the app:
- * the worst acceptable outcome of Sendlane being down is a missed subscriber.
+ * Never throws. Signup must not be able to block someone from entering the
+ * app: the worst acceptable outcome of the control plane being down is a
+ * missed subscriber. The result shape is unchanged from when this called
+ * Sendlane itself, because `/api/subscribe` and its tests are built on it.
  */
 export async function subscribe(
   email: string,
@@ -122,39 +134,35 @@ export async function subscribe(
   opts: { fetchImpl?: typeof fetch; env?: NodeJS.ProcessEnv; retries?: number } = {},
 ): Promise<SubscribeResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const creds = sendlaneCredentials(opts.env);
-  if (!creds) return { ok: false, reason: "disabled" };
+  const base = announcementsBaseUrl(opts.env);
+  if (!base) return { ok: false, reason: "disabled" };
 
   const trimmed = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmed)) {
     return { ok: false, reason: "invalid-email" };
   }
 
-  const body = new URLSearchParams({
-    api: creds.apiKey,
-    hash: creds.hashKey,
-    list_id: creds.listId,
-    email: trimmed,
-    tag_names: "murage,app-onboarding",
-  });
-  // Omitted fields are left intact by Sendlane, so only send a name we have.
+  // The Worker takes exactly these two fields and refuses anything else, and
+  // an absent name must stay absent: Sendlane leaves omitted fields intact, so
+  // an empty string would wipe a name the record already has.
   const first = (name ?? "").trim();
-  if (first) body.set("first_name", first);
+  const body = JSON.stringify(first ? { email: trimmed, name: first } : { email: trimmed });
 
   const attempts = Math.max(1, opts.retries ?? 3);
   let status: number | undefined;
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await fetchImpl(`${BASE}/list-subscriber-add`, {
+      const res = await fetchImpl(`${base}${ANNOUNCEMENTS_SUBSCRIBE_PATH}`, {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
+        headers: { "content-type": "application/json" },
+        body,
       });
       status = res.status;
-      const text = await res.text();
-      if (res.ok && !isHtml(text)) return { ok: true, status };
-      // 4xx that is not an HTML error page is a real rejection — do not retry it
-      if (res.status < 500 && !isHtml(text)) return { ok: false, reason: "upstream", status };
+      if (res.ok) return { ok: true, status };
+      // 4xx is the control plane saying no on purpose — a rejected address, a
+      // rate limit, a request it will refuse identically next time. Only a 5xx
+      // or a dead socket is worth another try.
+      if (res.status < 500) return { ok: false, reason: "upstream", status };
     } catch {
       // network failure — fall through to the backoff
     }

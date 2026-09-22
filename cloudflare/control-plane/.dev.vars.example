@@ -7,3 +7,9 @@ ALLOWED_ORIGINS=https://app.murage.test
 CLOUDFLARE_ACCOUNT_ID=00000000000000000000000000000000
 CLOUDFLARE_ZONE_ID=00000000000000000000000000000000
 COMPANION_HOST_SUFFIX=murage.test
+# Write credentials for the whole Sendlane account. Required before
+# POST /v1/announcements/subscribe will do anything but answer 503.
+# SENDLANE_LIST_ID is not here: a list id is configuration and lives in
+# wrangler.jsonc's vars.
+SENDLANE_API_KEY=replace-with-the-sendlane-v1-api-key
+SENDLANE_HASH_KEY=replace-with-the-sendlane-v1-hash-key

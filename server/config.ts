@@ -275,11 +275,13 @@ const appConfigSchema = z.object({
    *  every route that needs it injects a copy under a harness-owned name
    *  AFTER the strip. Absent = Flux routing is simply unavailable. */
   flux: z.object({ apiKey: optionalText, connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
-  /** Sendlane list the onboarding signup writes to. Absent = signup is
-   *  captured locally only and no request leaves the machine. */
-  sendlane: z
-    .object({ apiKey: optionalText, hashKey: optionalText, listId: optionalText })
-    .optional(),
+  /** Which control plane the onboarding signup is posted to. NOT a Sendlane
+   *  credential and deliberately incapable of holding one: an ASAR is an
+   *  archive, so anything a desktop build carries is public. The keys and the
+   *  list id live as Worker configuration — see server/sendlane.ts. Absent =
+   *  a packaged build uses the hosted default and any other build collects
+   *  nothing. */
+  sendlane: z.object({ baseUrl: optionalText }).optional(),
   /** Non-secret profile details shown in the sidebar. */
   profile: z.object({ name: optionalText, email: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
@@ -332,7 +334,7 @@ export interface AppConfig {
   imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string };
   webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
-  sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
+  sendlane?: { baseUrl?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
@@ -653,8 +655,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_FLUX_AMBIENT_KEY",
   "MURAGE_FLUX_CONNECTION_ALIASES",
   "COMPOSIO_API_KEY",
-  "SENDLANE_API_KEY",
-  "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
   // The FluxRouter connected-apps broker token. Engines DO receive the Flux
   // API key (it routes their models), so the connected-apps credential is a
