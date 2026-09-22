@@ -25,8 +25,12 @@ import {
   type RoutineRef,
   type TaskFilter,
   type TaskKind,
+  type TaskListEntry,
+  type TaskListSection,
+  type TaskListView,
   type TaskSort,
 } from "@/lib/task-list";
+import { sidebarMarkLabel, taskWaitsOnYou } from "@/lib/sidebar-attention";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -103,7 +107,60 @@ const NO_ROUTINES = () => undefined;
 
 const KIND_BADGE: Record<TaskKind, string | null> = { chat: null, routine: "Routine", bot: null };
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned"> & {
+/** Exactly what a sidebar row says when it is the one waiting on you. */
+const TASK_WAITING_LABEL = sidebarMarkLabel({ kind: "waiting", count: 1 });
+
+/** Waiting outranks every other ordering in this list, because the waiting
+ * task is the one the owner opened the list to find. The sidebar row already
+ * says the bot is waiting; the task that is waiting used to sit wherever its
+ * timestamp put it — below the fold, labelled "Working", sometimes inside a
+ * collapsed routine fold — so the two controls contradicted each other.
+ *
+ * This only REORDERS what the view already decided to show: a task the filter
+ * or the search dropped stays dropped, and nothing new appears. A waiting run
+ * is lifted out of its routine fold so a closed fold cannot hide it. */
+export function hoistWaitingTasks<T extends { threadId: string }>(
+  view: TaskListView<T>,
+  waiting: (task: T) => boolean,
+): TaskListView<T> {
+  const lifted: TaskListEntry<T>[] = [];
+  const kept: TaskListSection<T>[] = [];
+  for (const section of view.sections) {
+    const entries: TaskListEntry<T>[] = [];
+    for (const entry of section.entries) {
+      if (entry.type === "task") {
+        (waiting(entry.task) ? lifted : entries).push(entry);
+        continue;
+      }
+      const rest: T[] = [];
+      for (const run of entry.runs) {
+        if (waiting(run)) lifted.push({ type: "task", task: run, kind: "routine" });
+        else rest.push(run);
+      }
+      // A fold stands for two or more runs; one survivor is its own row,
+      // which is the same rule the view itself applies.
+      if (rest.length === entry.runs.length) entries.push(entry);
+      else if (rest.length === 1) entries.push({ type: "task", task: rest[0]!, kind: "routine" });
+      else if (rest.length > 1) entries.push({ ...entry, runs: rest, latest: rest[0]! });
+    }
+    if (entries.length) kept.push({ ...section, entries });
+  }
+  if (!lifted.length) return view;
+  const sections: TaskListSection<T>[] = [
+    { key: "waiting", label: sidebarMarkLabel({ kind: "waiting", count: lifted.length }), entries: lifted },
+    ...kept,
+  ];
+  const navigable: T[] = [];
+  for (const section of sections) {
+    for (const entry of section.entries) {
+      if (entry.type === "task") navigable.push(entry.task);
+      else navigable.push(...(entry.expanded ? entry.runs : [entry.latest]));
+    }
+  }
+  return { sections, navigable };
+}
+
+type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity"> & {
   usage?: Task["usage"];
 };
 
@@ -269,7 +326,10 @@ export function ConversationTaskPicker({
   const clock = { timeZone, locale };
   const nowAt = now ?? Date.now();
   const view = useMemo(
-    () => buildTaskListView(tasks, { query, filter, sort, now: nowAt, activeId: threadId, routineOf, expanded, timeZone, locale }),
+    () => hoistWaitingTasks(
+      buildTaskListView(tasks, { query, filter, sort, now: nowAt, activeId: threadId, routineOf, expanded, timeZone, locale }),
+      taskWaitsOnYou,
+    ),
     [tasks, query, filter, sort, nowAt, threadId, routineOf, expanded, timeZone, locale],
   );
 
@@ -331,12 +391,24 @@ export function ConversationTaskPicker({
       `Created ${formatTaskMoment(task.createdAt, clock)}`,
     ].filter(Boolean).join(" · ");
     const badge = readable.via === "delegation" ? "Delegated" : readable.via === "message" ? "Message" : inFold ? null : KIND_BADGE[kind];
-    const status = [task.busy ? "Working" : null, task.unread ? "Unread" : null].filter(Boolean).map((part) => ` · ${part}`).join("");
+    // A waiting task is also busy, so without this the row that is blocked on
+    // the owner reads "Working" — the exact contradiction that sent him
+    // scrolling a transcript looking for the approval.
+    const waiting = taskWaitsOnYou(task);
+    const status = [
+      task.busy && !waiting ? "Working" : null,
+      task.unread ? "Unread" : null,
+    ].filter(Boolean).map((part) => ` · ${part}`).join("");
     const tokens = formatTaskTokenLabel(task.usage, locale);
     return (
       <div
         key={task.threadId}
-        className={cn("group flex items-center gap-2 py-2 pr-2.5", inFold ? "pl-6" : "pl-2.5", active ? "bg-raised/60" : "hover:bg-raised/40")}
+        className={cn(
+          "group flex items-center gap-2 py-2 pr-2.5",
+          inFold ? "pl-6" : "pl-2.5",
+          // Amber is spent on one meaning here too: this row is waiting on you.
+          waiting ? "bg-warning/10 hover:bg-warning/15" : active ? "bg-raised/60" : "hover:bg-raised/40",
+        )}
       >
         <Check size={13} className={cn("shrink-0", active ? "text-accent" : "opacity-0")} />
         {renaming === task.threadId ? (
@@ -388,13 +460,18 @@ export function ConversationTaskPicker({
             className="min-w-0 flex-1 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
             title={TASK_RENAME_HINT}
           >
-            <div className="truncate text-[13px] text-ink">{name}</div>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {/* decoration: the row's accessible name carries the words */}
+              {waiting && <span data-task-mark="waiting" aria-hidden="true" className="size-2 shrink-0 rounded-full bg-warning" />}
+              <div className="truncate text-[13px] text-ink">{name}</div>
+            </div>
             <div className="flex min-w-0 items-center gap-1 text-[11px] text-ink-secondary">
               {badge && (
                 <span className="shrink-0 rounded border border-hairline/60 px-1 text-[10px] leading-[14px]">{badge}</span>
               )}
               <span className="min-w-0 truncate">
                 <time dateTime={new Date(at).toISOString()} title={moment}>{formatTaskWhen(at, nowAt, clock)}</time>
+                {waiting && <span className="font-medium text-warning">{` · ${TASK_WAITING_LABEL}`}</span>}
                 {status}
                 {tokens && <span title={tokens.detail}>{` · ${tokens.label}`}</span>}
               </span>

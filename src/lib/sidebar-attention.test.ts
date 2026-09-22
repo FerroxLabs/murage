@@ -8,7 +8,21 @@ import {
   sidebarMarkNameClass,
   sidebarMarkRowClass,
   sidebarSectionAttention,
+  taskWaitsOnYou,
 } from "./sidebar-attention";
+
+describe("taskWaitsOnYou", () => {
+  // The sidebar row and the task switcher both answer this question. If they
+  // answer it differently, the row says "waiting" over a list that says
+  // "working" and the owner has to go hunting.
+  it("is true only for the activity the bot mark counts", () => {
+    expect(taskWaitsOnYou({ activity: "waiting-on-you" })).toBe(true);
+    for (const activity of ["working", "idle", "no-signal", "dead"] as const) {
+      expect(taskWaitsOnYou({ activity })).toBe(false);
+    }
+    expect(taskWaitsOnYou({})).toBe(false);
+  });
+});
 
 describe("collapsed sidebar attention", () => {
   it("keeps unread chats and approval waits visible at the section level", () => {

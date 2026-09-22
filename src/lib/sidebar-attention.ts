@@ -38,14 +38,22 @@ export type SidebarMark =
   | { kind: "unread" }
   | { kind: "none" };
 
+/** The one test for "this thread is blocked on the owner".
+ *
+ *  Exported because the sidebar row and the task switcher both have to answer
+ *  it, and a bot row that says "Waiting for you" over a task list that says
+ *  "Working" sends the owner hunting through a transcript. One predicate, so
+ *  the two controls cannot disagree. */
+export function taskWaitsOnYou(task: SidebarAttentionTask): boolean {
+  return task.activity === "waiting-on-you";
+}
+
 /** Waiting outranks working outranks unread: one row, one mark. */
 export function sidebarBotMark(bot: SidebarAttentionBot): SidebarMark {
   if (bot.activity === "waiting-on-you") {
     // One decision per waiting thread. A bot with no task list (or one that
     // has not loaded) is still waiting on exactly one thing.
-    const threads = (bot.tasks ?? []).filter(
-      (task) => task.activity === "waiting-on-you",
-    ).length;
+    const threads = (bot.tasks ?? []).filter(taskWaitsOnYou).length;
     return { kind: "waiting", count: Math.max(1, threads) };
   }
   if (bot.activity === "working" || Boolean(bot.busy)) return { kind: "working" };
