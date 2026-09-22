@@ -49,3 +49,42 @@ describe("what the app says when its engine is not running", () => {
     }
   });
 });
+
+// COPY A STRANGER HAS TO BE ABLE TO READ.
+//
+// The stopped banner shipped saying "tell Sean what you were doing". That is
+// useful on one machine and meaningless on every other, and the app has
+// channels, teams and a companion in it precisely so other people use it.
+//
+// The rule is not "never write a name": it is that a notice shown to whoever
+// happens to be looking cannot address one person by their first name. The
+// control below is that ordinary words survive, so this cannot be satisfied
+// by deleting the sentence.
+describe("what the banner can say to somebody who is not the owner", () => {
+  const every = [
+    serverLifecycleNotice({ state: "restarting", since: 0, attempt: 1 }),
+    serverLifecycleNotice({ state: "failed", since: 0, attempt: 4 }),
+  ];
+
+  it("addresses nobody by name", () => {
+    for (const notice of every) {
+      expect(notice!.text, notice!.tone).not.toMatch(/\bSean\b/);
+    }
+  });
+
+  it("still says what happened and what to do about it", () => {
+    // The negative control. An empty string passes the test above.
+    for (const notice of every) {
+      expect(notice!.text.length, notice!.tone).toBeGreaterThan(40);
+      expect(notice!.text, "it is Murage that stopped, not 'the server'").toContain("Murage");
+    }
+    expect(every[1]!.text, "and the stopped one points at the evidence").toMatch(/server\.log/);
+  });
+
+  it("keeps the house copy rules the release is gated on", () => {
+    for (const notice of every) {
+      expect(notice!.text, "no em or en dashes").not.toMatch(/[—–]/);
+      expect(notice!.text.toLowerCase()).not.toContain("composio");
+    }
+  });
+});

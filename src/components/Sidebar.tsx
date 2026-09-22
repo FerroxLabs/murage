@@ -1833,7 +1833,11 @@ function ArchivedChannelsPanel({
           <div className="flex flex-col gap-1">
             {groups.map((group) => (
               <div key={group.id} className="flex items-center gap-3 rounded-xl border border-hairline/40 px-3 py-2.5">
-                {group.channelProject ? (
+                {/* Through the one predicate, like the sidebar row and the
+                    context menu. Two call sites here still tested
+                    `channelProject` by hand, which is the drift that put
+                    "Delete Channel" on a project in the first place. */}
+                {conversationNoun(group) === "project" ? (
                   <Target size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
                 ) : (
                   <Users size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
@@ -1867,7 +1871,7 @@ function ArchivedChannelsPanel({
       {pendingDelete && (
         <ConfirmDelete
           name={pendingDelete.name}
-          kind={pendingDelete.channelProject ? "project" : "channel"}
+          kind={conversationNoun(pendingDelete)}
           detail={`Every message in ${pendingDelete.name} goes with it. The bots stay.`}
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {

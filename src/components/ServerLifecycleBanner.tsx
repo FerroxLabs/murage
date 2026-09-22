@@ -58,7 +58,13 @@ export function serverLifecycleNotice(
   }
   return {
     tone: "stopped",
-    text: "Murage has stopped and could not restart itself. Quit and open it again, and tell Sean what you were doing.",
+    // NOT "tell Sean". This banner shipped naming the owner, which is fine on
+    // exactly one machine and meaningless on every other: a team member
+    // reading it has no idea who that is, and the app has channels and teams
+    // in it precisely so that other people use it. It names the log instead,
+    // which is true wherever it is read and is the thing whoever helps will
+    // actually want.
+    text: "Murage has stopped and could not restart itself. Quit and open it again. If it keeps happening, the reason is in Library/Logs/murage/server.log.",
   };
 }
 
