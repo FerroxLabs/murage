@@ -1,36 +1,39 @@
 // The open conversation's row in the sidebar.
 //
 // A faint fill plus a hairline border was too quiet to find at a glance. The
-// selected row carries an ink edge, doubled by an inset shadow so the edge
-// thickens without the box growing. A team lead's outline is
-// blue and the Chief keeps its orange tint underneath. Unread used to be an
-// orange dot here; it is the name's weight now, because a mark that fires on
-// unread is on nearly every row and therefore means nothing.
+// selected row carries a GOLD edge in the warning token (#fbbf24 dark,
+// #8a6100 light), doubled by an inset shadow so the edge thickens without the
+// box growing. A team lead's outline is blue and the Chief keeps its orange
+// tint underneath. Unread used to be an orange dot here; it is the name's
+// weight now, because a mark that fires on unread is on nearly every row and
+// therefore means nothing.
 //
-// COLOUR IS SPENT ON MEANING, AND SELECTION IS NOT MEANING.
+// IT SHARES A TOKEN WITH "WAITING FOR YOU", AND THAT IS A DECISION.
 //
-// The selected edge used to be drawn in the warning token, which is the same
-// token `sidebarMarkRowClass` fills a WAITING row with and the same one every
-// warning callout in the app uses. An earlier version of this comment claimed
-// gold was deliberately none of the other row signals. It was not, and a
-// comment asserting a safety property the code does not have is worse than
-// none.
+// An older comment here claimed gold was deliberately none of the other row
+// signals. That was simply false: sidebarMarkRowClass fills a waiting row
+// with bg-warning/10 and every warning callout in the app uses the same
+// token. The claim was removed, and then the selection was moved to ink to
+// make the claim true.
 //
-// The fix is to move the selection rather than the mark, because amber is
-// carrying information ("this bot is waiting on you") and selection is
-// carrying navigation state. Ink is not a signal colour, so it cannot be read
-// as waiting, as a team lead, or as the Chief, and it is near-white on dark
-// and near-black on light, so it is legible in both.
+// THAT WAS THE WRONG TRADE AND THE OWNER SAID SO. Nobody had ever confused
+// the two, no defect was ever reported, and gold selection is the look of his
+// product. An invariant invented to satisfy a comment is not worth the cost
+// of a theme he chose.
 //
-// AND IT HAS TO BE LOUD. The treatment before gold was a faint fill plus a
-// hairline border and it was too quiet to find at a glance, which is the
-// reason a signal colour got borrowed in the first place. Hairline is #4d4d4d
-// against a #2a2a2a row; ink is #f5f5f5. The inset shadow thickens the edge
-// without changing the box, so nothing shifts by a pixel when a row is
-// selected.
+// WHAT KEEPS THEM APART IS NOT COLOUR, and never really was. Selection is an
+// EDGE; waiting is a FILL, and it additionally carries an amber dot, the
+// words "Waiting for you" out loud (sidebarMarkLabel) and the name in full
+// weight. Four differences, only one of which is hue. The test below pins the
+// three that are not, so a future change that quietly drops the dot or the
+// label has to argue with something.
+//
+// If the two ever DO get confused in real use, move the selection and not the
+// mark: amber is carrying information and selection is carrying navigation
+// state.
 import type { botRole } from "@/lib/bot-role";
 
-export const SIDEBAR_SELECTED_ROW = "border-ink shadow-[inset_0_0_0_1px_var(--color-ink)]";
+export const SIDEBAR_SELECTED_ROW = "border-warning shadow-[inset_0_0_0_1px_var(--color-warning)]";
 
 type Role = ReturnType<typeof botRole>;
 
