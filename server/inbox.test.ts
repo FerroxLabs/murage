@@ -171,3 +171,81 @@ it("approval attention spans tasks and rooms, ignores read and snooze, and exclu
   expect(listInbox(db, { view: "decisions", includeSnoozed: true }, all).total).toBe(5);
   expect(listInbox(db, { view: "decisions" }, all).total).toBe(4);
 });
+
+// THE OWNER'S MORNING, THROUGH THE REAL DATABASE AND THE REAL ROUTE.
+//
+// `inbox-rollup.test.ts` proves the rules against a list of runs. This proves
+// the Inbox actually APPLIES them: that thirty six rows of routine runs reach
+// the routines tab as one row per routine, and that the three lists a person
+// is asked for are separated from each other and from the noise.
+//
+// The numbers are his. On 2026-09-22 he opened this with thirty six against
+// it, thirty five of which were one provider outage listed once per run, and
+// the one thing that needed him was invisible inside them.
+const morning: InboxAccess = { owner: true, threads: [
+  { threadId: "dax", label: "Dax (Closer)", botId: "dax" },
+  { threadId: "moss", label: "Moss (Secretary)", botId: "moss" },
+] };
+
+const OVERLOAD = "API Error: 529 Overloaded. This is a server-side issue, usually temporary.";
+const DEAD_TOKEN = "Gmail is not authorized. Reconnect the account to continue.";
+
+function runRow(db: DatabaseSync, thread: string, name: string, index: number, at: number, failed: boolean, detail: string) {
+  put(db, { id: `${thread}-${name}-${index}`, at, kind: "routine.run",
+    routineRun: { runId: `${thread}-${name}-${index}`, status: failed ? "failed" : "completed", routineName: name, summary: detail } }, thread);
+}
+
+it("turns a morning of routine runs into one row per routine, and badges only what is asked", () => {
+  const { db } = fixture();
+  const T0 = 1_758_500_000_000, HOUR = 3_600_000;
+  const now = T0 + 9 * HOUR;
+
+  // 26 night-watch runs: 22 failed on provider overload, the last 4 clean.
+  for (let index = 0; index < 26; index += 1) {
+    runRow(db, "dax", "RWA night watch", index, T0 + index * 1_800_000, index < 22, index < 22 ? OVERLOAD : "Swept and drafted");
+  }
+  // 8 Trustpilot runs: 3 failed early, then fine.
+  for (let index = 0; index < 8; index += 1) {
+    runRow(db, "dax", "Trustpilot sweep", index, T0 + index * HOUR, index < 3, index < 3 ? OVERLOAD : "Every review answered");
+  }
+  // One clean brief, and one routine genuinely stopped by a dead login.
+  runRow(db, "dax", "TC-TIDE morning brief", 0, T0 + 7 * HOUR, false, "Three movers");
+  runRow(db, "moss", "Gmail triage", 0, T0 + 6 * HOUR, true, DEAD_TOKEN);
+
+  // And the three things that genuinely require him, one of each kind.
+  put(db, { id: "send", at: T0 + 8 * HOUR, kind: "options",
+    card: { requestId: "send-id", title: "Send four drafted emails", options: ["Send", "Hold"], tool: "Gmail" } }, "dax");
+  put(db, { id: "propose", at: T0 + 8 * HOUR, kind: "options",
+    card: { requestId: "propose-id", title: "Make this a routine?", options: ["Yes", "No"], routineRequest: { requestId: "propose-id" } } }, "dax");
+  put(db, { id: "reconnect", at: T0 + 8 * HOUR, kind: "connector",
+    connector: { resumeKey: "gmail-resume", slug: "gmail", status: "pending" } }, "moss");
+
+  const routines = listInbox(db, { view: "routines", pageSize: 100 }, morning, now);
+
+  // THE WHOLE POINT. Thirty six runs went in; four rows come out.
+  expect(routines.routines, "one row per routine, never per run").toHaveLength(4);
+  const byName = Object.fromEntries(routines.routines!.map(entry => [entry.routineName, entry]));
+  expect(byName["RWA night watch"]).toMatchObject({ runs: 26, failed: 22, verdict: "recovered" });
+  expect(byName["Trustpilot sweep"]).toMatchObject({ runs: 8, failed: 3, verdict: "recovered" });
+  expect(byName["TC-TIDE morning brief"]).toMatchObject({ verdict: "ok" });
+  expect(byName["Gmail triage"]).toMatchObject({ verdict: "stuck", cause: "connection" });
+  expect(byName["Gmail triage"]!.botLabel, "named by the bot the owner knows").toBe("Moss (Secretary)");
+
+  // The routines list carries NO number of its own. A badge it can reach is a
+  // badge that fills up by itself, which is the defect this replaced.
+  const counted = listInbox(db, { view: "decisions", pageSize: 100 }, morning, now);
+  expect(counted.decisions, "three things require him, and not one run does").toBe(3);
+  expect(counted.approvals).toBe(1);
+  expect(counted.questions).toBe(1);
+  expect(counted.connections).toBe(1);
+  expect(counted.approvals + counted.questions + counted.connections).toBe(counted.decisions);
+
+  // Each list holds its own kind and nothing else.
+  expect(listInbox(db, { view: "approvals" }, morning, now).items.map(i => i.segment)).toEqual(["approval"]);
+  expect(listInbox(db, { view: "questions" }, morning, now).items.map(i => i.segment)).toEqual(["question"]);
+  expect(listInbox(db, { view: "connections" }, morning, now).items.map(i => i.segment)).toEqual(["connection"]);
+
+  // And the rollup is offered ONLY where it was asked for, so no other view
+  // pays to compute it.
+  expect(listInbox(db, { view: "decisions" }, morning, now).routines).toBeUndefined();
+});

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import type { OptionCardData } from "@/state/store";
-import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView } from "../../shared/inbox";
+import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
@@ -84,6 +84,29 @@ export const INBOX_VIEW_EMPTY: Partial<Record<InboxView, string>> = {
   decisions: "Nothing is waiting on you right now.",
   "to-read": "Nothing new to read.",
 };
+
+/** "26 runs, 22 failed" / "8 runs, all clean". Counts belong HERE, inside a
+ *  row somebody opened on purpose, and never on the tab: a number on the tab
+ *  is a number that grows by itself. */
+export function routineRunLine(routine: RoutineRollup): string {
+  if (routine.failed === 0) return routine.runs === 1 ? "1 run, clean" : `${routine.runs} runs, all clean`;
+  return `${routine.runs} run${routine.runs === 1 ? "" : "s"}, ${routine.failed} failed`;
+}
+
+/** What the row says about where the routine stands now.
+ *
+ *  "Recovered" is the sentence that empties this list: twelve failures
+ *  followed by a clean run is a routine that WORKS, and saying so is what
+ *  stops the owner reading twelve rows about it. A stalled provider is still
+ *  not his job, so it says what is happening and asks nothing. */
+export function routineVerdictLine(routine: RoutineRollup): string {
+  if (routine.verdict === "ok") return "OK";
+  if (routine.verdict === "recovered") return "Recovered";
+  if (routine.cause === "connection") return "Stopped, needs reconnecting";
+  if (routine.stalled) return "Waiting on the AI provider";
+  if (routine.cause === "upstream") return "Retrying";
+  return "Not recovering";
+}
 
 export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
@@ -177,6 +200,23 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
     {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
     {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
+        The owner's thirty six rows were four routines. A run that failed and
+        then ran again fine says "Recovered" and asks for nothing; a routine
+        that is still down says so and names why. Nothing here is counted:
+        see INBOX_VIEWS. */}
+    {view === "routines" && result?.routines && result.routines.length > 0 && (
+      <ul className="mb-3 space-y-2" aria-label="Routines">
+        {result.routines.map(routine => (
+          <li key={routine.routineKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-hairline/50 p-3 text-[13px]">
+            <span className="font-medium text-ink">{routine.routineName}</span>
+            <span className="text-ink-secondary">{routine.botLabel}</span>
+            <span className="flex-1 text-ink-secondary">{routineRunLine(routine)}</span>
+            <span className={routine.verdict === "stuck" ? "font-medium text-danger" : "text-ink-secondary"}>{routineVerdictLine(routine)}</span>
+          </li>
+        ))}
+      </ul>
+    )}
     <ul className="space-y-3" aria-label="Inbox items">
       {list.map(item => {
         // The bot's own words head the card whenever the live request can be

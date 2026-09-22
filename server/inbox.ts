@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
 import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { type RoutineRunFact, rollUpRoutineRuns } from "./inbox-rollup.ts";
 
 /** The two status lists as SQL literals. Built from the shared constants so
  *  the query, the counts and the tabs cannot drift: a status added in one
@@ -115,6 +116,38 @@ interface Row {
   source_key: string; thread_id: string; message_id: string; at: number; kind: string; json: string;
   status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; copies: number;
 }
+/** Routine runs, oldest first, for the rollup. Bounded: a workspace that has
+ *  run every thirty minutes for a year has seventeen thousand of these, and
+ *  the rollup answers the same question from the recent ones. */
+const ROUTINE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const ROUTINE_ROW_LIMIT = 2_000;
+
+/** A routine run reduced to what the rules need.
+ *
+ *  IDENTITY IS THE NAME WITHIN ITS THREAD, because a run carries `routineName`
+ *  and no stable routine id. Renaming a routine therefore starts a new row,
+ *  which is the honest reading: a renamed routine is a different thing in the
+ *  owner's head, and the alternative (matching loosely) would merge two real
+ *  routines that happen to share a name across bots. */
+function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["threads"], now: number): RoutineRunFact[] {
+  const rows = db.prepare(SOURCE + `SELECT thread_id, title, summary, status, at FROM items
+    WHERE segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
+    .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as
+    Array<{ thread_id: string; title: string; summary: string; status: string; at: number }>;
+  return rows.map(row => ({
+    routineKey: `${row.thread_id}:${row.title}`,
+    routineName: text(row.title, 120),
+    botLabel: text(threads.find(thread => thread.threadId === row.thread_id)?.label ?? "", 100),
+    at: row.at,
+    // Anything that is not a clean finish is a failure for the rules'
+    // purposes. Being generous here is the safe direction: a run wrongly
+    // counted as failed shows up inside a row that already exists, while one
+    // wrongly counted as clean can make a stuck routine read as recovered.
+    failed: row.status !== "completed",
+    detail: row.summary,
+  }));
+}
+
 function scope(access: InboxAccess) {
   if (access.owner !== true) reject(404, "Inbox is unavailable.");
   if (!Array.isArray(access.threads) || access.threads.length > 20_000 || access.threads.some(thread => !thread.threadId || typeof thread.threadId !== "string")) reject(400, "Invalid Inbox scope.");
@@ -216,7 +249,11 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   return { items: rows.map(row => item(row, access)), total, page, pageSize,
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
     decisions: decisionCount, toRead: toReadCount,
-    approvals: approvalCount, questions: questionCount, connections: connectionCount };
+    approvals: approvalCount, questions: questionCount, connections: connectionCount,
+    // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
+    // owner's thirty six rows were four routines; the tab says "one line per
+    // routine, not per run" and this is that sentence kept in data.
+    ...(view === "routines" ? { routines: rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now), now) } : {}) };
 }
 
 /** State updates cannot change source status, approve requests or run tools. */
