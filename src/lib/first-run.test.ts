@@ -21,6 +21,7 @@ import {
   closeFirstRun,
   firstRunActive,
   firstRunPhaseRows,
+  firstRunOwnsMainView,
   firstRunPhasesVisible,
   openFirstRun,
   readFirstRunPhases,
@@ -356,5 +357,56 @@ describe("the server's word on whether the flow is still going", () => {
   it("does not mistake an old build's view for a live conversation", () => {
     forgetFirstRunStarted();
     expect(firstRunPhasesVisible(view({}), open)).toBe(false);
+  });
+});
+
+// THE SCREEN A BLANK MACHINE ACTUALLY GOT.
+//
+// `App.tsx` replaced the Chief of Staff's thread with `<NoEngines />` on any
+// machine where no instance is runnable — the same predicate that makes
+// `nothingToThinkWith` true, so it fired on exactly the machine the first run
+// exists for. Every first-run card lives in that thread, including the only
+// one that can take a Flux key, so a bare computer was shown "Install an AI
+// engine to get started" and told "Murage doesn't ship a model of its own"
+// while the phase bar above it read `2 · switch it on`.
+//
+// These are the four states that decide it. The third is the one that stops
+// this fix going too far: an engine screen that never comes back is a worse
+// bug than the one being fixed here.
+describe("who owns the main view", () => {
+  it("hands it to the first run while there are steps left", () => {
+    expect(firstRunOwnsMainView(view({ conversationLive: true }))).toBe(true);
+  });
+
+  it("hands it to the first run on the blank machine that lost it", () => {
+    // Nothing to think with, Flux not answered: the exact machine whose card
+    // was replaced before it could draw.
+    const blank = view(
+      { conversationLive: true, nothingToThinkWith: true, agents: [], signedOutAgents: [] },
+      { hello: "done", detect: "skipped" },
+    );
+    expect(blank.next, "the flow must still be going").not.toBeNull();
+    expect(firstRunOwnsMainView(blank)).toBe(true);
+  });
+
+  it("gives it back when the flow has nothing left to do", () => {
+    // `conversationLive` stays true for ever once the welcome card is in the
+    // thread, and that card is never removed. On its own it would suppress
+    // the engine screen on every workspace that has ever been set up, which
+    // is why the phase bar pairs it with `next` and why this does too.
+    const finished = view(
+      { conversationLive: true },
+      { hello: "done", detect: "done", flux: "done", chat: "done", flow: "done" },
+    );
+    expect(finished.next, "nothing outstanding").toBeNull();
+    expect(firstRunOwnsMainView(finished)).toBe(false);
+  });
+
+  it("claims nothing before the server has answered", () => {
+    // A question nobody has asked yet. The engine screen keeps whatever
+    // behaviour it had, rather than flickering on an assumption.
+    expect(firstRunOwnsMainView(null)).toBe(false);
+    expect(firstRunOwnsMainView(undefined)).toBe(false);
+    expect(firstRunOwnsMainView(view({}))).toBe(false);
   });
 });

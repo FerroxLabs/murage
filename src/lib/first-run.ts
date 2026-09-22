@@ -200,6 +200,45 @@ export function firstRunPhasesVisible(
   return started && view.next !== null;
 }
 
+/**
+ * Does the first run own the main view right now?
+ *
+ * THE RELEASE BLOCK THIS ANSWERS, WHICH IS THE ORIGINAL ONE WEARING A COAT.
+ *
+ * Every first-run card lives in the Chief of Staff's thread. `App.tsx`
+ * renders `<NoEngines />` INSTEAD of that thread whenever no instance is
+ * runnable, and its predicate is a deliberate copy of `runnable()` from
+ * server/setup.ts — the very function that decides `nothingToThinkWith`. So
+ * the two are true on exactly the same machine: the blank one. Murage ships
+ * the Fuigo binary, so a bare computer has an instance reporting available
+ * with an empty catalogue, which is runnable-false and engine-less at once.
+ *
+ * On that machine the person was shown "Install an AI engine to get started"
+ * and "Murage doesn't ship a model of its own" — flatly contradicting the
+ * first run's own "Murage brought its own AI with it" — above a list of CLIs
+ * to install, a Check again button, and NO WAY TO ENTER A KEY. Meanwhile the
+ * phase bar sat above it reading `2 · switch it on` with nothing to press.
+ *
+ * The flux step's own fix is real and already shipped in this branch: the
+ * server plans `key` on every machine and `FirstRunFluxCard` swaps to its
+ * blank-machine heading. It was simply never reachable, because the screen
+ * that carries it was replaced before it could draw. That is the same defect
+ * as the original block, one layer up: the card that takes a key was shown
+ * only to machines that did not need one.
+ *
+ * THE TEST IS THE ONE THE PHASE BAR ALREADY USES, and that is the point.
+ * `conversationLive` alone would be wrong and permanently so: it is true once
+ * the welcome card is in the thread, and that card is never removed, so a
+ * workspace that finished setup years ago would suppress the engine screen
+ * for ever. Pairing it with `next !== null` is what the bar settled on for
+ * the same reason, so the band and the view below it now answer the question
+ * identically instead of disagreeing about whose screen this is.
+ */
+export function firstRunOwnsMainView(view: SetupView | null | undefined): boolean {
+  if (!view) return false;
+  return view.conversationLive === true && view.next !== null;
+}
+
 /** Whether the first run has been seen to start in this session. Sticky on
  *  purpose: see `firstRunPhasesVisible`. */
 let started = false;

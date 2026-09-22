@@ -17,6 +17,8 @@ import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
+import { useSetupView } from "@/components/FirstRunChrome";
+import { firstRunOwnsMainView } from "@/lib/first-run";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
@@ -30,6 +32,9 @@ import { InstallPrompt } from "./components/InstallPrompt";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // The same cached `GET /api/setup` the phase bar reads, so the band and the
+  // view underneath it cannot disagree about whose screen this is.
+  const { view: setupView } = useSetupView();
   // Same three-state answer the whole app uses, and the same rule: only a
   // CONFIRMED desktop gets a first-run surface. See the comment on App().
   const desktop = useDesktopSurface();
@@ -82,9 +87,22 @@ function Shell() {
   // disagreed: the selector said "no engine", this said "we have one". The
   // condition below is `runnable()` from server/setup.ts, kept deliberately
   // identical so they cannot drift apart again.
+  //
+  // AND IT YIELDS TO THE FIRST RUN, BECAUSE IT WAS SHADOWING IT.
+  //
+  // This predicate is true on exactly the machine `nothingToThinkWith` is
+  // true on, so on a blank computer it replaced the Chief of Staff's thread —
+  // and every first-run card lives in that thread, including the only card
+  // that can take a Flux key. The person was told "Murage doesn't ship a
+  // model of its own", which contradicts what the first run says on the very
+  // next screen, and offered a list of CLIs to install with no way to enter a
+  // key, while the phase bar above read `2 · switch it on`. See
+  // `firstRunOwnsMainView`.
+  const setupOwnsView = firstRunOwnsMainView(setupView);
   const noEngines =
     state.connected &&
     state.instances.length > 0 &&
+    !setupOwnsView &&
     !state.instances.some(
       (i) =>
         i.enabled !== false &&

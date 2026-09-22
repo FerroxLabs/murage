@@ -514,12 +514,17 @@ test.describe("a machine with nothing on it", () => {
     ).toEqual(["who you are", "switch it on", "first chat", "do the thing"]);
   });
 
-  // ── RELEASE BLOCK, RECORDED AS ONE ─────────────────────────────────────
+  // ── RELEASE BLOCK, FOUND HERE AND FIXED ────────────────────────────────
   //
-  // `test.fail()` for the same reason as above: the check is right, the
-  // product is not, and a red suite teaches people to ignore red.
+  // These two were written `test.fail()` against the product as it stood, and
+  // they are the reason the block was found at all. The fix landed the same
+  // day (`firstRunOwnsMainView`, src/lib/first-run.ts), both went green, and
+  // Playwright reported them as "Expected to fail, but passed" — which is the
+  // marker doing exactly the job it was put there for. The markers are gone
+  // now and the history stays, because the shape of this defect is worth
+  // recognising the third time it appears.
   //
-  // WHAT IS WRONG, AND IT IS THE ORIGINAL BLOCK ONE LAYER UP. Every card in
+  // WHAT WAS WRONG, AND IT WAS THE ORIGINAL BLOCK ONE LAYER UP. Every card in
   // the first run — the welcome, the detection report, the Flux card with the
   // only box in the flow that takes a key — lives in the CHIEF'S THREAD.
   // App.tsx renders `<NoEngines />` INSTEAD of that thread whenever no
@@ -544,11 +549,18 @@ test.describe("a machine with nothing on it", () => {
   // own AI with it") — with no way to reach the card that would switch it on.
   // The dead end moved; it did not go.
   //
-  // The screen ITSELF is fine, which is why the test above passes: it has
-  // live controls, real prose and nothing off the right edge. What it does
-  // not have is the flow.
+  // The screen ITSELF was fine, which is why the test above passed all along:
+  // it had live controls, real prose and nothing off the right edge. What it
+  // did not have was the flow.
+  //
+  // THE FIX IS NOT "SHOW THE THREAD WHEN THE CONVERSATION IS LIVE". That was
+  // tried and is a worse bug: `conversationLive` goes true once the welcome
+  // card is in the thread and that card is never removed, so the engine
+  // screen would be suppressed for ever on every workspace that has ever been
+  // set up. It is paired with `next !== null`, which is the same pairing the
+  // phase bar already uses, so the band and the view below it now answer the
+  // question identically.
   test("still lets the person reach the Chief's question", async ({ app }) => {
-    test.fail();
     await chiefHasSpoken(app);
     await takeEveryEngineAway();
     await reloadSettled(app);
@@ -556,7 +568,6 @@ test.describe("a machine with nothing on it", () => {
   });
 
   test("gets a Flux screen it can answer, leave, and come back to", async ({ app }) => {
-    test.fail();
     await chiefHasSpoken(app);
     await takeEveryEngineAway();
     await harness("POST", "/api/setup/answer", { step: "hello", answer: OWNER });
