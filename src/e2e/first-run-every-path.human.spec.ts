@@ -23,6 +23,7 @@
 // route the app calls.
 import type { Page } from "@playwright/test";
 
+import { clippedText } from "./clipped-text";
 import { expect, test } from "./fixtures";
 import { HARNESS_URL, desktopHeaders } from "./rig";
 
@@ -62,51 +63,6 @@ async function harness(method: string, path: string, body?: unknown): Promise<an
 }
 
 const stepOf = (view: any, id: string) => view.steps.find((entry: { id: string }) => entry.id === id);
-
-/**
- * Anything with a box that ends past the right edge of the document.
- *
- * Reported with the text it was carrying, because "some div overflows" is not
- * actionable and "the sentence that says where your email goes is cut off" is.
- */
-async function clippedText(app: Page): Promise<Array<{ text: string; right: number; limit: number }>> {
-  return app.evaluate(() => {
-    // MEASURE THE LINE BOXES, NOT THE ELEMENTS.
-    //
-    // THE DEFECT IN THE FIRST VERSION. It walked elements and skipped any
-    // with children, to avoid measuring a wrapper instead of its prose. But
-    // ALL REAL PROSE HAS MARKUP IN IT — a bolded word, a link, a span — so
-    // every sentence worth checking was a non-leaf and was skipped. It went
-    // green at three widths on a release with photographed clipping, and a
-    // bare-div control passed while a control with one <strong> in it did
-    // not. A check that only sees the simplest text on the page is decoration.
-    //
-    // A Range over a TEXT NODE reports the rectangles the browser actually
-    // painted, one per wrapped line, which is exactly what a reader's eye
-    // lands on and is indifferent to how the markup is nested.
-    const limit = document.documentElement.clientWidth;
-    const found: Array<{ text: string; right: number; limit: number }> = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      const text = (node.textContent ?? "").trim();
-      if (text.length < 12) continue;
-      const parent = node.parentElement;
-      if (!parent) continue;
-      const style = window.getComputedStyle(parent);
-      if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0") continue;
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width === 0 || rect.height === 0) continue;
-        if (rect.right > limit + 1) {
-          found.push({ text: text.slice(0, 80), right: Math.round(rect.right), limit });
-          break;
-        }
-      }
-    }
-    return found.slice(0, 8);
-  });
-}
 
 /** Controls a person can actually operate right now. */
 function liveControls(app: Page) {

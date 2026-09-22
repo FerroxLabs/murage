@@ -30,12 +30,20 @@
 // the half of `saveAndProveFluxKey` that leaves the machine.
 //
 // THE FOUR CUSTOMER RULES ARE THE ONES FROM `first-run-every-path`, and so are
-// `clippedText`, `chiefHasSpoken` and the `test.use` app override. They are
-// copied rather than imported because that file is a spec, not a module; each
-// copy that matters is re-proved by a negative control at the bottom of this
-// file.
+// `chiefHasSpoken` and the `test.use` app override — copied, because that file
+// is a spec rather than a module, and each copy that matters is re-proved by a
+// negative control at the bottom of this file.
+//
+// `clippedText` IS NOT COPIED, and its history is why. This file's copy got a
+// fix the original did not — visually hidden text is not clipped text — and
+// the original was left armed with a false alarm it had simply never been in
+// a position to fire. Two checks that disagree about what clipping means, and
+// neither one saying so, is worse than one check. It lives in
+// `./clipped-text` now and both specs import it. The controls stay here,
+// because a shared measurement still owes each caller proof it can scream.
 import type { Page } from "@playwright/test";
 
+import { clippedText } from "./clipped-text";
 import { expect, test } from "./fixtures";
 import { HARNESS_URL, desktopHeaders } from "./rig";
 
@@ -131,72 +139,6 @@ async function harness(method: string, path: string, body?: unknown): Promise<an
 
 const setupView = () => harness("GET", "/api/setup");
 const stepOf = (view: any, id: string) => view.steps.find((entry: { id: string }) => entry.id === id);
-
-/**
- * Anything with a box that ends past the right edge of the document.
- *
- * COPIED WHOLE FROM `first-run-every-path`, INCLUDING THE REASON IT LOOKS
- * LIKE THIS. An earlier version walked ELEMENTS and skipped any with
- * children, so every sentence containing a bolded word or a link — which is
- * all real prose — was skipped, and it went green at three widths on a
- * release with photographed clipping. A Range over a TEXT NODE reports the
- * rectangles the browser actually painted, one per wrapped line, which is
- * what a reader's eye lands on. The bait at the bottom of this file proves
- * THIS copy still sees prose with markup in it.
- *
- * ONE THING IS SKIPPED HERE THAT `first-run-every-path` DOES NOT SKIP, AND IT
- * IS A FALSE ALARM THAT FILE HAS NEVER BEEN IN A POSITION TO HIT. See the
- * comment on the parent box below.
- */
-async function clippedText(app: Page): Promise<Array<{ text: string; right: number; limit: number }>> {
-  return app.evaluate(() => {
-    const limit = document.documentElement.clientWidth;
-    const found: Array<{ text: string; right: number; limit: number }> = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      const text = (node.textContent ?? "").trim();
-      if (text.length < 12) continue;
-      const parent = node.parentElement;
-      if (!parent) continue;
-      const style = window.getComputedStyle(parent);
-      if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0") continue;
-      // VISUALLY HIDDEN TEXT IS NOT CLIPPED TEXT.
-      //
-      // Tailwind's `sr-only` is `position:absolute;width:1px;height:1px;
-      // overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap`, so the TEXT
-      // inside lays out at its natural width in a one-pixel box and a Range
-      // over it reports a rectangle tens of pixels wide — past the right edge
-      // whenever the control it labels sits near one. NOTHING IS PAINTED
-      // THERE: the browser clipped it away before anybody could read it,
-      // which is the entire purpose of the idiom.
-      //
-      // The first thing this file hit was exactly that — PushToTalk's
-      // "Hold to talk", right 1488 in a 1440 viewport. The skip-path spec has
-      // never seen it because that button only renders once something can
-      // answer, and on `flux:skipped` with a blank machine nothing can. So
-      // this is a false alarm in the shared check that only the connected
-      // world can reach, not a defect in the app.
-      //
-      // The test is the PARENT'S OWN PAINTED BOX, not a class name: an
-      // element one pixel across is not showing anybody a sentence. Real
-      // prose lives in a parent at least as wide as one line of it, so this
-      // cannot hide the clipping the check exists for — the bait at the
-      // bottom of this file is prose in a full-width parent and still screams.
-      const box = parent.getBoundingClientRect();
-      if (box.width <= 1 || box.height <= 1) continue;
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width === 0 || rect.height === 0) continue;
-        if (rect.right > limit + 1) {
-          found.push({ text: text.slice(0, 80), right: Math.round(rect.right), limit });
-          break;
-        }
-      }
-    }
-    return found.slice(0, 8);
-  });
-}
 
 /** Controls a person can actually operate right now. */
 function liveControls(app: Page) {
