@@ -1,5 +1,6 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
+import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
@@ -544,6 +545,78 @@ app.on("second-instance", (_event, commandLine) => {
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+
+/**
+ * THE ENGINE GETS A REPLACEMENT NOW.
+ *
+ * The exit handler below was already written for one — it drops the desktop
+ * surface secret because "a replacement mints its own" and clears the browser
+ * capabilities "before any replacement child receives the browser descriptor"
+ * — and nothing ever made it. On 2026-09-22 one unhandled WebSocket error
+ * killed the server at 02:58:16Z and the window stayed open, looking healthy,
+ * until the owner relaunched by hand 53 minutes later. Every bot, memory,
+ * every tool, the browser and the phone were gone, and nothing said so.
+ */
+const serverSupervisor = createServerSupervisor();
+/** One restart in flight at a time, and none once we are quitting. */
+let serverRestarting = false;
+/** What the renderer is told, so a dead engine can never again pass for a
+ *  dozen broken features. */
+let serverLifecycleState = { state: "running", since: null, attempt: 0 };
+
+function publishServerLifecycle(next) {
+  serverLifecycleState = next;
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  try { win.webContents.send("server-lifecycle:state", next); } catch { /* the window is going away */ }
+}
+
+/** Watch the child that actually became the engine. Boot attempts that lose a
+ *  port race are not failures and are not watched. */
+function superviseServerChild(proc) {
+  proc.once("exit", (code) => {
+    if (proc !== serverProc) return; // superseded by a later child
+    const decision = serverSupervisor.decide({ code, intentional: desktopShutdownStarted });
+    if (decision.action === "stay-down") {
+      slog(`server supervisor: staying down (${decision.reason})`);
+      return;
+    }
+    if (decision.action === "give-up") {
+      slog(`server supervisor: giving up after ${decision.crashes} crashes in two minutes`);
+      publishServerLifecycle({ state: "failed", since: Date.now(), attempt: decision.crashes });
+      return;
+    }
+    slog(`server supervisor: restarting in ${decision.delayMs}ms (attempt ${decision.attempt})`);
+    publishServerLifecycle({ state: "restarting", since: Date.now(), attempt: decision.attempt });
+    if (serverRestarting) return;
+    serverRestarting = true;
+    setTimeout(() => {
+      void (async () => {
+        try {
+          if (desktopShutdownStarted) return;
+          serverProc = null;
+          serverReady = await startServerPackaged();
+          if (serverReady) {
+            slog("server supervisor: engine back up");
+            publishServerLifecycle({ state: "running", since: Date.now(), attempt: decision.attempt });
+            // Only once it has answered health checks does it stop counting
+            // against the loop guard; a child that dies during boot is the
+            // loop this guards.
+            setTimeout(() => serverSupervisor.settled(), CRASH_WINDOW_MS);
+          } else {
+            slog("server supervisor: replacement child could not start");
+            publishServerLifecycle({ state: "failed", since: Date.now(), attempt: decision.attempt });
+          }
+        } catch (error) {
+          slog(`server supervisor: restart threw ${error?.message ?? error}`);
+          publishServerLifecycle({ state: "failed", since: Date.now(), attempt: decision.attempt });
+        } finally {
+          serverRestarting = false;
+        }
+      })();
+    }, decision.delayMs);
+  });
+}
 let desktopRecoveryMode = false;
 let recoveryWindow = null;
 let recoveryActivateRegistered = false;
@@ -1595,6 +1668,7 @@ async function startServerPackaged() {
       if (started.proc) {
         serverProc = started.proc;
         SERVER_PORT = port;
+        superviseServerChild(started.proc);
         return true;
       }
       // A child that exited or timed out is not evidence of a port conflict —
