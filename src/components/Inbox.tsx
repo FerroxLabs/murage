@@ -3,6 +3,8 @@ import { api } from "@/state/store";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
+import { useSetupView } from "./FirstRunChrome";
+import { signedOutEngineRows, withSignedOutEngines } from "@/lib/signed-out-engines";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
@@ -135,13 +137,14 @@ export function inboxShowsEmpty(
   view: InboxView,
   cards: readonly unknown[],
   routines: readonly unknown[],
-  restore: readonly unknown[] = [],
+  rows: readonly unknown[] = [],
 ): boolean {
   if (view === "routines") return routines.length === 0;
-  // A dead credential raised from routine failures has no message under it,
-  // so it is not in `cards`. Without this, the one row that says a login has
-  // died would sit underneath "Everything is connected."
-  return cards.length === 0 && restore.length === 0;
+  // `rows` is every purpose-built row on this view: a dead credential raised
+  // from routine failures, and an engine nobody is signed in to. Neither has
+  // a message under it, so neither is in `cards`, and without them the rows
+  // saying a login has died would sit underneath "Everything is connected."
+  return cards.length === 0 && rows.length === 0;
 }
 
 /** "9 min", "4 hours", "3 days". A request that has been waiting since
@@ -215,6 +218,16 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   const list = inboxCardItems(view, result?.items ?? []);
   const routineRows = result?.routines ?? [];
   const restoreRows = result?.restore ?? [];
+  // A LIVE READING, NOT A MESSAGE. See src/lib/signed-out-engines.ts: the
+  // server already computes this on every setup view and exactly one
+  // component ever read it, so a login that expires on day two was reported
+  // nowhere at all.
+  const { view: setupView } = useSetupView();
+  const signedOut = view === "connections" || view === "decisions" ? signedOutEngineRows(setupView) : [];
+  // The counts the tabs read, with the live rows folded in. Both numbers or
+  // neither: the three segments sum to the umbrella.
+  const shown = result ? withSignedOutEngines(result, signedOut) : null;
+  const ownRows = [...restoreRows, ...signedOut];
   // The live card for each waiting request on this page, keyed by message id.
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
@@ -253,7 +266,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         three different ways. */}
     <nav aria-label="Inbox views" className="mt-4 flex flex-wrap gap-2">
       {INBOX_VIEWS.map(({ value, label, count }) => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
-        {label}{result && count ? ` (${count(result)})` : ""}
+        {label}{shown && count ? ` (${count(shown)})` : ""}
       </button>)}
     </nav>
     <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setPage(0); }}>
@@ -272,7 +285,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     {/* Routines draws its own list, so its emptiness is the rollup's, not
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
-    {!busy && result && inboxShowsEmpty(view, list, routineRows, restoreRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {!busy && result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
     {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
         The owner's thirty six rows were four routines. A run that failed and
         then ran again fine says "Recovered" and asks for nothing; a routine
@@ -285,6 +298,24 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         rather than an item: there is no message under it to open, read or
         snooze. The run carrying the error is the only evidence there is, so
         that is what it offers. */}
+    {/* AN ENGINE THAT IS HERE AND SIGNED OUT OF.
+        The driver was asked and said nobody is signed in. It is a live
+        reading re-read on a poll, so it empties itself the moment they sign
+        in, which is why it is allowed to count when the failed-turn log row
+        underneath it is not. */}
+    {signedOut.length > 0 && (
+      <ul className="mb-3 space-y-2" aria-label="Engines to sign in to">
+        {signedOut.map(engine => (
+          <li key={engine.id} className="rounded-xl border border-warning/40 bg-warning/5 p-3 text-[13px]">
+            <p className="font-medium text-ink">{engine.name} is here, and nobody is signed in to it.</p>
+            <p className="mt-1 text-ink-secondary">
+              Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}
+            </p>
+            {engine.signInCommand && <code className="mt-2 block break-all rounded bg-control px-2 py-1 text-[12px] text-ink">{engine.signInCommand}</code>}
+          </li>
+        ))}
+      </ul>
+    )}
     {restoreRows.length > 0 && (
       <ul className="mb-3 space-y-2" aria-label="Connections to restore">
         {restoreRows.map(row => (

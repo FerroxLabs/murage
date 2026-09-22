@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
+import { signedOutEngineRows } from "@/lib/signed-out-engines";
+import { useSetupView } from "./FirstRunChrome";
 
 /** A snapshot of canonical cards, never notification history. Failed reads retain
  * the last count; reconnect and foregrounding request a fresh snapshot. */
@@ -34,5 +36,17 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
       window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh);
     };
   }, [enabled, connected]);
-  return { count, decisions, stale: stale || !connected };
+  // THE ROW AND THE DIALOG COUNT THE SAME THINGS OR THEY ARE BOTH WRONG.
+  //
+  // An engine nobody is signed in to is owed and has no message behind it,
+  // so the Inbox folds it in on the client. If this row did not, the badge
+  // would say two, the Inbox would open saying three, and the number nobody
+  // can reconcile is the number nobody reads.
+  const { view } = useSetupView();
+  const signedOut = signedOutEngineRows(view).length;
+  return {
+    count,
+    decisions: decisions === undefined ? decisions : decisions + signedOut,
+    stale: stale || !connected,
+  };
 }
