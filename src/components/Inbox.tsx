@@ -125,6 +125,16 @@ export function inboxCardItems(view: InboxView, items: readonly InboxItem[]): re
   return view === "routines" ? [] : items;
 }
 
+/** Whether the "nothing here" panel belongs on screen.
+ *
+ *  Routines draws its OWN list from the rollup, so once the per-run cards
+ *  were suppressed its card list is always empty and the panel would have
+ *  printed "your routines have not run yet" underneath four routines that
+ *  plainly had. Its emptiness is the rollup's. */
+export function inboxShowsEmpty(view: InboxView, cards: readonly unknown[], routines: readonly unknown[]): boolean {
+  return view === "routines" ? routines.length === 0 : cards.length === 0;
+}
+
 /** "9 min", "4 hours", "3 days". A request that has been waiting since
  *  Tuesday said "Waiting 6231 min for your approval", which is a number
  *  nobody converts in their head and therefore a number that says nothing
@@ -194,6 +204,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   };
   const chooseView = (next: InboxView) => { setView(next); setPage(0); };
   const list = inboxCardItems(view, result?.items ?? []);
+  const routineRows = result?.routines ?? [];
   // The live card for each waiting request on this page, keyed by message id.
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
@@ -240,18 +251,26 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
       <button className={button} disabled={busy}>Search</button>
     </form>
     {!INBOX_OWED_VIEWS.includes(view) && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
-    {result && <p className="mb-3 text-[12px] text-ink-secondary">While you were away: {result.unread} unread on this page. {result.total} matching items.</p>}
+    {/* Routines counts the ROWS a person sees, not the runs behind them:
+        "36 matching items" over four lines is the number this tab exists to
+        stop showing him. */}
+    {result && <p className="mb-3 text-[12px] text-ink-secondary">{view === "routines"
+      ? `${routineRows.length} ${routineRows.length === 1 ? "routine" : "routines"}, covering ${result.total} ${result.total === 1 ? "run" : "runs"}.`
+      : `While you were away: ${result.unread} unread on this page. ${result.total} matching items.`}</p>}
     {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
     {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
-    {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {/* Routines draws its own list, so its emptiness is the rollup's, not
+        the card list's. Reading `list` here would print "your routines have
+        not run yet" underneath four routines that plainly had. */}
+    {!busy && result && inboxShowsEmpty(view, list, routineRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
     {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
         The owner's thirty six rows were four routines. A run that failed and
         then ran again fine says "Recovered" and asks for nothing; a routine
         that is still down says so and names why. Nothing here is counted:
         see INBOX_VIEWS. */}
-    {view === "routines" && result?.routines && result.routines.length > 0 && (
+    {view === "routines" && routineRows.length > 0 && (
       <ul className="mb-3 space-y-2" aria-label="Routines">
-        {result.routines.map(routine => (
+        {routineRows.map(routine => (
           <li key={routine.routineKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-hairline/50 p-3 text-[13px]">
             <span className="font-medium text-ink">{routine.routineName}</span>
             <span className="text-ink-secondary">{routine.botLabel}</span>

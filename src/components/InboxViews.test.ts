@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import en from "@/locales/en.json";
-import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, owedWaitingLine, waitedFor } from "./Inbox";
+import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, inboxShowsEmpty, owedWaitingLine, waitedFor } from "./Inbox";
 import type { InboxItem } from "../../shared/inbox";
 import { INBOX_BADGED_SEGMENTS } from "../../shared/inbox";
 
@@ -161,6 +161,30 @@ describe("how long a thing has been waiting", () => {
     // No em dashes, and never the vendor's name: the release is gated on both.
     for (const segment of ["approval", "question", "connection"]) {
       expect(owedWaitingLine(row(segment, "x"), now)).not.toMatch(/[\u2014\u2013]/);
+    }
+  });
+});
+
+// "YOUR ROUTINES HAVE NOT RUN YET", UNDERNEATH FOUR ROUTINES THAT HAD.
+//
+// Suppressing the per-run cards on the Routines tab emptied the list the
+// empty-state panel was reading, so the panel appeared over a perfectly full
+// rollup. The fix for one defect, printing the opposite of the truth.
+describe("when the nothing-here panel belongs on screen", () => {
+  const some = [{}, {}];
+
+  it("reads the rollup on the routines tab, not the card list it no longer has", () => {
+    expect(inboxShowsEmpty("routines", [], some)).toBe(false);
+    expect(inboxShowsEmpty("routines", [], []), "and still appears when there really are none").toBe(true);
+  });
+
+  it("reads the card list everywhere else", () => {
+    // The control. Reading the rollup on a tab that has no rollup would hide
+    // the panel on every empty list in the Inbox.
+    for (const { value } of INBOX_VIEWS) {
+      if (value === "routines") continue;
+      expect(inboxShowsEmpty(value, [], []), `${value} empty`).toBe(true);
+      expect(inboxShowsEmpty(value, some, []), `${value} full`).toBe(false);
     }
   });
 });
