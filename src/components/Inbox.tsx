@@ -29,6 +29,62 @@ const INLINE_CARD_LIMIT = 10;
 
 /** Opening navigates to the exact persisted source; a waiting request can
  * also be read and answered here, through the conversation's own routes. */
+/**
+ * THE FIVE LISTS, THEIR WORDS, AND WHICH OF THEM MAY SHOW A NUMBER.
+ *
+ * Exported so the tabs, the sentence under the heading and the empty state
+ * cannot drift apart, and so a test can assert the rule below without
+ * rendering the dialog.
+ *
+ * THE RULE: only `approvals`, `questions` and `connections` carry a count.
+ * They are the three things that genuinely require the owner. Routines and
+ * results are things that HAPPENED — telling him is the whole job, and a
+ * number on them is a number that grows by itself, which is how this Inbox
+ * came to read thirty six when one thing needed him.
+ */
+export const INBOX_VIEWS: ReadonlyArray<{ value: InboxView; label: string; count?: (page: InboxPage) => number }> = [
+  // The umbrella, and the view this opens on. It is the number the sidebar
+  // badge shows, so it has to have a home here or the badge would lead
+  // somewhere with no tab selected. The three after it are how it breaks
+  // down, and they sum to it.
+  { value: "decisions", label: "Needs you", count: page => page.decisions },
+  { value: "approvals", label: "Approvals", count: page => page.approvals },
+  // Labelled with the owner's word. The wire name is `questions` because
+  // `decisions` is already taken by the umbrella the sidebar badge reads.
+  { value: "questions", label: "Decisions", count: page => page.questions },
+  { value: "connections", label: "Connections", count: page => page.connections },
+  { value: "routines", label: "Routines" },
+  { value: "results", label: "Results" },
+  { value: "all", label: "All" },
+];
+
+/** The views where something is owed. Snoozing is offered on none of them:
+ *  "not now" is a legitimate answer to being asked, but the checkbox that
+ *  HIDES snoozed items is not, because it would hide a request that is still
+ *  outstanding behind a control that reads like a filter. */
+export const INBOX_OWED_VIEWS: readonly InboxView[] = ["decisions", "approvals", "questions", "connections"];
+
+export const INBOX_VIEW_COPY: Partial<Record<InboxView, string>> = {
+  approvals: "Something is drafted and waiting on your yes. Nothing here has been sent or done. Reading one, or snoozing it, is not answering it.",
+  questions: "A judgement only you can make. Nothing is drafted yet, so there is nothing to undo either way.",
+  connections: "Something needs your hands. A login has gone, and no amount of waiting brings it back. Anything depending on it is stopped until you reconnect it.",
+  routines: "What your routines have been doing. One line per routine, not per run, and nothing here is waiting on you.",
+  results: "Work your bots finished in the background.",
+  decisions: "Everything waiting on an answer from you. Nothing here moves until you say. Reading one, or snoozing it, is not answering it.",
+  "to-read": "Things that already happened and are worth knowing about. Nothing is waiting on you here, so reading one is the whole job.",
+  all: "Everything your bots have produced in the background.",
+};
+
+export const INBOX_VIEW_EMPTY: Partial<Record<InboxView, string>> = {
+  approvals: "Nothing is waiting on your yes.",
+  questions: "Nobody has a question for you.",
+  connections: "Everything is connected.",
+  routines: "Your routines have not run yet.",
+  results: "Nothing finished in the background yet.",
+  decisions: "Nothing is waiting on you right now.",
+  "to-read": "Nothing new to read.",
+};
+
 export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
@@ -98,27 +154,29 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2"><button className={button} disabled={busy} onClick={() => setRevision(current => current + 1)}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Inbox</button>}</div>
     </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{view === "decisions"
-      ? "Everything waiting on an answer from you. Nothing here moves until you say. Reading one, or snoozing it, is not answering it."
-      : view === "to-read"
-        ? "Things that already happened and are worth knowing about. Nothing is waiting on you here, so reading one is the whole job."
-        : "Everything your bots have produced in the background."}</p>
+    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
+    {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
+        The owner opened this with thirty six against it, and thirty five of
+        those were one provider outage listed once per run. A count he cannot
+        act on is a count he stops reading, and then the one he could act on
+        is invisible inside it. So routines and results are told and never
+        counted, and the three that can be asked of a person are separated,
+        because an approval, a judgement and a dead credential are answered in
+        three different ways. */}
     <nav aria-label="Inbox views" className="mt-4 flex flex-wrap gap-2">
-      {(["decisions", "to-read", "results", "all"] as const).map(value => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
-        {value === "decisions" ? `Needs you${result ? ` (${result.decisions})` : ""}`
-          : value === "to-read" ? `To read${result ? ` (${result.toRead})` : ""}`
-            : value === "results" ? "Results" : "All"}
+      {INBOX_VIEWS.map(({ value, label, count }) => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
+        {label}{result && count ? ` (${count(result)})` : ""}
       </button>)}
     </nav>
     <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setPage(0); }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button} disabled={busy}>Search</button>
     </form>
-    {view !== "decisions" && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
+    {!INBOX_OWED_VIEWS.includes(view) && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
     {result && <p className="mb-3 text-[12px] text-ink-secondary">While you were away: {result.unread} unread on this page. {result.total} matching items.</p>}
     {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
     {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
-    {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : view === "decisions" ? "Nothing is waiting on you right now." : view === "to-read" ? "Nothing new to read."  : "No items in this view yet."}</p>}
+    {!busy && result && !list.length && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
     <ul className="space-y-3" aria-label="Inbox items">
       {list.map(item => {
         // The bot's own words head the card whenever the live request can be

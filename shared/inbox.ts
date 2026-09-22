@@ -53,7 +53,7 @@ export type InboxSegment = "approval" | "question" | "connection" | "routine" | 
 /** The segments that may put a number in front of the owner. Routines and
  *  results are told, never counted: a badge they can reach is a badge that
  *  fills up on its own, which is the defect this whole split exists for. */
-export const INBOX_BADGED_SEGMENTS = ["approval", "decision", "connection"] as const;
+export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as const;
 
 /** Statuses where a person owes an answer. Shared so the query, the count and
  *  the tab can never disagree about what a decision is. */
