@@ -33,6 +33,9 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
     }); };
   }, []);
   useEffect(() => { content.current?.querySelector<HTMLElement>("[data-settings-scroll]")?.scrollTo({ top: 0 }); }, [section]);
+  // "Add a skill" from anywhere, even with this window already open, lands
+  // on Skills (BotSkillsPanel opens its picker and clears the intent).
+  useEffect(() => { if (state.botSettingsIntent) setSection(state.botSettingsIntent.section); }, [state.botSettingsIntent]);
   useEffect(() => { if (!saving) setNotice(null); }, [saving]);
   useEffect(() => { if (query && matches.length && !matches.some(item => item.id === section)) setSection(matches[0].id); }, [query, matches, section]);
   // Overlay convention (styles.css): a modal with text fields is pinned to the

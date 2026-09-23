@@ -144,7 +144,11 @@ export function IntakeTurn({ bot, message }: { bot: Bot; message: Message }) {
       void reply(action.text);
       return;
     }
-    if (action.outcome === "library") dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" });
+    // This bot's own window, Skills, picker open.
+    if (action.outcome === "library") {
+      dispatch({ type: "select", id: bot.id });
+      dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } });
+    }
     void close(action.outcome);
   };
 

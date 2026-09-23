@@ -62,8 +62,8 @@ describe("the library separates bots, teams and skills", () => {
     expect(sidebar).toContain("initialView={state.teamLibrary.view}");
   });
 
-  it("the intake's own escape hatch opens it on Skills, naming the bot", () => {
-    expect(intakeCard).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" })');
+  it("the intake's own escape hatch opens the bot's own Skills picker", () => {
+    expect(intakeCard).toContain('dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } })');
   });
 
   it("names the agent BEFORE any search, not only once results exist", () => {

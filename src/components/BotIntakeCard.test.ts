@@ -52,7 +52,7 @@ describe("zero clear matches is an answer, with one way out", () => {
   });
 
   it("that action opens the library on SKILLS with this bot preselected", () => {
-    expect(card).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" })');
+    expect(card).toContain('dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } })');
   });
 });
 

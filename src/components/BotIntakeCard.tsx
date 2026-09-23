@@ -3,7 +3,6 @@ import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 
 import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { useBotSettingsNavigation } from "./bot-settings-drafts";
 import {
   invalidateSkillCount,
   setSkillCount,
@@ -93,7 +92,6 @@ function IntakeQuestion({
   autoFocus?: boolean;
 }) {
   const { dispatch } = useStore();
-  const navigate = useBotSettingsNavigation();
   const desktop = useDesktopSurface();
   const [answer, setAnswer] = useState("");
   const [suggestion, setSuggestion] = useState<IntakeSuggestion | null>(null);
@@ -191,10 +189,11 @@ function IntakeQuestion({
   };
 
   /** The one action on the empty state, and the one action under a phone's
-   *  disabled buttons: the library, already on Skills, already knowing which
-   *  agent this is about. A dead end with an apology in it is not an answer. */
+   *  disabled buttons: this bot's own Skills, with the picker open. It stays
+   *  in the bot window; nothing opens behind it. A dead end with an apology
+   *  in it is not an answer. */
   const browseLibrary = () => {
-    navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }));
+    dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } });
   };
 
   const profile = suggestion?.profile ?? null;

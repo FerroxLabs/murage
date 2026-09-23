@@ -694,9 +694,11 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
   // sidebar's "Add a skill" arrives with it already open.
   const [adding, setAdding] = useState(Boolean(state.botSettingsIntent?.addSkill));
   useEffect(() => {
-    if (state.botSettingsIntent) dispatch({ type: "clearBotSettingsIntent" });
-    // read once, when the window opens
-  }, []);
+    const intent = state.botSettingsIntent;
+    if (!intent) return;
+    if (intent.addSkill) setAdding(true);
+    dispatch({ type: "clearBotSettingsIntent" });
+  }, [state.botSettingsIntent, dispatch]);
   const authoringEnabled = skillRecorderEnabled(state.config);
   const canEditHistory = useDesktopSurface() === true;
   const [query, setQuery] = useState("");
