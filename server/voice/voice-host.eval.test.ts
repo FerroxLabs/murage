@@ -15,6 +15,7 @@
 // openai and groq read ~/.config/murage-test/<provider>.key. Lookups then use
 // that provider's own web search when it has one, else xAI's.
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
@@ -23,7 +24,8 @@ import { runVoiceBrief, runVoiceHostTurn, type VoiceHostState } from "./voice-ho
 import { handDownResult } from "./hand-downs.ts";
 import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 
-const home = (file: string | undefined) => file?.replace(/^~/, process.env.HOME ?? "");
+// the owner's real home: the test setup points HOME at a scratch folder
+const home = (file: string | undefined) => file?.replace(/^~/, userInfo().homedir);
 const keyFile = home(process.env.MURAGE_VOICE_HOST_EVAL);
 const via = (process.env.MURAGE_VOICE_HOST_EVAL_VIA || "flux") as ProviderPreset;
 const keyFiles: Partial<Record<ProviderPreset, string | undefined>> = {

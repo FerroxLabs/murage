@@ -325,12 +325,28 @@ const TOOLS = [
   },
 ] as const;
 
-function failure(status: number): { reason: VoiceHostFailure; message: string } {
-  if (status === 401 || status === 403) return { reason: "auth", message: "Flux rejected the workspace key." };
-  if (status === 402) return { reason: "premium", message: "Fast replies on calls need a paid Flux plan." };
-  if (status === 404) return { reason: "unavailable", message: "Fast replies on calls are not available for this Flux account." };
-  if (status === 429) return { reason: "rate_limit", message: "Flux is rate-limiting this account." };
-  return { reason: "upstream", message: `Flux returned ${status}.` };
+function failure(status: number, provider = "Flux"): { reason: VoiceHostFailure; message: string } {
+  const plan = provider === "Flux" ? "a paid Flux plan" : `credit on your ${provider} account`;
+  if (status === 401 || status === 403) return { reason: "auth", message: `${provider} rejected the saved key.` };
+  if (status === 402) return { reason: "premium", message: `Fast replies on calls need ${plan}.` };
+  if (status === 404) return { reason: "unavailable", message: `Fast replies on calls are not available for this ${provider} account.` };
+  if (status === 429) return { reason: "rate_limit", message: `${provider} is rate-limiting this account.` };
+  return { reason: "upstream", message: `${provider} returned ${status}.` };
+}
+
+/** The display name of the provider behind an endpoint, for messages. */
+function providerName(endpoint: VoiceEndpoint): string {
+  return { flux: "Flux", xai: "xAI", openai: "OpenAI", anthropic: "Anthropic", groq: "Groq", openrouter: "OpenRouter" }[endpoint.via as string] ?? endpoint.label;
+}
+
+/**
+ * Output length and sampling for a chat request, in the provider's terms.
+ * OpenAI's current models refuse max_tokens (they take
+ * max_completion_tokens) and any temperature but the default; every other
+ * provider here takes the classic pair.
+ */
+function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number> {
+  return endpoint.via === "openai" ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens, temperature: 0.2 };
 }
 
 /**
@@ -347,7 +363,7 @@ export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeo
     body: JSON.stringify({
       model: host.model,
       messages: [{ role: "user", content: "Say ok." }],
-      max_tokens: 1,
+      ...sampling(host, 1),
     }),
     signal: AbortSignal.timeout(FIRST_TOKEN_TIMEOUT_MS),
   })
@@ -573,8 +589,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
           messages,
           tools,
           stream: true,
-          max_tokens: 300,
-          temperature: 0.2,
+          ...sampling(host, 300),
         }),
         signal: controller.signal,
       });
@@ -582,11 +597,11 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
       if (options.signal?.aborted) return;
       yield timedOut
         ? { type: "error", reason: "timeout", message: "The fast reply took too long." }
-        : { type: "error", reason: "upstream", message: "Couldn't reach Flux." };
+        : { type: "error", reason: "upstream", message: `Couldn't reach ${providerName(host)}.` };
       return;
     }
     if (!res.ok || !res.body) {
-      yield { type: "error", ...failure(res.status) };
+      yield { type: "error", ...failure(res.status, providerName(host)) };
       return;
     }
 
@@ -834,8 +849,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
             { role: "user", content: "[Call event: your working self's answer is ready. Tell me now.]" },
           ],
           stream: true,
-          max_tokens: 500,
-          temperature: 0.2,
+          ...sampling(host, 500),
         }),
         signal: controller.signal,
       });
@@ -844,7 +858,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
       return;
     }
     if (!res.ok || !res.body) {
-      yield { type: "error", ...failure(res.status) };
+      yield { type: "error", ...failure(res.status, providerName(host)) };
       return;
     }
     const splitter = new SentenceSplitter();
