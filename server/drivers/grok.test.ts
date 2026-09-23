@@ -97,6 +97,13 @@ describe("GrokDriver turns (fake fetch)", () => {
     expect(entries.find((entry) => entry.dir === "out")?.msg.model).toBe("grok-4");
   });
 
+  // Upstream #1632: the catalog window is what sizes the memory budget; a
+  // missing one fell back to 20,480 tokens for a 500k model.
+  it("advertises Grok 4.7's 500k context window", async () => {
+    await create();
+    expect(instance.models.options).toContainEqual({ id: "grok-4.7", label: "Grok 4.7", contextWindow: 500_000 });
+  });
+
   it("auto-retries transient 429/5xx responses, then completes once", async () => {
     script = [{ status: 429 }, { status: 503 }];
     await create();
