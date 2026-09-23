@@ -265,6 +265,7 @@ import {
   writeSteerQueueMirror,
   type SteerQueueEntries,
 } from "./steer-queue.ts";
+import { sendScreenshot } from "./screenshot-response.ts";
 import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
@@ -14849,7 +14850,7 @@ const server = createServer(async (req, res) => {
     }
     if (method === "POST" && path === "/api/local-computer/screenshot") {
       localVmIdleFor(SHARED_LOCAL_VM_TARGET).touch();
-      return json(res, 200, {
+      return sendScreenshot(res, {
         image: await containerComputerScreenshot(undefined, undefined, SHARED_LOCAL_VM_TARGET),
       });
     }
@@ -14918,7 +14919,7 @@ const server = createServer(async (req, res) => {
       if (!bot) return json(res, 404, { error: "no such bot" });
       const target = localVmTargetForBot(bot.id);
       localVmIdleFor(target).touch();
-      return json(res, 200, {
+      return sendScreenshot(res, {
         image: await containerComputerScreenshot(undefined, undefined, target),
       });
     }
@@ -16300,7 +16301,7 @@ const server = createServer(async (req, res) => {
           }
           return json(res, 200, await vps.vpsComputerJoin(cfg, botId));
         }
-        if (m[2] === "screenshot") return json(res, 200, await vps.vpsComputerScreenshot(cfg, botId));
+        if (m[2] === "screenshot") return sendScreenshot(res, await vps.vpsComputerScreenshot(cfg, botId));
         const action = m[2] === "provision" ? "provision" : m[2] === "remove" ? "remove" : "stop";
         return json(res, 200, await vps.vpsComputerAction(action, cfg, botId));
       }
@@ -16328,7 +16329,7 @@ const server = createServer(async (req, res) => {
           return json(res, 200, await box.execOnBox(cfg, botId, String(body.command ?? "")));
         }
         case "screenshot":
-          return json(res, 200, await box.screenshotBox(cfg, botId));
+          return sendScreenshot(res, await box.screenshotBox(cfg, botId));
       }
     }
 
