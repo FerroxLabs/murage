@@ -18,6 +18,12 @@ import { deleteCollectionSkill, findingLines, readSkill, refusalOf, setSkillForB
 export const READER_PREVIEW_CHARS = 60_000;
 export const BLOCKED_LINE = "This skill was blocked by the safety check and can't be switched on.";
 
+/** The instructions without their header block (name, description and
+ *  other settings), which the reader already shows in words above. */
+export function skillBody(text: string): string {
+  return text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "").replace(/^\s+/, "");
+}
+
 export type ReaderMode = { kind: "settings" } | { kind: "bot"; botId: string };
 export type Pending = { kind: "enable"; botId: string } | { kind: "delete"; bots: string[] } | null;
 
@@ -45,7 +51,8 @@ export function SkillReaderView(props: SkillReaderViewProps) {
   const findings = findingLines(skill.scan);
   const blocked = skill.verdict === "blocked";
   const inBot = mode.kind === "bot" ? skill.bots.find((bot) => bot.botId === mode.botId) : undefined;
-  const text = props.showAll || skill.text.length <= READER_PREVIEW_CHARS ? skill.text : skill.text.slice(0, READER_PREVIEW_CHARS);
+  const body = skillBody(skill.text);
+  const text = props.showAll || body.length <= READER_PREVIEW_CHARS ? body : body.slice(0, READER_PREVIEW_CHARS);
 
   return (
     <div className="mt-1">
@@ -157,9 +164,9 @@ export function SkillReaderView(props: SkillReaderViewProps) {
 
       <div className="mt-4 text-[12px] font-medium text-ink">What it tells the bot</div>
       <div className="mt-1 max-h-[480px] overflow-y-auto rounded-lg bg-inset p-3 text-[13px] leading-relaxed text-ink">
-        {skill.text.trim() ? <ChatMarkdown text={text} /> : <span className="text-ink-secondary">This skill is empty.</span>}
+        {body.trim() ? <ChatMarkdown text={text} /> : <span className="text-ink-secondary">This skill is empty.</span>}
       </div>
-      {text.length < skill.text.length && (
+      {text.length < body.length && (
         <button type="button" onClick={props.onShowAll} className={`${LINK} mt-1`}>Show all</button>
       )}
       {skill.files.length > 1 && (

@@ -588,6 +588,7 @@ export type AppSettingsSection =
   | "channels"
   | "companion"
   | "computer"
+  | "skills"
   | "usage";
 
 export interface AppState {

@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Archive, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
+import { Archive, BookOpen, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -23,6 +23,7 @@ import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
+import { SkillsSettings } from "./skills/SkillsSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { BackupSettings } from "./BackupSettings";
 import { StartupSettings } from "./StartupSettings";
@@ -66,6 +67,7 @@ const SECTIONS: Array<{
   { id: "channels", label: "Messaging apps", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging", "channels"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
+  { id: "skills", label: "Skills", icon: BookOpen, desktopOnly: true, keywords: ["skills", "skill", "import", "scan", "library", "instructions", "safety"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
 ];
 
@@ -860,6 +862,8 @@ export function SettingsModal() {
             {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 
             {desktop === true && section === "computer" && <LocalComputerSection />}
+
+            {desktop === true && section === "skills" && <SkillsSettings />}
 
             {section === "usage" && <UsageSection />}
           </div>

@@ -53,6 +53,22 @@ function shippedVerdict(id: string): SkillVerdict | null {
   return verdictCache.skills[id]?.verdict ?? null;
 }
 
+const nameCache = new Map<string, string>();
+/** A library skill's display name ("Invoice Creator"), from its manifest. */
+function libraryName(id: string): string {
+  const cached = nameCache.get(id);
+  if (cached !== undefined) return cached;
+  let name = id;
+  try {
+    const manifest = JSON.parse(readFileSync(join(SKILL_LIBRARY_ROOT, id, "manifest.json"), "utf8"));
+    if (typeof manifest?.name === "string" && manifest.name.trim()) name = manifest.name.trim();
+  } catch {
+    // no manifest: the id is the name
+  }
+  nameCache.set(id, name);
+  return name;
+}
+
 function libraryScan(id: string): { text: string; description: string; scan: SkillScan } | null {
   const checked = checkLibrarySkill(id, SKILL_LIBRARY_ROOT);
   if ("error" in checked) return null;
@@ -79,7 +95,7 @@ function collectionSummary(skill: CollectionSkill, bots: SkillsApiBot[]): SkillS
 function librarySummary(hit: { id: string; name: string; description: string }, bots: SkillsApiBot[]): SkillSummary {
   const ref = `${LIBRARY}${hit.id}`;
   const verdict = shippedVerdict(hit.id) ?? libraryScan(hit.id)?.scan.verdict ?? "clean";
-  return { ref, name: hit.id, description: hit.description, kind: "library", verdict, source: "Library", usedBy: usedBy(ref, bots) };
+  return { ref, name: libraryName(hit.id), description: hit.description, kind: "library", verdict, source: "Library", usedBy: usedBy(ref, bots) };
 }
 
 /** The library skills some bot already uses, found from the bots' own lists. */

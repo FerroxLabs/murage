@@ -77,3 +77,13 @@ describe("the skill reader", () => {
     expect(html).toContain("Show all");
   });
 });
+
+describe("the skill's instructions", () => {
+  it("are shown without their header block", async () => {
+    const { skillBody } = await import("./SkillReader");
+    expect(skillBody("---\nname: x\ndescription: y\n---\n# Title\nBody.")).toBe("# Title\nBody.");
+    expect(skillBody("No header.")).toBe("No header.");
+    const html = render({ skill: detail({ text: "---\nname: invoice-chaser\ndescription: Chases.\n---\n# Invoices\nDraft." }) });
+    expect(html).not.toContain("name: invoice-chaser");
+  });
+});
