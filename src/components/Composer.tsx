@@ -44,6 +44,7 @@ import {
   clipboardHasImages,
   clipboardImageFiles,
   composeMessage,
+  composerShouldRefocus,
   isLongPaste,
   pasteAttachment,
   type Attachment,
@@ -315,6 +316,19 @@ export function Composer({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
   const [dismissedSlashAt, setDismissedSlashAt] = useState<number | null>(null); // Esc'd this /
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // the latest caret, readable from callbacks without re-creating them
+  const caretRef = useRef(0);
+  caretRef.current = caret;
+  /** Returns keyboard focus to the draft, keeping the caret where it was. */
+  const refocusInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input || input.disabled || !composerShouldRefocus(document.activeElement, input)) return;
+      const at = Math.min(caretRef.current, input.value.length);
+      input.focus();
+      input.setSelectionRange(at, at);
+    });
+  }, []);
   const mentionListRef = useRef<HTMLDivElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
@@ -747,7 +761,7 @@ export function Composer({
   };
 
   return (
-    <div className="pointer-events-none relative px-5 pb-3">
+    <div data-composer className="pointer-events-none relative px-5 pb-3">
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
       {speechError && (
@@ -931,7 +945,9 @@ export function Composer({
             multiple
             className="hidden"
             onChange={(e) => {
-              void pickFiles(e.target.files);
+              // The picker leaves focus on the attach button; hand it back
+              // to the draft once the files land (upstream #1599).
+              void pickFiles(e.target.files).finally(refocusInput);
               // same file twice in a row still fires onChange
               e.target.value = "";
             }}
