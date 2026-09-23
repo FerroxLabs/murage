@@ -1046,7 +1046,7 @@ function handle(msg: any) {
         complete();
         setTimeout(() => out({
           jsonrpc: "2.0", id: 9100, method: "session/request_permission",
-          params: { sessionId: msg.params?.sessionId, toolCall: { toolCallId: "late-1", title: "rm -rf build", kind: "execute" },
+          params: { sessionId: msg.params?.sessionId, toolCall: { toolCallId: "late-1", title: "make clean", kind: "execute" },
             options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] },
         }), 150);
         return;
