@@ -20,6 +20,21 @@ describe("roomRespondersForComposer", () => {
     ).toEqual([members[1]]);
   });
 
+  // Upstream #1607: the composer's preview uses the same boundaries as the
+  // server, so a wrapped mention shows the bot that will actually answer.
+  it("uses the shared Markdown, bracket and Unicode mention boundaries", () => {
+    const mentionsOnly = { defaultResponder: { kind: "mentions" } } as const;
+    expect(roomRespondersForComposer("**@Milind**", members, mentionsOnly)).toEqual([members[1]]);
+    expect(roomRespondersForComposer("(@Milind)", members, mentionsOnly)).toEqual([members[1]]);
+    expect(roomRespondersForComposer("_@Milind_", members, mentionsOnly)).toEqual([members[1]]);
+    expect(roomRespondersForComposer("【@Milind】", members, mentionsOnly)).toEqual([members[1]]);
+    expect(roomRespondersForComposer("user@Milind /@Milind", members, mentionsOnly)).toEqual([]);
+    expect(roomRespondersForComposer("@Milind調査", members, mentionsOnly)).toEqual([]);
+    expect(roomRespondersForComposer("İ @Milind", members, mentionsOnly)).toEqual([members[1]]);
+    expect(roomRespondersForComposer("**@EVERYONE** hello", members, mentionsOnly)).toEqual(members);
+    expect(roomRespondersForComposer("@everyone調査 hello", members, mentionsOnly)).toEqual([]);
+  });
+
   it("supports everyone and mentions-only room policies", () => {
     expect(roomRespondersForComposer("hello", members, { defaultResponder: { kind: "everyone" } })).toEqual(members);
     expect(roomRespondersForComposer("hello", members, { defaultResponder: { kind: "mentions" } })).toEqual([]);
