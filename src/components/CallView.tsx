@@ -35,7 +35,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -54,6 +54,12 @@ const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 
 type Phase = "listening" | "sending" | "working" | "speaking";
 const CALL_ENDPOINT_MS = 850;
+/** How long the bot stays paused for what may be the owner before carrying
+ *  on (LiveKit's false_interruption_timeout default). */
+const FALSE_INTERRUPTION_MS = 2_000;
+/** Voice while the echo canceller settles on the bot's first words is the
+ *  bot (LiveKit uses 3 s of AEC warm-up). */
+const ECHO_WARMUP_MS = 3_000;
 
 export function CallButton({ bot }: { bot: Bot }) {
   return (
@@ -247,7 +253,12 @@ function Call({ bot }: { bot: Bot }) {
   // itself mid-call (no key, a plan without it); a network blip only sends
   // that one turn down the engine path.
   const hostOn = useRef(Boolean(state.config?.tts?.routes?.host));
-  const hostHistory = useRef<Array<{ role: "owner" | "host"; text: string }>>([]);
+  const hostHistory = useRef<HostTurnInput["history"]>([]);
+  /** When the bot first spoke on this call (echo warm-up). */
+  const firstSpokeAt = useRef(0);
+  /** Work handed down on this call and what the call screen knows of it;
+   *  the host sees each as a tool call with its live status. */
+  const handDowns = useRef<CallHandDown[]>([]);
   const hostAbort = useRef<AbortController | null>(null);
   const heardRef = useRef("");
   /** An engine reply that arrived while the owner was mid-sentence. */
@@ -308,6 +319,7 @@ function Call({ bot }: { bot: Bot }) {
    * callbacks together. React state alone is too late: the helper can exit
    * in the same tick as a final transcript or an intentional mute. */
   const move = useCallback((next: Phase) => {
+    if (next === "speaking" && !firstSpokeAt.current) firstSpokeAt.current = Date.now();
     phaseRef.current = next;
     if (alive.current) setPhase(next);
   }, []);
@@ -340,11 +352,41 @@ function Call({ bot }: { bot: Bot }) {
 
   /** The owner talked over the bot: stop speaking and listen to them. */
   const bargeIn = useCallback(() => {
+    if (maybeOwner.current?.timer) clearTimeout(maybeOwner.current.timer);
+    maybeOwner.current = null;
     sayGeneration.current += 1;
     hostSpeaking.current = false;
     speaker.stop();
     move("listening");
   }, [move]);
+
+  // Talking over the bot, the way LiveKit Agents does it (voice/
+  // agent_activity.py, Apache-2.0): the first sign of the owner PAUSES the
+  // bot; it stops for good only once it is clearly speech (two words, or a
+  // finished sentence), and resumes after FALSE_INTERRUPTION_MS otherwise. A
+  // cough or a keyboard used to end its sentence for good.
+  const maybeOwner = useRef<{ timer: ReturnType<typeof setTimeout> | null; voice: boolean } | null>(null);
+  const resumeBot = useCallback(() => {
+    if (maybeOwner.current?.timer) clearTimeout(maybeOwner.current.timer);
+    maybeOwner.current = null;
+    speaker.resume();
+  }, []);
+  const settleMaybeOwner = useCallback(() => {
+    const pending = maybeOwner.current;
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    // still hearing them: wait for them to finish before deciding
+    pending.timer = setTimeout(() => (maybeOwner.current?.voice ? settleMaybeOwner() : resumeBot()), FALSE_INTERRUPTION_MS);
+  }, [resumeBot]);
+  const holdForOwner = useCallback(() => {
+    if (maybeOwner.current) {
+      maybeOwner.current.voice = true;
+      return;
+    }
+    if (!speaker.pause()) return;
+    maybeOwner.current = { timer: null, voice: true };
+    settleMaybeOwner();
+  }, [settleMaybeOwner]);
 
   /** Speak. With an echo-cancelled microphone it stays open, so the owner can
    * talk over the bot; on the fallback it closes for the duration (an open,
@@ -387,7 +429,7 @@ function Call({ bot }: { bot: Bot }) {
       let stream: ReturnType<typeof speaker.stream> | null = null;
       await hostTurn(
         bot.id,
-        { text, threadId: bot.threadId, history: [], brief: true },
+        { text, threadId: bot.threadId, history: hostHistory.current, handDowns: handDowns.current, brief: true },
         (event) => {
           if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
           if (event.type === "sentence") {
@@ -406,8 +448,13 @@ function Call({ bot }: { bot: Bot }) {
       if (!stream) return sayThenListen(text);
       const told = stream as ReturnType<typeof speaker.stream>;
       told.end();
+      const heardAll = await told.done;
+      hostHistory.current = [
+        ...hostHistory.current,
+        { role: "host" as const, text: `${told.heard().join(" ")}${heardAll ? "" : " [the owner cut in here]"}`.trim() },
+      ].slice(-12);
       // talked over or hung up: the owner has moved on
-      if (!(await told.done)) return;
+      if (!heardAll) return;
       if (sayGeneration.current !== mine || phaseRef.current !== "speaking") return;
       // another answer landed while this one was being told: tell it next
       const held = deferredReply.current;
@@ -432,15 +479,23 @@ function Call({ bot }: { bot: Bot }) {
    *  Without this a refused send (no model connected, a full queue) died
    *  quietly while the call went on saying it was on it. */
   const sendFromCall = useCallback(
-    (text: string, said: string) => {
+    (text: string, said: string, handDownId?: string) => {
+      const record = handDownId ? handDowns.current.find((h) => h.id === handDownId) : undefined;
       dispatch({
         type: "send",
         botId: bot.id,
         text,
         threadId: bot.threadId,
+        onSent: () => {
+          if (record && record.state === "sending") record.state = "accepted";
+        },
         onError: (error: unknown) => {
           if (!alive.current || currentCall() !== bot.id) return false;
           const reason = plainFailure(error instanceof Error ? error.message : String(error));
+          if (record) {
+            record.state = "refused";
+            record.reason = reason;
+          }
           refusedSends.current.set(said, reason);
           for (const entry of callLog.current) {
             if (entry.said === said && (entry.outcome === "handed_down" || entry.outcome === "engine")) {
@@ -448,12 +503,12 @@ function Call({ bot }: { bot: Bot }) {
               entry.detail = reason;
             }
           }
-          // the host must know nothing is running, or "is it done yet?" is
-          // answered as if it were
+          // the host learns it from the hand-down's status, in order; a line
+          // pushed here landed before the turn it belonged to
           const line = `I couldn't start that. ${reason}`;
-          hostHistory.current.push({ role: "host", text: line });
-          hostSpeaking.current = false;
-          void sayThenListenRef.current(line);
+          // never over the bot's own sentence: said once the turn ends
+          if (hostSpeaking.current || phaseRef.current === "sending") deferredReply.current = line;
+          else void sayThenListenRef.current(line);
           return true;
         },
       });
@@ -493,11 +548,12 @@ function Call({ bot }: { bot: Bot }) {
       let spoken = "";
       let handed = false;
       let handedRequest = "";
+      let handedId = "";
       let lookedUp = false;
       let failed = false;
       await hostTurn(
         bot.id,
-        { text: said, threadId: bot.threadId, history: hostHistory.current },
+        { text: said, threadId: bot.threadId, history: hostHistory.current, handDowns: handDowns.current },
         (event) => {
           if (!alive.current || currentCall() !== bot.id) return;
           if (event.type === "lookup") {
@@ -510,8 +566,11 @@ function Call({ bot }: { bot: Bot }) {
           } else if (event.type === "hand_down" && !handed) {
             handed = true;
             handedRequest = event.request;
-            sendFromCall(event.request, said);
+            handedId = crypto.randomUUID();
+            handDowns.current = [...handDowns.current, { id: handedId, request: event.request, at: Date.now(), state: "sending" as const }].slice(-12);
+            sendFromCall(event.request, said, handedId);
           } else if (event.type === "cancel") {
+            for (const h of handDowns.current) if (h.state === "sending" || h.state === "accepted") h.state = "cancelled";
             dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId });
           } else if (event.type === "error") {
             failed = true;
@@ -538,15 +597,25 @@ function Call({ bot }: { bot: Bot }) {
             : { said, outcome: "answered", detail: spoken.trim() },
       );
       hostHistory.current.push({ role: "owner", text: said });
-      if (spoken.trim()) hostHistory.current.push({ role: "host", text: spoken.trim() });
+      // The host's line goes in as it was HEARD, not as it was written: cut
+      // off after one sentence, the model must not believe it said the rest
+      // (LiveKit keeps the played transcript with interrupted=True; Pipecat
+      // adds text to the context only once it is spoken).
+      const entry: HostTurnInput["history"][number] = { role: "host", text: "", ...(handedId ? { handDown: { id: handedId, request: handedRequest } } : {}) };
+      hostHistory.current.push(entry);
       hostHistory.current = hostHistory.current.slice(-12);
       // a hand-down with nothing said would be dead air: a claim-free line
       if (handed && !spoken.trim() && sayGeneration.current === mine) voice().push("On it.");
       if (stream) {
-        (stream as ReturnType<typeof speaker.stream>).end();
-        const heard = await (stream as ReturnType<typeof speaker.stream>).done;
-        if (!heard || sayGeneration.current !== mine || !alive.current || currentCall() !== bot.id) return;
+        const told = stream as ReturnType<typeof speaker.stream>;
+        told.end();
+        const heardAll = await told.done;
+        entry.text = `${told.heard().join(" ")}${heardAll ? "" : " [the owner cut in here]"}`.trim();
+        if (!heardAll || sayGeneration.current !== mine || !alive.current || currentCall() !== bot.id) return;
+      } else {
+        entry.text = spoken.trim();
       }
+      if (!entry.text && !entry.handDown) hostHistory.current = hostHistory.current.filter((e) => e !== entry);
       if (phaseRef.current === "speaking" || phaseRef.current === "sending") listenOrCatchUp();
     },
     [bot.id, bot.threadId, bot.voice, hush, listenOrCatchUp, move, sendFromCall],
@@ -607,10 +676,22 @@ function Call({ bot }: { bot: Bot }) {
       }
       if (typeof line.text !== "string") return;
       if (bargeable) {
-        // a word or two could be a cough the recognizer guessed at; two
-        // words, or a finished sentence, is the owner
+        // a word could be a cough the recognizer guessed at: hold the bot
+        // and wait; two words, or a finished sentence, is the owner
         const words = line.text.trim().split(/\s+/).filter(Boolean);
-        if (line.partial !== false && words.length < 2) return;
+        if (line.partial !== false && words.length < 2) {
+          if (words.length) {
+            holdForOwner();
+            if (maybeOwner.current) maybeOwner.current.voice = false;
+            settleMaybeOwner();
+          }
+          return;
+        }
+        // a Flux transcript of a noise: not the owner after all
+        if (mic.kind === "flux" && words.length < 2) {
+          resumeBot();
+          return;
+        }
         bargeIn();
       }
       setHeard(line.text);
@@ -730,7 +811,19 @@ function Call({ bot }: { bot: Bot }) {
     // Flux transcription has no partial words to barge in on; sustained
     // voice while the bot speaks is the owner talking over it.
     offVoice = mic.onVoice((speaking) => {
-      if (speaking && mic.kind === "flux" && mic.duplex && phaseRef.current === "speaking" && alive.current) bargeIn();
+      if (!alive.current || mic.kind !== "flux" || !mic.duplex) return;
+      if (!speaking) {
+        if (maybeOwner.current) {
+          maybeOwner.current.voice = false;
+          settleMaybeOwner();
+        }
+        return;
+      }
+      if (phaseRef.current !== "speaking") return;
+      // the echo canceller is still settling on the first things the bot
+      // says: a spike then is the bot, not the owner (LiveKit's AEC warm-up)
+      if (firstSpokeAt.current && Date.now() - firstSpokeAt.current < ECHO_WARMUP_MS) return;
+      holdForOwner();
     });
     };
     const begin = () => {
@@ -762,7 +855,7 @@ function Call({ bot }: { bot: Bot }) {
     // busy/approval are intentionally initial snapshots. Their live changes
     // are handled below without tearing down native event listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bargeIn, bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, openTurn, sayThenListen, sendFromCall]);
+  }, [bargeIn, bot.id, bot.threadId, dispatch, holdForOwner, hush, hostReply, listen, move, openTurn, resumeBot, sayThenListen, sendFromCall, settleMaybeOwner]);
 
   // ── narrate the work, speak the answer, read the approvals ───────────
   useEffect(() => {

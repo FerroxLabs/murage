@@ -21,10 +21,21 @@ export type HostEvent =
   | { type: "done" }
   | { type: "error"; reason: string; message: string };
 
+/** Work handed down on this call, as far as the call screen knows. The
+ *  harness reads the rest (running, failed, done) from the thread. */
+export interface CallHandDown {
+  id: string;
+  request: string;
+  at: number;
+  state: "sending" | "accepted" | "refused" | "cancelled";
+  reason?: string;
+}
+
 export interface HostTurnInput {
   text: string;
   threadId?: string;
-  history: Array<{ role: "owner" | "host"; text: string }>;
+  history: Array<{ role: "owner" | "host"; text: string; handDown?: { id: string; request: string } }>;
+  handDowns?: CallHandDown[];
   /** The approval card open right now, as it would be read aloud. */
   approval?: string;
   /** `text` is a finished answer to tell in a few sentences, not speech. */

@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Message } from "../store.ts";
+import { handDownResult, handDownStatus, parseHandDowns } from "./hand-downs.ts";
 import {
   BRIEF_MAX_CHARS,
   runVoiceBrief,
@@ -65,14 +66,16 @@ export function voiceHostState(
   deps: Pick<VoiceHostRouteDeps, "activePath" | "lastActivityAt" | "needsYou">,
   now: number,
   approval?: string,
+  handedDown: string[] = [],
 ): VoiceHostState {
   const path = deps.activePath(threadId);
+  const fromThisCall = new Set(handedDown.map((r) => r.trim()));
   // A turn that failed leaves an error step, not a message. It belongs in the
   // conversation the host sees, or "are you doing it?" is answered (and
   // handed down again) as if the work were under way.
   const failed = (m: Message) => m.kind === "activity" && m.tool?.ok === false && /^error:/i.test(m.tool.name ?? "");
   const recent = path
-    .filter((m) => (m.kind === "text" && typeof m.text === "string" && m.text.trim()) || failed(m))
+    .filter((m) => (m.kind === "text" && typeof m.text === "string" && m.text.trim() && !(m.role === "user" && fromThisCall.has(m.text.trim()))) || failed(m))
     .slice(-RECENT_MESSAGES)
     .map((m) =>
       failed(m)
@@ -118,7 +121,10 @@ function parseHistory(raw: unknown): VoiceHostTurn[] {
   for (const entry of raw.slice(-12)) {
     const role = entry?.role === "host" ? "host" : entry?.role === "owner" ? "owner" : null;
     const text = typeof entry?.text === "string" ? entry.text.trim().slice(0, SAID_MAX_CHARS) : "";
-    if (role && text) turns.push({ role, text });
+    const id = typeof entry?.handDown?.id === "string" && /^[\w-]{1,64}$/.test(entry.handDown.id) ? entry.handDown.id : "";
+    const request = typeof entry?.handDown?.request === "string" ? entry.handDown.request.trim().slice(0, 2_000) : "";
+    const handDown = role === "host" && id && request ? { id, request } : undefined;
+    if (role && (text || handDown)) turns.push({ role, text, ...(handDown ? { handDown } : {}) });
   }
   return turns;
 }
@@ -158,7 +164,10 @@ export async function handleVoiceHostRoute(
     return sendJson(409, { error: "that task does not belong to this bot" });
   }
 
-  const state = voiceHostState(bot, threadId, deps, (deps.now ?? Date.now)(), typeof body.approval === "string" ? body.approval : undefined);
+  // requests handed down on this call are in the host's context as tool
+  // calls; listing them again as the owner's words made them look unanswered
+  const handedDown = parseHandDowns(body.handDowns).map((h) => h.request);
+  const state = voiceHostState(bot, threadId, deps, (deps.now ?? Date.now)(), typeof body.approval === "string" ? body.approval : undefined, handedDown);
   const controller = new AbortController();
   // `close` fires on the response when the client goes away mid-stream
   res.on("close", () => controller.abort());
@@ -169,9 +178,22 @@ export async function handleVoiceHostRoute(
     "x-accel-buffering": "no",
   });
   const { host, lookup } = deps.endpoints();
+  // What became of each piece of work handed down on this call, read from
+  // the thread (hand-downs.ts): the host's context carries it as a tool
+  // result, and work still running cannot be handed down again.
+  const history = parseHistory(body.history);
+  const thread = deps.activePath(threadId);
+  const busy = Boolean(bot.busy) && bot.threadId === threadId;
+  const results: Record<string, string> = {};
+  const running: string[] = [];
+  for (const handDown of parseHandDowns(body.handDowns)) {
+    const status = handDownStatus(handDown, thread, busy);
+    results[handDown.id] = handDownResult(status);
+    if (status.kind === "running" || status.kind === "starting") running.push(handDown.request);
+  }
   const events = brief
-    ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, signal: controller.signal })
-    : (deps.run ?? runVoiceHostTurn)({ state, history: parseHistory(body.history), said, host, lookup, signal: controller.signal });
+    ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, history, results, signal: controller.signal })
+    : (deps.run ?? runVoiceHostTurn)({ state, history, said, host, lookup, results, running, signal: controller.signal });
   // One line per turn in the harness log: what the host chose and how fast,
   // never what was said. A live call is otherwise a black box afterwards.
   const started = Date.now();

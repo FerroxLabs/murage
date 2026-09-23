@@ -69,6 +69,7 @@ export class Speaker {
   }
 
   stop() {
+    this.held = false;
     this.token += 1;
     this.request?.abort();
     this.request = null;
@@ -79,6 +80,35 @@ export class Speaker {
     else this.teardownAudio();
     if (this.snapshot.status !== "idle" || this.snapshot.error) this.set(IDLE);
   }
+
+  /**
+   * Hold the clip that is playing, without ending it. The call screen does
+   * this the moment the owner seems to start talking and resumes if it was
+   * a cough or a keyboard, not speech: LiveKit Agents' false-interruption
+   * handling (voice/agent_activity.py, pause then resume after a timeout).
+   * True when there was something to pause.
+   */
+  pause(): boolean {
+    if (this.snapshot.status === "idle") return false;
+    // held covers the gap between clips too: the next one waits for resume()
+    this.held = true;
+    if (this.audio && !this.audio.paused) this.audio.pause();
+    return true;
+  }
+
+  /** Carry on from where pause() held it. */
+  resume(): void {
+    if (!this.held) return;
+    this.held = false;
+    if (this.audio?.paused && this.settlePlayback) void this.audio.play().catch(() => this.settlePlayback?.(false));
+  }
+
+  /** True while speech is held by pause(). */
+  isPaused(): boolean {
+    return this.held;
+  }
+
+  private held = false;
 
   private teardownAudio() {
     if (this.audio) {
@@ -167,13 +197,22 @@ export class Speaker {
    * `done` resolves true when every pushed sentence was heard after end(),
    * false when interrupted or failed. It never rejects.
    */
-  stream(opts: SpeakOptions = {}): { push(text: string): void; end(): void; done: Promise<boolean> } {
+  stream(opts: SpeakOptions = {}): {
+    push(text: string): void;
+    end(): void;
+    done: Promise<boolean>;
+    /** The sentences the listener actually heard, in order; one that was
+     *  cut off part-way is included with "…" (what they heard of it). */
+    heard(): string[];
+  } {
     this.stop();
     const mine = this.token;
     const controller = new AbortController();
     this.request = controller;
     const live = () => this.token === mine && !controller.signal.aborted;
     const queue: string[] = [];
+    const played: string[] = [];
+    let playing: string | null = null;
     let ended = false;
     let wake: (() => void) | null = null;
     const poke = () => {
@@ -213,7 +252,12 @@ export class Speaker {
           return false;
         }
         this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: rendered.text });
-        if (!(await this.play(rendered.blob, live)) || !live()) return false;
+        playing = rendered.text;
+        const finished = await this.play(rendered.blob, live);
+        playing = null;
+        if (finished) played.push(rendered.text);
+        else played.push(`${rendered.text.replace(/[.!?]+$/, "")}…`);
+        if (!finished || !live()) return false;
       }
       if (live()) this.set(IDLE);
       return true;
@@ -233,6 +277,7 @@ export class Speaker {
         poke();
       },
       done,
+      heard: () => (playing ? [...played, `${playing.replace(/[.!?]+$/, "")}…`] : [...played]),
     };
   }
 
@@ -288,7 +333,8 @@ export class Speaker {
       audio.onended = () => done(true);
       // a clip that cannot decode should not strand the whole message
       audio.onerror = () => done(false);
-      audio.play().catch(() => done(false));
+      // held by pause() between clips: this one starts on resume()
+      if (!this.held) audio.play().catch(() => done(false));
     });
   }
 }

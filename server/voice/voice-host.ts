@@ -29,6 +29,7 @@
 // keys must not leave the server.
 import { isUnavailable, markUnavailable, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 import { splitSentences } from "../tts/speech-text.ts";
+import { sameRequest } from "./hand-downs.ts";
 
 /** Beyond this the host has stalled; the call falls back to the engine. */
 const FIRST_TOKEN_TIMEOUT_MS = 6_000;
@@ -64,6 +65,34 @@ export interface VoiceHostState {
 export interface VoiceHostTurn {
   role: "owner" | "host";
   text: string;
+  /** A host turn that handed work down: it becomes a tool call in the
+   *  host's context, answered by that work's live status. */
+  handDown?: { id: string; request: string };
+}
+
+/**
+ * The call so far as chat messages. A turn that handed work down is an
+ * assistant message with a `hand_down` tool call, followed by the tool
+ * result: what became of the work (hand-downs.ts). The model then knows a
+ * refused, failed, running or finished hand-down for what it is.
+ */
+export function historyMessages(history: VoiceHostTurn[], results: Record<string, string> = {}): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const turn of history.slice(-12)) {
+    if (turn.role === "owner") {
+      out.push({ role: "user", content: turn.text });
+    } else if (turn.handDown) {
+      out.push({
+        role: "assistant",
+        content: turn.text || null,
+        tool_calls: [{ id: turn.handDown.id, type: "function", function: { name: "hand_down", arguments: JSON.stringify({ request: turn.handDown.request }) } }],
+      });
+      out.push({ role: "tool", tool_call_id: turn.handDown.id, content: results[turn.handDown.id] ?? "Sent to your working self." });
+    } else {
+      out.push({ role: "assistant", content: turn.text });
+    }
+  }
+  return out;
 }
 
 export type VoiceHostEvent =
@@ -487,6 +516,11 @@ export interface VoiceHostOptions {
   /** Where lookups run, in the order to try them; none offers no lookup
    *  tool (the host hands down). */
   lookup?: VoiceEndpoint | VoiceEndpoint[] | null;
+  /** The live status of each hand-down in `history`, by id. */
+  results?: Record<string, string>;
+  /** Requests handed down on this call that are still running. A new
+   *  hand-down of the same work is refused in code, not left to the prompt. */
+  running?: string[];
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
@@ -509,10 +543,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
   const tools = lookupSource ? TOOLS : TOOLS.filter((tool) => tool.function.name !== "quick_lookup");
   const messages = [
     { role: "system", content: voiceHostPrompt(options.state) },
-    ...options.history.slice(-12).map((turn) => ({
-      role: turn.role === "owner" ? "user" : "assistant",
-      content: turn.text,
-    })),
+    ...historyMessages(options.history, options.results),
     { role: "user", content: options.said },
   ];
 
@@ -666,7 +697,14 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
           // malformed arguments: hand down the owner's own words instead
         }
         handed = true;
-        yield { type: "hand_down", request: request || options.said };
+        const work = request || options.said;
+        // the same work is already running: say so instead of starting it
+        // twice (LiveKit's on_duplicate="reject", done in code)
+        if ((options.running ?? []).some((running) => sameRequest(running, work))) {
+          yield { type: "sentence", text: "That's already under way." };
+        } else {
+          yield { type: "hand_down", request: work };
+        }
       }
     }
     // Never say it is stopping without stopping: the model sometimes answers
@@ -701,16 +739,23 @@ export interface VoiceBriefOptions {
   /** The working self's finished answer, as it appears in the chat. */
   answer: string;
   host: VoiceEndpoint | null;
+  /** The call so far, so the answer is told as a reply to what was asked
+   *  and nothing already said is said again. */
+  history?: VoiceHostTurn[];
+  results?: Record<string, string>;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
 
 /**
- * A long finished answer, told the way a person would on the phone: every
- * item in a short sentence, then that the details are in the chat.
- * A page of headings and bullets read aloud is minutes of listening to what
- * the owner can skim in seconds. Same event stream as a host turn; any
- * failure is an `error` event and the caller reads the answer out instead.
+ * A finished answer from the working self, told on the call. Neither LiveKit
+ * nor Pipecat runs a separate summarizer: the result comes back into the same
+ * conversation and the same voice model says it, as a reply to what was
+ * asked. This is that. The wording follows LiveKit's REPLY_INSTRUCTIONS_AT_TAIL
+ * (livekit-agents voice/tool_executor.py, Apache-2.0) and Pipecat's
+ * _FINAL_DESCRIPTION (pipecat processors/aggregators/async_tool_messages.py,
+ * BSD-2-Clause). Same event stream as a host turn; any failure is an `error`
+ * event and the caller reads the answer out instead.
  */
 export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator<VoiceHostEvent> {
   const host = options.host;
@@ -718,12 +763,15 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  const answer = clip(options.answer, BRIEF_MAX_CHARS);
+  const alreadyInResults = Object.values(options.results ?? {}).some((result) => result.includes(answer.slice(0, 200)));
   const prompt = [
-    `You are ${options.state.botName}, on a live voice call with the person you work for.`,
-    "Your working self just finished what they asked for and wrote the answer below into the chat, which they can read later.",
-    "Tell them what it says the way people talk on the phone. Cover every item it reports, in its order, one short sentence each (for a long list, the most important eight), so they hear the actual content, not just that it exists. No lists, no markdown, no URLs, no headings read out, no preamble.",
-    "Keep every fact exactly as written; add nothing. If the answer asks them a question, end with that question.",
-    "Finish with a few words saying the details and sources are in the chat.",
+    voiceHostPrompt(options.state),
+    "",
+    "Your working self has just finished and written its answer into the chat.",
+    alreadyInResults ? "The answer is the latest hand_down result above." : `Its answer:\n${answer}`,
+    "Tell the owner now, as a spoken reply to what they asked. Answer it in full: for a list, every item in its own short sentence (the most important eight if there are more); keep every fact as written and add nothing.",
+    "Do NOT repeat information you have already told the owner on this call. No lists, no markdown, no URLs, no headings read out, no preamble. If the answer asks them a question, end with that question; otherwise finish with a few words saying the details and sources are in the chat.",
   ].join("\n");
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -741,7 +789,10 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
           model: host.model,
           messages: [
             { role: "system", content: prompt },
-            { role: "user", content: clip(options.answer, BRIEF_MAX_CHARS) },
+            ...historyMessages(options.history ?? [], options.results),
+            // some providers need the conversation to end on a user turn; this
+            // is an event marker, not something the owner said
+            { role: "user", content: "[Call event: your working self's answer is ready. Tell me now.]" },
           ],
           stream: true,
           max_tokens: 500,

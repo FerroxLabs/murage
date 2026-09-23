@@ -386,7 +386,7 @@ describe("voice host route", () => {
 });
 
 describe("voice brief", () => {
-  it("asks for the gist in a few spoken sentences with no tools, and streams them", async () => {
+  it("tells a finished answer inside the call's conversation, every item, with no tools", async () => {
     let sent: any;
     const events = await collect(
       runVoiceBrief({
@@ -402,8 +402,10 @@ describe("voice brief", () => {
       { type: "done" },
     ]);
     expect(sent.tools).toBeUndefined();
-    expect(sent.messages[0].content).toContain("Cover every item it reports");
-    expect(sent.messages[1].content).toContain("Gemini for Windows");
+    expect(sent.messages[0].content).toContain("every item in its own short sentence");
+    expect(sent.messages[0].content).toContain("Gemini for Windows");
+    expect(sent.messages[0].content).toContain("You are Sable");
+    expect(sent.messages.at(-1).role).toBe("user");
   });
 
   it("reports a failure as an event, so the caller reads the answer out", async () => {

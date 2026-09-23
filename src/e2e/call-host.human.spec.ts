@@ -67,9 +67,28 @@ window.muragebox = {
   onSpeechEnd: (fn) => { window.__speech.onEnd = fn; return () => {}; },
 };
 window.__say = (text, partial = false) => window.__speech.onText?.({ text, partial });
-// Headless audio: every clip "plays" for 60 ms and ends.
+// Headless audio: every clip "plays" for __clipMs and ends; pause() holds
+// the rest of it, play() carries on.
 window.__clipMs = 60;
-HTMLMediaElement.prototype.play = function () { setTimeout(() => this.onended?.(), window.__clipMs); return Promise.resolve(); };
+window.__pauses = 0;
+const clips = new WeakMap();
+HTMLMediaElement.prototype.play = function () {
+  const clip = clips.get(this) ?? { left: window.__clipMs };
+  clip.at = Date.now();
+  clip.playing = true;
+  clip.timer = setTimeout(() => { clip.playing = false; this.onended?.(); }, clip.left);
+  clips.set(this, clip);
+  return Promise.resolve();
+};
+HTMLMediaElement.prototype.pause = function () {
+  const clip = clips.get(this);
+  if (!clip?.playing) return;
+  clearTimeout(clip.timer);
+  clip.left -= Date.now() - clip.at;
+  clip.playing = false;
+  window.__pauses += 1;
+};
+Object.defineProperty(HTMLMediaElement.prototype, "paused", { get() { return !clips.get(this)?.playing; } });
 `;
 
 test.beforeAll(async () => {
@@ -271,7 +290,15 @@ test("a hand-down the harness refuses is said out loud, and the host is told not
   h.replies.push([{ type: "sentence", text: "Nothing is running yet." }, { type: "done" }]);
   await page.evaluate(() => (window as any).__say("Do you have any results yet?"));
   await expect.poll(() => h.spoken.at(-1)).toBe("Nothing is running yet.");
-  expect(h.hostBodies.at(-1).history).toContainEqual({ role: "host", text: "I couldn't start that. This bot's model needs an AI provider connected first." });
+  // the host is told through the hand-down itself, in order, not by a stray line
+  const last = h.hostBodies.at(-1);
+  expect(last.history).toEqual([
+    { role: "owner", text: "AI news from the last 48 hours" },
+    { role: "host", text: "Let me look into that.", handDown: { id: expect.any(String), request: "AI news from the last 48 hours" } },
+  ]);
+  expect(last.handDowns).toEqual([
+    { id: last.history[1].handDown.id, request: "AI news from the last 48 hours", at: expect.any(Number), state: "refused", reason: "This bot's model needs an AI provider connected first." },
+  ]);
 });
 
 test("a handed-down turn that fails is said out loud, not left running in silence", async ({ page }) => {
@@ -328,6 +355,35 @@ test("on a Mac the recognizer is fed the echo-cancelled microphone and the owner
   expect(await page.evaluate(() => (window as any).__speech.fed)).toBe(fedAtMute);
   await page.getByRole("button", { name: "Unmute microphone" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__speech.fed)).toBeGreaterThan(fedAtMute);
+});
+
+test("a stray word pauses the bot and it carries on; the owner's words stop it, and the host is told only what was heard", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 4_000));
+  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "sentence", text: "It goes on for a while." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's on the board?"));
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+
+  // one word (a cough the recognizer guessed at): paused, then resumed
+  await page.evaluate(() => (window as any).__say("uh", true));
+  await expect.poll(() => page.evaluate(() => (window as any).__pauses)).toBe(1);
+  await page.waitForTimeout(2_600);
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  expect(await actions(page)).toEqual([]);
+
+  // the second sentence plays after the first finishes: the call carried on
+  await expect(page.getByText("It goes on for a while.")).toBeVisible({ timeout: 8_000 });
+
+  // two words: the owner. Stopped, and the host learns what was heard
+  await page.evaluate(() => (window as any).__say("hold on", true));
+  h.replies.push([{ type: "sentence", text: "Sure." }, { type: "done" }]);
+  await page.evaluate(() => ((window as any).__clipMs = 60));
+  await page.evaluate(() => (window as any).__say("hold on, just the first meeting"));
+  await expect.poll(() => h.hostBodies.at(-1)?.text).toBe("hold on, just the first meeting");
+  expect(h.hostBodies.at(-1).history.at(-1)).toEqual({
+    role: "host",
+    text: "Here is a long summary of the whole board. It goes on for a while… [the owner cut in here]",
+  });
 });
 
 test("on Windows and Linux the app finds the end of the utterance and Flux transcribes it", async ({ page }) => {
