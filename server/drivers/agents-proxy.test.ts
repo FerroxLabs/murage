@@ -917,6 +917,51 @@ describe("agents-proxy MCP surface", () => {
     });
   });
 
+  // Upstream #1554: "ember" is an internal name, and "cloud" read as "my
+  // VPS", so VPS users were asked for a Box key. The tool speaks murage/box;
+  // stored values stay ember/cloud, and legacy input still works.
+  it("advertises run_on as murage or box, with the VPS on the default", async () => {
+    const list = await rpc("tools/list");
+    const routine = list.result.tools.find((entry: { name: string }) => entry.name === "propose_routine");
+    expect(routine.inputSchema.properties.run_on.enum).toEqual(["murage", "box"]);
+    expect(routine.inputSchema.properties.run_on.description).toContain("including a self-hosted VPS");
+    expect(JSON.stringify(list.result.tools)).not.toMatch(/\bember\b/);
+  });
+
+  it.each([["murage", "ember"], ["ember", "ember"], ["box", "cloud"], ["cloud", "cloud"]])(
+    "stores run_on %s as %s, for create and update",
+    async (run_on, stored) => {
+      await callTool("propose_routine", {
+        name: "Check", instructions: "Check it.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] }, run_on,
+      });
+      expect(lastRoutineRequestBody.routine.runOn).toBe(stored);
+      await callTool("propose_routine_action", { routine_id: "routine-1", action: "update", changes: { run_on } });
+      expect(lastRoutineRequestBody.changes.runOn).toBe(stored);
+    },
+  );
+
+  it("refuses an unknown run_on with directions instead of forwarding it", async () => {
+    lastRoutineRequestBody = null;
+    const res = await callTool("propose_routine", {
+      name: "Check", instructions: "Check it.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] }, run_on: "vps",
+    });
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toContain("self-hosted VPS");
+    expect(lastRoutineRequestBody).toBeNull();
+  });
+
+  it("lists routines with run_on in the tool's own words", async () => {
+    routinesResponse = {
+      now: "2026-08-28T10:30:00.000Z",
+      timeZone: "Asia/Kolkata",
+      routines: [{ id: "routine-1", runOn: "ember" }, { id: "routine-2", runOn: "cloud" }],
+    };
+    const text = (await callTool("list_routines", {})).result.content[0].text;
+    expect(text).toContain('"runOn": "murage"');
+    expect(text).toContain('"runOn": "box"');
+    expect(text).not.toMatch(/\bember\b/);
+  });
+
   it("proposes routine updates and destructive actions without applying them", async () => {
     const update = await callTool("propose_routine_action", {
       routine_id: "routine-1",

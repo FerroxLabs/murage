@@ -539,7 +539,8 @@ function cardCopy(
   }
   const nextRunAt = nextForOperation(operation, manager, now);
   const when = operation.action === "run_now" ? "Now" : scheduleText(definition.schedule, timeZone);
-  const destination = definition.runOn === "cloud" ? "Cloud VM" : "This Murage setup";
+  // Upstream #1554: "Cloud VM" read as the person's own VPS.
+  const destination = definition.runOn === "cloud" ? "Box-hosted runner" : "Bot's current setup";
   const current = operation.action === "create"
     ? null
     : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;
