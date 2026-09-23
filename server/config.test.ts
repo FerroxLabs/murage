@@ -24,6 +24,7 @@ import { customMcpServers,
   browserProfilePartitionTarget,
   browserProfileReplacementConflict,
   browserProfileRoutingConflict,
+  deleteEnvNames,
   stripRoutingEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
@@ -116,6 +117,29 @@ describe("explicit web search configuration", () => {
     const inherited = { TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
     stripWorkspaceCredentialEnv(inherited);
     expect(inherited).toEqual({ TAVILY_API_KEY: "ambient-engine-tavily-key", EXA_API_KEY: "ambient-engine-exa-key" });
+  });
+});
+
+// Upstream #1620: Windows environment names are case-insensitive, and a
+// spread copy of process.env keeps the casing the variable was set with.
+describe("child environment strip on Windows", () => {
+  it("drops credentials and routing switches whatever their casing on win32", () => {
+    const env: Record<string, string | undefined> = { Flux_Api_Key: "workspace-flux", murage_flux_composio_broker_token: "broker", Openai_Base_Url: "https://elsewhere.invalid", Path: "C:\\Windows", HOME: "C:\\Users\\me" };
+    stripWorkspaceCredentialEnv(env, "win32");
+    stripRoutingEnv(env, "win32");
+    expect(env).toEqual({ Path: "C:\\Windows", HOME: "C:\\Users\\me" });
+  });
+
+  it("keeps the exact-name compare on POSIX, where casing makes a different variable", () => {
+    const env: Record<string, string | undefined> = { FLUX_API_KEY: "workspace-flux", flux_api_key: "a different variable" };
+    stripWorkspaceCredentialEnv(env, "linux");
+    expect(env).toEqual({ flux_api_key: "a different variable" });
+  });
+
+  it("names only what the list names", () => {
+    const env: Record<string, string | undefined> = { XAI_API_KEY_BACKUP: "not listed", Xai_Api_Key: "listed" };
+    deleteEnvNames(env, ["XAI_API_KEY"], "win32");
+    expect(env).toEqual({ XAI_API_KEY_BACKUP: "not listed" });
   });
 });
 

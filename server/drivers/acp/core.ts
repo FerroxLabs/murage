@@ -41,7 +41,7 @@ import { folderTrustKindNames } from "../../folder-trust.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 
-import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
+import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
@@ -836,9 +836,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // voice key, …) are the harness's secrets — riding along in
         // `...process.env` is not a grant. A driver keeps only what its
         // credentialEnv allowlist names.
-        for (const key of [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV]) {
-          if (!allowedCredentials.has(key)) delete env[key];
-        }
+        deleteEnvNames(env, [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV].filter(key => !allowedCredentials.has(key)));
         // Routing switches are a third list, stripped unconditionally: a
         // `credentialEnv` allowlist grants a driver a key, never the right to
         // be pointed at someone else's endpoint, so this must not be folded
