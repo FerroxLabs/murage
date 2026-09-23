@@ -158,6 +158,84 @@ export class Speaker {
     if (this.request === controller) this.request = null;
   }
 
+  /**
+   * Speak sentences as they arrive rather than a finished message: the call
+   * screen pushes each one the voice host streams, so the first is audible
+   * while the rest are still being written. Sentence n+1 is rendered while n
+   * plays, the same prefetch speak() uses.
+   *
+   * `done` resolves true when every pushed sentence was heard after end(),
+   * false when interrupted or failed. It never rejects.
+   */
+  stream(opts: SpeakOptions = {}): { push(text: string): void; end(): void; done: Promise<boolean> } {
+    this.stop();
+    const mine = this.token;
+    const controller = new AbortController();
+    this.request = controller;
+    const live = () => this.token === mine && !controller.signal.aborted;
+    const queue: string[] = [];
+    let ended = false;
+    let wake: (() => void) | null = null;
+    const poke = () => {
+      wake?.();
+      wake = null;
+    };
+    // stop() aborts this controller; the loop may be parked waiting for the
+    // next sentence, and must wake to see it has been interrupted
+    controller.signal.addEventListener("abort", poke, { once: true });
+    this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
+
+    type Rendered = { text: string; blob?: Blob; error?: unknown };
+    const render = (text: string): Promise<Rendered> =>
+      this.render(text, opts.voiceId, controller.signal).then(
+        (blob) => ({ text, blob }),
+        (error: unknown) => ({ text, error }),
+      );
+
+    const run = async (): Promise<boolean> => {
+      let next: Promise<Rendered> | null = null;
+      for (;;) {
+        if (!live()) return false;
+        if (!next) {
+          if (!queue.length) {
+            if (ended) break;
+            await new Promise<void>((resolve) => (wake = resolve));
+            continue;
+          }
+          next = render(queue.shift()!);
+        }
+        const rendered = await next;
+        next = queue.length ? render(queue.shift()!) : null;
+        if (!live()) return false;
+        if (rendered.error !== undefined || !rendered.blob) {
+          const error = rendered.error;
+          this.set({ ...IDLE, error: error instanceof Error ? error.message : String(error ?? "the voice failed") });
+          return false;
+        }
+        this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: rendered.text });
+        if (!(await this.play(rendered.blob, live)) || !live()) return false;
+      }
+      if (live()) this.set(IDLE);
+      return true;
+    };
+    const done = run().finally(() => {
+      if (this.request === controller) this.request = null;
+    });
+    return {
+      push: (text: string) => {
+        const clean = text.trim();
+        if (!clean || ended || !live()) return;
+        queue.push(clean);
+        poke();
+      },
+      end: () => {
+        ended = true;
+        poke();
+      },
+      done,
+    };
+  }
+
   private async prepare(text: string, voiceId: string | undefined, signal: AbortSignal): Promise<string[]> {
     const res = await fetch("/api/tts/prepare", {
       method: "POST",

@@ -58,6 +58,8 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
+import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
+import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import type { InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
@@ -15906,6 +15908,42 @@ const server = createServer(async (req, res) => {
         if (e instanceof tts.NoVoiceConfigured) return json(res, 409, { error: e.message });
         return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
       }
+    }
+
+    // The fast half of a call (server/voice/voice-host.ts). Read only: it
+    // streams what the host says; the call screen sends any hand-down
+    // through the ordinary message route. Owner's desktop only, because the
+    // snapshot includes the inbox.
+    if (method === "POST" && VOICE_HOST_PATH.test(path)) {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      await handleVoiceHostRoute(method, path, req, res, {
+        bot: (id) => store.bot(id),
+        activePath: (threadId) => store.activePath(threadId),
+        lastActivityAt: (threadId) => store.lastActivityAt(threadId),
+        needsYou: (botId) => {
+          const bot = store.bot(botId);
+          if (!bot) return [];
+          const threads = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])]
+            .map((threadId) => ({ threadId, label: [bot.name, bot.tasks?.find((task) => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }));
+          const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } }, { owner: true, threads });
+          const items = (result.body as { items?: Array<{ title: string; summary: string; at: number; botId?: string }> })?.items ?? [];
+          return items.filter((item) => item.botId === botId).map(({ title, summary, at }) => ({ title, summary, at }));
+        },
+        readBody: (request) => readBody(request),
+      });
+      return;
+    }
+
+    // The record a call leaves in its conversation when it ends
+    // (server/voice/call-note.ts). Built from the call's own log, no model.
+    if (method === "POST" && CALL_NOTE_PATH.test(path)) {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      await handleCallNoteRoute(method, path, req, res, {
+        bot: (id) => store.bot(id),
+        append: (threadId, text) => { store.appendMessage(threadId, { role: "bot", kind: "text", text }); },
+        readBody: (request) => readBody(request),
+      });
+      return;
     }
 
     // Voice IN, on the workspace's own Flux key. Registered rather than

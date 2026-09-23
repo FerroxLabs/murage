@@ -97,4 +97,44 @@ describe("Speaker lifecycle", () => {
     ]);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-test");
   });
+
+  it("streams pushed sentences in order and reports that all were heard", async () => {
+    const spoken: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        spoken.push(JSON.parse(String(init?.body)).text);
+        return new Response(new Blob(["mp3"]), { status: 200 });
+      }),
+    );
+    const speaker = new Speaker();
+    const stream = speaker.stream({ voiceId: "v" });
+    stream.push("Let me look into that.");
+    await vi.waitFor(() => expect(speaker.state.caption).toBe("Let me look into that."));
+    stream.push("It is running now.");
+    FakeAudio.latest!.onended?.();
+    await vi.waitFor(() => expect(speaker.state.caption).toBe("It is running now."));
+    stream.end();
+    FakeAudio.latest!.onended?.();
+    await expect(stream.done).resolves.toBe(true);
+    expect(spoken).toEqual(["Let me look into that.", "It is running now."]);
+    expect(speaker.state).toEqual({ status: "idle" });
+  });
+
+  it("settles a stream that is waiting for its next sentence when stopped", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["mp3"]), { status: 200 })));
+    const speaker = new Speaker();
+    const stream = speaker.stream();
+    speaker.stop();
+    await expect(stream.done).resolves.toBe(false);
+    stream.push("too late");
+    expect(speaker.state).toEqual({ status: "idle" });
+  });
+
+  it("an ended stream with nothing pushed finishes at once", async () => {
+    const speaker = new Speaker();
+    const stream = speaker.stream();
+    stream.end();
+    await expect(stream.done).resolves.toBe(true);
+  });
 });

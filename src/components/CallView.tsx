@@ -18,12 +18,25 @@ import { t } from "@/lib/i18n";
 // every activity chip the harness narrates (`tool.spoken`) is read aloud as
 // it happens, which is why waiting feels like listening to someone work
 // rather than listening to nothing.
+//
+// 0.1.59: TWO LAYERS, ONE BOT. With a Flux key, what you say goes first to
+// the voice host (server/voice/voice-host.ts), a fast model that speaks as
+// this bot from what the bot already knows and starts talking in about a
+// second. Anything that needs real work it hands down, and this screen sends
+// that request through the ordinary send path, so the engine turn, the
+// approvals and the transcript are exactly a typed message's. While the
+// engine works the microphone stays open between spoken lines, so you can
+// ask how it is going or talk about something else; a soft pulse fills the
+// silence instead of narration. When the host is unavailable the call is
+// the engine-only call it always was.
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
+import { HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
+import { WorkingPulse } from "@/lib/working-pulse";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
@@ -196,12 +209,33 @@ export function CallOverlay({ bot }: { bot: Bot }) {
 }
 
 function Call({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const speech = useSpeech();
   const initialPhase: Phase = bot.busy ? "working" : "listening";
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  // The voice host answers first when the workspace has a Flux key. It is
+  // switched off for the rest of the call by a failure that will not fix
+  // itself mid-call (no key, a plan without it); a network blip only sends
+  // that one turn down the engine path.
+  const hostOn = useRef(Boolean(state.config?.flux?.configured));
+  const hostHistory = useRef<Array<{ role: "owner" | "host"; text: string }>>([]);
+  const hostAbort = useRef<AbortController | null>(null);
+  const heardRef = useRef("");
+  /** An engine reply that arrived while the owner was mid-sentence. */
+  const deferredReply = useRef<string | null>(null);
+  const pulse = useRef<WorkingPulse | null>(null);
+  /** The host's sentences are being voiced; an engine reply waits for them. */
+  const hostSpeaking = useRef(false);
+  const quietRestartAt = useRef(0);
+  /** The host is looking something up on the web right now. */
+  const [lookingUp, setLookingUp] = useState(false);
+  /** What happened to each thing the owner said: the call note's source. */
+  const callLog = useRef<Array<{ said: string; outcome: "answered" | "looked_up" | "handed_down" | "engine" | "decision"; detail?: string }>>([]);
+  const callStartedAt = useRef(Date.now());
+  const threadRef = useRef(bot.threadId);
+  threadRef.current = bot.threadId;
   const pushToTalk = usePushToTalk(bot.id, phase === "listening", () => {
     setNote("Push to talk couldn't start. Check Microphone and Speech Recognition access.");
   });
@@ -255,6 +289,7 @@ function Call({ bot }: { bot: Bot }) {
     if (!alive.current || currentCall() !== bot.id) return;
     move("listening");
     setHeard("");
+    heardRef.current = "";
     setNote(null);
     void window.muragebox?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
       if (alive.current && currentCall() === bot.id) {
@@ -287,6 +322,100 @@ function Call({ bot }: { bot: Bot }) {
     [listen, say],
   );
 
+  /** Speak whatever was held back while the owner was talking, then listen. */
+  const listenOrCatchUp = useCallback(() => {
+    const held = deferredReply.current;
+    deferredReply.current = null;
+    if (held) void sayThenListen(held);
+    else listen();
+  }, [listen, sayThenListen]);
+
+  /** One spoken turn through the voice host. Its sentences are voiced as
+   * they stream; a hand-down becomes an ordinary send. Any failure hands
+   * the owner's words to the engine exactly as a call did before. */
+  const hostReply = useCallback(
+    async (said: string) => {
+      if (!alive.current || currentCall() !== bot.id) return;
+      move("sending");
+      hush();
+      const controller = new AbortController();
+      hostAbort.current?.abort();
+      hostAbort.current = controller;
+      const mine = ++sayGeneration.current;
+      let stream: ReturnType<typeof speaker.stream> | null = null;
+      const voice = () => {
+        if (!stream) {
+          move("speaking");
+          hostSpeaking.current = true;
+          stream = speaker.stream({ botId: bot.id, voiceId: bot.voice });
+          void stream.done.finally(() => {
+            hostSpeaking.current = false;
+          });
+        }
+        return stream;
+      };
+      let spoken = "";
+      let handed = false;
+      let handedRequest = "";
+      let lookedUp = false;
+      let failed = false;
+      await hostTurn(
+        bot.id,
+        { text: said, threadId: bot.threadId, history: hostHistory.current },
+        (event) => {
+          if (!alive.current || currentCall() !== bot.id) return;
+          if (event.type === "lookup") {
+            lookedUp = true;
+            setLookingUp(true);
+          } else if (event.type === "sentence") {
+            setLookingUp(false);
+            spoken += `${event.text} `;
+            if (sayGeneration.current === mine) voice().push(event.text);
+          } else if (event.type === "hand_down" && !handed) {
+            handed = true;
+            handedRequest = event.request;
+            dispatch({ type: "send", botId: bot.id, text: event.request, threadId: bot.threadId });
+          } else if (event.type === "cancel") {
+            dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId });
+          } else if (event.type === "error") {
+            failed = true;
+            if (HOST_OFF_FOR_CALL.has(event.reason)) hostOn.current = false;
+          }
+        },
+        controller.signal,
+      );
+      if (hostAbort.current === controller) hostAbort.current = null;
+      if (alive.current) setLookingUp(false);
+      if (!alive.current || currentCall() !== bot.id) return;
+      if (failed && !handed && !spoken) {
+        // the host could not take this turn; the engine takes it, as before
+        move("sending");
+        callLog.current.push({ said, outcome: "engine" });
+        dispatch({ type: "send", botId: bot.id, text: said, threadId: bot.threadId });
+        return;
+      }
+      callLog.current.push(
+        handed
+          ? { said, outcome: "handed_down", detail: handedRequest }
+          : lookedUp
+            ? { said, outcome: "looked_up", detail: spoken.trim() }
+            : { said, outcome: "answered", detail: spoken.trim() },
+      );
+      hostHistory.current.push({ role: "owner", text: said });
+      if (spoken.trim()) hostHistory.current.push({ role: "host", text: spoken.trim() });
+      hostHistory.current = hostHistory.current.slice(-12);
+      // a hand-down with nothing said would be dead air: a claim-free line
+      if (handed && !spoken.trim() && sayGeneration.current === mine) voice().push("On it.");
+      if (stream) {
+        (stream as ReturnType<typeof speaker.stream>).end();
+        const heard = await (stream as ReturnType<typeof speaker.stream>).done;
+        if (!heard || sayGeneration.current !== mine || !alive.current || currentCall() !== bot.id) return;
+      }
+      if (phaseRef.current === "speaking" || phaseRef.current === "sending") listenOrCatchUp();
+    },
+    [bot.id, bot.threadId, bot.voice, dispatch, hush, listenOrCatchUp, move],
+  );
+
   // Navigating away from this bot hangs up. Without ownership checking, the
   // overlay disappeared but `currentCall()` remained set and auto-speak was
   // permanently disabled for a call nobody could see.
@@ -295,11 +424,32 @@ function Call({ bot }: { bot: Bot }) {
     return () => {
       alive.current = false;
       sayGeneration.current += 1;
+      hostAbort.current?.abort();
+      pulse.current?.dispose();
+      pulse.current = null;
+      // Leave the call's record in the conversation. Only when the host took
+      // part: an engine-only call is already fully in the transcript.
+      const log = callLog.current;
+      callLog.current = [];
+      if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up")) {
+        void fetch(`/api/bots/${bot.id}/call-note`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ threadId: threadRef.current, durationMs: Date.now() - callStartedAt.current, log }),
+          // the overlay is closing; the request must outlive it
+          keepalive: true,
+        }).catch(() => undefined);
+      }
       // StrictMode immediately remounts effects once in development. A
       // microtask distinguishes that probe from real navigation: the probe
       // has set alive=true again before this runs; a genuine unmount has not.
       deferCallCleanup(bot.id, () => alive.current);
     };
+  }, [bot.id]);
+
+  // Wake the host's model as the call opens, so the first answer is warm.
+  useEffect(() => {
+    if (hostOn.current) warmHost(bot.id);
   }, [bot.id]);
 
   // ── the microphone ───────────────────────────────────────────────────
@@ -314,10 +464,11 @@ function Call({ bot }: { bot: Bot }) {
       }
       if (typeof line.text !== "string") return;
       setHeard(line.text);
+      heardRef.current = line.partial === false ? "" : line.text;
       if (line.partial !== false) return;
       // final result — Apple's recognizer decided the turn ended
       const said = line.text.trim();
-      if (!said) return listen();
+      if (!said) return listenOrCatchUp();
 
       const open = askedApproval.current;
       if (open) {
@@ -337,6 +488,7 @@ function Call({ bot }: { bot: Bot }) {
           // arrives. Clearing it here lets a render in that network gap read
           // and submit the same approval again.
           open.submitted = true;
+          callLog.current.push({ said, outcome: "decision" });
           move("working");
           hush();
           setHeard("");
@@ -378,13 +530,34 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
 
+      if (hostOn.current) {
+        void hostReply(said);
+        return;
+      }
       move("sending");
+      callLog.current.push({ said, outcome: "engine" });
       dispatch({ type: "send", botId: bot.id, text: said, threadId: bot.threadId });
     });
     const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
       if (!alive.current || currentCall() !== bot.id) return;
       if (code === 2) {
         setNote("Calls need macOS dictation, which isn't available here yet.");
+        return;
+      }
+      // With the host on, the microphone can sit open through minutes of
+      // engine work with nobody talking, and Apple's recognizer may give up
+      // on a long silence. That is not a permission problem: reopen quietly,
+      // no more than once every few seconds so a real fault still surfaces.
+      if (
+        code === 1 &&
+        reason === "recognition-error" &&
+        hostOn.current &&
+        phaseRef.current === "listening" &&
+        !heardRef.current &&
+        Date.now() - quietRestartAt.current > 3_000
+      ) {
+        quietRestartAt.current = Date.now();
+        listen();
         return;
       }
       if (code === 1) {
@@ -401,7 +574,7 @@ function Call({ bot }: { bot: Bot }) {
       // to be listening, that means the user's turn ended — start the next
       if (phaseRef.current === "listening") listen();
     });
-    if (bot.busy && !approval && !question) move("working");
+    if (bot.busy && !approval && !question && !hostOn.current) move("working");
     else listen();
     return () => {
       offTranscript();
@@ -411,7 +584,7 @@ function Call({ bot }: { bot: Bot }) {
     // busy/approval are intentionally initial snapshots. Their live changes
     // are handled below without tearing down native event listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bot.id, bot.threadId, dispatch, hush, listen, move, sayThenListen]);
+  }, [bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, sayThenListen]);
 
   // ── narrate the work, speak the answer, read the approvals ───────────
   useEffect(() => {
@@ -426,7 +599,8 @@ function Call({ bot }: { bot: Bot }) {
     if (askedQuestion.current && question?.card?.requestId !== askedQuestion.current.requestId) {
       askedQuestion.current = null;
     }
-    if (!approval && !question && bot.busy && phaseRef.current === "listening") {
+    // With the host on, the owner can keep talking while the engine works.
+    if (!approval && !question && bot.busy && phaseRef.current === "listening" && !hostOn.current) {
       move("working");
       hush();
     }
@@ -474,8 +648,14 @@ function Call({ bot }: { bot: Bot }) {
     for (const m of fresh) spokenIds.current.add(m.id);
 
     if (reply?.text) {
-      void sayThenListen(reply.text);
-    } else if (chip?.tool?.spoken && phase === "working") {
+      // Never talk over the owner or over the host's own sentence: hold the
+      // answer until that turn ends (listenOrCatchUp speaks it).
+      const busyTalking =
+        hostOn.current &&
+        (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
+      if (busyTalking) deferredReply.current = reply.text;
+      else void sayThenListen(reply.text);
+    } else if (chip?.tool?.spoken && phase === "working" && !hostOn.current) {
       void say(chip.tool.spoken).then((stillMine) => {
         if (stillMine && phaseRef.current === "speaking") move("working");
       });
@@ -486,8 +666,14 @@ function Call({ bot }: { bot: Bot }) {
   useEffect(() => {
     if (bot.busy) {
       // An open approval deliberately keeps the mic live for yes/no. Every
-      // other busy phase is half-duplex and must close capture.
-      if (phaseRef.current !== "speaking" && !askedApproval.current && !askedQuestion.current) {
+      // other busy phase is half-duplex and must close capture, except with
+      // the host on, where the owner talks to it while the engine works.
+      if (
+        !hostOn.current &&
+        phaseRef.current !== "speaking" &&
+        !askedApproval.current &&
+        !askedQuestion.current
+      ) {
         move("working");
         hush();
       }
@@ -520,6 +706,25 @@ function Call({ bot }: { bot: Bot }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [bot.id, listen]);
 
+  // The latest step of the running turn, as a phrase: the activity line.
+  const activity = lookingUp
+    ? "looking it up"
+    : bot.busy
+      ? [...messages].reverse().find((m) => m.kind === "activity" && m.tool?.spoken)?.tool?.spoken
+      : undefined;
+  // Pulse only for real work, and only while nobody is speaking.
+  const pulsing =
+    (lookingUp && speech.status !== "speaking") ||
+    (Boolean(bot.busy) &&
+      !approval &&
+      !question &&
+      !heard &&
+      (hostOn.current ? phase === "listening" : phase === "working"));
+  useEffect(() => {
+    if (pulsing) (pulse.current ??= new WorkingPulse()).start();
+    else pulse.current?.stop();
+  }, [pulsing]);
+
   const status =
     phase === "listening"
       ? pushToTalk
@@ -549,6 +754,12 @@ function Call({ bot }: { bot: Bot }) {
           {(phase === "working" || phase === "sending") && <Loader2 size={13} className="animate-spin" />}
           {status}
         </div>
+        {activity && (lookingUp || phase === "working" || (hostOn.current && phase === "listening")) && (
+          <div className="flex items-center gap-1.5 text-[12.5px] text-ink-secondary/80">
+            <Loader2 size={11} className="animate-spin" />
+            {activity.charAt(0).toUpperCase() + activity.slice(1)}
+          </div>
+        )}
       </div>
 
       {/* one line, whichever is current: what you're saying, or what it is */}
