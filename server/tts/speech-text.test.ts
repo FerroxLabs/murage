@@ -4,7 +4,7 @@
 // the kitchen at 8am.
 import { describe, expect, it } from "vitest";
 
-import { narrateTool, speakable, toUtterances } from "./speech-text.ts";
+import { narrateTool, pronounceable, speakable, toUtterances } from "./speech-text.ts";
 
 describe("speakable", () => {
   it("names a code block instead of reading it", () => {
@@ -139,4 +139,26 @@ describe("narrateTool", () => {
     expect(narrateTool("deploy_thing")).toBe("running deploy_thing");
     expect(narrateTool('curl -X POST "https://x/y" --data @{}')).toBeNull();
   });
+});
+
+describe("pronounceable", () => {
+  it.each([
+    ["Your flight is on Sept 14.", "Your flight is on September 14."],
+    ["Due Sept. 14th, then Oct 2.", "Due September 14th, then October 2."],
+    ["Thai Airways BKK, 14 Oct, 1,240 USD", "Thai Airways BKK, 14 October, 1,240 USD"],
+    ["Fri, 3 Oct at noon", "Friday, 3 October at noon"],
+    ["Tue Sept 30", "Tuesday September 30"],
+    ["MRR at 182k, up 4 percent", "MRR at 182 thousand, up 4 percent"],
+    ["Raised $2.5M", "Raised $2.5 million"],
+    ["Opus vs GPT, e.g. on coding", "Opus versus GPT, for example, on coding"],
+  ])("%s", (written, said) => {
+    expect(pronounceable(written)).toBe(said);
+  });
+
+  it.each(["Mar-a-Lago is in Florida.", "I sat on it for a while.", "The Sun rose.", "A 4K display.", "Run it for 5m."])(
+    "leaves ordinary words alone: %s",
+    (text) => {
+      expect(pronounceable(text)).toBe(text);
+    },
+  );
 });

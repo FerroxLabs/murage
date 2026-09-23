@@ -217,3 +217,45 @@ export function narrateTool(toolName: string): string | null {
   const short = shortenPaths(name).slice(0, 40);
   return /^[\w .:/-]+$/.test(short) ? `running ${short}` : null;
 }
+
+const MONTHS: Record<string, string> = {
+  jan: "January", feb: "February", mar: "March", apr: "April", jun: "June", jul: "July",
+  aug: "August", sep: "September", sept: "September", oct: "October", nov: "November", dec: "December",
+};
+const DAYS: Record<string, string> = {
+  mon: "Monday", tue: "Tuesday", tues: "Tuesday", wed: "Wednesday", thu: "Thursday", thur: "Thursday",
+  thurs: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday",
+};
+const ABBREVIATIONS: Array<[RegExp, string]> = [
+  [/\be\.g\.,?/gi, "for example,"],
+  [/\bi\.e\.,?/gi, "that is,"],
+  [/\bvs\.?(?=\s)/gi, "versus"],
+  [/\bapprox\.?(?=\s)/gi, "about"],
+  [/\betc\./gi, "and so on."],
+];
+
+/**
+ * Written shorthand → what a person would say. Voices read "Sept 14" as
+ * "sept fourteen" and "182k" as "182 k"; nobody talks like that.
+ *
+ * Month and weekday abbreviations are expanded only next to a date or
+ * another day ("Sept 14", "14 Oct", "Fri, 3 Oct"), so "Mar" in a name or
+ * "sat on it" is left alone. Every voice gets this, on every path: it runs
+ * where the harness synthesizes, not where the text was written.
+ */
+export function pronounceable(input: string): string {
+  let text = input;
+  // "Sept 14", "Sept. 14th"
+  text = text.replace(/\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?(?=\s+\d{1,2}(?:st|nd|rd|th)?\b)/gi, (_m, m: string) => MONTHS[m.toLowerCase()]!);
+  // "14 Oct", "3rd Sept 2026"
+  text = text.replace(/(\b\d{1,2}(?:st|nd|rd|th)?\s+)(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b\.?/gi, (_m, day: string, m: string) => `${day}${MONTHS[m.toLowerCase()]!}`);
+  // "Fri, 3 Oct", "Tue 14 Oct", "Mon Sept 14" (the month is already expanded)
+  text = text.replace(/\b(Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun)\b\.?(?=,?\s+(?:\d{1,2}\b|January|February|March|April|May|June|July|August|September|October|November|December))/gi, (_m, d: string) => DAYS[d.toLowerCase()]!);
+  for (const [pattern, spoken] of ABBREVIATIONS) text = text.replace(pattern, spoken);
+  // "$182k", "182k", "2.5M", "$3B": money and counts with a magnitude. Not
+  // "4K" (a display), "5m" (minutes or metres) or "8b" (a model's size).
+  text = text.replace(/(\$?)(\d+(?:\.\d+)?)\s?(k|K|M|B)\b(?!\w)/g, (whole, dollar: string, n: string, unit: string) =>
+    unit === "K" && !dollar ? whole : `${dollar}${n} ${{ k: "thousand", K: "thousand", M: "million", B: "billion" }[unit]}`,
+  );
+  return text;
+}

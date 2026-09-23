@@ -12,6 +12,7 @@
 import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";
 import * as fluxSpeech from "./flux-speech.ts";
+import { pronounceable } from "./speech-text.ts";
 import type { VoiceEndpoint, VoicePart } from "../voice/voice-routes.ts";
 
 /** Where hosted speech runs (Flux, or an own OpenAI key) and which provider
@@ -152,7 +153,8 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Pro
 
 /** Synthesize one utterance. Throws NoVoiceConfigured when there is nothing
  * to speak with, which the route turns into a 409 the client can explain. */
-export function speak(cfg: AppConfig, text: string, voiceId?: string, run?: systemVoices.Runner) {
+export function speak(cfg: AppConfig, written: string, voiceId?: string, run?: systemVoices.Runner) {
+  const text = pronounceable(written);
   if (voiceProvider(cfg) === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
     return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run);
