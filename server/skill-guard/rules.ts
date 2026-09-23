@@ -24,9 +24,18 @@ const first = (text: string, ...patterns: RegExp[]) => {
   return null;
 };
 
-const CREDENTIAL_USE = /(?:cat|type|read|open|copy|upload|send|print)\b[^\n]{0,80}(?:~\/\.ssh\/|\bid_rsa\b|\.aws\/credentials|\.netrc\b|\.env\b)/i;
-const CREDENTIAL_LITERAL = /AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9_-]{20,}/;
-const CREDENTIAL_MENTION = /~\/\.ssh\/|\bid_rsa\b|\.aws\/credentials|\.env\b/i;
+// Blocked means theft: reading or sending private keys and cloud
+// credentials. A public key (.pub) is meant to be shared.
+// Reading means a command aimed straight at the file; sending may be said
+// in a sentence ("upload the key to...").
+const READ_OR_SEND = String.raw`(?:\b(?:cat|type|print|less|more|head|tail|base64)\s+[^\n|;&]{0,40}|\b(?:upload|send|post|exfiltrate|email|paste)\b[^\n]{0,80})`;
+const PRIVATE_KEYS = String.raw`(?:~\/\.ssh\/(?!\S*\.pub\b)[\w.-]+|\bid_(?:rsa|dsa|ecdsa|ed25519)\b(?!\.pub)|\.aws\/credentials|\.netrc\b|\.gnupg\/)`;
+const CREDENTIAL_USE = new RegExp(READ_OR_SEND + PRIVATE_KEYS, "i");
+// A settings file of secrets: worth a look, never Blocked on its own
+// (setup guides copy .env.example to .env all the time). Not `process.env`.
+const ENV_FILE_USE = new RegExp(READ_OR_SEND + String.raw`(?<![\w$.])\.env\b(?!\.example|\.sample|\.template)`, "i");
+// A key pasted into a skill is a leak, not theft; placeholders don't count.
+const CREDENTIAL_LITERAL = /AKIA[0-9A-Z]{16}|Bearer\s+(?![^\s]*(?:EXAMPLE|REPLACE|YOUR|xxx|dummy|placeholder|<))[A-Za-z0-9_-]{20,}/;
 const BASE64_RUN = (min: number) => new RegExp(`[A-Za-z0-9+/]{${min},}={0,2}`);
 const DECODE_RUN = /\batob\s*\(|\bbase64\s+-(?:d|-decode)\b|\bopenssl\s+enc\b/i;
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -49,13 +58,15 @@ function padding(text: string): string | null {
 }
 
 export const SKILL_RULES: SkillRule[] = [
-  { id: "SG1", category: "credential-access", severity: "critical", confidence: 0.9, source: "skill-guard", test: (t) => first(t, CREDENTIAL_USE, CREDENTIAL_LITERAL) },
-  { id: "SG1m", category: "credential-mention", severity: "medium", confidence: 0.6, source: "skill-guard",
-    test: (t) => (first(t, CREDENTIAL_USE, CREDENTIAL_LITERAL) ? null : first(t, CREDENTIAL_MENTION)) },
+  { id: "SG1", category: "credential-access", severity: "critical", confidence: 0.9, source: "skill-guard", test: (t) => first(t, CREDENTIAL_USE) },
+  { id: "SG1e", category: "credential-mention", severity: "medium", confidence: 0.7, source: "skill-guard", test: (t) => first(t, ENV_FILE_USE) },
+  { id: "SG1k", category: "credential-literal", severity: "medium", confidence: 0.7, source: "skill-guard", test: (t) => first(t, CREDENTIAL_LITERAL) },
   { id: "SG2", category: "network-exfiltration", severity: "critical", confidence: 0.9, source: "skill-guard",
     test: (t) => first(t, /\b(curl|wget)\b[^\n]*(?:\bPOST\b|--data|--upload-file|-T\s)/i) },
-  { id: "SG3", category: "shell-execution", severity: "critical", confidence: 0.9, source: "skill-guard",
-    test: (t) => first(t, /\brm\s+-rf\s+\/(?!\w)|\b(?:curl|wget)\b[^\n]{0,200}\|\s*(?:ba|z|da)?sh\b|\beval\s*[(`]/i) },
+  // Piping a download into a shell, or wiping the disk: documented as bad
+  // examples far more often than meant, so worth a look, not Blocked.
+  { id: "SG3", category: "shell-execution", severity: "medium", confidence: 0.8, source: "skill-guard",
+    test: (t) => first(t, /\b(?:curl|wget)\b[^\n|]{0,200}\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b|\brm\s+-rf\s+\/(?![\w.$"'{])/i) },
   { id: "SG4", category: "filesystem-write", severity: "medium", confidence: 0.7, source: "skill-guard",
     test: (t) => first(t, /(?:\b(?:write|tee)|>>?)\s*\/etc\/|~\/Library\/(?:Application Support|Preferences)\/|~\/\.config\/[a-z]/i) },
   { id: "SG5", category: "instruction-override", severity: "medium", confidence: 0.8, source: "skill-guard",
@@ -65,6 +76,6 @@ export const SKILL_RULES: SkillRule[] = [
   { id: "SG6b", category: "obfuscation", severity: "medium", confidence: 0.6, source: "murage",
     test: (t) => (DECODE_RUN.test(t) ? null : first(t, BASE64_RUN(120))) },
   { id: "M1", category: "hidden-text", severity: "medium", confidence: 0.8, source: "murage", test: hiddenText },
-  { id: "M2", category: "direction-override", severity: "high", confidence: 0.9, source: "murage", test: (t) => first(t, /[\u202A-\u202E\u2066-\u2069][^\n]{0,40}/) },
+  { id: "M2", category: "direction-override", severity: "high", confidence: 0.9, source: "murage", test: (t) => first(t, /[‪-‮⁦-⁩][^\n]{0,40}/) },
   { id: "M3", category: "padding", severity: "medium", confidence: 0.7, source: "murage", test: padding },
 ];

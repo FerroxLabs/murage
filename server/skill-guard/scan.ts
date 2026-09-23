@@ -30,9 +30,32 @@ function views(path: string, content: string): { code: string; prose: string; ma
   return { code: code.join("\n"), prose, manifest: false };
 }
 
+/** Blocked comes from a critical finding, or a high one from Ferrox's own
+ *  rules. SkillSpector's high patterns are read without the context
+ *  analysis SkillSpector runs around them, so on their own they ask for a
+ *  look and never block. */
 export function verdictFor(findings: SkillFinding[]): SkillVerdict {
-  if (findings.some((f) => (f.severity === "critical" && f.confidence >= BLOCK_RULES.criticalAt) || (f.severity === "high" && f.confidence >= BLOCK_RULES.highAt))) return "blocked";
+  const blocks = (f: SkillFinding) =>
+    (f.severity === "critical" && f.confidence >= BLOCK_RULES.criticalAt) ||
+    (f.severity === "high" && f.source !== "skillspector" && f.confidence >= BLOCK_RULES.highAt);
+  if (findings.some(blocks)) return "blocked";
   return findings.length ? "review" : "clean";
+}
+
+/** Patterns never reported: MP2_CONTENT is a repetition detector that fires
+ *  on every markdown table and horizontal rule; padding is M3's job. */
+const SPECTOR_SKIPPED = /^skillspector:MP2_CONTENT\./;
+
+/** SkillSpector's own verdict is a risk score, not any single match: keep a
+ *  critical, a high match of 0.85 or more, or matches of 0.8 or more in two or more
+ *  categories that back each other up. Lone low and medium matches are the
+ *  everyday phrases ("never judge", "without asking") it scores down. */
+function corroborated(findings: SkillFinding[]): SkillFinding[] {
+  const spector = findings.filter((f) => f.source === "skillspector" && !SPECTOR_SKIPPED.test(f.rule) && f.severity !== "low");
+  const strong = (f: SkillFinding) => f.severity === "critical" || (f.severity === "high" && f.confidence >= 0.85);
+  const mediumCategories = new Set(spector.filter((f) => !strong(f) && f.confidence >= 0.8).map((f) => f.category));
+  const kept = spector.filter((f) => strong(f) || (mediumCategories.size >= 2 && f.confidence >= 0.8));
+  return [...findings.filter((f) => f.source !== "skillspector"), ...kept];
 }
 
 export function scanSkill(input: SkillScanInput, now: Date = new Date()): SkillScan {
@@ -69,6 +92,6 @@ export function scanSkill(input: SkillScanInput, now: Date = new Date()): SkillS
       findings.push({ rule: "SG7", category: "index-poisoning", severity: "low", confidence: 0.6, message: plainMessage("index-poisoning"), evidence: evidence(input.triggerTerms.slice(0, 8).join(", ")), file: "(trigger terms)", source: "skill-guard" });
     }
   }
-  const reported = findings.filter((f) => f.confidence >= REPORT_CONFIDENCE);
+  const reported = corroborated(findings).filter((f) => f.confidence >= REPORT_CONFIDENCE);
   return { verdict: verdictFor(reported), findings: reported, contentHash: skillContentHash(input), scannerVersion: SKILL_SCANNER_VERSION, scannedAt: now.toISOString() };
 }

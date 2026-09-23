@@ -4,7 +4,8 @@
 // What each kind of finding means, in words an owner acts on.
 const MESSAGES: Record<string, string> = {
   "credential-access": "Reads passwords, keys or tokens",
-  "credential-mention": "Mentions where passwords or keys are kept",
+  "credential-mention": "Reads the settings file where passwords are kept",
+  "credential-literal": "Contains what looks like a password or key",
   "network-exfiltration": "Sends data to an outside website",
   "shell-execution": "Runs risky commands on the computer",
   "filesystem-write": "Changes files outside its own folder",

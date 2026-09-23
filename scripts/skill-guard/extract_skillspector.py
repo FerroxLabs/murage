@@ -27,6 +27,9 @@ def to_js(src: str) -> str:
     src = src.replace("(?P<", "(?<")
     src = re.sub(r"\(\?P=(\w+)\)", r"\\k<\1>", src)
     src = src.replace(r"\A", "^").replace(r"\Z", "$")
+    # SkillSpector matches one line at a time, so a negated class such as
+    # [^|] never crosses a line there; over a whole file it would.
+    src = re.sub(r"(?<!\\)\[\^(?!\])", r"[^\\n", src)
     return re.sub(r"^\(\?i\)", "", src)
 
 def resolve(node, names, seen=()):
