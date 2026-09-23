@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
 import type { ProviderPreset } from "../../shared/provider-connections.ts";
 import { runVoiceBrief, runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
+import { handDownResult } from "./hand-downs.ts";
 import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 
 const home = (file: string | undefined) => file?.replace(/^~/, process.env.HOME ?? "");
@@ -146,11 +147,12 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     let did = "answer";
     const history = [
       { role: "owner" as const, text: "I'd like the latest AI news" },
-      { role: "host" as const, text: "Let me look into that." },
+      { role: "host" as const, text: "Let me look into that.", handDown: { id: "h1", request: "I'd like the latest AI news" } },
       { role: "owner" as const, text: "Well are you doing it" },
       { role: "host" as const, text: "That didn't work. You've used all the included free usage for model grok-4.7 for now." },
     ];
-    for await (const event of runVoiceHostTurn({ state: AFTER_NEWS, history, said: "Well I need the news from the last 72 hours for AI.", host, lookup })) {
+    const results = { h1: handDownResult({ kind: "failed", reason: "You've used all the included free usage for model grok-4.7 for now." }) };
+    for await (const event of runVoiceHostTurn({ state: AFTER_NEWS, history, results, said: "Well I need the news from the last 72 hours for AI.", host, lookup })) {
       if (event.type === "lookup") did = "lookup";
       else if (event.type === "hand_down" && did !== "lookup") did = "hand";
     }
@@ -170,16 +172,21 @@ describe.skipIf(!planned)("voice host, live routing", () => {
   it("after a refused hand-down, a progress question is answered honestly, not handed down again", async () => {
     let spoken = "";
     let handed = false;
+    // as the app sends it: the hand-down is a tool call whose result says it failed
     const history = [
       { role: "owner" as const, text: "Well AI news from the last 48 hours" },
-      { role: "host" as const, text: "Let me look into that. I couldn't start that. This bot's model needs an AI provider connected first." },
+      { role: "host" as const, text: "Let me look into that.", handDown: { id: "h1", request: "AI news from the last 48 hours" } },
     ];
-    for await (const event of runVoiceHostTurn({ state: IDLE, history, said: "Do you have any results yet?", host, lookup })) {
+    const results = { h1: handDownResult({ kind: "failed", reason: "This bot's model needs an AI provider connected first." }) };
+    for await (const event of runVoiceHostTurn({ state: IDLE, history, results, said: "Do you have any results yet?", host, lookup })) {
       if (event.type === "sentence") spoken += `${event.text} `;
-      if (event.type === "hand_down" || event.type === "lookup") handed = true;
+      // a lookup is fine (it gets them the news now); a second hand-down of
+      // the refused work is not
+      if (event.type === "hand_down") handed = true;
     }
     rows.push(`refused | said: ${spoken.trim()}`);
     expect(handed).toBe(false);
+    expect(spoken).toMatch(/nothing is running|couldn'?t start|didn'?t start|failed/i);
   }, 30_000);
 
   it("a long answer is told item by item, briefly", async () => {

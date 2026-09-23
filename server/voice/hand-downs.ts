@@ -111,7 +111,7 @@ export function handDownResult(status: HandDownStatus): string {
         status.steps.length ? `Steps so far (the only progress you may mention): ${status.steps.join("; ")}.` : "No steps reported yet.",
       ].join(" ");
     case "failed":
-      return `This failed and nothing is running for it: ${status.reason.split("\n")[0]} Tell the owner plainly if they ask; hand it down again only if they ask you to try again.`;
+      return `This failed and nothing is running for it: ${status.reason.split("\n")[0]} Tell the owner plainly if they ask. If they ask for it again, news and plain facts go to quick_lookup; other work is handed down again only when they ask you to try again.`;
     case "cancelled":
       return "The owner cancelled this. Nothing is running for it.";
     case "done":

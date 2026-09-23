@@ -60,6 +60,14 @@ const FALSE_INTERRUPTION_MS = 2_000;
 /** Voice while the echo canceller settles on the bot's first words is the
  *  bot (LiveKit uses 3 s of AEC warm-up). */
 const ECHO_WARMUP_MS = 3_000;
+/** While the engine works and nobody has spoken for this long, say what it
+ *  is doing (LiveKit Agents' filler scheduler: delay, then interval, capped). */
+const STILL_ON_IT_AFTER_MS = 14_000;
+const STILL_ON_IT_EVERY_MS = 25_000;
+const STILL_ON_IT_MAX = 3;
+/** Engine work running this long gets one plain check-in (Pipecat's
+ *  function-call timeout, softened: the work is not cancelled). */
+const LONG_WORK_MS = 4 * 60_000;
 
 export function CallButton({ bot }: { bot: Bot }) {
   return (
@@ -262,7 +270,11 @@ function Call({ bot }: { bot: Bot }) {
   const hostAbort = useRef<AbortController | null>(null);
   const heardRef = useRef("");
   /** An engine reply that arrived while the owner was mid-sentence. */
-  const deferredReply = useRef<string | null>(null);
+  /** Answers that landed while the owner or the bot was talking, oldest
+   *  first. A queue, not a slot: a second answer used to overwrite the first
+   *  and the owner never heard it (Pipecat and LiveKit both queue results
+   *  owed to the user until the conversation is idle). */
+  const deferredReplies = useRef<string[]>([]);
   const pulse = useRef<WorkingPulse | null>(null);
   /** The host's sentences are being voiced; an engine reply waits for them. */
   const hostSpeaking = useRef(false);
@@ -283,7 +295,13 @@ function Call({ bot }: { bot: Bot }) {
   });
 
   const messages = visibleMessages(bot);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  /** The last time anyone spoke on the call, for the "still on it" lines. */
+  const lastSpeechAt = useRef(Date.now());
   const approval = pendingApprovals(messages)[0];
+  const approvalRef = useRef(approval);
+  approvalRef.current = approval;
   const question = messages.find(
     (message) =>
       message.kind === "options" &&
@@ -319,7 +337,10 @@ function Call({ bot }: { bot: Bot }) {
    * callbacks together. React state alone is too late: the helper can exit
    * in the same tick as a final transcript or an intentional mute. */
   const move = useCallback((next: Phase) => {
-    if (next === "speaking" && !firstSpokeAt.current) firstSpokeAt.current = Date.now();
+    if (next === "speaking") {
+      if (!firstSpokeAt.current) firstSpokeAt.current = Date.now();
+      lastSpeechAt.current = Date.now();
+    }
     phaseRef.current = next;
     if (alive.current) setPhase(next);
   }, []);
@@ -408,7 +429,11 @@ function Call({ bot }: { bot: Bot }) {
   const sayThenListen = useCallback(
     async (text: string) => {
       const stillMine = await say(text);
-      if (stillMine && phaseRef.current === "speaking") listen();
+      if (!stillMine || phaseRef.current !== "speaking") return;
+      // anything held while this was said is next, then the owner's turn
+      const held = deferredReplies.current.shift();
+      if (held) void tellNext.current(held);
+      else listen();
     },
     [listen, say],
   );
@@ -457,8 +482,7 @@ function Call({ bot }: { bot: Bot }) {
       if (!heardAll) return;
       if (sayGeneration.current !== mine || phaseRef.current !== "speaking") return;
       // another answer landed while this one was being told: tell it next
-      const held = deferredReply.current;
-      deferredReply.current = null;
+      const held = deferredReplies.current.shift();
       if (held) void tellNext.current(held);
       else listen();
     },
@@ -469,8 +493,7 @@ function Call({ bot }: { bot: Bot }) {
 
   /** Speak whatever was held back while the owner was talking, then listen. */
   const listenOrCatchUp = useCallback(() => {
-    const held = deferredReply.current;
-    deferredReply.current = null;
+    const held = deferredReplies.current.shift();
     if (held) void tellReply(held);
     else listen();
   }, [listen, tellReply]);
@@ -507,7 +530,7 @@ function Call({ bot }: { bot: Bot }) {
           // pushed here landed before the turn it belonged to
           const line = `I couldn't start that. ${reason}`;
           // never over the bot's own sentence: said once the turn ends
-          if (hostSpeaking.current || phaseRef.current === "sending") deferredReply.current = line;
+          if (hostSpeaking.current || phaseRef.current === "sending") deferredReplies.current.push(line);
           else void sayThenListenRef.current(line);
           return true;
         },
@@ -525,7 +548,7 @@ function Call({ bot }: { bot: Bot }) {
    * they stream; a hand-down becomes an ordinary send. Any failure hands
    * the owner's words to the engine exactly as a call did before. */
   const hostReply = useCallback(
-    async (said: string) => {
+    async (said: string, approvalOpen?: string) => {
       if (!alive.current || currentCall() !== bot.id) return;
       move("sending");
       if (!duplex()) hush();
@@ -553,7 +576,7 @@ function Call({ bot }: { bot: Bot }) {
       let failed = false;
       await hostTurn(
         bot.id,
-        { text: said, threadId: bot.threadId, history: hostHistory.current, handDowns: handDowns.current },
+        { text: said, threadId: bot.threadId, history: hostHistory.current, handDowns: handDowns.current, ...(approvalOpen ? { approval: approvalOpen } : {}) },
         (event) => {
           if (!alive.current || currentCall() !== bot.id) return;
           if (event.type === "lookup") {
@@ -620,6 +643,44 @@ function Call({ bot }: { bot: Bot }) {
     },
     [bot.id, bot.threadId, bot.voice, hush, listenOrCatchUp, move, sendFromCall],
   );
+
+  // "Still on it": while the engine works and the call has gone quiet, say
+  // the newest step now and then, and once, after a long while, check in.
+  // Only with the host on (without it the engine's chips are narrated as
+  // before). Any speech on the call resets the clock.
+  const busyRef = useRef(bot.busy);
+  busyRef.current = bot.busy;
+  useEffect(() => {
+    let said = 0;
+    let lastSaidAt = 0;
+    let busySince = 0;
+    let checkedIn = false;
+    const tick = setInterval(() => {
+      if (!alive.current || currentCall() !== bot.id || !hostOn.current) return;
+      if (!busyRef.current) {
+        busySince = 0;
+        said = 0;
+        checkedIn = false;
+        return;
+      }
+      const now = Date.now();
+      if (!busySince) busySince = now;
+      const idle = phaseRef.current === "listening" && !heardRef.current && !hostSpeaking.current && !speaker.isSpeaking();
+      if (!idle || now - lastSpeechAt.current < STILL_ON_IT_AFTER_MS) return;
+      const steps = messagesRef.current.filter((m) => m.kind === "activity" && m.tool?.spoken).map((m) => m.tool!.spoken!);
+      const step = steps.at(-1);
+      if (!checkedIn && now - busySince > LONG_WORK_MS) {
+        checkedIn = true;
+        void sayThenListen(`This is taking a while${step ? `; right now I'm ${step}` : ""}. I'll keep going, or say stop and I'll leave it.`);
+        return;
+      }
+      if (said >= STILL_ON_IT_MAX || now - lastSaidAt < STILL_ON_IT_EVERY_MS) return;
+      said += 1;
+      lastSaidAt = now;
+      void sayThenListen(step ? `Still on it: ${step}.` : "Still working on it.");
+    }, 1_000);
+    return () => clearInterval(tick);
+  }, [bot.id, sayThenListen]);
 
   // Navigating away from this bot hangs up. Without ownership checking, the
   // overlay disappeared but `currentCall()` remained set and auto-speak was
@@ -694,6 +755,7 @@ function Call({ bot }: { bot: Bot }) {
         }
         bargeIn();
       }
+      lastSpeechAt.current = Date.now();
       setHeard(line.text);
       heardRef.current = line.partial === false ? "" : line.text;
       if (line.partial !== false) return;
@@ -747,8 +809,14 @@ function Call({ bot }: { bot: Bot }) {
           });
           return;
         }
-        // not a decision — leave the card up and say so rather than
-        // guessing consent from an ambiguous sentence
+        // Not a decision: never guess consent from it. With the host on, a
+        // question about the request ("what is it searching for?") gets an
+        // answer from the host, which knows the card and ends by asking for
+        // a yes or no; the card stays open either way.
+        if (hostOn.current && approvalRef.current) {
+          void hostReply(said, spokenApprovalPrompt(approvalRef.current, bot.name, true));
+          return;
+        }
         void sayThenListen("Sorry, is that a yes or a no?");
         return;
       }
@@ -933,7 +1001,7 @@ function Call({ bot }: { bot: Bot }) {
       const busyTalking =
         hostOn.current &&
         (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
-      if (busyTalking) deferredReply.current = line;
+      if (busyTalking) deferredReplies.current.push(line);
       else void sayThenListen(line);
       return;
     }
@@ -943,7 +1011,7 @@ function Call({ bot }: { bot: Bot }) {
       const busyTalking =
         hostOn.current &&
         (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
-      if (busyTalking) deferredReply.current = reply.text;
+      if (busyTalking) deferredReplies.current.push(reply.text);
       else void tellReply(reply.text);
     } else if (chip?.tool?.spoken && phase === "working" && !hostOn.current) {
       void say(chip.tool.spoken).then((stillMine) => {

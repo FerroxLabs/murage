@@ -315,6 +315,38 @@ test("a handed-down turn that fails is said out loud, not left running in silenc
   await expect.poll(() => h.hostBodies.at(-1).history).toContainEqual({ role: "host", text: "That didn't work. Grok CLI is not signed in, run grok login in a terminal." });
 });
 
+test("while the engine works and the call is quiet, the bot says what it is doing, now and then", async ({ page }) => {
+  await page.clock.install();
+  const h = await harness(page);
+  h.replies.push([{ type: "sentence", text: "Let me look into that." }, { type: "hand_down", request: "Research flights to Bangkok" }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("Research flights to Bangkok"));
+  await expect.poll(async () => (await actions(page)).at(-1)).toMatchObject({ type: "send" });
+  await page.clock.runFor(500);
+  await page.evaluate(() => (window as any).__setBot({ busy: true, messages: [{ id: "a1", role: "bot", kind: "activity", at: 1, tool: { name: "WebFetch", spoken: "reading a page" } }] }));
+  await page.clock.runFor(8_000);
+  expect(h.spoken).not.toContain("Still on it: reading a page.");
+  await page.clock.runFor(8_000);
+  await expect.poll(() => h.spoken).toContain("Still on it: reading a page.");
+  // capped: not every second
+  await page.clock.runFor(10_000);
+  expect(h.spoken.filter((s) => s.startsWith("Still on it")).length).toBe(1);
+});
+
+test("an approval is asked in plain words, and a question about it goes to the host, never deciding it", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => (window as any).__setBot({ busy: true, messages: [
+    { id: "ap1", role: "bot", kind: "options", at: 1, card: { tool: "other", subtitle: "Agents_web_search", requestId: "req-1", options: ["Allow", "Deny"] } },
+  ] }));
+  await expect.poll(() => h.spoken).toContain("Can I search the web? Yes or no.");
+  h.replies.push([{ type: "sentence", text: "It wants to search for this week's AI news. Yes or no?" }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What is it searching for?"));
+  await expect.poll(() => h.spoken.at(-1)).toBe("It wants to search for this week's AI news. Yes or no?");
+  expect(h.hostBodies.at(-1)).toMatchObject({ text: "What is it searching for?", approval: "Can I search the web? Yes or no." });
+  expect((await actions(page)).some((a) => a.type === "decideRequest")).toBe(false);
+  await page.evaluate(() => (window as any).__say("Yes"));
+  await expect.poll(async () => (await actions(page)).at(-1)).toMatchObject({ type: "decideRequest", requestId: "req-1", behavior: "allow" });
+});
+
 test("cancel from the host stops the running turn", async ({ page }) => {
   const h = await harness(page);
   await page.evaluate(() => (window as any).__setBot({ busy: true }));

@@ -153,7 +153,7 @@ export function voiceHostPrompt(state: VoiceHostState): string {
     "- Never say something is started, sent, booked or done unless you can see it below, and never estimate time or progress (no \"almost done\", no \"in a minute\"). After hand_down, say you are on it, not that it is done.",
     "- If the owner asks about progress and nothing is running, say plainly that nothing is running (and, if you said earlier on this call that something could not start, that it could not start and why). Never hand the same request down again because they asked how it is going.",
     "- If work is already running and the owner asks how it is going, name only steps from the \"Steps so far\" list below, in plain words, and nothing else. If there is no list, say it is still working. If they ask to stop it, say so briefly and call cancel_task.",
-    "- If an approval is waiting, tell the owner what it is and that a plain yes or no answers it.",
+    "- If an approval is waiting, answer what the owner asks about it from what you can see, in plain words (never a tool's internal name), and end by asking for a plain yes or no. Never decide it for them, never hand it down, and never say it is approved or denied.",
     "- The owner's words reach you through speech recognition, which mishears names (yours included) and small words. Answer what they meant; never correct or remark on how something came through.",
     "- If the owner is just chatting, chat back briefly, in character.",
     "",
@@ -716,7 +716,9 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
       !handed &&
       options.state.task.busy &&
       STOP_ASKED.test(options.said) &&
-      STOP_SAID.test(`${streamed} ${spoken}`)
+      !KEEP_GOING.test(options.said) &&
+      STOP_SAID.test(`${streamed} ${spoken}`) &&
+      !KEEP_GOING.test(`${streamed} ${spoken}`)
     ) {
       yield { type: "cancel" };
     }
@@ -729,6 +731,8 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
 }
 
 const STOP_ASKED = /\b(stop|cancel|never ?mind|forget (it|that)|halt|drop it)\b/i;
+/** "Don't stop", "keep going", "I won't stop it": the opposite of a stop. */
+const KEEP_GOING = /\b(don'?t|do not|won'?t|will not|not|never)\s+(\w+\s+){0,2}(stop|cancel|halt)|\bkeep (going|at it|on)|\bcarry on\b/i;
 const STOP_SAID = /\b(stop(ping|ped)?|cancel(l?ing|l?ed)?|halt(ing|ed)?|dropp(ing|ed))\b/i;
 
 /** Longest finished answer the host is asked to brief (about 3,000 words). */

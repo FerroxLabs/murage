@@ -210,6 +210,12 @@ describe("voice host", () => {
     // nothing running, or not asked to stop: nothing is cancelled
     expect(await said(STATE, "Actually, stop that, never mind.")).not.toContainEqual({ type: "cancel" });
     expect(await said(busy, "How's it going?")).not.toContainEqual({ type: "cancel" });
+    // the opposite of a stop, from either side
+    expect(await said(busy, "Don't stop, keep going.")).not.toContainEqual({ type: "cancel" });
+    const keep = await collect(
+      runVoiceHostTurn({ state: busy, history: [], said: "should I stop it?", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("No, I won't stop it, it's nearly there.")]) }),
+    );
+    expect(keep).not.toContainEqual({ type: "cancel" });
     // the tool was called: one cancel, not two
     const both = await collect(
       runVoiceHostTurn({ state: busy, history: [], said: "stop that", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Stopping that."), tool(0, "cancel_task", "{}")]) }),
