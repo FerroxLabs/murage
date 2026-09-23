@@ -51,6 +51,8 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
  * sentence that merely contained the word "sure". */
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
+/** Listening noises while the bot talks: "uh-huh", "yeah", "mm", "right". */
+const BACKCHANNEL = /^(u+h+[- ]?h+u+h+|m+h?m+|mm+[- ]?h+m+|yeah|yep|yes|right|okay|ok|sure|got it|i see|oh|ah|wow|nice|cool|uh|um)[.!?]*$/i;
 /** A yes that covers this kind of request until the call ends. */
 const YES_FOR_CALL = /\b(for (the rest of |)(the|this) call|yes to (all|everything)|until (i|we) hang up|(for )?the rest of (the|this) call|don'?t (ask|keep asking)( me)?( again)?)\b/i;
 
@@ -275,6 +277,10 @@ function Call({ bot }: { bot: Bot }) {
   /** Work handed down on this call and what the call screen knows of it;
    *  the host sees each as a tool call with its live status. */
   const handDowns = useRef<CallHandDown[]>([]);
+  /** When the owner last cancelled work on this call. A reply the stopped
+   *  work still writes is not spoken (Pipecat drops results that arrive
+   *  after a call was cancelled). */
+  const cancelledAt = useRef(0);
   const hostAbort = useRef<AbortController | null>(null);
   const heardRef = useRef("");
   /** An engine reply that arrived while the owner was mid-sentence. */
@@ -606,6 +612,7 @@ function Call({ bot }: { bot: Bot }) {
             handDowns.current = [...handDowns.current, { id: handedId, request: event.request, at: Date.now(), state: "sending" as const }].slice(-12);
             sendFromCall(event.request, said, handedId);
           } else if (event.type === "cancel") {
+            cancelledAt.current = Date.now();
             for (const h of handDowns.current) if (h.state === "sending" || h.state === "accepted") h.state = "cancelled";
             dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId });
           } else if (event.type === "error") {
@@ -771,6 +778,21 @@ function Call({ bot }: { bot: Bot }) {
         // a word could be a cough the recognizer guessed at: hold the bot
         // and wait; two words, or a finished sentence, is the owner
         const words = line.text.trim().split(/\s+/).filter(Boolean);
+        // "uh-huh", "yeah", "right": listening noises, not a turn (LiveKit's
+        // backchannel handling). The bot carries on; a finished line of only
+        // those is not a turn either.
+        const answering = (askedApproval.current && !askedApproval.current.submitted) || askedQuestion.current;
+        if (!answering && BACKCHANNEL.test(line.text.trim())) {
+          if (line.partial === false) {
+            resumeBot();
+          } else {
+            // could still become "yeah, but...": hold, and carry on if not
+            holdForOwner();
+            if (maybeOwner.current) maybeOwner.current.voice = false;
+            settleMaybeOwner();
+          }
+          return;
+        }
         if (line.partial !== false && words.length < 2) {
           if (words.length) {
             holdForOwner();
@@ -1050,6 +1072,9 @@ function Call({ bot }: { bot: Bot }) {
     const chip = [...fresh].reverse().find((m) => m.kind === "activity" && m.tool?.spoken);
     for (const m of fresh) spokenIds.current.add(m.id);
 
+    // written by work the owner cancelled on this call: in the chat, not said
+    const lastSent = handDowns.current.at(-1)?.at ?? 0;
+    if (reply && cancelledAt.current > lastSent && reply.at >= cancelledAt.current - 1_000) return;
     if (!reply?.text && failure?.tool) {
       const why = plainFailure(failure.tool.errorDetails || failure.tool.name);
       const line = `That didn't work. ${why}${/[.!?]$/.test(why) ? "" : "."}`;

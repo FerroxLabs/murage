@@ -385,6 +385,10 @@ test("cancel from the host stops the running turn", async ({ page }) => {
   await page.evaluate(() => (window as any).__say("never mind, stop"));
   await expect.poll(async () => (await actions(page)).at(-1)).toMatchObject({ type: "interrupt", botId: "bot-1", threadId: "thread-1" });
   await expect.poll(() => h.spoken).toContain("Stopping that.");
+  // the stopped work still writes a reply: it stays in the chat, unspoken
+  await page.evaluate(() => (window as any).__setBot({ busy: false, messages: [{ id: "late", role: "bot", kind: "text", at: Date.now(), text: "Here is the half-finished report." }] }));
+  await page.waitForTimeout(500);
+  expect(h.spoken).not.toContain("Here is the half-finished report.");
 });
 
 test("on a Mac the recognizer is fed the echo-cancelled microphone and the owner can talk over the bot", async ({ page }) => {
@@ -447,6 +451,18 @@ test("a stray word pauses the bot and it carries on; the owner's words stop it, 
     role: "host",
     text: "Here is a long summary of the whole board. It goes on for a while… [the owner cut in here]",
   });
+});
+
+test("an uh-huh while the bot talks is listening, not interrupting", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 1_500));
+  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "sentence", text: "It goes on for a while." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's on the board?"));
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  const asked = h.hostBodies.length;
+  await page.evaluate(() => (window as any).__say("uh-huh"));
+  await expect(page.getByText("It goes on for a while.")).toBeVisible({ timeout: 5_000 });
+  expect(h.hostBodies.length).toBe(asked);
 });
 
 test("words the recognizer guesses from a noise (no speech heard) neither interrupt the bot nor start a turn", async ({ page }) => {
