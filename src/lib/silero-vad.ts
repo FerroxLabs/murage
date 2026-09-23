@@ -40,8 +40,11 @@ export class SileroVad {
       ort.env.wasm.wasmPaths = { wasm: wasmUrl, mjs: mjsUrl };
       const model = await fetch(modelUrl).then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(`${res.status}`))));
       const session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ["wasm"] });
+      console.info("[call] speech detector ready (Silero VAD)");
       return new SileroVad(session);
-    } catch {
+    } catch (error) {
+      // the call carries on with its loudness gate; say so where it can be seen
+      console.warn(`[call] speech detector unavailable, using loudness: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

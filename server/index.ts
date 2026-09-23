@@ -502,6 +502,11 @@ const STATIC_DIR = process.env.MURAGE_STATIC_DIR || null;
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "text/javascript",
+  // the call's speech detector: ONNX Runtime Web loads its glue as a module
+  // (a module served as anything but JavaScript is refused) and compiles
+  // its WebAssembly by streaming, which requires this exact type
+  ".mjs": "text/javascript",
+  ".wasm": "application/wasm",
   ".css": "text/css",
   ".svg": "image/svg+xml",
   ".png": "image/png",
