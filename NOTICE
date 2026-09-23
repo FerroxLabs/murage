@@ -375,6 +375,13 @@ no source file was copied whole.
     call window through ONNX Runtime Web (onnxruntime-web, MIT License).
     Murage: src/lib/silero-vad.ts, src/lib/call-mic.ts
 
+  KaTeX (https://katex.org), MIT License. Math in chat.
+    Murage: src/lib/chat-math.ts, src/components/ChatMath.tsx
+  Mermaid (https://mermaid.js.org), MIT License. Diagrams in chat, drawn in
+    a sandboxed frame. Murage: src/mermaid-frame/, src/components/MermaidDiagram.tsx
+  DOMPurify (https://github.com/cure53/DOMPurify), Apache-2.0 OR MPL-2.0
+    (used under Apache-2.0). Cleans math and diagram output.
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,
