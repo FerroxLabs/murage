@@ -396,7 +396,13 @@ export interface ProviderAdapter {
    * the deadline, and implement this method. Codex already closes its child
    * before emitting turn.completed and rejects an unconfirmed stop. Claude
    * retains sessions. Antigravity and BoxAgent are NOT covered: their
-   * interruptTurn still means "requested, not observed". */
+   * interruptTurn still means "requested, not observed".
+   *
+   * 0.1.59 (#1575): an ACP harness with `pooledSessions` (Fuigo) may hand a
+   * cleanly finished turn's child to its idle pool instead of closing it; that
+   * turn's wait then resolves confirmed at once, as Claude's retained session
+   * does. interruptTurn and resetSession close the idle child and confirm its
+   * exit. */
   awaitTurnTeardown?(threadId: ThreadId, turnId?: TurnId): Promise<ProviderStopResult>;
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.

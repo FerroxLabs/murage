@@ -39,6 +39,18 @@ describe("ChildTeardown", () => {
     child.emit("close", 0, null);
     await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
   });
+  it("detach hands a live child back to a pool: the turn's waits confirm and its close listener goes", async () => {
+    const child = fakeChild();
+    const teardowns = new TurnTeardowns(confirmFake);
+    const teardown = teardowns.track("thread", "turn", child);
+    const waiting = teardowns.wait("thread", "turn", budget);
+    const listeners = child.listenerCount("close");
+    teardown.detach();
+    await expect(waiting).resolves.toEqual({ closeConfirmed: true });
+    expect(teardowns.pending("thread")).toBe(false);
+    // one listener per turn on a long-lived pooled child would pile up
+    expect(child.listenerCount("close")).toBe(listeners - 1);
+  });
   it("treats a spawn that produced no process as already closed", async () => {
     const teardown = new ChildTeardown(fakeChild(null), confirmFake);
     expect(teardown.closed).toBe(true);

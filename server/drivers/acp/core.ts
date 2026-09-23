@@ -38,6 +38,7 @@ import { resolveToolIdentity, resolveToolLabel, toolFailureText } from "../../..
 import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 
@@ -46,7 +47,7 @@ import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
-import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "../child-teardown.ts";
+import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
   errnoCategory,
@@ -615,7 +616,7 @@ import { isHarnessOwnedMcpEnvName } from "../../mcp-registry.ts";
 // packaged server dir entirely. See server/proxy-paths.ts.
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "../bounded-lines.ts";
+import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage, type FrameOverflow } from "../bounded-lines.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
 export interface AcpConfig {
@@ -747,6 +748,14 @@ export interface AcpSupport {
    *  session that was given a non-empty `mcpServers` list until this
    *  notification names the session, or `MCP_READY_WAIT_MS` passes. */
   mcpReadyNotification?: string;
+  /** Keep one engine process per thread alive between turns (upstream
+   *  4b0dabc6, #1575), so a turn on a thread whose last turn finished cleanly
+   *  skips the spawn, `initialize` and `authenticate`. Opt-in per harness:
+   *  it is only safe for an engine whose `session/load` on a session that is
+   *  already live in the process re-applies the `mcpServers` it is handed,
+   *  because the harness mints fresh capability tokens for them every turn.
+   *  See the pool notes inside `createAcpDriver`. */
+  pooledSessions?: boolean;
 }
 
 /** Handshake budgets, overridable per box. A cold `npx`-shaped agent, a slow
@@ -820,6 +829,21 @@ const promptIdleTimeoutMs = (): number => {
   const ms = Number(raw);
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
 };
+/** How long a pooled engine process may sit idle before it is closed. Read
+ * lazily so a fixture can shorten it; a non-positive or non-numeric value
+ * keeps the default rather than disarming the close. */
+const poolIdleMs = (): number => envOr("MURAGE_ACP_POOL_IDLE_MS", 10 * 60_000);
+/** Most idle processes one engine instance keeps. Each is a whole engine
+ * (Fuigo's resident set is large), and a burst of one-off threads — routine
+ * runs, a room — would otherwise hold one each for the full idle window. The
+ * longest-idle process is closed first. */
+const poolMaxIdle = (): number => Math.max(1, Math.floor(envOr("MURAGE_ACP_POOL_MAX", 4)));
+/** `MURAGE_ACP_POOL=0` turns the pool off for every harness: each turn spawns
+ * and closes its own process, as before #1575. */
+const poolingEnabled = (): boolean => process.env.MURAGE_ACP_POOL !== "0";
+/** A stable digest, so neither the spawn environment's secrets nor the
+ * per-turn capability tokens in `mcpServers` are ever held as a key. */
+const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 /** After session/cancel the agent may still answer the prompt; past this the
  * turn settles as cancelled and the child is terminated. */
 const ACP_CANCEL_GRACE_MS = 5_000;
@@ -1012,6 +1036,229 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
+      // ── Engine process pool (upstream 4b0dabc6, #1575) ─────────────────
+      //
+      // A harness with `pooledSessions` keeps the process that served a
+      // thread's last turn alive, idle, for the next one, so that turn skips
+      // the spawn, `initialize` and `authenticate`. Every child — pooled or
+      // not — is wrapped in an `AcpProcess` whose stdout/stderr/exit
+      // listeners live as long as the process; the running turn plugs its
+      // handlers in as `hooks`, and between turns nothing is brokered.
+      //
+      // What makes reuse safe (checked in `launch`, all or nothing):
+      //  - the spawn contract is unchanged: binary, full argv (model, effort,
+      //    permission mode and the `--trust` folder decision all ride argv),
+      //    cwd, a digest of the exact child environment and, for an engine
+      //    that gates folders, the turn's whole folder-trust record;
+      //  - the turn resumes exactly the native session the process holds
+      //    (`resumeCursor === sessionId`) and the harness did not ask for a
+      //    reset (`sessionReset`, #1562): an edit, a branch switch, a memory
+      //    refresh or any rebuilt context therefore never reaches a process
+      //    that remembers the abandoned branch;
+      //  - the turn is not provider-routed (a routed turn's per-turn home is
+      //    removed when its child closes), the harness is not Grok (its
+      //    resume binding waits on the previous child's close), the instance
+      //    does not bypass permissions, and the turn holds no computer or
+      //    browser (see `launch`: work an engine leaves running after
+      //    `end_turn` must not outlive those claims);
+      //  - nothing retired the thread since: `interruptTurn` and
+      //    `resetSession` bump its epoch and close any idle process.
+      //
+      // The capability tokens the harness puts in `mcpServers` change every
+      // turn, so a reused process gets them through `session/load` on its live
+      // session, which re-applies the servers (Fuigo: `load_session` on a
+      // resident session sends `UpdateMcpServers`); a load it refuses falls
+      // back to a fresh process in the same turn.
+      //
+      // Only a turn that ends cleanly (`end_turn` with something to show)
+      // parks its process. A failure, a cancel, an interrupt, a crash or a
+      // frame overflow closes it exactly as before. An idle process closes
+      // after `MURAGE_ACP_POOL_IDLE_MS`, on `interruptTurn` (every Stop, bot
+      // delete, stall watchdog and settings change goes through it),
+      // `resetSession`, a contract change, a request it sends while idle,
+      // its own exit, `stopAll` and `dispose`; and the longest-idle one closes
+      // when more than `MURAGE_ACP_POOL_MAX` sit idle.
+      interface AcpProcessHooks {
+        line(line: string): void;
+        overflow(overflow: FrameOverflow): void;
+        stderr(text: string): void;
+        error(error: Error): void;
+        close(code: number | null, signal: NodeJS.Signals | null): void;
+      }
+      interface AcpProcess {
+        readonly child: ReturnType<typeof spawnCli>;
+        /** unique per process; keys its close observation */
+        readonly key: string;
+        /** spawn-contract digest; null when this process may never be pooled */
+        readonly contractKey: string | null;
+        /** JSON-RPC ids are per process, not per turn: a late answer to a
+         *  settled turn's request must never match a later turn's. */
+        nextId: number;
+        /** `initialize`'s answer, paid once per process */
+        initResult: any;
+        /** the native session live in this process, once a turn parked it */
+        sessionId: string | null;
+        /** digest of the `mcpServers` that session was established with */
+        sessionKey: string | null;
+        /** sessions the engine reported MCP-ready, recorded from the first
+         *  byte of stdout, so a notification that beats its response is kept */
+        readonly mcpReadySessions: Set<string>;
+        /** the running turn's handlers; null while idle */
+        hooks: AcpProcessHooks | null;
+        idleTimer: ReturnType<typeof setTimeout> | null;
+        closing: boolean;
+        dead: boolean;
+        /** the close observation `stopAll`/`dispose`/`interruptTurn` wait on
+         *  once no turn owns the process */
+        poolTeardown: ChildTeardown | null;
+      }
+      /** Idle processes, by thread. A process owned by a running turn is
+       *  never in here. */
+      const pool = new Map<string, AcpProcess>();
+      /** Close observations of processes no turn owns any more. */
+      const poolTeardowns = new TurnTeardowns();
+      /** Bumped by interruptTurn/resetSession: a turn that started under an
+       *  older epoch never parks its process. */
+      const threadEpochs = new Map<string, number>();
+      const epochOf = (threadId: string) => threadEpochs.get(threadId) ?? 0;
+      const retireThread = (threadId: string) => threadEpochs.set(threadId, epochOf(threadId) + 1);
+      let processSeq = 0;
+      let disposed = false;
+
+      const writeTo = (threadId: string, proc: AcpProcess, obj: unknown) => {
+        try {
+          proc.child.stdin.write(JSON.stringify(obj) + "\n");
+        } catch {}
+        appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
+      };
+
+      /** Close a process nobody may use again. `keepHooks` leaves the running
+       *  turn's handlers attached, so the turn still observes the exit it
+       *  asked for (its stop path); otherwise the process is detached first. */
+      const closeProcess = (
+        threadId: string,
+        proc: AcpProcess,
+        why: string,
+        options: { keepHooks?: boolean; observer?: Parameters<typeof killCliTree>[1] } = {},
+      ) => {
+        if (proc.idleTimer) clearTimeout(proc.idleTimer);
+        proc.idleTimer = null;
+        if (pool.get(threadId) === proc) pool.delete(threadId);
+        if (!options.keepHooks) {
+          proc.hooks = null;
+          proc.poolTeardown ??= poolTeardowns.track(threadId, proc.key, proc.child);
+        }
+        proc.poolTeardown?.markStopRequested();
+        const first = !proc.closing;
+        proc.closing = true;
+        // Only a process that could have been pooled logs its close: every other
+        // harness keeps exactly the native log it had.
+        if (first && proc.contractKey !== null) appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "close", reason: why } });
+        // A turn's own stop may repeat, as it always could (an interrupt
+        // before the session existed, then its settle); a pool close does not.
+        if (first || options.keepHooks) killCliTree(proc.child, options.observer);
+      };
+
+      /** Wrap a freshly spawned child. Its listeners outlive any one turn. */
+      const openProcess = (threadId: string, child: ReturnType<typeof spawnCli>, contractKey: string | null): AcpProcess => {
+        const proc: AcpProcess = {
+          child,
+          key: `acp-process-${++processSeq}`,
+          contractKey,
+          nextId: 1,
+          initResult: null,
+          sessionId: null,
+          sessionKey: null,
+          mcpReadySessions: new Set(),
+          hooks: null,
+          idleTimer: null,
+          closing: false,
+          dead: false,
+          poolTeardown: null,
+        };
+        // Byte-bounded framing (A4): the splitter decodes UTF-8 only for
+        // complete lines, so multibyte characters that straddle two reads
+        // stay intact, and one frame can never hold more than
+        // ENGINE_FRAME_MAX_BYTES of this shared process's memory. One per
+        // process, so a line cut across two turns is not lost.
+        const lines = createBoundedLineSplitter({
+          onLine: (line) => (proc.hooks ? proc.hooks.line(line) : idleLine(threadId, proc, line)),
+          onOverflow: (overflow) => {
+            if (proc.hooks) return proc.hooks.overflow(overflow);
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
+            closeProcess(threadId, proc, "frame_overflow");
+          },
+        });
+        child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
+        child.stderr.on("data", (chunk) => proc.hooks?.stderr(String(chunk)));
+        child.on("error", (error) => {
+          proc.dead = true;
+          if (pool.get(threadId) === proc) closeProcess(threadId, proc, "error");
+          proc.hooks?.error(error);
+        });
+        child.on("close", (code, signal) => {
+          proc.dead = true;
+          if (proc.idleTimer) clearTimeout(proc.idleTimer);
+          proc.idleTimer = null;
+          if (pool.get(threadId) === proc) {
+            pool.delete(threadId);
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: { acpPool: "exited", code, signal } });
+          }
+          proc.hooks?.close(code, signal);
+        });
+        return proc;
+      };
+
+      /** Output of a process no turn owns. Notifications are only recorded;
+       *  a request means the engine is acting with nobody to answer it, so it
+       *  is answered (never left blocking) and the process is retired. */
+      const idleLine = (threadId: string, proc: AcpProcess, line: string) => {
+        if (!line.trim()) return;
+        let msg: any;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          return;
+        }
+        appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
+        if (msg.id !== undefined && msg.method) {
+          writeTo(threadId, proc, msg.method === "session/request_permission"
+            ? { jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "cancelled" } } }
+            : { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no turn is running" } });
+          closeProcess(threadId, proc, "idle_request");
+          return;
+        }
+        if (support.mcpReadyNotification && msg.method === support.mcpReadyNotification) {
+          const readyId = msg.params?.sessionId;
+          if (typeof readyId === "string" && readyId) proc.mcpReadySessions.add(readyId);
+        }
+      };
+
+      /** Hand a still-healthy process back to the pool for this thread. */
+      const parkProcess = (threadId: string, proc: AcpProcess, sessionId: string) => {
+        proc.hooks = null;
+        proc.sessionId = sessionId;
+        proc.poolTeardown ??= poolTeardowns.track(threadId, proc.key, proc.child);
+        const previous = pool.get(threadId);
+        if (previous && previous !== proc) closeProcess(threadId, previous, "replaced");
+        pool.set(threadId, proc);
+        // Map order is park order: the first entry has been idle longest.
+        for (const [oldestThread, oldest] of pool) {
+          if (pool.size <= poolMaxIdle()) break;
+          closeProcess(oldestThread, oldest, "pool_full");
+        }
+        if (proc.idleTimer) clearTimeout(proc.idleTimer);
+        proc.idleTimer = setTimeout(() => closeProcess(threadId, proc, "idle"), poolIdleMs());
+        proc.idleTimer.unref?.();
+        appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "park" } });
+      };
+
+      /** Close the idle process of one thread (none is fine). */
+      const closeIdle = (threadId: string, why: string) => {
+        const idle = pool.get(threadId);
+        if (idle) closeProcess(threadId, idle, why);
+      };
+
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
@@ -1067,6 +1314,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let child: ReturnType<typeof spawnCli> | null = null;
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
+        // The process this turn is using (see the pool notes above), whether
+        // it adopted it from the pool (`reused`), and the thread epoch it
+        // started under. `poolable` and `contractKey` are settled in launch().
+        let proc: AcpProcess | null = null;
+        let reused = false;
+        let poolable = false;
+        let contractKey: string | null = null;
+        const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
         const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false };
@@ -1081,14 +1336,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // dropped when the terminal update consumes it. Two names, because the
         // chip's is a display string and retention cannot be decided on it.
         const toolNames = new Map<string, { label: string; identity?: string }>();
-        let nextId = 1;
         let sessionId: string | null = null;
         let promptStartedAt: number | null = null;
-        // Sessions the engine has reported MCP-ready. Recorded from the first
-        // byte of the child's stdout, so a notification that arrives BEFORE
-        // the session/new response is kept, not lost. One child per turn, so
-        // this holds one or two ids at most.
-        const mcpReadySessions = new Set<string>();
+        // Sessions the engine has reported MCP-ready live on the process
+        // (`proc.mcpReadySessions`), recorded from the first byte of its
+        // stdout, so a notification that arrives BEFORE the session/new
+        // response is kept, not lost.
         let releaseMcpWait: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1125,6 +1378,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
             for (const pending of rpcPending.values()) pending.armIdle();
           }
+          if (proc) return writeTo(threadId, proc, obj);
           try {
             child?.stdin.write(JSON.stringify(obj) + "\n");
           } catch {}
@@ -1144,7 +1398,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           idleMessage?: string,
         ) =>
           new Promise<any>((resolve, reject) => {
-            const id = nextId++;
+            if (!proc) return reject(new Error(`${method} before the engine started`));
+            const id = proc.nextId++;
             let timer: ReturnType<typeof setTimeout> | null = null;
             if (timeoutMs) {
               timer = setTimeout(() => {
@@ -1192,7 +1447,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             promptSent: state.promptSent,
           });
           teardown?.markStopRequested();
-          if (child) killCliTree(child, lifecycle.observeStopRoute);
+          // A process a turn stops is never pooled again; its hooks stay so
+          // this turn still observes the exit it asked for.
+          if (proc) closeProcess(threadId, proc, reason, { keepHooks: true, observer: lifecycle.observeStopRoute });
+          else if (child) killCliTree(child, lifecycle.observeStopRoute);
         };
 
         /** Emit buffered assistant text as its own item, then clear it. */
@@ -1251,9 +1509,21 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           rpcPending.clear();
           active.delete(threadId);
+          // Only a clean finish parks the process (see the pool notes). It is
+          // parked BEFORE the final events, so a listener that starts the next
+          // turn at once finds it, and so the turn's teardown is already
+          // released when the harness asks for it.
+          const park = proc !== null && poolable && ok && stopReason === null && !state.cancelRequested
+            && sessionId !== null && !proc.dead && !proc.closing
+            && proc.child.exitCode === null && proc.child.signalCode === null
+            && !disposed && epochOf(threadId) === startEpoch;
+          if (park) {
+            teardown?.detach();
+            parkProcess(threadId, proc!, sessionId!);
+          }
           flushAssistantText();
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
-          stop(cause); // the agent process does not exit on its own
+          if (!park) stop(cause); // the agent process does not exit on its own
         };
 
         // A question for the owner (Fuigo's `_fuigo/ask_user_question`, an ACP
@@ -1556,7 +1826,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (support.mcpReadyNotification && msg.method === support.mcpReadyNotification) {
             const readyId = msg.params?.sessionId;
             if (typeof readyId === "string" && readyId) {
-              mcpReadySessions.add(readyId);
+              proc?.mcpReadySessions.add(readyId);
               if (readyId === sessionId) releaseMcpWait?.();
             }
             return;
@@ -1652,19 +1922,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        // Byte-bounded framing (A4): the splitter decodes UTF-8 only for
-        // complete lines, so multibyte characters that straddle two reads stay
-        // intact, and one frame can never hold more than ENGINE_FRAME_MAX_BYTES
-        // of this shared process's memory.
-        const stdoutLines = createBoundedLineSplitter({
-          onLine: (line) => handleStdoutLine(line),
-          onOverflow: (overflow) => {
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
-            if (state.settled) return;
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage(support.displayName, overflow) });
-            settle(false, FRAME_TOO_LARGE);
-          },
-        });
+        // A frame over ENGINE_FRAME_MAX_BYTES (A4); the byte-bounded splitter
+        // that detects it belongs to the process (`openProcess`).
+        const handleOverflow = (overflow: FrameOverflow) => {
+          appendNative(threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
+          if (state.settled) return;
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage(support.displayName, overflow) });
+          settle(false, FRAME_TOO_LARGE);
+        };
         const handleStdoutLine = (line: string) => {
           if (!line.trim()) return;
           let msg: any;
@@ -1707,19 +1972,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        const attachChild = (proc: NonNullable<typeof child>) => {
-        proc.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
-        proc.stderr.on("data", (c) => {
-          const text = String(c), remaining = STDERR_DIAGNOSTIC_CHARS - stderrDiagnostic.length;
+        /** Plug this turn into a process: its output, its stderr and its
+         * exit are this turn's until the turn settles and parks or stops it. */
+        const attachHooks = (target: AcpProcess) => {
+        target.hooks = {
+        line: handleStdoutLine,
+        overflow: handleOverflow,
+        stderr: (text) => {
+          const remaining = STDERR_DIAGNOSTIC_CHARS - stderrDiagnostic.length;
           stderrDiagnostic += text.slice(0, Math.max(0, remaining));
           if (text.length > remaining) stderrDiagnosticTruncated = true;
-        });
-        proc.on("error", (e) => {
+        },
+        error: (e) => {
           if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
           emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
           settle(false, "spawn_error");
-        });
-        proc.on("close", (code, signal) => {
+        },
+        close: (code, signal) => {
           // Redact before splitting records, so a credential crossing a chunk
           // boundary is not exposed. A capped partial final line is omitted.
           const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
@@ -1731,7 +2000,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           lifecycle.record("closed", {
             code,
             signal,
-            pid: proc.pid ?? null,
+            pid: target.child.pid ?? null,
             pendingMethods: [...rpcPending.values()].map((pending) => pending.method),
             pendingCount: rpcPending.size,
             settled: state.settled,
@@ -1760,7 +2029,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             settle(false, "exit_before_result");
           }
           stderrDiagnostic = "";
-        });
+        },
+        };
         };
 
         // interruptTurn cannot tell a user's Stop from a watchdog or a settings
@@ -1797,7 +2067,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * The timer and the release hook are always cleared together. */
         const awaitMcpReady = (id: string) =>
           new Promise<"ready" | "timeout" | "aborted">((resolve) => {
-            if (mcpReadySessions.has(id)) return resolve("ready");
+            const ready = proc?.mcpReadySessions ?? new Set<string>();
+            if (ready.has(id)) return resolve("ready");
             if (state.settled || state.cancelRequested) return resolve("aborted");
             const finish = (outcome: "ready" | "timeout" | "aborted") => {
               if (releaseMcpWait !== release) return;
@@ -1805,7 +2076,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               clearTimeout(timer);
               resolve(outcome);
             };
-            const release = () => finish(mcpReadySessions.has(id) ? "ready" : "aborted");
+            const release = () => finish(ready.has(id) ? "ready" : "aborted");
             releaseMcpWait = release;
             const timer = setTimeout(() => finish("timeout"), mcpReadyWaitMs());
             timer.unref?.();
@@ -1823,32 +2094,146 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * handshake. A synchronous spawn failure throws to the caller, as it
          * always did for a turn that needs no card. */
         const launch = (trusted: boolean) => {
-        lifecycle.record("spawn_requested");
-        const proc = (() => {
-          try {
-            return spawnCli(config.cli, support.spawnArgs(config, cliTurn, { requestedModel: turn.model, folderTrusted: trusted }), {
-              cwd,
-              env,
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-          } catch (error) {
-            lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
-            throw error;
+        const argv = support.spawnArgs(config, cliTurn, { requestedModel: turn.model, folderTrusted: trusted });
+        // The spawn contract (see the pool notes): everything that decides
+        // which process a turn gets. The model, effort, permission mode and
+        // `--trust` all ride argv; the environment is the child's exact env,
+        // held only as a digest.
+        // Never pooled: a provider-routed turn (its home is removed when its
+        // child closes), Grok (its resume binding waits on that close), a
+        // bypass-permissions instance, and a turn holding a computer or a
+        // browser. An engine can leave background work running after
+        // `end_turn` (Fuigo's background tasks and subagents); while the
+        // process is idle, every permission request it sends is refused and
+        // the process closed, but a bypass-permissions engine sends none, and
+        // the computer and browser claims are released when the turn ends.
+        const integrations = turn.integrations;
+        poolable = poolingEnabled() && support.pooledSessions === true && !providerBinding
+          && support.driverKind !== "grokAgent" && !config.fullAuto
+          && !integrations?.computer && !integrations?.localComputer && !integrations?.browser;
+        // The folder-trust record is in it too, whole: the engine caches its
+        // trust verdict per workspace for the life of the process (Fuigo
+        // `agent/folder_trust.rs`), so a change Murage can see (the owner's
+        // decision, the sources the scan found, a grant added to or revoked
+        // from the user's own trusted_folders.toml) must reach a new process.
+        contractKey = poolable
+          ? digest([config.cli, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null])
+          : null;
+        // `sessionReset` outranks the cursor (contracts.ts, #1562): the
+        // rebuilt history is already in the prompt, and resuming the old
+        // native session under it would hand the engine both branches.
+        const resumeId = turn.sessionReset !== true && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+
+        const spawnFresh = () => {
+          spawned = false;
+          lifecycle.record("spawn_requested");
+          const spawnedChild = (() => {
+            try {
+              return spawnCli(config.cli, argv, {
+                cwd,
+                env,
+                stdio: ["pipe", "pipe", "pipe"],
+              });
+            } catch (error) {
+              lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
+              throw error;
+            }
+          })();
+          child = spawnedChild;
+          spawnedChild.once("spawn", () => {
+            spawned = true;
+            lifecycle.record("spawned", { pid: spawnedChild.pid ?? null });
+          });
+          teardown = teardowns.track(threadId, turnId, spawnedChild);
+          teardown.onClosed(() => providerBinding?.cleanup());
+          proc = openProcess(threadId, spawnedChild, contractKey);
+          reused = false;
+          attachHooks(proc);
+        };
+
+        // Adopt the thread's idle process only when nothing that matters
+        // changed and the turn continues exactly the session it holds; any
+        // other idle process is closed, never reused.
+        const idle = pool.get(threadId);
+        if (idle) {
+          pool.delete(threadId);
+          if (idle.idleTimer) clearTimeout(idle.idleTimer);
+          idle.idleTimer = null;
+          const adopt = poolable && !idle.dead && !idle.closing && idle.contractKey === contractKey
+            && idle.child.exitCode === null && idle.child.signalCode === null
+            && turn.sessionReset !== true && resumeId !== null && resumeId === idle.sessionId;
+          if (adopt) {
+            proc = idle;
+            child = idle.child;
+            spawned = true;
+            reused = true;
+            // Ownership moves from the pool to this turn: its close is now
+            // the turn's to observe (and a reset while it runs does not wait
+            // on a process the turn is still using).
+            idle.poolTeardown?.detach();
+            idle.poolTeardown = null;
+            teardown = teardowns.track(threadId, turnId, idle.child);
+            attachHooks(idle);
+            appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "reuse" } });
+          } else {
+            closeProcess(threadId, idle, turn.sessionReset === true ? "session_reset"
+              : idle.contractKey !== contractKey ? "contract_changed" : "session_changed");
           }
-        })();
-        child = proc;
-        proc.once("spawn", () => {
-          spawned = true;
-          lifecycle.record("spawned", { pid: proc.pid ?? null });
-        });
-        teardown = teardowns.track(threadId, turnId, proc);
-        teardown.onClosed(() => providerBinding?.cleanup());
-        attachChild(proc);
+        }
+        if (!proc) spawnFresh();
         start();
 
         (async () => {
           try {
-            const init = await request(
+            const sessionKey = digest(mcpServers);
+            // Whether this turn (re-)established MCP servers and so must wait
+            // for the engine to report them ready before prompting.
+            let mcpEstablished = true;
+            let sessionResult: any = null;
+            let init: any;
+            if (reused) {
+              // The process and its native session are live. The harness put
+              // fresh capability tokens in `mcpServers`, so unless they are
+              // byte-identical to the ones the session holds, re-establish it
+              // over the wire: Fuigo's session/load on a resident session
+              // re-applies the servers (restarting only the changed ones) and,
+              // with `noReplay`, skips re-sending a transcript this driver
+              // would drop anyway. A load that fails or answers nothing gets a
+              // fresh process instead, in this same turn.
+              init = proc!.initResult;
+              if (proc!.sessionKey === sessionKey) {
+                mcpEstablished = false;
+                sessionId = resumeId;
+              } else {
+                const live = proc!;
+                live.sessionKey = null;
+                live.mcpReadySessions.delete(resumeId!);
+                try {
+                  sessionResult = await request(
+                    "session/load",
+                    { sessionId: resumeId, cwd, mcpServers, _meta: { noReplay: true } },
+                    LOAD_SESSION_TIMEOUT,
+                  );
+                  if (!sessionResult) throw new Error("session/load answered no session");
+                  live.sessionKey = sessionKey;
+                  sessionId = resumeId;
+                } catch (error) {
+                  if (state.settled) return;
+                  if (state.cancelRequested) { settle(true, "cancelled"); return; }
+                  appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "reestablish_failed" } });
+                  // The pooled process belongs to no one now: its close is
+                  // observed by the pool, and this turn owns the replacement.
+                  closeProcess(threadId, live, "reestablish_failed");
+                  teardown?.detach();
+                  proc = null;
+                  spawnFresh();
+                  sessionResult = null;
+                  mcpEstablished = true;
+                }
+              }
+            }
+            if (!reused) {
+            init = await request(
               "initialize",
               {
                 protocolVersion: 1,
@@ -1864,6 +2249,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               },
               INIT_TIMEOUT,
             );
+            proc!.initResult = init;
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
             const methodId = support.pickAuthMethod(methods);
             if (!(support.driverKind === "grokAgent" && providerBinding) && !skipSubscriptionAuthForLocalInject(turn.model)) {
@@ -1879,8 +2265,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             }
 
-            const cursor = grokBinding ? grokBinding.cursor : typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
-            let sessionResult: any = null;
+            const cursor = grokBinding ? grokBinding.cursor : resumeId;
             if (cursor) {
               try {
                 sessionResult = await request(
@@ -1920,6 +2305,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
             }
+            proc!.sessionKey = sessionKey;
+            }
+            if (!sessionId) throw new Error("no native session was established");
             let selectedModel: string | null = null;
             let sessionStarted = false;
             const emitSessionStarted = () => {
@@ -1985,7 +2373,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // Fuigo: the servers in `mcpServers` start connecting at
             // session/new; prompting before they settle hands the model a
             // "currently connecting, do not use" reminder on its first step.
-            if (support.mcpReadyNotification && mcpServers.length && sessionId) {
+            // A reused session whose servers did not change was not
+            // re-established, and the engine sends nothing for it.
+            if (support.mcpReadyNotification && mcpServers.length && sessionId && mcpEstablished) {
               const outcome = await awaitMcpReady(sessionId);
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -2168,6 +2558,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return { turnId };
       };
 
+      /** Every child this instance spawned — turn-owned or pooled — closed. */
+      const waitAllClosed = async () => {
+        const budget = { closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() };
+        const [turns, pooled] = await Promise.all([teardowns.waitAll(budget), poolTeardowns.waitAll(budget)]);
+        return turns.closeConfirmed ? pooled : turns;
+      };
+
       const snapshot = async (): Promise<ProviderSnapshot> => {
         const env = childEnv();
         const probe = await new Promise<{ error: Error | null; version: string }>((resolve) => {
@@ -2215,11 +2612,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // Close-confirmed stop (A2): resolve only once the child that served
           // this thread has closed; reject at the bounded deadline while the
           // process stays owned. A thread with no live child is already closed.
+          // Every stop of a thread also retires its idle pooled process (a
+          // Stop, a bot delete, the stall watchdog and a settings change all
+          // arrive here), and the answer waits for that process's close too.
           interruptTurn: async (threadId, turnId) => {
+            retireThread(threadId);
             active.get(threadId)?.interrupt();
-            const result = await teardowns.wait(threadId, turnId, acpStopBudget());
+            closeIdle(threadId, "interrupt");
+            const [turnClosed, poolClosed] = await Promise.all([
+              teardowns.wait(threadId, turnId, acpStopBudget()),
+              poolTeardowns.wait(threadId, undefined, acpStopBudget()),
+            ]);
+            const result = turnClosed.closeConfirmed ? poolClosed : turnClosed;
             if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
             return result;
+          },
+          // The harness calls this whenever it rebuilds or drops a thread's
+          // context outside a turn (memory refresh, relaunch): the idle
+          // process must not carry the old native session into the next turn,
+          // and a turn already running must not park its process afterwards.
+          resetSession: async (threadId) => {
+            retireThread(threadId);
+            closeIdle(threadId, "reset");
+            const closed = await poolTeardowns.wait(threadId, undefined, acpStopBudget());
+            if (!closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
           },
           awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, acpStopBudget()),
           respondToRequest: async (threadId, requestId, decision) => {
@@ -2238,8 +2654,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
           hasSession: (threadId) => active.has(threadId),
           stopAll: async () => {
+            for (const threadId of [...active.keys(), ...pool.keys()]) retireThread(threadId);
             for (const { stop } of active.values()) stop("driver_dispose");
-            const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+            for (const threadId of [...pool.keys()]) closeIdle(threadId, "stop_all");
+            const result = await waitAllClosed();
             if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           },
           onEvent: (listener) => {
@@ -2248,8 +2666,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
         },
         dispose: async () => {
+          disposed = true;
           for (const { stop } of active.values()) stop("driver_dispose");
-          const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+          for (const threadId of [...pool.keys()]) closeIdle(threadId, "dispose");
+          const result = await waitAllClosed();
           // Same as codex: an unconfirmed close keeps listeners attached so
           // the owned child's late events are still accounted for.
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);

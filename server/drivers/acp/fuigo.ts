@@ -463,6 +463,15 @@ const support: AcpSupport = {
    *  holds the first prompt for it, bounded (core.ts MCP_READY_WAIT_MS). */
   mcpReadyNotification: "_fuigo/mcp_initialized",
 
+  /** One process per thread between turns (upstream #1575, core.ts pool
+   *  notes). Safe here because `load_session` on a session already resident
+   *  in the process re-applies the `mcpServers` it is handed, restarting only
+   *  the servers whose config changed (fuigo-shell mvp_agent/session_setup.rs
+   *  `UpdateMcpServers`), and announces them again with
+   *  `_fuigo/mcp_initialized`; so the per-turn capability tokens reach a
+   *  reused process. `_meta.noReplay` skips re-sending the transcript. */
+  pooledSessions: true,
+
   /**
    * `transformEnv`, NOT `applyTurnEnv` — and that is the opposite of every
    * other Flux-routed driver in this tree, on purpose.
