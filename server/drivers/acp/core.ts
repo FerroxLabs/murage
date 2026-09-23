@@ -1045,7 +1045,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let child: ReturnType<typeof spawnCli> | null = null;
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "" };
+        // `producedItem`: the turn emitted something a person can see (a reply,
+        // an image, a tool result). An end_turn without one is a lost turn.
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false };
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
@@ -1176,6 +1178,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const text = state.text;
           state.text = "";
           if (!text.trim()) return;
+          state.producedItem = true;
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
         };
 
@@ -1548,6 +1551,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const delta = content?.text;
               if (content?.type === "image" && typeof content.data === "string" && content.data) {
                 flushAssistantText();
+                state.producedItem = true;
                 emit({
                   ...base(threadId, turnId),
                   type: "item.completed",
@@ -1602,6 +1606,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // go only into the model's context; the person who has to act
                 // on it never saw it.
                 const detail = u.status === "failed" ? redactSecretsInText(toolFailureText(u) ?? "") || undefined : undefined;
+                state.producedItem = true;
                 emit({
                   ...base(threadId, turnId),
                   type: "item.completed",
@@ -1989,7 +1994,27 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               });
             }
             const reason = result?.stopReason;
-            if (reason === "end_turn") settle(true, null);
+            // Flushed here, not in settle, so the check below sees a reply
+            // that was still buffered as streamed text.
+            if (reason === "end_turn") flushAssistantText();
+            if (reason === "end_turn" && !state.producedItem) {
+              // `end_turn` with nothing to show for it (no reply, no image,
+              // no tool result) is a lost turn, not a success. A provider can
+              // cut a reasoning-only stream and still answer end_turn, and
+              // ok:true ended the thread quietly with the person's message
+              // unanswered: no error card, no Inbox item, no team incident.
+              // Report it as a failure so those paths see it (upstream
+              // b679798f, #1623).
+              const eventBase=base(threadId,turnId);
+              emit({
+                ...eventBase,
+                type: "runtime.error",
+                message: `${support.displayName} finished without a reply, an image or a tool result, so nothing came back.`,
+                diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation),
+              });
+              settle(false, "empty_turn");
+            }
+            else if (reason === "end_turn") settle(true, null);
             else if (reason === "cancelled") settle(true, "cancelled");
             // An interrupt already sent session/cancel. An engine that ends
             // the cancelled request under its own stop reason stopped because

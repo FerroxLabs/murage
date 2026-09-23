@@ -1116,6 +1116,37 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
   });
 
+  // An end_turn with nothing to show for it used to complete ok:true, so the
+  // person's message went unanswered with no error card, Inbox item or
+  // incident (upstream #1623).
+  it("an end_turn with no reply, image or tool result is a failed turn with a plain reason", async () => {
+    await create(GrokAgentDriver, "empty-reply");
+    await instance.adapter.sendTurn({ threadId: "t-empty", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
+    expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message)
+      .toMatch(/finished without a reply, an image or a tool result/);
+  });
+
+  it("reasoning with no answer is a lost turn, not a success", async () => {
+    // a provider that never leaves its thinking stream: thought chunks
+    // stream, the engine still answers end_turn
+    await create(GrokAgentDriver, "reasoning-only");
+    await instance.adapter.sendTurn({ threadId: "t-reasoning", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
+    expect(recorder.events.some((e) => e.type === "content.delta" && (e as any).streamKind === "reasoning_text")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "item.completed")).toBe(false);
+  });
+
+  it("an end_turn with only an image is still a success", async () => {
+    await create(GrokAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image-only", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
   it("cancellation-close regression: exit on cancellation is not an unexpected failure", async () => {
     await create(GrokAgentDriver, "exit-on-cancel");
     const threadId = "t-cancel-close";
