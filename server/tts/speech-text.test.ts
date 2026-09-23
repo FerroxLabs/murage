@@ -4,7 +4,7 @@
 // the kitchen at 8am.
 import { describe, expect, it } from "vitest";
 
-import { narrateTool, pronounceable, speakable, toUtterances } from "./speech-text.ts";
+import { narrateTool, pronounceable, speakable, splitSentences, toUtterances } from "./speech-text.ts";
 
 describe("speakable", () => {
   it("names a code block instead of reading it", () => {
@@ -161,4 +161,21 @@ describe("pronounceable", () => {
       expect(pronounceable(text)).toBe(text);
     },
   );
+});
+
+describe("splitSentences", () => {
+  it.each([
+    ["It lands Sept. 14 for most users. Then we ship. ", ["It lands Sept. 14 for most users.", "Then we ship."]],
+    ["The U.S. economy grew. Europe did not. ", ["The U.S. economy grew.", "Europe did not."]],
+    ["Ask Dr. Lee, e.g. about the dose. Done. ", ["Ask Dr. Lee, e.g. about the dose.", "Done."]],
+    ["It moved to the U.S. Then it grew. ", ["It moved to the U.S.", "Then it grew."]],
+    ["Wait... really? Yes! ", ["Wait... really?", "Yes!"]],
+    ["I said no. Then I left. ", ["I said no.", "Then I left."]],
+  ])("%s", (text, sentences) => {
+    expect(splitSentences(text).sentences).toEqual(sentences);
+  });
+
+  it("keeps an unfinished sentence for the next piece of the stream", () => {
+    expect(splitSentences("It lands Sept.")).toEqual({ sentences: [], rest: "It lands Sept." });
+  });
 });

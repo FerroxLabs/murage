@@ -128,9 +128,55 @@ export function speakable(input: string): string {
   return /[\p{L}\p{N}]/u.test(text) ? text : "";
 }
 
-/** Sentence-ish boundary: `.`/`!`/`?` followed by space, but not inside a
- * decimal, an ellipsis, or a common abbreviation. */
-const BOUNDARY = /(?<!\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|No|approx))(?<![.\d])([.!?])(["')\]]*)\s+/g;
+/** Words whose full stop is never a sentence end. */
+const ALWAYS_ABBREVIATED = /\b(?:e\.g|i\.e|vs|Dr|Mr|Mrs|Ms|St|Jr|Sr|approx|Inc|Ltd|Corp|a\.m|p\.m)$/i;
+/** Words whose full stop is not a sentence end when a number follows. */
+const BEFORE_A_NUMBER = /\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec|Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun|No|Nos|Vol|pp?|ch)$/i;
+
+/**
+ * Where sentences end in `text`: after `.`, `!` or `?` (and any closing
+ * quote or bracket) followed by whitespace, except after an abbreviation.
+ * "Sept. 14", "the U.S. economy", "e.g. most" and "Dr. Lee" stay whole:
+ * a date cut from its month is a date a voice cannot say, and each piece
+ * becomes its own synthesis request. Returns the index just past each end.
+ */
+export function sentenceEnds(text: string, final = true): number[] {
+  const ends: number[] = [];
+  const boundary = /([.!?])(["')\]]*)\s+/g;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(text))) {
+    const end = match.index + match[0].length;
+    if (match[1] === ".") {
+      const before = text.slice(0, match.index);
+      const next = text[end] ?? "";
+      if (/\.$/.test(before)) continue; // an ellipsis
+      if (ALWAYS_ABBREVIATED.test(before)) continue;
+      // streaming, and what follows decides it ("Sept. " then "14"): wait
+      if (!final && !next && (BEFORE_A_NUMBER.test(before) || /(?:\b[A-Za-z]\.)*\b[A-Za-z]$/.test(before))) break;
+      if (BEFORE_A_NUMBER.test(before) && /\d/.test(next)) continue;
+      // U.S., U.K., N.Y.: an acronym ends the sentence only before a capital
+      if (/(?:\b[A-Za-z]\.)+[A-Za-z]$/.test(before) && !/[A-Z]/.test(next)) continue;
+      // a lone initial ("J. Smith")
+      if (/(?:^|\s)[A-Z]$/.test(before) && /[A-Z]/.test(next)) continue;
+    }
+    ends.push(end);
+  }
+  return ends;
+}
+
+/** `text` cut at its sentence ends; the tail after the last end is kept.
+ *  While text is still streaming in (`final` false), an end with nothing
+ *  after it yet waits: "Sept. " may be followed by "14". */
+export function splitSentences(text: string, final = true): { sentences: string[]; rest: string } {
+  const sentences: string[] = [];
+  let last = 0;
+  for (const end of sentenceEnds(text, final)) {
+    const sentence = text.slice(last, end).trim();
+    if (sentence) sentences.push(sentence);
+    last = end;
+  }
+  return { sentences, rest: text.slice(last) };
+}
 
 /**
  * Split speakable text into utterances a synthesizer can start on.
@@ -145,15 +191,8 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
   const text = speakable(input);
   if (!text) return [];
 
-  // Split on a sentinel, never on the whitespace itself: the boundary
-  // match consumes the trailing space, so splitting on " " would split
-  // every word in the text rather than every sentence.
-  const MARK = "\u0000";
-  const rough = text
-    .replace(BOUNDARY, `$1$2${MARK}`)
-    .split(MARK)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const { sentences, rest } = splitSentences(`${text} `);
+  const rough = [...sentences, rest.trim()].filter(Boolean);
 
   const out: string[] = [];
   for (const piece of rough) {

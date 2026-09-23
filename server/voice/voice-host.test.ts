@@ -195,6 +195,13 @@ describe("voice host", () => {
     expect(events).toContainEqual({ type: "hand_down", request: "AI news today" });
   });
 
+  it("keeps a month with its date even when the stream breaks right after the abbreviation", () => {
+    const splitter = new SentenceSplitter();
+    expect(splitter.push("It lands Sept. ")).toEqual([]);
+    expect(splitter.push("14 for most users. Then")).toEqual(["It lands Sept. 14 for most users."]);
+    expect(splitter.flush()).toEqual(["Then"]);
+  });
+
   it("stops running work when asked and the reply says so, even without the cancel tool", async () => {
     const busy = { ...STATE, task: { ...STATE.task, busy: true } };
     const said = (state: VoiceHostState, words: string) =>

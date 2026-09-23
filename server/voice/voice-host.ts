@@ -28,6 +28,7 @@
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
 import { isUnavailable, markUnavailable, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
+import { splitSentences } from "../tts/speech-text.ts";
 
 /** Beyond this the host has stalled; the call falls back to the engine. */
 const FIRST_TOKEN_TIMEOUT_MS = 6_000;
@@ -172,19 +173,12 @@ export class SentenceSplitter {
 
   push(delta: string): string[] {
     this.pending += delta;
-    const out: string[] = [];
-    // a sentence ends at . ! ? or an em dash run-on only when followed by
-    // whitespace, so "1,240.50" and "U.S." mid-sentence do not split early
-    const boundary = /[.!?]["')\]]*\s+/g;
-    let last = 0;
-    let match: RegExpExecArray | null;
-    while ((match = boundary.exec(this.pending))) {
-      const sentence = this.pending.slice(last, match.index + match[0].length).trim();
-      if (sentence) out.push(sentence);
-      last = match.index + match[0].length;
-    }
-    this.pending = this.pending.slice(last);
-    return out;
+    // one splitter for every spoken path (speech-text.ts): "Sept. 14" and
+    // "the U.S. economy" stay in one sentence. A boundary needs the
+    // whitespace after it, so a sentence is never cut while it streams in.
+    const { sentences, rest } = splitSentences(this.pending, false);
+    this.pending = rest;
+    return sentences;
   }
 
   flush(): string[] {
