@@ -380,6 +380,7 @@ function Call({ bot }: { bot: Bot }) {
   const openTurn = useCallback(() => {
     if (!alive.current || currentCall() !== bot.id || micLive.current) return;
     micLive.current = true;
+    console.warn(`[call-diag] session start phase=${phaseRef.current}`);
     void micRef.current?.start({ endpointMs: CALL_ENDPOINT_MS, hints: [bot.name] }).catch(() => {
       micLive.current = false;
       if (alive.current && currentCall() === bot.id) {
@@ -775,7 +776,14 @@ function Call({ bot }: { bot: Bot }) {
       // With an echo-cancelled mic, words heard while the bot is speaking are
       // the owner talking over it.
       const bargeable = mic.duplex && phaseRef.current === "speaking";
-      if (!alive.current || currentCall() !== bot.id || (phaseRef.current !== "listening" && !bargeable)) return;
+      // [call-diag]: counts and states only, never the words
+      const diag = (what: string) =>
+        console.warn(`[call-diag] line ${line.partial === false ? "final" : "partial"} ${(line.text ?? "").trim().split(/\s+/).filter(Boolean).length}w phase=${phaseRef.current} speech=${mic.speechWithin(1_500)} share=${mic.speechShare(1_500)?.toFixed(2) ?? "n/a"}: ${what}`);
+      if (!alive.current || currentCall() !== bot.id || (phaseRef.current !== "listening" && !bargeable)) {
+        if (alive.current && phaseRef.current !== "listening") diag("ignored (not listening, not talk-over)");
+        return;
+      }
+      if (bargeable) diag("heard while the bot speaks");
       if (line.error) {
         setNote("Dictation stopped unexpectedly. Check Microphone and Speech Recognition access.");
         return;
@@ -786,6 +794,7 @@ function Call({ bot }: { bot: Bot }) {
       // heard no speech: the line is dropped, whatever it says.
       const noSpeech = mic.speechWithin(bargeable ? 1_500 : 8_000) === false;
       if (noSpeech && line.text.trim()) {
+        diag("dropped: no speech heard");
         if (bargeable) resumeBot();
         if (line.partial === false && !bargeable) listenOrCatchUp();
         return;
@@ -938,6 +947,7 @@ function Call({ bot }: { bot: Bot }) {
     });
     offEnd = mic.onEnd(({ code, reason }) => {
       micLive.current = false;
+      console.warn(`[call-diag] session ended (${code}, ${reason ?? "-"}) phase=${phaseRef.current}`);
       if (!alive.current || currentCall() !== bot.id) return;
       if (code === 2) {
         setNote("Calls need macOS dictation, which isn't available here yet.");
