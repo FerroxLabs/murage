@@ -60,13 +60,19 @@ const BRIDGE = `
 window.__speech = { starts: 0, stops: 0, onText: null, onEnd: null, fed: 0, options: [] };
 window.muragebox = {
   desktopSurfaceSecret: "fixture-surface-secret",
-  speechStart: async (options) => { window.__speech.starts += 1; window.__speech.options.push(options); },
+  speechStart: async (options) => { window.__speech.starts += 1; window.__speech.running = true; window.__speech.options.push(options); },
   speechFeed: (bytes) => { window.__speech.fed += bytes.byteLength; },
-  speechStop: async () => { window.__speech.stops += 1; },
+  speechStop: async () => { window.__speech.stops += 1; window.__speech.running = false; },
   onSpeechTranscript: (fn) => { window.__speech.onText = fn; return () => {}; },
   onSpeechEnd: (fn) => { window.__speech.onEnd = fn; return () => {}; },
 };
-window.__say = (text, partial = false) => window.__speech.onText?.({ text, partial });
+// Like Apple's recognizer in the helper: words arrive only while a session
+// runs, and the session ends by itself after each finished sentence.
+window.__say = (text, partial = false) => {
+  if (!window.__speech.running) { window.__speech.missed = (window.__speech.missed || 0) + 1; return; }
+  window.__speech.onText?.({ text, partial });
+  if (!partial) { window.__speech.running = false; setTimeout(() => window.__speech.onEnd?.({ code: 0, reason: "completed" }), 10); }
+};
 // Headless audio: every clip "plays" for __clipMs and ends; pause() holds
 // the rest of it, play() carries on.
 window.__clipMs = 60;
@@ -160,6 +166,7 @@ async function harness(page: Page, os: "mac" | "linux" = "mac") {
   const spoken: string[] = [];
   const hostBodies: any[] = [];
   const replies: HostReply[] = [];
+  const h = { delayMs: 0 };
   await page.route("**/api/tts/speak", async (route: Route) => {
     spoken.push(JSON.parse(route.request().postData() ?? "{}").text);
     await route.fulfill({ status: 200, contentType: "audio/wav", body: silentWav() });
@@ -179,6 +186,7 @@ async function harness(page: Page, os: "mac" | "linux" = "mac") {
     const body = JSON.parse(route.request().postData() ?? "{}");
     hostBodies.push(body);
     if (body.warm) return route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
+    if (h.delayMs) await new Promise((r) => setTimeout(r, h.delayMs));
     const events = replies.shift() ?? [{ type: "done" }];
     await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") });
   });
@@ -196,7 +204,7 @@ async function harness(page: Page, os: "mac" | "linux" = "mac") {
   // and Silero has judged some audio (in the app the recognizer is fed only
   // audio Silero has already judged, so words never arrive before it)
   await expect.poll(() => page.evaluate(() => (window as any).__vadFrames ?? 0)).toBeGreaterThan(0);
-  return { spoken, hostBodies, replies, transcribed, heard };
+  return Object.assign(h, { spoken, hostBodies, replies, transcribed, heard });
 }
 
 const actions = (page: Page) => page.evaluate(() => (window as any).__actions as Array<Record<string, any>>);
@@ -208,13 +216,11 @@ test("the host answers first, hands work down through the ordinary send, and kee
 
   // 1. answered by the host, spoken sentence by sentence, nothing sent
   h.replies.push([{ type: "sentence", text: "Three meetings today." }, { type: "sentence", text: "Two approvals are waiting." }, { type: "done" }]);
-  const before = await starts(page);
   await page.evaluate(() => (window as any).__say("What's on the board?"));
   await expect.poll(() => h.spoken).toEqual(["Three meetings today.", "Two approvals are waiting."]);
-  // listening again: the recognizer ran straight through the bot's speech
-  // (full duplex), so there is nothing to restart
+  // listening again, with a recognizer session running for the owner
   await expect(page.getByText("Listening", { exact: true })).toBeVisible();
-  expect(await starts(page)).toBe(before);
+  await expect.poll(() => page.evaluate(() => (window as any).__speech.running)).toBe(true);
   expect(await actions(page)).toEqual([]);
   expect(h.hostBodies.at(-1)).toMatchObject({ text: "What's on the board?", threadId: "thread-1", history: [] });
 
@@ -463,6 +469,25 @@ test("an uh-huh while the bot talks is listening, not interrupting", async ({ pa
   await page.evaluate(() => (window as any).__say("uh-huh"));
   await expect(page.getByText("It goes on for a while.")).toBeVisible({ timeout: 5_000 });
   expect(h.hostBodies.length).toBe(asked);
+});
+
+test("after a slow answer (a web lookup) the owner can still talk over the bot", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 4_000));
+  // the recognizer's session ends with the question, while the call waits
+  // several seconds for the lookup (heard live: nothing was listening then)
+  h.delayMs = 1_200;
+  h.replies.push([{ type: "sentence", text: "Here is the news from the last three days." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's the latest AI news?"));
+  await expect(page.getByText("Here is the news from the last three days.")).toBeVisible();
+  // listening WHILE it speaks, not once it has finished
+  await expect.poll(() => page.evaluate(() => (window as any).__speech.running), { timeout: 1_000 }).toBe(true);
+  await expect(page.getByText("Here is the news from the last three days.")).toBeVisible();
+  h.delayMs = 0;
+  await page.evaluate(() => (window as any).__say("stop stop", true));
+  await page.evaluate(() => (window as any).__say("stop stop stop"));
+  await expect(page.getByText("Listening", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__speech.missed ?? 0)).toBe(0);
 });
 
 test("music that trips the speech model now and then does not stop the bot", async ({ page }) => {

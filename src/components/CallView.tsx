@@ -397,6 +397,14 @@ function Call({ bot }: { bot: Bot }) {
     openTurn();
   }, [bot.id, move, openTurn]);
 
+  // Whenever the bot starts to speak on an echo-cancelled microphone, the
+  // owner must be heard. The recognizer's session ends after each sentence;
+  // when it ended while the call waited for an answer, nothing reopened it
+  // and "stop" went unheard for the whole reply (a live call, 2026-09-23).
+  useEffect(() => {
+    if ((phase === "speaking" || phase === "sending") && micRef.current?.duplex && !micLive.current) openTurn();
+  }, [phase, openTurn]);
+
   /** The owner talked over the bot: stop speaking and listen to them. */
   const bargeIn = useCallback(() => {
     interruptedAt.current = Date.now();
@@ -965,7 +973,9 @@ function Call({ bot }: { bot: Bot }) {
       // to be listening, that means the user's turn ended — start the next
       if (phaseRef.current === "listening") listen();
       // talking over the bot needs a turn running while it speaks
-      else if (mic.duplex && phaseRef.current === "speaking") openTurn();
+      // talking over the bot, or cutting in while it fetches an answer,
+      // needs a turn running then too: the session ends with each sentence
+      else if (mic.duplex && (phaseRef.current === "speaking" || phaseRef.current === "sending")) openTurn();
     });
     // Flux transcription has no partial words to barge in on; sustained
     // voice while the bot speaks is the owner talking over it.
