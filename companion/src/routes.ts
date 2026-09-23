@@ -196,6 +196,10 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
+  // The diagram frame (src/mermaid-frame): chat renders Mermaid inside a
+  // sandboxed, opaque-origin iframe loaded from this one static page. The
+  // harness serves it with its own `sandbox allow-scripts` CSP header.
+  { method: "GET", path: /^\/mermaid-frame\.html$/ },
   // Not in `dist/` today — the vite build emits neither, measured. Listed so
   // the door does not have to change the day the PWA files land, and harmless
   // until then because a miss is a 404 here rather than the SPA fallback.
