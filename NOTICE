@@ -387,6 +387,14 @@ no source file was copied whole.
 
 --------------------------------------------------------------------------
 
+Skill scanning patterns (server/skill-guard/spector-patterns.generated.ts)
+  are converted from NVIDIA SkillSpector
+  (https://github.com/NVIDIA/SkillSpector), Copyright (c) 2026 NVIDIA
+  CORPORATION & AFFILIATES, Apache-2.0, at commit
+  94f5cc80679c45a1fa4774e2d37ad663ca0be337.
+
+--------------------------------------------------------------------------
+
 This distribution also includes third-party components under third_party/,
 each retaining its own license and notices. See the LICENSE and NOTICE files
 within those directories for details.
