@@ -1238,6 +1238,125 @@ describe("pending queued chip", () => {
   });
 });
 
+// Upstream #1527: the desktop holds a page of each thread and pages back.
+describe("scrollback pages", () => {
+  const message = (id: string, at: number) =>
+    ({ id, at, role: "user", kind: "text", text: id }) as never as Message;
+  const bot = {
+    id: "bot-1",
+    threadId: "thread-1",
+    messages: [message("m3", 3), message("m4", 4)],
+    hasMore: true,
+  } as never as Bot;
+  const state = { ...initialState, bots: [bot] };
+
+  it("marks the thread loading so one scroll cannot ask twice", () => {
+    const loading = reducer(state, { type: "loadOlderMessages", threadId: "thread-1" });
+    expect(loading.loadingOlder["thread-1"]).toBe(true);
+    expect(reducer(loading, { type: "loadOlderMessages", threadId: "thread-1" })).toBe(loading);
+  });
+
+  it("prepends a page, keeps held copies, and clears the flag", () => {
+    const loading = reducer(state, { type: "loadOlderMessages", threadId: "thread-1" });
+    const next = reducer(loading, {
+      type: "olderMessages",
+      threadId: "thread-1",
+      generation: loading.transcriptGeneration["thread-1"] ?? 0,
+      // m3 overlaps the page this client already holds
+      messages: [message("m1", 1), message("m2", 2), { ...message("m3", 3), text: "stale copy" }],
+      hasMore: false,
+    });
+    expect(next.bots[0].messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4"]);
+    expect(next.bots[0].messages[2].text).toBe("m3");
+    expect(next.bots[0].hasMore).toBe(false);
+    expect(next.loadingOlder).toEqual({});
+  });
+
+  it("drops a page that was in flight across a rewind, and stops the spinner", () => {
+    const withLeaf = { ...bot, activeLeafId: "m4" } as never as Bot;
+    const loading = reducer({ ...initialState, bots: [withLeaf] }, { type: "loadOlderMessages", threadId: "thread-1" });
+    const generation = loading.transcriptGeneration["thread-1"] ?? 0;
+    const rewound = reducer(loading, { type: "threadActive", threadId: "thread-1", activeLeafId: "m3" });
+    expect(rewound.transcriptGeneration["thread-1"]).not.toBe(generation);
+    const landed = reducer(rewound, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("abandoned", 1)], hasMore: false });
+    expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m3", "m4"]);
+    expect(landed.bots[0].hasMore).toBe(true);
+    expect(landed.loadingOlder).toEqual({});
+  });
+
+  it("drops a page asked for in the thread this bot switched away from", () => {
+    const generation = state.transcriptGeneration["thread-1"] ?? 0;
+    const away = reducer(state, { type: "taskSwitched", bot: { ...bot, threadId: "thread-2", messages: [message("n1", 1)], hasMore: false } });
+    const back = reducer(away, { type: "taskSwitched", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
+    const landed = reducer(back, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("m3", 3)], hasMore: true });
+    expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m4"]);
+  });
+
+  it("drops a page that raced a fresh snapshot", () => {
+    const generation = state.transcriptGeneration["thread-1"] ?? 0;
+    const hydrated = reducer(state, { type: "hydrate", bots: [bot], groups: [], computerControl: {} });
+    const landed = reducer(hydrated, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("m2", 2)], hasMore: true });
+    expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m3", "m4"]);
+  });
+
+  it("still lands a page over messages that arrived while it was on the wire", () => {
+    const loading = reducer(state, { type: "loadOlderMessages", threadId: "thread-1" });
+    const generation = loading.transcriptGeneration["thread-1"] ?? 0;
+    const appended = reducer(loading, { type: "messageAdded", threadId: "thread-1", message: message("m5", 5) });
+    const patched = reducer(appended, { type: "messagePatched", threadId: "thread-1", message: { ...message("m4", 4), text: "edited" } });
+    const landed = reducer(patched, { type: "olderMessages", threadId: "thread-1", generation, messages: [message("m2", 2)], hasMore: true });
+    expect(landed.bots[0].messages.map((m) => m.id)).toEqual(["m2", "m3", "m4", "m5"]);
+    expect(landed.bots[0].messages[2].text).toBe("edited");
+    expect(landed.loadingOlder).toEqual({});
+  });
+
+  it("takes a switched thread's scrollback answer from its own page, never the previous thread's", () => {
+    // an unpaged answer: the whole thread, so no marker at all
+    const { hasMore: _previous, ...unpaged } = bot;
+    const switched = reducer(state, { type: "taskSwitched", bot: { ...unpaged, threadId: "thread-2", messages: [message("n1", 1)] } });
+    expect(switched.bots[0].hasMore).toBeUndefined();
+    // the same move arriving as a bot frame with a transcript
+    const framed = reducer(state, { type: "botPatched", bot: { ...unpaged, threadId: "thread-2", tasks: undefined, messages: [message("n1", 1)] } });
+    expect(framed.bots[0].threadId).toBe("thread-2");
+    expect(framed.bots[0].hasMore).toBeUndefined();
+  });
+
+  it("keeps how far this client paged back when a same-thread frame carries a page", () => {
+    const paged = reducer(state, { type: "olderMessages", threadId: "thread-1", generation: 0, messages: [message("m1", 1)], hasMore: false });
+    const framed = reducer(paged, { type: "botPatched", bot: { ...bot, messages: [message("m4", 4)], hasMore: true } });
+    expect(framed.bots[0].messages.map((m) => m.id)).toEqual(["m1", "m3", "m4"]);
+    expect(framed.bots[0].hasMore).toBe(false);
+  });
+
+  it("answers the scrollback question from a room payload that carries a transcript", () => {
+    const group = {
+      id: "room",
+      threadId: "room-thread",
+      name: "Room",
+      memberIds: [],
+      defaultResponder: { kind: "mentions" },
+      createdAt: 1,
+      bulletin: "",
+      unread: false,
+      messages: [message("m9", 9)],
+      hasMore: true,
+    } as never as Group;
+    const withRoom = { ...initialState, groups: [group] };
+    const complete = reducer(withRoom, {
+      type: "groupPatched",
+      group: { id: "room", threadId: "room-thread", messages: [message("m8", 8), message("m9", 9)] },
+    });
+    expect(complete.groups[0].hasMore).toBe(false);
+    expect(complete.transcriptGeneration["room-thread"]).toBe(1);
+    const renamed = reducer(withRoom, { type: "groupPatched", group: { id: "room", name: "Renamed" } });
+    expect(renamed.groups[0].hasMore).toBe(true);
+    expect(renamed.transcriptGeneration["room-thread"]).toBeUndefined();
+    const older = reducer(withRoom, { type: "olderMessages", threadId: "room-thread", generation: 0, messages: [message("m7", 7)], hasMore: false });
+    expect(older.groups[0].messages.map((m) => m.id)).toEqual(["m7", "m9"]);
+    expect(older.groups[0].hasMore).toBe(false);
+  });
+});
+
 describe("messageAdded leaf adoption", () => {
   it("adopts an edited branch only on the authoritative thread event, then its answer", () => {
     const original = { id: "original", at: 1, parentId: null, role: "user", kind: "text", text: "v1" } as Message;

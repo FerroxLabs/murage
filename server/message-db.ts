@@ -114,6 +114,26 @@ export function readThreadBefore(threadId: string, messageId: string, limit: num
   return slice;
 }
 
+/** How many of the newest rows a newest-page must span to include every open
+ * request card and the stored branch head (`leafId`), or 0 when neither is
+ * older than the newest row. An open card is one the person still has to
+ * answer: `Store.isOpenRequestCard`, spelled in SQL, and answered is any
+ * truthy value exactly as `!card.answered` reads it. Upstream #1527 pages the
+ * desktop; a card older than the page would otherwise vanish from the
+ * composer that takes it over. */
+export function newestPageSpan(threadId: string, leafId: string | null): number {
+  const row = db()
+    .prepare(
+      "SELECT COUNT(*) AS span FROM messages WHERE thread_id = ? AND rowid >= (" +
+        "SELECT MIN(rowid) FROM messages WHERE thread_id = ? AND (id = ? OR (kind = 'options' " +
+        "AND json_type(json, '$.card.requestId') = 'text' AND json_extract(json, '$.card.requestId') <> '' " +
+        "AND COALESCE(json_extract(json, '$.card.answered'), '') IN ('', 0) " +
+        "AND COALESCE(json_extract(json, '$.card.dismissed'), 0) IN ('', 0))))",
+    )
+    .get(threadId, threadId, leafId ?? "") as { span: number } | undefined;
+  return row?.span ?? 0;
+}
+
 /** A `limit`-row window containing `messageId`, positioned exactly as the
  * whole-array formula (anchor slightly after centre, clamped to either end).
  * Reads at most limit+1 older and limit newer rows. Null for a foreign or

@@ -6,6 +6,7 @@ import {
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  windowAfterPrepend,
 } from "./transcript-window";
 
 const thread = (total: number): number[] => Array.from({ length: total }, (_, i) => i);
@@ -132,5 +133,24 @@ describe("focusWindowRange", () => {
 
   it("uses the full short transcript", () => {
     expect(focusWindowRange(20, 10)).toEqual({ start: 0, end: 20 });
+  });
+});
+
+describe("windowAfterPrepend", () => {
+  it("moves a mounted window with its rows when older ones land in front", () => {
+    expect(windowAfterPrepend({ start: 30, end: null }, 100)).toEqual({ start: 130, end: null });
+    expect(windowAfterPrepend({ start: 30, end: 150 }, 100, true)).toEqual({ start: 130, end: 250 });
+    // a jump walking back through pages mounts none of them
+    expect(windowAfterPrepend({ start: 0, end: null }, 100)).toEqual({ start: 100, end: null });
+  });
+
+  it("keeps a window at the top there when the reader asked, so the page shows", () => {
+    expect(windowAfterPrepend({ start: 0, end: null }, 100, true)).toEqual({ start: 0, end: null });
+  });
+
+  it("leaves the window alone when the first row did not move back", () => {
+    const window = { start: 5, end: null };
+    expect(windowAfterPrepend(window, -1)).toBe(window);
+    expect(windowAfterPrepend(window, 0)).toBe(window);
   });
 });

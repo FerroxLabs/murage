@@ -1713,10 +1713,14 @@ function ArchivedBotsPanel({
 /** One line per archived channel, so the person can read every name before
  * confirming a bulk delete. Mirrors archivedBotsDeleteItems. */
 export function archivedChannelsDeleteItems(groups: Group[]): string[] {
-  return groups.map((group) => {
-    const messages = group.messages.length;
-    return `${group.name}: ${messages} ${messages === 1 ? "message" : "messages"}`;
-  });
+  return groups.map((group) => `${group.name}: ${heldMessageCount(group)}`);
+}
+
+/** "N messages" for a channel. This client holds a page of a long one
+ * (upstream #1527), so the count is a floor, and says so. */
+function heldMessageCount(group: Group): string {
+  const held = group.messages.length;
+  return `${held}${group.hasMore ? "+" : ""} ${held === 1 && !group.hasMore ? "message" : "messages"}`;
 }
 
 /** The way back from Archive, mirroring Archived bots: the same dialog, the
@@ -1846,7 +1850,7 @@ function ArchivedChannelsPanel({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14.5px] text-ink">{group.name}</span>
                   <span className="block truncate text-[12px] text-ink-secondary">
-                    {group.messages.length} {group.messages.length === 1 ? "message" : "messages"}
+                    {heldMessageCount(group)}
                   </span>
                 </span>
                 <button

@@ -34,6 +34,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
+import { unheardMessages } from "@/lib/scrollback";
 import { speaker } from "@/lib/tts";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
@@ -1149,7 +1150,8 @@ function Call({ bot }: { bot: Bot }) {
       void sayThenListen(`${bot.name} asks: ${detail}${/[.!?]$/.test(detail) ? "" : "."}${choices}`);
       return;
     }
-    const fresh = messages.filter((m) => !spokenIds.current.has(m.id));
+    // unheardMessages: a scrollback page loaded mid-call is not news.
+    const fresh = unheardMessages(messages, spokenIds.current);
     if (!fresh.length) return;
     // only the newest of each kind matters: a burst of tool chips should
     // not queue thirty seconds of narration behind the actual answer

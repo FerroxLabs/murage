@@ -102,12 +102,16 @@ import {
   bubbleTapOpensActions,
 } from "@/lib/transcript-chrome";
 import { useNarrowViewport } from "@/lib/media-query";
+import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
+import { useMessageById } from "@/lib/held-message";
 import {
+  SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  windowAfterPrepend,
 } from "@/lib/transcript-window";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { useReplyDraft } from "@/lib/drafts";
@@ -863,6 +867,12 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
   );
 }
 
+/** A screen row from a bounded page: pixels fetched once it is mounted. */
+function PagedScreenFrame({ threadId, messageId }: { threadId: string; messageId: string }) {
+  const frame = usePagedScreenFrame(threadId, messageId);
+  return frame ? <ScreenFrame png={frame.png} mime={frame.mime} /> : null;
+}
+
 /** The settled transcript, memoized as one unit: during streaming every
  * frame re-renders ChatView, but all of these props keep their identity
  * (bot/messages only change on real message events), so the whole list —
@@ -1076,7 +1086,7 @@ const MessagesList = memo(function MessagesList({
               return <ActivityChip message={m} />;
             }
             case "screen":
-              return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
+              return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : m.hasImage ? <PagedScreenFrame threadId={bot.threadId} messageId={m.id} /> : null;
             default:
               return (
                 <Bubble
@@ -1123,7 +1133,8 @@ function PinnedBanner({
   onJump: (messageId: string) => void;
   onUnpin: () => void;
 }) {
-  const pinned = messages.find((m) => m.id === pinnedId);
+  // may be older than the held page (upstream #1527)
+  const pinned = useMessageById(bot.threadId, pinnedId || undefined, messages);
   if (!pinned || pinned.kind !== "text") return null;
   const sender =
     pinned.role === "user" ? "You" : (pinned.from?.name ?? bot.name);
@@ -1195,17 +1206,31 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // never flashes into the new one. Everything derived below (lastBotTextId,
   // lastUserMessage, working dots) stays computed from the FULL list.
   const transcriptKey = `${bot.id}:${bot.threadId}`;
+  // `firstId` is the row the boundary was measured against. A page of older
+  // messages lands in front of it, and the boundary moves with the rows so
+  // the mounted window does not slide back in time (upstream #1527).
+  const firstMessageId = messages[0]?.id;
+  // Height captured before a reader-initiated expand or page (see
+  // showEarlier/loadOlder below). Declared here because a pending capture is
+  // also how the window tells the page the reader asked for from the pages a
+  // jump walks through.
+  const preExpandHeight = useRef<{ key: string; height: number } | null>(null);
   const [transcriptWindow, setTranscriptWindow] = useState<{
     key: string;
     start: number;
     end: number | null;
+    firstId?: string;
   }>(() => ({
     key: transcriptKey,
     start: tailWindowStart(messages.length),
     end: null,
+    firstId: firstMessageId,
   }));
   if (transcriptWindow.key !== transcriptKey) {
-    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
+    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null, firstId: firstMessageId });
+  } else if (transcriptWindow.firstId !== firstMessageId) {
+    const shift = transcriptWindow.firstId ? messages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
+    setTranscriptWindow({ ...windowAfterPrepend(transcriptWindow, shift, preExpandHeight.current?.key === transcriptKey), firstId: firstMessageId });
   }
   const {
     visible: windowedMessages,
@@ -1361,25 +1386,62 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
-  // (browser scroll anchoring is disabled on this container).
-  const preExpandHeight = useRef<number | null>(null);
+  // (browser scroll anchoring is disabled on this container). The capture
+  // belongs to the thread it was taken in: a switch between the capture and
+  // the commit would otherwise shift the new thread by the old one's growth.
+  const captureHeight = () => {
+    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
+  };
+  const restoreHeight = () => {
+    const el = scrollRef.current;
+    const captured = preExpandHeight.current;
+    if (!captured || !el) return;
+    preExpandHeight.current = null;
+    if (captured.key !== transcriptKey) return;
+    el.scrollTop += el.scrollHeight - captured.height;
+    // keep the resume-follow heuristic from reading the restore as a
+    // downward user scroll
+    previousScrollTop.current = el.scrollTop;
+  };
   const showEarlier = () => {
-    preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
+    captureHeight();
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
     const start = expandWindowStart(startIndex);
     setTranscriptWindow((w) => ({ ...w, start }));
   };
+  // transcriptKey is a dependency so a switch runs this and drops a capture
+  // that belongs to the thread being left.
+  useLayoutEffect(restoreHeight, [transcriptWindow.start, transcriptKey]);
+
+  // Scrollback across the network (upstream #1527): the store holds the
+  // newest page, and everything before it is still on the server. A page
+  // prepends rows exactly like expanding the window, so the same height
+  // capture keeps the viewport still; here it is applied when the transcript
+  // grows at the front rather than when the boundary moves.
+  const olderPending = Boolean(state.loadingOlder[bot.threadId]);
+  const loadOlder = () => {
+    if (olderPending) return;
+    captureHeight();
+    setBottomFollow(false);
+    dispatch({ type: "loadOlderMessages", threadId: bot.threadId });
+  };
+  useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
+  // A page that came back empty or was dropped as stale moved nothing, so
+  // its capture must not be applied to some later, unrelated growth.
   useLayoutEffect(() => {
+    if (!olderPending) preExpandHeight.current = null;
+  }, [olderPending]);
+  // Reaching the top keeps reading back: first the rows already held, then
+  // the server's. Only while the reader is scrolled away from the live end,
+  // so the programmatic scroll to the bottom never pulls in history.
+  const reachedTop = () => {
     const el = scrollRef.current;
-    if (preExpandHeight.current === null || !el) return;
-    el.scrollTop += el.scrollHeight - preExpandHeight.current;
-    preExpandHeight.current = null;
-    // keep the resume-follow heuristic from reading the restore as a
-    // downward user scroll
-    previousScrollTop.current = el.scrollTop;
-  }, [transcriptWindow.start]);
+    if (!el || followRef.current || el.scrollTop > SCROLLBACK_TRIGGER_PX) return;
+    if (hiddenCount > 0) showEarlier();
+    else if (bot.hasMore) loadOlder();
+  };
 
   const showLater = () => {
     setBottomFollow(false);
@@ -1502,6 +1564,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           previousScrollTop.current = scrollTop;
           distanceFromBottom.current = fromBottom;
           if (resume) setBottomFollow(true);
+          else reachedTop();
         }}
       >
         <div
@@ -1512,7 +1575,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
         >
-          {hiddenCount > 0 && (
+          {hiddenCount > 0 ? (
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
@@ -1521,7 +1584,18 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
                 Show earlier messages ({hiddenCount} more)
               </button>
             </div>
-          )}
+          ) : bot.hasMore ? (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={loadOlder}
+                disabled={olderPending}
+                data-testid="load-earlier"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+              >
+                {olderPending ? "Loading earlier messages…" : "Load earlier messages"}
+              </button>
+            </div>
+          ) : null}
           <MessagesList
             bot={bot}
             messages={windowedMessages}

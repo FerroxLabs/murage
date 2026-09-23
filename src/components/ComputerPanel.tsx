@@ -63,6 +63,7 @@ import {
   writeComputerPanelView,
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
+import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
 
 export function ScreenStreamNotice({ message }: { message?: string }) {
   return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
@@ -663,11 +664,14 @@ export function ComputerPanel({
     };
   }, [panelView, phase, isLinux, pageVisible, bot.busy, bot.id]);
 
-  const lastScreenMessage = [...bot.messages].reverse().find((m) => m.kind === "screen" && m.png);
+  const lastScreenMessage = [...bot.messages].reverse().find((m) => m.kind === "screen" && (m.png || m.hasImage));
+  // A hydrated page carries the last frame's row without its pixels
+  // (upstream #1527); fetch them so the panel still opens on that frame.
+  const pagedFrame = usePagedScreenFrame(bot.threadId, lastScreenMessage && !lastScreenMessage.png ? lastScreenMessage.id : undefined);
   const cloudFrame =
     live ??
     polledFrame ??
-    (lastScreenMessage ? { png: lastScreenMessage.png!, mime: lastScreenMessage.mime ?? "image/png" } : null);
+    (lastScreenMessage?.png ? { png: lastScreenMessage.png, mime: lastScreenMessage.mime ?? "image/png" } : pagedFrame);
   const frameSrc =
     phase === "vm"
       ? vmFrame

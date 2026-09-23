@@ -4,6 +4,7 @@ import { Files, artifactNativeAction, type FilesOpenDetail } from "./Files";
 import type { Artifact } from "../../shared/artifacts";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 import { t } from "@/lib/i18n";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null), gate = useRef(false);
@@ -16,11 +17,11 @@ export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose
       if (!bot || !artifact.sourceConversationAvailable) throw new Error(t("files.sourceUnavailableRetained"));
       const group = state.groups.find(group => group.threadId === artifact.threadId || group.tasks?.some(task => task.threadId === artifact.threadId));
       if (group) {
-        const result = await api(`/api/groups/${group.id}/tasks/${artifact.threadId}`, { method: "POST" });
+        const result = await api(`/api/groups/${group.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.group || result.group.threadId !== artifact.threadId) throw new Error(t("source.openError"));
         dispatch({ type: "groupPatched", group: result.group }); dispatch({ type: "select", id: group.id });
       } else {
-        const result = await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}`, { method: "POST" });
+        const result = await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.bot || result.bot.threadId !== artifact.threadId) throw new Error(t("source.openError"));
         dispatch({ type: "taskSwitched", bot: result.bot }); dispatch({ type: "select", id: bot.id });
       }

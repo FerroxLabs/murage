@@ -2821,15 +2821,44 @@ function messagePage(threadId: string, limit: number | undefined, before?: strin
   return page && { messages: page.messages.map(slimMessage), hasMore: page.hasMore };
 }
 
+/** Messages in a thread-switch frame. A switch broadcast is not a transcript
+ * delivery: every client folds it, a phone over a tunnel included, so it
+ * carries the newest page (with `hasMore`) and older rows page back through
+ * /api/threads/:id/messages. Matches the desktop's MESSAGE_PAGE_SIZE, so the
+ * frame and the HTTP answer to its own switch describe the same rows
+ * (upstream #1527). */
+const SWITCH_FRAME_PAGE = 100;
+
+/** A newest page is at least `limit` long and reaches back far enough to hold
+ * every open request card and the active branch head: a client renders the
+ * approval strip and the visible branch from what it holds, so a page that cut
+ * either off would hide a question the person still has to answer. Zero stays
+ * zero — that caller asked for settings, not a transcript. */
+function newestPageLimit(threadId: string, limit: number): number {
+  return limit > 0 ? Math.max(limit, store.newestPageSpan(threadId)) : limit;
+}
+
 /** A bot entry for a bounded `/api/bots?messages=n`: publicBot()'s fields in
  * its key order, without publicBot()'s whole-transcript read. */
 function pagedPublicBot(bot: NonNullable<ReturnType<typeof store.bot>>, limit: number) {
-  const page = store.messagePage(bot.threadId, limit)!;
+  const page = store.messagePage(bot.threadId, newestPageLimit(bot.threadId, limit))!;
   return {
     ...wireBot(bot),
     messages: page.messages.map(slimMessage),
     activeLeafId: page.activeLeafId,
     tasks: store.tasks(bot.id).map(wireTask),
+    hasMore: page.hasMore,
+  };
+}
+
+/** groupWithThread()'s shape with a bounded newest page and `hasMore`. */
+function pagedGroupWithThread(group: GroupRecord, limit: number) {
+  const page = store.messagePage(group.threadId, newestPageLimit(group.threadId, limit))!;
+  return {
+    ...publicGroupState(group),
+    messages: page.messages.map(slimMessage),
+    activeLeafId: page.activeLeafId,
+    ...(group.dm ? {} : { tasks: store.groupTasks(group.id) }),
     hasMore: page.hasMore,
   };
 }
@@ -11566,7 +11595,10 @@ const server = createServer(async (req, res) => {
         : store.groups;
       return json(res, 200, {
         bots: bots.map((bot) => (limit === undefined ? { ...publicBot(bot), ...messagePage(bot.threadId, limit) } : pagedPublicBot(bot, limit))),
-        groups: groups.map((g) => ({ ...publicGroupState(g), ...messagePage(g.threadId, limit) })),
+        groups: groups.map((g) => ({
+          ...publicGroupState(g),
+          ...messagePage(g.threadId, limit === undefined ? limit : newestPageLimit(g.threadId, limit)),
+        })),
         computerControl: Object.fromEntries(
           bots.map((bot) => {
             const snapshot = computerControl.snapshot(bot.id);
@@ -12703,7 +12735,9 @@ const server = createServer(async (req, res) => {
       const task = store.createGroupTask(group.id, request.data.title);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       const fresh = groupWithThread(store.group(group.id)!);
-      broadcast({ kind: "group", group: fresh });
+      // A new task's thread is empty, so this page is the whole of it; the
+      // frame is bounded all the same, like every other switch frame.
+      broadcast({ kind: "group", group: pagedGroupWithThread(store.group(group.id)!, SWITCH_FRAME_PAGE) });
       return json(res, 201, { group: fresh, task });
     }
 
@@ -12715,13 +12749,26 @@ const server = createServer(async (req, res) => {
       if (channelTaskSwitchBlocked(group, m[2])) {
         return json(res, 409, { error: "this channel is working or waiting on you in another task" });
       }
+      // Parsed before the switch: a rejected value must not leave the channel
+      // pointing at another thread on its way to a 400 (upstream #1527).
+      const requestedMessages = url.searchParams.get("messages");
+      const switchLimit = pageSize(requestedMessages);
+      if (switchLimit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       const switched = store.switchGroupTask(group.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such channel task" });
-      const fresh = groupWithThread(switched);
-      broadcast({ kind: "group", group: fresh });
-      const responseGroup = url.searchParams.get("messages") === "0"
+      // The frame says the channel moved; it is not a transcript delivery. A
+      // long room's whole history over SSE is what paging exists to avoid, and
+      // it would overwrite the bounded snapshot every other client holds. One
+      // page renders the switch; anything earlier pages back on request.
+      broadcast({ kind: "group", group: pagedGroupWithThread(switched, SWITCH_FRAME_PAGE) });
+      // "0" predates paging and means settings only (no `messages` key); a
+      // positive value is a bounded page; no parameter is the whole thread,
+      // as it always was, and only that branch materializes it.
+      const responseGroup = requestedMessages === "0"
         ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id).map(withLastActivity) }
-        : fresh;
+        : switchLimit === undefined
+          ? groupWithThread(switched)
+          : pagedGroupWithThread(switched, switchLimit);
       return json(res, 200, { group: responseGroup });
     }
     if (m && method === "PATCH") {
@@ -12752,9 +12799,10 @@ const server = createServer(async (req, res) => {
       const updated = store.deleteGroupTask(group.id, m[2]);
       if (!updated) return json(res, 400, { error: "a channel keeps at least one task" });
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
-      const fresh = groupWithThread(updated);
-      broadcast({ kind: "group", group: fresh });
-      return json(res, 200, { group: fresh });
+      // Deleting the open task moves the channel to another one: bounded
+      // like a switch frame.
+      broadcast({ kind: "group", group: pagedGroupWithThread(updated, SWITCH_FRAME_PAGE) });
+      return json(res, 200, { group: groupWithThread(updated) });
     }
 
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
@@ -14774,7 +14822,8 @@ const server = createServer(async (req, res) => {
       const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       const fresh = botWithThread(store.bot(bot.id)!);
-      broadcast({ kind: "bot", bot: fresh });
+      // Empty thread, so the page is all of it; bounded like every switch frame.
+      broadcast({ kind: "bot", bot: pagedPublicBot(store.bot(bot.id)!, SWITCH_FRAME_PAGE) });
       return json(res, 201, { bot: fresh, task: wireTask(task) });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
@@ -14785,13 +14834,21 @@ const server = createServer(async (req, res) => {
       // loses ownership of the process and can make a later interrupt target
       // the wrong task. Keep this mutation atomic at the HTTP boundary; an
       // MCP client cannot make a safe check-then-switch across two requests.
+      // Parsed before the switch, as on the channel route (upstream #1527).
+      const requestedMessages = url.searchParams.get("messages");
+      const switchLimit = pageSize(requestedMessages);
+      if (switchLimit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
-      const fresh = botWithThread(switched);
-      broadcast({ kind: "bot", bot: fresh });
-      const responseBot = url.searchParams.get("messages") === "0"
+      // Bounded for the same reason as the channel switch frame.
+      broadcast({ kind: "bot", bot: pagedPublicBot(switched, SWITCH_FRAME_PAGE) });
+      // "0" is settings only, a positive value a bounded page, and no
+      // parameter the whole thread — the one branch that materializes it.
+      const responseBot = requestedMessages === "0"
         ? { ...wireBot(switched), tasks: store.tasks(switched.id).map(wireTask) }
-        : fresh;
+        : switchLimit === undefined
+          ? botWithThread(switched)
+          : pagedPublicBot(switched, switchLimit);
       return json(res, 200, { bot: responseBot });
     }
     if (m && method === "PATCH") {
@@ -14825,8 +14882,9 @@ const server = createServer(async (req, res) => {
       const task = store.patchTask(m[1],m[2],patch);
       if (!task) return json(res, 404, { error: "no such task" });
       if (fullAccess.acknowledgedAt !== undefined) store.patchBot(m[1], { fullAccessAcknowledgedAt: fullAccess.acknowledgedAt }, { preserveTaskSettings: true });
-      const fresh = botWithThread(store.bot(m[1])!);
-      broadcast({ kind: "bot", bot: fresh });
+      // A settings change does not move the transcript, and clients keep
+      // theirs on a same-thread frame; one page keeps the frame small.
+      broadcast({ kind: "bot", bot: pagedPublicBot(store.bot(m[1])!, SWITCH_FRAME_PAGE) });
       return json(res, 200, { task: wireTask(task) });
     }
     if (m && method === "DELETE") {
@@ -14839,9 +14897,9 @@ const server = createServer(async (req, res) => {
       if (!updated) return json(res, 400, { error: "a bot keeps at least one task" });
       revokeInternalThread(m[2]);
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
-      const fresh = botWithThread(updated);
-      broadcast({ kind: "bot", bot: fresh });
-      return json(res, 200, { bot: fresh });
+      // Deleting the open task moves the bot to another one: a switch frame.
+      broadcast({ kind: "bot", bot: pagedPublicBot(updated, SWITCH_FRAME_PAGE) });
+      return json(res, 200, { bot: botWithThread(updated) });
     }
 
     // what the user's machine can host: which runtime is installed, whether

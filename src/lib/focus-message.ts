@@ -5,6 +5,7 @@
 import { useEffect } from "react";
 import { api, useStore, type Action, type AppState } from "@/state/store";
 import type { SearchHit } from "@/lib/search-hit";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 const FLASH_CLASSES = ["ring-2", "ring-accent/70", "rounded-2xl", "transition-shadow"];
 
@@ -21,11 +22,12 @@ export async function landOnSearchHit(
 
   dispatch({ type: "select", id: ownerId,threadId:hit.threadId });
   if (bot && bot.threadId !== hit.threadId) {
-    const result = await api(`/api/bots/${bot.id}/tasks/${hit.threadId}`, { method: "POST" });
+    // A page, like every switch; the focus below pages back to the hit.
+    const result = await api(`/api/bots/${bot.id}/tasks/${hit.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
     if (result?.bot) dispatch({ type: "taskSwitched", bot: result.bot });
   }
   if (group && group.threadId !== hit.threadId) {
-    const result = await api(`/api/groups/${group.id}/tasks/${hit.threadId}`, { method: "POST" });
+    const result = await api(`/api/groups/${group.id}/tasks/${hit.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
     if (result?.group) dispatch({ type: "groupPatched", group: result.group });
   }
   if (bot && !hit.onActivePath) {
