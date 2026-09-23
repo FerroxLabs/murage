@@ -67,10 +67,18 @@ export function voiceHostState(
   approval?: string,
 ): VoiceHostState {
   const path = deps.activePath(threadId);
+  // A turn that failed leaves an error step, not a message. It belongs in the
+  // conversation the host sees, or "are you doing it?" is answered (and
+  // handed down again) as if the work were under way.
+  const failed = (m: Message) => m.kind === "activity" && m.tool?.ok === false && /^error:/i.test(m.tool.name ?? "");
   const recent = path
-    .filter((m) => m.kind === "text" && typeof m.text === "string" && m.text.trim())
+    .filter((m) => (m.kind === "text" && typeof m.text === "string" && m.text.trim()) || failed(m))
     .slice(-RECENT_MESSAGES)
-    .map((m) => ({ who: m.role === "user" ? ("owner" as const) : ("bot" as const), text: m.text!, at: m.at }));
+    .map((m) =>
+      failed(m)
+        ? { who: "bot" as const, text: `(That attempt failed and nothing is running: ${m.tool!.errorDetails || m.tool!.name.replace(/^error:\s*/i, "")})`, at: m.at }
+        : { who: m.role === "user" ? ("owner" as const) : ("bot" as const), text: m.text!, at: m.at },
+    );
   // Steps from the running turn only: the chips after the owner's last line.
   let lastOwner = -1;
   for (let i = path.length - 1; i >= 0; i -= 1) {

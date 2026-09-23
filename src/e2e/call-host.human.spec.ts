@@ -274,6 +274,20 @@ test("a hand-down the harness refuses is said out loud, and the host is told not
   expect(h.hostBodies.at(-1).history).toContainEqual({ role: "host", text: "I couldn't start that. This bot's model needs an AI provider connected first." });
 });
 
+test("a handed-down turn that fails is said out loud, not left running in silence", async ({ page }) => {
+  const h = await harness(page);
+  h.replies.push([{ type: "sentence", text: "Let me look into that." }, { type: "hand_down", request: "AI news from the last 72 hours" }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("AI news from the last 72 hours"));
+  await expect.poll(async () => (await actions(page)).at(-1)).toMatchObject({ type: "send" });
+  await page.evaluate(() => (window as any).__setBot({ busy: false, messages: [
+    { id: "e1", role: "bot", kind: "activity", at: 5, tool: { name: "error: Grok CLI is not signed in", ok: false, errorDetails: "Grok CLI is not signed in, run grok login in a terminal" } },
+  ] }));
+  await expect.poll(() => h.spoken).toContain("That didn't work. Grok CLI is not signed in, run grok login in a terminal.");
+  h.replies.push([{ type: "sentence", text: "Nothing is running." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("Are you doing it?"));
+  await expect.poll(() => h.hostBodies.at(-1).history).toContainEqual({ role: "host", text: "That didn't work. Grok CLI is not signed in, run grok login in a terminal." });
+});
+
 test("cancel from the host stops the running turn", async ({ page }) => {
   const h = await harness(page);
   await page.evaluate(() => (window as any).__setBot({ busy: true }));

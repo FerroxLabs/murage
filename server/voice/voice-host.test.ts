@@ -274,6 +274,15 @@ describe("voice host route", () => {
     endpoints: () => ({ host: HOST, lookup: [LOOKUP] }),
   };
 
+  it("shows a failed turn to the host as a failure, so it is not treated as running", () => {
+    const failedPath: Message[] = [
+      message({ role: "user", kind: "text", text: "AI news from the last 72 hours", at: NOW - 60_000 }),
+      message({ role: "bot", kind: "activity", at: NOW - 59_000, tool: { name: "error: Grok CLI is not signed in", ok: false, errorDetails: "Grok CLI is not signed in" } as any }),
+    ];
+    const state = voiceHostState({ ...bot, busy: false }, "t1", { ...deps, activePath: () => failedPath }, NOW);
+    expect(state.recent.at(-1)).toMatchObject({ who: "bot", text: "(That attempt failed and nothing is running: Grok CLI is not signed in)" });
+  });
+
   it("snapshots the running turn's steps, the other tasks and the inbox", () => {
     const state = voiceHostState(bot, "t1", deps, NOW);
     expect(state.task).toEqual({ title: "Board prep", busy: true, activity: ["reading the board pack", "counting rows"] });

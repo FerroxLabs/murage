@@ -822,9 +822,28 @@ function Call({ bot }: { bot: Bot }) {
     // only the newest of each kind matters: a burst of tool chips should
     // not queue thirty seconds of narration behind the actual answer
     const reply = [...fresh].reverse().find((m) => m.role === "bot" && m.kind === "text" && m.text?.trim());
+    // a turn that failed ends in an error step, not a reply: say so, or the
+    // call goes on as if the work were running
+    const failure = [...fresh].reverse().find((m) => m.kind === "activity" && m.tool?.ok === false && /^error:/i.test(m.tool.name ?? ""));
     const chip = [...fresh].reverse().find((m) => m.kind === "activity" && m.tool?.spoken);
     for (const m of fresh) spokenIds.current.add(m.id);
 
+    if (!reply?.text && failure?.tool) {
+      const why = (failure.tool.errorDetails || failure.tool.name.replace(/^error:\s*/i, "")).trim();
+      const line = `That didn't work. ${why}${/[.!?]$/.test(why) ? "" : "."}`;
+      const sent = [...callLog.current].reverse().find((e) => e.outcome === "handed_down" || e.outcome === "engine");
+      if (sent) {
+        sent.outcome = "not_started";
+        sent.detail = why;
+      }
+      hostHistory.current.push({ role: "host", text: line });
+      const busyTalking =
+        hostOn.current &&
+        (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
+      if (busyTalking) deferredReply.current = line;
+      else void sayThenListen(line);
+      return;
+    }
     if (reply?.text) {
       // Never talk over the owner or over the host's own sentence: hold the
       // answer until that turn ends (listenOrCatchUp speaks it).
