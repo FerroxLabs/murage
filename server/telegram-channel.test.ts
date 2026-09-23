@@ -149,3 +149,16 @@ it("a text reply the approvals manager captures as a question answer is never en
   f.updates([message(4, "now do the work")]); await channel.pollOnce();
   expect(f.enqueue).toHaveBeenCalledExactlyOnceWith({ deliveryId: "telegram:123:4", prompt: expect.stringContaining("now do the work"), senderId: "7" });
 });
+it("sends the run's voice notes as audio after its text reply, in order", async () => {
+  const f = fixture();
+  const sendAudio = vi.fn(async () => ({ chatId: "7", messageId: 2 }));
+  const voiceNotes = vi.fn(() => [{ name: "Voice note from Sable.mp3", mime: "audio/mpeg", bytes: new Uint8Array([1]), text: "Hi", from: "Sable" }]);
+  const channel = new TelegramChannel({ ...f.options, transport: { ...f.transport, sendAudio }, voiceNotes });
+  const challenge = channel.beginPairing();
+  f.updates([message(1, `/pair ${challenge.code}`)]); await channel.pollOnce();
+  f.updates([message(2, "send me a voice note")]); await channel.pollOnce();
+  expect(f.transport.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Done" }));
+  expect(voiceNotes).toHaveBeenCalledWith("run");
+  expect(sendAudio).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chatId: "7", fileName: "Voice note from Sable.mp3", title: "Voice note from Sable", performer: "Sable" }));
+  expect(f.transport.sendMessage.mock.invocationCallOrder.at(-1)!).toBeLessThan(sendAudio.mock.invocationCallOrder[0]!);
+});

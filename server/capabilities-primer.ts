@@ -163,6 +163,9 @@ export interface PrimerFacts {
    * from `mounted.agents`: the generate_image tool can be present with no
    * provider behind it, which is exactly the case a bot promises and fails. */
   readonly imageProvider: boolean;
+  /** This bot's voice can speak (send_voice_note has something to say it
+   *  with). Absent is the same as false. */
+  readonly voice?: boolean;
   /** What Murage decided about the working folder.
    *  - `trusted`/`untrusted`: an actual folder-trust decision was taken.
    *  - `ungated`: there is a folder, but this engine does not carry Murage's
@@ -258,6 +261,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
   if (facts.mounted.agents) {
     if (facts.imageProvider) can.push("create and edit images");
     else cannot.push("image generation — no image provider is connected in this workspace");
+    if (facts.voice) can.push("send the owner a voice note in your own voice (send_voice_note), when they ask for one or would rather hear it");
   }
   if (facts.mounted.agents && facts.peers === 0) {
     cannot.push("any peer to hand work to — Murage's roster shows no other bot you are allowed to reach");
@@ -369,6 +373,7 @@ export function turnCapabilityFacts(input: {
   peers: number;
   memory: MemoryMode;
   imageProvider: boolean;
+  voice?: boolean;
   canAskOwner: boolean;
   browserLock?: BrowserProtection;
 }): PrimerFacts {
@@ -399,6 +404,7 @@ export function turnCapabilityFacts(input: {
     mounted,
     memory: input.memory,
     imageProvider: input.imageProvider,
+    ...(input.voice ? { voice: true } : {}),
     // `folderTrustForTurn` returns undefined whenever the engine does not
     // carry the gate (index.ts:1486), which is most of the fleet. That is NOT
     // a trust decision, and folding it into "trusted" made Murage vouch for a

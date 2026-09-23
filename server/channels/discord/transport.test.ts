@@ -61,3 +61,13 @@ it("acks buttons before delivery and rejects other providers, groups, authors, f
   ack.mockRejectedValueOnce(new Error("secret"));emit();await vi.waitFor(()=>expect(health).toHaveBeenCalledWith("error"));
   expect(receive).toHaveBeenCalledTimes(1);await f.transport.stop();emit();expect(ack).toHaveBeenCalledTimes(2);
 });
+it("sends a voice note as an audio attachment to the owner's DM only",async()=>{
+  const f=fixture(),signal=new AbortController().signal;
+  await f.transport.sendAudio({dmId:"14",name:"Voice note from Sable.mp3",mime:"audio/mpeg",bytes:new Uint8Array([1,2,3]),title:"Voice note from Sable",signal});
+  const [path,options]=f.post.mock.calls[0] as [string,any];
+  expect(path).toBe("/channels/14/messages");
+  expect(options.body).toMatchObject({content:"Voice note from Sable",attachments:[{id:0,filename:"Voice note from Sable.mp3"}],allowed_mentions:{parse:[]}});
+  expect(options.files).toEqual([{name:"Voice note from Sable.mp3",data:Buffer.from([1,2,3]),contentType:"audio/mpeg"}]);
+  await expect(f.transport.sendAudio({dmId:"14",name:"x.html",mime:"text/html",bytes:new Uint8Array([1]),title:"x",signal})).rejects.toMatchObject({code:"invalid-request"});
+  expect(f.post).toHaveBeenCalledTimes(1);
+});

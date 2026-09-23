@@ -107,13 +107,29 @@ export class TelegramTransport {
       text: input.text, reply_markup: { inline_keyboard: input.keyboard.map(row => row.map(button => ({ text: button.text, callback_data: button.data }))) } }, false, input.signal);
     if (!object(result) || result.message_id !== input.messageId || !object(result.chat) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response");
   }
+  /** A voice note, as an audio message: an mp3 plays in Telegram's own
+   *  player (a round voice bubble needs OGG/Opus, which no voice service here
+   *  returns alongside the chat's mp3). Telegram takes up to 50 MB. */
+  async sendAudio(input: { chatId: string; bytes: Uint8Array; mime: string; fileName: string; title: string; performer?: string; caption?: string; signal?: AbortSignal }): Promise<{ chatId: string; messageId: number }> {
+    if (!chatId(input.chatId) || !input.bytes.length || input.bytes.length > 50 * 1024 * 1024 || !/^audio\//.test(input.mime)
+      || !input.fileName || input.fileName.length > 200 || !input.title || input.title.length > 200 || (input.caption !== undefined && input.caption.length > 1024)) throw new TelegramTransportError("invalid-request");
+    const form = new FormData();
+    form.set("chat_id", input.chatId);
+    form.set("title", input.title);
+    if (input.performer) form.set("performer", input.performer.slice(0, 200));
+    if (input.caption) form.set("caption", input.caption);
+    form.set("audio", new Blob([new Uint8Array(input.bytes)], { type: input.mime }), input.fileName);
+    const result = await this.request("sendAudio", form, true, input.signal);
+    if (!object(result) || !integer(result.message_id, 1) || !object(result.chat) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response", { uncertain: true });
+    return { chatId: input.chatId, messageId: result.message_id };
+  }
   async settleApprovalMessage(input: { chatId: string; messageId: number; text: string; signal?: AbortSignal }): Promise<void> {
     if (!chatId(input.chatId) || !integer(input.messageId, 1) || !input.text || input.text.length > 4096) throw new TelegramTransportError("invalid-request");
     const result = await this.request("editMessageText", { chat_id: input.chatId, message_id: input.messageId,
       text: input.text, reply_markup: { inline_keyboard: [] } }, false, input.signal);
     if (!object(result) || result.message_id !== input.messageId || !object(result.chat) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response");
   }
-  private async request(method: "getMe" | "getUpdates" | "sendMessage" | "answerCallbackQuery" | "editMessageText", body: Json, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
+  private async request(method: "getMe" | "getUpdates" | "sendMessage" | "sendAudio" | "answerCallbackQuery" | "editMessageText", body: Json | FormData, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
     if (signal?.aborted) throw new TelegramTransportError("cancel");
     const controller = new AbortController(); let dispatched = false;
     const stop = () => controller.abort(new TelegramTransportError("cancel", { uncertain: sending && dispatched }));
@@ -121,7 +137,7 @@ export class TelegramTransport {
     const timer = setTimeout(() => controller.abort(new TelegramTransportError("timeout", { uncertain: sending && dispatched })), pollMs + this.#timeoutMs);
     try {
       dispatched = true;
-      const fetching = this.#fetch(`https://api.telegram.org/bot${this.#token}/${method}`, { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal }).catch(error => {
+      const fetching = this.#fetch(`https://api.telegram.org/bot${this.#token}/${method}`, { method: "POST", redirect: "error", ...(body instanceof FormData ? { body } : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), signal: controller.signal }).catch(error => {
         // Only a failed initial DNS lookup proves this request was not sent.
         // Keep this at the fetch boundary: response-body failures are uncertain.
         const cause = error instanceof TypeError ? error.cause : undefined;

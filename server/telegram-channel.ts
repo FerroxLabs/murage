@@ -14,14 +14,18 @@ const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Num
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, targetBotId: z.string().min(1).max(180).optional(), enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
-  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage">>; botIdentityId: string; targetBotId: string;
+  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage" | "sendAudio">>; botIdentityId: string; targetBotId: string;
   approvals?: TelegramApprovalActions;
   isCurrentTarget?: () => boolean;
   onVerifiedSender?: (senderId:string)=>void;
   enqueue: (input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
+  /** Voice notes the run made (server/voice/voice-notes.ts), each handed out
+   *  once; sent after the text reply. */
+  voiceNotes?: (runId: string) => ChannelVoiceNote[];
   now?: () => number;
 }
+export interface ChannelVoiceNote { name: string; mime: string; bytes: Uint8Array; text: string; from: string }
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 function fail(): never { throw new Error("Telegram channel state is invalid or unavailable; original data was preserved."); }
 
@@ -177,6 +181,18 @@ export class TelegramChannel {
     await this.drain(active, signal);
     if (active() && this.state.binding) await this.approvals?.publish(this.state.binding, active, signal);
   }
+  /** Best effort, after the text went: a note that cannot be sent is still
+   *  in the Murage chat and in Files, so a failure is logged, not retried. */
+  private async sendVoiceNotes(runId: string | undefined, chatId: string, signal: AbortSignal) {
+    if (!runId || !this.options.voiceNotes || !this.options.transport.sendAudio) return;
+    for (const note of this.options.voiceNotes(runId)) {
+      try {
+        await this.options.transport.sendAudio({ chatId, bytes: note.bytes, mime: note.mime, fileName: note.name, title: `Voice note from ${note.from}`, performer: note.from, signal });
+      } catch (error) {
+        console.warn(`[telegram] a voice note could not be sent: ${error instanceof TelegramTransportError ? error.code : "failed"}`);
+      }
+    }
+  }
   private async drain(active: () => boolean, signal: AbortSignal) {
     for (const original of [...this.state.records]) {
       if (!active() || !this.state.binding) return;
@@ -208,6 +224,7 @@ export class TelegramChannel {
         await this.options.transport.sendMessage({ chatId, text: formatTelegramHtml(record.response), parseMode: "HTML", signal });
         if (!active()) return;
         this.mutate(state => { const item = state.records.find(item => item.updateId === record.updateId)!; item.state = "sent"; delete item.retryAt; delete item.deliveryError; });
+        await this.sendVoiceNotes(record.runId, chatId, signal);
       } catch (error) {
         if (active()) this.mutate(state => {
           const item = state.records.find(item => item.updateId === record.updateId)!;

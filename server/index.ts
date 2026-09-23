@@ -312,6 +312,8 @@ import {
   type FrameSubject,
 } from "./sse-visibility.ts";
 import * as tts from "./tts/index.ts";
+import { admitVoiceNote, createVoiceNote, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
+import type { ChannelVoiceNote } from "./telegram-channel.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh, replaysTranscriptNatively } from "./turn-context.ts";
 import { planExternalDelivery, withExternalDelivery } from "./external-context-delivery.ts";
@@ -5751,6 +5753,7 @@ async function startTurn(
         // behind it, which is the case where a bot promises a picture it
         // cannot make.
         imageProvider: cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0,
+        voice: tts.voiceReady(cfg, bot.voice, bot.voiceProvider),
         canAskOwner: humanIsOwner && opts?.automationSource === undefined,
         browserLock: integrations.browser ? unifiedBrowserProtection(threadId) ?? undefined : undefined,
       }));
@@ -6468,6 +6471,15 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
       return outcome === "unavailable" ? { ok: false, error: "Your bot stopped waiting for this answer." } : { ok: true };
     } };
   };
+/** Voice notes a channel turn made, for its channel to send after the text.
+ *  Only for a run still bound to its person (the same check as its result). */
+function channelVoiceNotes(runId: string): ChannelVoiceNote[] {
+  const run = routines!.listRuns().find(item => item.id === runId);
+  if (!run?.threadId) return [];
+  try { if (!run.humanPrincipal) return []; assertHumanPrincipal(run.humanPrincipal); } catch { return []; }
+  const from = store.bot(run.botId)?.name ?? "your bot";
+  return takeVoiceNotes(run.threadId, run.startedAt ?? run.createdAt).map(note => ({ name: note.name, mime: note.mime, bytes: note.bytes, text: note.text, from }));
+}
 const telegram = new TelegramService({ dataDir: DATA_DIR,
   isCurrentTarget: targetBotId => store.workspaceChief()?.id === targetBotId,
   approvals: targetBotId=>channelApprovalActions(targetBotId,()=>telegramHumanBindingId),
@@ -6488,6 +6500,7 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
     return run ? { status: run.status, output: run.output && redactSecretsInText(run.output), error: run.error } : null;
   },
+  voiceNotes: channelVoiceNotes,
   revokeRuns: async connectionId => {
     revokeHumanConnection("telegram",connectionId);
     for (const run of routines!.listRuns().filter(run => run.telegramConnectionId === connectionId)) {
@@ -6539,6 +6552,7 @@ function makeSlack(targetBotId: string) {
           if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
           return run ? { status: run.status, output: run.output && redactSecretsInText(run.output.replaceAll(appToken, "«redacted»").replaceAll(botToken, "«redacted»")), error: run.error ? "Review the task in Murage." : undefined } : null;
         },
+        voiceNotes: id => channelVoiceNotes(id),
       };
     },
     revokeRuns: async connectionId => {
@@ -6597,6 +6611,7 @@ function makeDiscord(targetBotId: string) {
           if(run){try{if(!run.humanPrincipal)throw new Error("unbound");assertHumanPrincipal(run.humanPrincipal);}catch{return {status:"failed",error:"Channel person binding changed. Review this task in Murage."};}}
           return run ? { status: run.status, output: run.output && redactSecretsInText(run.output.replaceAll(botToken, "«redacted»")), error: run.error ? "Review the task in Murage." : undefined } : null;
         },
+        voiceNotes: id => channelVoiceNotes(id),
       };
     },
     revokeRuns: async connectionId => {
@@ -10167,6 +10182,29 @@ const server = createServer(async (req, res) => {
           store.appendMessage(internalClaim.threadId, { role: "bot", kind: "text", text: `Saved file: ${artifact.name}`, artifactIds: [artifact.id] });
         }
         return json(res, 201, { artifact });
+      }
+
+      // A voice note (server/voice/voice-notes.ts): the text in this bot's own
+      // voice, left in this conversation as an audio message and held for a
+      // channel that is waiting on this turn.
+      if (path === "/api/internal/voice-note" && method === "POST") {
+        const body = z.object({ text: z.string().min(1).max(VOICE_NOTE_MAX_CHARS), title: z.string().min(1).max(120).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        if (!admitVoiceNote(`${internalClaim.threadId}:${internalClaim.generation}`)) {
+          return json(res, 429, { error: `Only ${VOICE_NOTES_PER_TURN} voice notes per turn. Put the rest in your reply.` });
+        }
+        try {
+          const note = await createVoiceNote(
+            { db: database(), dataDir: DATA_DIR, store, cfg, speak: (config, text, voiceId, _run, own) => tts.speak(config, text, voiceId, undefined, own) },
+            { botId: internalClaim.botId, threadId: internalClaim.threadId, runId: String(internalClaim.generation), text: body.text, title: body.title },
+          );
+          rememberVoiceNote({ threadId: internalClaim.threadId, at: Date.now(), name: note.artifact.filename, mime: note.mime, bytes: note.bytes, text: body.text });
+          return json(res, 201, { sent: true, artifact: { id: note.artifact.id, name: note.artifact.name }, seconds: Math.round(body.text.length / 15) });
+        } catch (error) {
+          if (error instanceof VoiceNoteError) return json(res, error.status, { error: error.message });
+          if (error instanceof tts.NoVoiceConfigured) return json(res, 409, { error: `No voice is set up for this bot yet (${error.message}) Tell the owner, and answer in text.` });
+          return json(res, 502, { error: `The voice note could not be made: ${error instanceof Error ? error.message : String(error)} Answer in text instead.` });
+        }
       }
 
       if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }

@@ -11,6 +11,8 @@ export interface DiscordTransport {
   start(receive: (event: unknown) => void, health: (state: Health) => void): Promise<void>;
   stop(): Promise<void>;
   sendText(input: { dmId: string; text: string; signal: AbortSignal }): Promise<{ channel: string; messageId: string }>;
+  /** A voice note, as an audio file Discord plays inline. */
+  sendAudio?(input: { dmId: string; name: string; mime: string; bytes: Uint8Array; title: string; signal: AbortSignal }): Promise<void>;
 }
 interface SDK {
   on(name: string, callback: (...args: any[]) => void): unknown;
@@ -18,7 +20,7 @@ interface SDK {
   destroy(): Promise<void>;
   user: { id: string } | null;
   application: { id: string } | null;
-  rest: { patch?(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>; get(path: string): Promise<unknown>; post(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> };
+  rest: { patch?(path: string, options: { body: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>; get(path: string): Promise<unknown>; post(path: string, options: { body: Record<string, unknown>; signal: AbortSignal; files?: Array<{ name: string; data: Buffer; contentType?: string }> }): Promise<unknown> };
 }
 export type DiscordSDKFactory = (token: string) => Promise<SDK>;
 export const discordClientOptions = () => ({ intents: [4096], partials: [1],
@@ -140,6 +142,19 @@ export class DiscordGatewayTransport implements DiscordTransport {
       const result = object(await sdk.rest.patch(`/channels/${input.dmId}/messages/${input.messageId}`, { signal: input.signal,
         body: { content: input.text, components: [], allowed_mentions: { parse: [], replied_user: false } } }));
       if (result.channel_id !== input.dmId || result.id !== input.messageId) throw new ChannelSendError("invalid-request", true);
+    } catch (error) { throw safeFailure(error, true); }
+  }
+  async sendAudio(input: { dmId: string; name: string; mime: string; bytes: Uint8Array; title: string; signal: AbortSignal }) {
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    // 10 MB is Discord's upload limit for a bot without a boosted server
+    if (!discordId.safeParse(input.dmId).success || !input.bytes.length || input.bytes.length > 10 * 1024 * 1024 || !/^audio\//.test(input.mime)) throw new ChannelSendError("invalid-request", false);
+    const sdk = await this.client();
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    try {
+      const result = object(await sdk.rest.post(`/channels/${input.dmId}/messages`, { signal: input.signal,
+        body: { content: input.title.slice(0, 200), attachments: [{ id: 0, filename: input.name }], allowed_mentions: { parse: [], replied_user: false }, flags: 4 },
+        files: [{ name: input.name, data: Buffer.from(input.bytes), contentType: input.mime }] }));
+      if (result.channel_id !== input.dmId) throw new ChannelSendError("invalid-request", true);
     } catch (error) { throw safeFailure(error, true); }
   }
   async sendText(input: { dmId: string; text: string; signal: AbortSignal }) {

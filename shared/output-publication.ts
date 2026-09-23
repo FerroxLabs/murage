@@ -16,7 +16,7 @@ import { isWorkspaceRelativePath } from "./workspace-files.ts";
 
 export const OUTPUT_PUBLICATIONS_TABLE = "output_publications";
 
-export const OUTPUT_PRODUCERS = ["shell-output", "image-operation", "assistant-image"] as const;
+export const OUTPUT_PRODUCERS = ["shell-output", "image-operation", "assistant-image", "voice-note"] as const;
 export type OutputProducer = typeof OUTPUT_PRODUCERS[number];
 
 /** retained: bytes verified on disk, nothing published yet.

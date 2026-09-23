@@ -134,7 +134,7 @@ export function SlackSettings() {
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{slackHealth(status, expired)}</p>
     <details className="mt-3 text-[12px] text-ink-secondary">
       <summary className="min-h-11 cursor-pointer py-3 text-ink">Private Slack app setup</summary>
-      <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled.</p>
+      <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
       <a className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
     </details>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>

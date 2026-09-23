@@ -10,10 +10,12 @@ export interface SlackTransport {
   start(onEnvelope: (value: unknown, ack: () => Promise<void>) => void, onHealth: (state: "connected" | "disconnected" | "error") => void): Promise<void>;
   stop(): Promise<void>;
   sendText(input: { dmId: string; text: string; signal: AbortSignal }): Promise<{ channel: string; ts: string }>;
+  /** A voice note, as an audio file (needs the files:write scope). */
+  sendAudio?(input: { dmId: string; name: string; mime: string; bytes: Uint8Array; title: string; signal: AbortSignal }): Promise<void>;
 }
 interface SDK {
   socket: { on(name: string, fn: (...args: unknown[]) => void): unknown; start(): Promise<unknown>; disconnect(): Promise<unknown> };
-  web: { auth: { test(): Promise<unknown> }; chat: { update?(input: Record<string, unknown>): Promise<unknown>; postMessage(input: Record<string, unknown>): Promise<unknown> } };
+  web: { auth: { test(): Promise<unknown> }; chat: { update?(input: Record<string, unknown>): Promise<unknown>; postMessage(input: Record<string, unknown>): Promise<unknown> }; files?: { uploadV2?(input: Record<string, unknown>): Promise<unknown> } };
 }
 export type SlackSDKFactory = (appToken: string, botToken: string, safeError: () => void) => Promise<SDK>;
 const object = (x: unknown): Record<string, unknown> => x !== null && typeof x === "object" ? x as Record<string, unknown> : {};
@@ -117,6 +119,17 @@ export class SlackSocketTransport implements SlackTransport {
       if (result.channel !== input.dmId || typeof result.ts !== "string" || !/^\d+\.\d+$/.test(result.ts) || (messageId && result.ts !== messageId)) throw new ChannelSendError("invalid-request", true);
       return { channel: result.channel, ts: result.ts };
     } catch (error) { throw safeFailure(error, true); }
+  }
+  async sendAudio(input: { dmId: string; name: string; mime: string; bytes: Uint8Array; title: string; signal: AbortSignal }) {
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    if (!/^D[A-Z0-9]{1,79}$/.test(input.dmId) || !input.bytes.length || input.bytes.length > 50 * 1024 * 1024 || !/^audio\//.test(input.mime)) throw new ChannelSendError("invalid-request", false);
+    const sdk = await this.client();
+    if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
+    if (!sdk.web.files?.uploadV2) throw new ChannelSendError("forbidden", false);
+    try {
+      const result = object(await sdk.web.files.uploadV2({ channel_id: input.dmId, file: Buffer.from(input.bytes), filename: input.name, title: input.title }));
+      if (result.ok !== true) throw { data: result };
+    } catch (e) { throw safeFailure(e, true); }
   }
   async sendText(input: { dmId: string; text: string; signal: AbortSignal }) {
     if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);

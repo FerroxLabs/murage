@@ -59,3 +59,16 @@ it("acks interactive payloads before identity-bound delivery and fails closed on
   emit({user:{id:"WOWNER"}});await vi.waitFor(()=>expect(receive).toHaveBeenCalledTimes(2));
   await f.transport.stop();emit();expect(ack).toHaveBeenCalledTimes(7);
 });
+it("uploads a voice note to the owner's DM, and says forbidden when files:write is missing", async () => {
+  const f = fixture(), signal = new AbortController().signal;
+  const uploadV2 = vi.fn(async (_input: Record<string, unknown>): Promise<unknown> => ({ ok: true }));
+  const withFiles: SlackSDKFactory = async () => ({ socket: { on: () => {}, start: async () => {}, disconnect: async () => {} },
+    web: { auth: { test: async () => ({ ok: true, team_id: "TEAM", user_id: "UBOT", bot_id: "BOT" }) }, chat: { postMessage: f.post }, files: { uploadV2 } } });
+  const transport = new SlackSocketTransport({ appToken: "fake-app", botToken: "fake-bot", factory: withFiles });
+  await transport.sendAudio({ dmId: "DOWNER", name: "Voice note from Sable.mp3", mime: "audio/mpeg", bytes: new Uint8Array([1, 2]), title: "Voice note from Sable", signal });
+  expect(uploadV2.mock.calls[0]![0]).toMatchObject({ channel_id: "DOWNER", filename: "Voice note from Sable.mp3", title: "Voice note from Sable" });
+  expect(Buffer.isBuffer(uploadV2.mock.calls[0]![0].file)).toBe(true);
+  uploadV2.mockRejectedValue({ data: { ok: false, error: "missing_scope" } });
+  await expect(transport.sendAudio({ dmId: "DOWNER", name: "a.mp3", mime: "audio/mpeg", bytes: new Uint8Array([1]), title: "t", signal })).rejects.toMatchObject({ code: "forbidden" });
+  await expect(transport.sendAudio({ dmId: "CPUBLIC", name: "a.mp3", mime: "audio/mpeg", bytes: new Uint8Array([1]), title: "t", signal })).rejects.toMatchObject({ code: "invalid-request" });
+});

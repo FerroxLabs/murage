@@ -3,6 +3,24 @@ import { TelegramTransport } from "./telegram-transport.ts";
 const token = "123456:FAKE_TOKEN_CANARY_1234567890";
 const ok = (result: unknown) => Response.json({ ok: true, result });
 describe("bounded Telegram transport", () => {
+  it("uploads a voice note as audio in a multipart request, and refuses what is not audio", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(ok({ message_id: 9, chat: { id: 7 } }));
+    const transport = new TelegramTransport({ token, fetch: fetcher });
+    expect(await transport.sendAudio({ chatId: "7", bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg", fileName: "Voice note from Ember.mp3", title: "Voice note from Ember", performer: "Ember" }))
+      .toEqual({ chatId: "7", messageId: 9 });
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(String(url)).toMatch(/\/sendAudio$/);
+    const form = init!.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get("chat_id")).toBe("7");
+    expect(form.get("title")).toBe("Voice note from Ember");
+    const audio = form.get("audio") as File;
+    expect([audio.name, audio.type, audio.size]).toEqual(["Voice note from Ember.mp3", "audio/mpeg", 3]);
+    // multipart sets its own content type, with the boundary
+    expect((init!.headers as Record<string, string> | undefined)?.["content-type"]).toBeUndefined();
+    await expect(transport.sendAudio({ chatId: "7", bytes: new Uint8Array([1]), mime: "text/html", fileName: "x.html", title: "x" })).rejects.toMatchObject({ code: "invalid-request" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("edits exact approval message and removes its inline buttons", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(ok({ message_id: 7, chat: { id: 7 } }));
     const transport = new TelegramTransport({ token, fetch: fetcher });

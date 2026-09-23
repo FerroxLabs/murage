@@ -24,11 +24,16 @@ export class ChannelSendError extends Error {
 export interface ChannelRuns {
   enqueue(input: { deliveryId: string; prompt: string }): { id: string };
   result(id: string): { status: string; output?: string; error?: string } | null;
+  /** Voice notes the run made, each handed out once (server/voice/voice-notes.ts). */
+  voiceNotes?(id: string): Array<{ name: string; mime: string; bytes: Uint8Array; text: string; from: string }>;
 }
 interface Options {
   file: string; bindingKey: string; recipient: string; isCurrent: () => boolean;
   runs: ChannelRuns;
   send: (input: { recipient: string; text: string; signal: AbortSignal }) => Promise<{ recipient: string; messageId: string }>;
+  /** Sends one voice note after the run's text reply went. Best effort: a
+   *  note that cannot be sent is still in the Murage chat and in Files. */
+  sendAudio?: (input: { recipient: string; name: string; mime: string; bytes: Uint8Array; title: string; signal: AbortSignal }) => Promise<void>;
   now?: () => number;
 }
 const windowMs = 7 * 86400000;
@@ -132,6 +137,15 @@ export class DurableDelivery {
         if (!this.active()) return;
         if (sent.recipient !== this.options.recipient || !id.safeParse(sent.messageId).success) throw new ChannelSendError("invalid-request", true);
         change(x => { x.state = "sent"; x.messageId = sent.messageId; delete x.retryAt; delete x.error; });
+        if (r.runId && this.options.sendAudio && this.options.runs.voiceNotes) {
+          for (const note of this.options.runs.voiceNotes(r.runId)) {
+            try {
+              await this.options.sendAudio({ recipient: this.options.recipient, name: note.name, mime: note.mime, bytes: note.bytes, title: `Voice note from ${note.from}`, signal: this.controller.signal });
+            } catch (error) {
+              console.warn(`[channels] a voice note could not be sent: ${error instanceof ChannelSendError ? error.code : "failed"}`);
+            }
+          }
+        }
       } catch (error) {
         if (!this.active()) return;
         change(x => {

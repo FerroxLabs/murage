@@ -79,3 +79,19 @@ it("rejects linked state without touching the target", () => {
   const f = fixture(), target = join(roots.at(-1)!, "target"); writeFileSync(target, "keep"); symlinkSync(target, f.options.file);
   expect(() => new DurableDelivery(f.options)).toThrow(); expect(readFileSync(target, "utf8")).toBe("keep");
 });
+it("sends a run's voice notes after its text reply, and a note that fails does not unsend the reply", async () => {
+  const f = fixture();
+  const note = (name: string) => ({ name, mime: "audio/mpeg", bytes: new Uint8Array([1, 2]), text: "Hi", from: "Ember" });
+  const voiceNotes = vi.fn((_id: string) => [note("a.mp3"), note("b.mp3")]);
+  const sendAudio = vi.fn(async (input: { name: string }) => { if (input.name === "a.mp3") throw new ChannelSendError("forbidden", false); });
+  const ledger = new DurableDelivery({ ...f.options, runs: { ...f.options.runs, voiceNotes }, sendAudio });
+  ledger.accept(f.input); await ledger.drain();
+  expect(f.send).toHaveBeenCalledTimes(1);
+  expect(voiceNotes).toHaveBeenCalledWith("run-event-1");
+  expect(sendAudio.mock.calls.map(call => call[0])).toEqual([
+    expect.objectContaining({ recipient: "DOWNER", name: "a.mp3", mime: "audio/mpeg", title: "Voice note from Ember" }),
+    expect.objectContaining({ name: "b.mp3" }),
+  ]);
+  expect(JSON.parse(readFileSync(f.options.file, "utf8")).records[0]).toMatchObject({ state: "sent" });
+  ledger.stop();
+});

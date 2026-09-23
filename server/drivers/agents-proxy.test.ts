@@ -279,6 +279,7 @@ describe("agents-proxy MCP surface", () => {
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
       "murage_help",
       "register_artifact",
+      "send_voice_note",
       "list_image_models",
       "resolve_image_reference",
       "generate_image",

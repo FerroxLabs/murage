@@ -127,6 +127,10 @@ export class SlackService {
         if (!this.live || !this.isCurrent(binding) || !this.transport) throw new ChannelSendError("forbidden", false);
         const sent = await this.transport.sendText({ dmId: recipient, text, signal });
         return { recipient: sent.channel, messageId: sent.ts };
+      },
+      sendAudio: async ({ recipient, name, mime, bytes, title, signal }) => {
+        if (!this.live || !this.isCurrent(binding) || !this.transport?.sendAudio) throw new ChannelSendError("forbidden", false);
+        await this.transport.sendAudio({ dmId: recipient, name, mime, bytes, title, signal });
       } });
   }
   private async start(generation: number) {

@@ -13,6 +13,7 @@ interface TelegramServiceOptions {
   onVerifiedSender?: (connectionId:string,senderId:string)=>void;
   enqueue: (connectionId: string, targetBotId: string, input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
+  voiceNotes?: (runId: string) => import("./telegram-channel.ts").ChannelVoiceNote[];
   revokeRuns: (connectionId: string) => Promise<void>;
   transport?: (token: string) => TelegramTransport;
   approvals?: (targetBotId: string) => TelegramApprovalActions;
@@ -72,7 +73,7 @@ export class TelegramService {
       isCurrentTarget: () => this.options.isCurrentTarget?.(connection.targetBotId) !== false,
       approvals: this.options.approvals?.(connection.targetBotId),
       onVerifiedSender:senderId=>this.options.onVerifiedSender?.(connection.botIdentityId,senderId),
-      enqueue: input => this.options.enqueue(connection.botIdentityId, connection.targetBotId, input), runResult: this.options.runResult });
+      enqueue: input => this.options.enqueue(connection.botIdentityId, connection.targetBotId, input), runResult: this.options.runResult, voiceNotes: this.options.voiceNotes });
   }
   status() {
     const status = this.channel?.status() ?? { enabled: false, paired: false, pending: 0, uncertain: 0, error: null, nextRetryAt: null };
