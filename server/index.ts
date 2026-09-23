@@ -374,6 +374,7 @@ import {
   removeSkill,
   setSkillEnabled,
   migrateSkillDiscoveryToTasks,
+  sweepSkillScans,
   rollbackSkillRevision,
   skillRevisionHistory,
   scopedSkillRevisionHistory,
@@ -14028,6 +14029,8 @@ const server = createServer(async (req, res) => {
 
       const installed: SkillListing[] = [];
       const errors: string[] = [];
+      const needsLook: string[] = [];
+      const blocked: string[] = [];
       for (const skillId of skillIds) {
         const result = installSkillFromLibrary(target.id, skillId, SKILL_LIBRARY_ROOT);
         if ("error" in result) {
@@ -14038,6 +14041,8 @@ const server = createServer(async (req, res) => {
         // person chose this profile from the catalogue this app ships.
         const enabled = setSkillEnabled(target.id, result.name, true);
         installed.push("error" in enabled ? result : enabled);
+        if ("code" in enabled && enabled.code === "needs-review") needsLook.push(result.name);
+        if ("code" in enabled && enabled.code === "blocked") blocked.push(result.name);
       }
 
       const bot = publicBot(store.bot(target.id)!);
@@ -14048,6 +14053,8 @@ const server = createServer(async (req, res) => {
         installed,
         playbooks: packagePlaybooks.map(({ key, name, summary }) => ({ key, name, summary })),
         errors,
+        needsLook,
+        blocked,
       });
     }
 
@@ -14076,6 +14083,9 @@ const server = createServer(async (req, res) => {
       }
       const installed: SkillListing[] = [];
       const errors: string[] = [];
+      // Installed but left off by Skill Guard, for the caller to explain.
+      const needsLook: string[] = [];
+      const blocked: string[] = [];
       for (const skillId of new Set(parsed.data.ids)) {
         const result = installSkillFromLibrary(bot.id, skillId, SKILL_LIBRARY_ROOT);
         if ("error" in result) {
@@ -14088,11 +14098,13 @@ const server = createServer(async (req, res) => {
         // rather than in a helper that cannot tell first-party from a URL.
         const enabled = setSkillEnabled(bot.id, result.name, true);
         installed.push("error" in enabled ? result : enabled);
+        if ("code" in enabled && enabled.code === "needs-review") needsLook.push(result.name);
+        if ("code" in enabled && enabled.code === "blocked") blocked.push(result.name);
       }
       if (!installed.length) {
         return json(res, 422, { error: errors.join("; ") || "nothing installable in that list" });
       }
-      return json(res, 201, { installed, errors });
+      return json(res, 201, { installed, errors, needsLook, blocked });
     }
 
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)\/(history|rollback)$/);
@@ -14122,10 +14134,12 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { text });
     }
     if (m && method === "PATCH") {
-      const parsed = z.object({ enabled: z.boolean() }).safeParse(await readBody(req));
+      // `acknowledged`: the content hash of the Needs a look findings the
+      // owner was shown and accepted (Skill Guard, server/skill-guard).
+      const parsed = z.object({ enabled: z.boolean(), acknowledged: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().safeParse(await readBody(req));
       if (!parsed.success) return json(res, 400, { error: "enabled must be true or false" });
-      const result = setSkillEnabled(m[1]!, m[2]!, parsed.data.enabled);
-      if ("error" in result) return json(res, 404, { error: result.error });
+      const result = setSkillEnabled(m[1]!, m[2]!, parsed.data.enabled, { acknowledged: parsed.data.acknowledged });
+      if ("error" in result) return result.code ? json(res, 409, result) : json(res, 404, { error: result.error });
       return json(res, 200, { skill: result });
     }
     if (m && method === "DELETE") {
@@ -16486,6 +16500,19 @@ catch { console.warn("Attachment cleanup could not finish. The next upload will 
 // receipts. Known pending receipts only; no provider request, no folder scan.
 try { imageOperations.resumePendingPublications(); outputPublisher.resumePending(); }
 catch { console.warn("Pending image publication could not finish. It will retry at the next startup."); }
+// Skill Guard, once per start: every installed skill gets a current scan,
+// and one switched on that now comes out Blocked is switched off. The bot
+// says so in its own chat, naming the skill and why.
+try {
+  for (const { botId, name, scan } of sweepSkillScans(store.bots.map(bot => bot.id))) {
+    const bot = store.bot(botId);
+    if (!bot) continue;
+    const why = [...new Set(scan.findings.filter(f => f.severity === "critical" || f.severity === "high").map(f => f.message.toLowerCase()))].join("; ");
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `I switched off my "${name}" skill because a safety check found that it ${why || "needs a look"}. It stays off. You can read it or remove it in my settings.` });
+  }
+} catch (error) {
+  console.warn("Skill safety sweep could not finish:", error instanceof Error ? error.message : String(error));
+}
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
