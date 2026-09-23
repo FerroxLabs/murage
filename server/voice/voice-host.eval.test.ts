@@ -142,6 +142,22 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     }, 30_000);
   }
 
+  it("news asked again after it was handed down earlier on the call is looked up, not handed down again", async () => {
+    let did = "answer";
+    const history = [
+      { role: "owner" as const, text: "I'd like the latest AI news" },
+      { role: "host" as const, text: "Let me look into that." },
+      { role: "owner" as const, text: "Well are you doing it" },
+      { role: "host" as const, text: "That didn't work. You've used all the included free usage for model grok-4.7 for now." },
+    ];
+    for await (const event of runVoiceHostTurn({ state: AFTER_NEWS, history, said: "Well I need the news from the last 72 hours for AI.", host, lookup })) {
+      if (event.type === "lookup") did = "lookup";
+      else if (event.type === "hand_down" && did !== "lookup") did = "hand";
+    }
+    rows.push(`again | ${did}`);
+    expect(did).toBe("lookup");
+  }, 30_000);
+
   it("a misheard name is answered, not corrected", async () => {
     let spoken = "";
     for await (const event of runVoiceHostTurn({ state: IDLE, history: [], said: "Hey Sabel, how are you doing?", host, lookup })) {
@@ -166,7 +182,7 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     expect(handed).toBe(false);
   }, 30_000);
 
-  it("a long answer is told as a short brief", async () => {
+  it("a long answer is told item by item, briefly", async () => {
     const answer = [
       "Here's the latest AI news, well-sourced stories first.",
       "## Today's biggest story",
@@ -184,8 +200,11 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     }
     rows.push(`brief | ${sentences.join(" ")}`);
     expect(sentences.length).toBeGreaterThan(0);
-    expect(sentences.length).toBeLessThanOrEqual(5);
-    expect(sentences.join(" ")).toMatch(/chat/i);
+    // every item heard, not just that there is news
+    const told = sentences.join(" ");
+    for (const item of [/china/i, /gemini|windows/i, /nasa|lunar/i, /siri/i]) expect(told).toMatch(item);
+    expect(sentences.length).toBeLessThanOrEqual(10);
+    expect(told).toMatch(/chat/i);
   }, 30_000);
 
   it("report", () => {

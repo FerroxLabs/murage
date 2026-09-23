@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { spokenApprovalPrompt, type Pending } from "./PendingApproval";
+import { spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
 
@@ -359,5 +359,29 @@ describe("ApprovalCard ACP permission kinds", () => {
     const real = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card("Bash", "git status") }));
     expect(real).toContain("Business Planner wants to run a command");
     expect(real).toContain(">Bash<");
+  });
+});
+
+describe("tool approvals, spoken on a call", () => {
+  it.each([
+    ["other", "Agents_web_search", "search the web"],
+    ["search_tool", "", "search the web"],
+    ["WebSearch", "latest AI news", "search the web"],
+    ["fetch", "https://www.reuters.com/technology/ai", "open a page on reuters.com"],
+    ["web_fetch", "", "open a web page"],
+    ["Bash", "ls -la ~/Documents", "run a command on your computer"],
+    ["Edit", "src/components/CallView.tsx", "change CallView.tsx"],
+    ["Read", "notes/board.md", "read board.md"],
+    ["mcp__gmail__send_email", "", "use send email"],
+    ["other", "{\"weird\": true}", "use a tool"],
+  ])("%s / %s → %s", (tool, detail, action) => {
+    expect(spokenToolAction(tool, detail)).toBe(action);
+  });
+
+  it("asks in the bot's own voice on a one-to-one call, and names the bot in a group", () => {
+    const message = { id: "a1", role: "bot", kind: "options", at: 1, card: { tool: "other", subtitle: "Agents_web_search", requestId: "r1" } } as unknown as Message;
+    const pending: Pending = { message, requestId: "r1", tool: "other", detail: "Agents_web_search" };
+    expect(spokenApprovalPrompt(pending, "Ember", true)).toBe("Can I search the web? Yes or no.");
+    expect(spokenApprovalPrompt(pending, "Ember")).toBe("Ember would like to search the web. Yes or no?");
   });
 });

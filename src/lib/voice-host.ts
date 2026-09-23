@@ -101,3 +101,20 @@ export async function hostTurn(
     if (!signal?.aborted) onEvent({ type: "error", reason: "upstream", message: "The reply was cut off." });
   }
 }
+
+/**
+ * An engine's failure, as something to say. Engines report failures for a
+ * log: "API error (status 429 Too Many Requests): subscription:free-usage-
+ * exhausted: You've used all the included free usage...". The status line
+ * and the machine code are dropped and only the first sentence is kept.
+ */
+export function plainFailure(details: string): string {
+  let text = details.replace(/^error:\s*/i, "").split("\n")[0] ?? "";
+  text = text.replace(/^[\w ]*error\s*\(status \d{3}[^)]*\)\s*:?\s*/i, "");
+  // leading machine codes such as "subscription:free-usage-exhausted:"
+  text = text.replace(/^(?:[a-z][\w.-]*:)+(?:[a-z][\w.-]*)?:\s*/i, "");
+  text = text.replace(/`/g, "").replace(/\s+/g, " ").trim();
+  const first = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
+  const clipped = first.replace(/…$/, "").trim();
+  return clipped.length > 220 ? `${clipped.slice(0, 217).replace(/\s+\S*$/, "")}.` : clipped || "The engine reported an error.";
+}

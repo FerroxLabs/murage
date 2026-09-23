@@ -35,7 +35,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -375,7 +375,7 @@ function Call({ bot }: { bot: Bot }) {
   sayThenListenRef.current = sayThenListen;
 
   /** Tell the engine's finished answer. A long one is told the way people
-   *  do on the phone (the gist, then "the full version is in the chat")
+   *  do on the phone (each item in a sentence, then "details are in the chat")
    *  through the host; a short one, or any failure, is read out as written. */
   const tellReply = useCallback(
     async (text: string) => {
@@ -440,7 +440,7 @@ function Call({ bot }: { bot: Bot }) {
         threadId: bot.threadId,
         onError: (error: unknown) => {
           if (!alive.current || currentCall() !== bot.id) return false;
-          const reason = (error instanceof Error ? error.message : String(error)).trim() || "the request was refused";
+          const reason = plainFailure(error instanceof Error ? error.message : String(error));
           refusedSends.current.set(said, reason);
           for (const entry of callLog.current) {
             if (entry.said === said && (entry.outcome === "handed_down" || entry.outcome === "engine")) {
@@ -800,7 +800,7 @@ function Call({ bot }: { bot: Bot }) {
       const skillPrompt = approval.message.card?.skillRequest?.action === "update"
         ? `${bot.name} wants to update a learned skill. Open this chat to review the complete skill before replacing the current version. You can say no to deny it.`
         : `${bot.name} wants to enable a new learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.`;
-      void sayThenListen(isSkillApproval(approval) ? skillPrompt : spokenApprovalPrompt(approval, bot.name));
+      void sayThenListen(isSkillApproval(approval) ? skillPrompt : spokenApprovalPrompt(approval, bot.name, true));
       return;
     }
     if (
@@ -829,7 +829,7 @@ function Call({ bot }: { bot: Bot }) {
     for (const m of fresh) spokenIds.current.add(m.id);
 
     if (!reply?.text && failure?.tool) {
-      const why = (failure.tool.errorDetails || failure.tool.name.replace(/^error:\s*/i, "")).trim();
+      const why = plainFailure(failure.tool.errorDetails || failure.tool.name);
       const line = `That didn't work. ${why}${/[.!?]$/.test(why) ? "" : "."}`;
       const sent = [...callLog.current].reverse().find((e) => e.outcome === "handed_down" || e.outcome === "engine");
       if (sent) {

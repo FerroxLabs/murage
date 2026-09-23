@@ -195,6 +195,21 @@ describe("voice host", () => {
     expect(events).toContainEqual({ type: "hand_down", request: "AI news today" });
   });
 
+  it("stops running work when asked and the reply says so, even without the cancel tool", async () => {
+    const busy = { ...STATE, task: { ...STATE.task, busy: true } };
+    const said = (state: VoiceHostState, words: string) =>
+      collect(runVoiceHostTurn({ state, history: [], said: words, host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Stopping that now.")]) }));
+    expect(await said(busy, "Actually, stop that, never mind.")).toContainEqual({ type: "cancel" });
+    // nothing running, or not asked to stop: nothing is cancelled
+    expect(await said(STATE, "Actually, stop that, never mind.")).not.toContainEqual({ type: "cancel" });
+    expect(await said(busy, "How's it going?")).not.toContainEqual({ type: "cancel" });
+    // the tool was called: one cancel, not two
+    const both = await collect(
+      runVoiceHostTurn({ state: busy, history: [], said: "stop that", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Stopping that."), tool(0, "cancel_task", "{}")]) }),
+    );
+    expect(both.filter((e) => e.type === "cancel")).toHaveLength(1);
+  });
+
   it("speaks whole sentences and drops the ones that promise time or progress", async () => {
     const events = await collect(
       runVoiceHostTurn({
@@ -380,7 +395,7 @@ describe("voice brief", () => {
       { type: "done" },
     ]);
     expect(sent.tools).toBeUndefined();
-    expect(sent.messages[0].content).toContain("at most three short sentences");
+    expect(sent.messages[0].content).toContain("Cover every item it reports");
     expect(sent.messages[1].content).toContain("Gemini for Windows");
   });
 

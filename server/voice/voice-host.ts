@@ -118,7 +118,7 @@ export function voiceHostPrompt(state: VoiceHostState): string {
     "Rules:",
     "- Speak the way people talk on the phone: one to three short sentences, no lists, no markdown, no emoji, no URLs read aloud.",
     "- Answer from what you can see below when it answers the question. Say how fresh it is when that matters (\"as of ten minutes ago\"). Never mention a snapshot, a working self, layers or tools; to the owner you are simply you.",
-    "- A plain question of fact from the outside world (news, prices, scores, benchmarks, opening hours) that needs nothing of the owner's: say one short line such as \"Let me check.\", then call quick_lookup.",
+    "- A plain question of fact from the outside world (news, headlines, prices, scores, benchmarks, opening hours) that needs nothing of the owner's: say one short line such as \"Let me check.\", then call quick_lookup. This holds even if it was asked before on this call or in the conversation, or an earlier attempt was handed down or failed: a spoken answer now beats waiting on a task. Hand it down instead only when they ask for something made from it (a report, a document, a message to someone).",
     "- Anything else that needs doing, looking up, checking, writing, sending, deciding, or knowing more than you can see: first say one short neutral line such as \"Let me look into that.\", then call hand_down with a request your working self can act on without hearing this call. Use the owner's own words and add nothing they did not say. Do not guess instead, and never turn a request away as outside your role: your working self can research, check and do far more than you can see, so hand it down.",
     "- Never say something is started, sent, booked or done unless you can see it below, and never estimate time or progress (no \"almost done\", no \"in a minute\"). After hand_down, say you are on it, not that it is done.",
     "- If the owner asks about progress and nothing is running, say plainly that nothing is running (and, if you said earlier on this call that something could not start, that it could not start and why). Never hand the same request down again because they asked how it is going.",
@@ -260,7 +260,7 @@ const TOOLS = [
     function: {
       name: "hand_down",
       description:
-        "Give real work to your full working self (tools, files, apps, web, memory). Use for anything the snapshot cannot answer. Returns immediately; the work continues after you speak.",
+        "Give real work to your full working self (tools, files, apps, memory). Use for anything the snapshot cannot answer, except news, headlines and other plain facts from the web, which go to quick_lookup even if they were handed down before. Returns immediately; the work continues after you speak.",
       parameters: {
         type: "object",
         properties: {
@@ -563,6 +563,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
     const calls = new Map<number, { name: string; args: string }>();
     const splitter = new SentenceSplitter();
     let spoke = false;
+    let streamed = "";
     try {
       for await (const part of readCompletion(res.body)) {
         if (!spoke) {
@@ -570,7 +571,10 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
           clearTimeout(firstToken);
         }
         if (part.kind === "text") {
-          for (const sentence of sentencesFrom(splitter, part.text)) yield { type: "sentence", text: sentence };
+          for (const sentence of sentencesFrom(splitter, part.text)) {
+            streamed += `${sentence} `;
+            yield { type: "sentence", text: sentence };
+          }
         } else {
           const entry = calls.get(part.index) ?? { name: "", args: "" };
           entry.name += part.name ?? "";
@@ -585,7 +589,11 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         : { type: "error", reason: "upstream", message: "The fast reply was cut off." };
       return;
     }
-    for (const sentence of sentencesFrom(splitter, null)) yield { type: "sentence", text: sentence };
+    let spoken = "";
+    for (const sentence of sentencesFrom(splitter, null)) {
+      spoken += `${sentence} `;
+      yield { type: "sentence", text: sentence };
+    }
 
     let handed = false;
     for (const { name, args } of calls.values()) {
@@ -667,6 +675,19 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         yield { type: "hand_down", request: request || options.said };
       }
     }
+    // Never say it is stopping without stopping: the model sometimes answers
+    // "stop that" with "Stopping it." and no cancel_task. When work is
+    // running, the owner asked to stop, and the reply says so, stop it.
+    const cancelled = [...calls.values()].some((c) => c.name === "cancel_task");
+    if (
+      !cancelled &&
+      !handed &&
+      options.state.task.busy &&
+      STOP_ASKED.test(options.said) &&
+      STOP_SAID.test(`${streamed} ${spoken}`)
+    ) {
+      yield { type: "cancel" };
+    }
     yield { type: "done" };
   } finally {
     clearTimeout(firstToken);
@@ -674,6 +695,9 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
     options.signal?.removeEventListener("abort", abort);
   }
 }
+
+const STOP_ASKED = /\b(stop|cancel|never ?mind|forget (it|that)|halt|drop it)\b/i;
+const STOP_SAID = /\b(stop(ping|ped)?|cancel(l?ing|l?ed)?|halt(ing|ed)?|dropp(ing|ed))\b/i;
 
 /** Longest finished answer the host is asked to brief (about 3,000 words). */
 export const BRIEF_MAX_CHARS = 20_000;
@@ -688,8 +712,8 @@ export interface VoiceBriefOptions {
 }
 
 /**
- * A long finished answer, told the way a person would on the phone: the
- * gist in two or three sentences, then that the full version is in the chat.
+ * A long finished answer, told the way a person would on the phone: every
+ * item in a short sentence, then that the details are in the chat.
  * A page of headings and bullets read aloud is minutes of listening to what
  * the owner can skim in seconds. Same event stream as a host turn; any
  * failure is an `error` event and the caller reads the answer out instead.
@@ -703,9 +727,9 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
   const prompt = [
     `You are ${options.state.botName}, on a live voice call with the person you work for.`,
     "Your working self just finished what they asked for and wrote the answer below into the chat, which they can read later.",
-    "Tell them the gist the way people talk on the phone: at most three short sentences, the most important point first, no lists, no markdown, no URLs, no reading out of headings.",
+    "Tell them what it says the way people talk on the phone. Cover every item it reports, in its order, one short sentence each (for a long list, the most important eight), so they hear the actual content, not just that it exists. No lists, no markdown, no URLs, no headings read out, no preamble.",
     "Keep every fact exactly as written; add nothing. If the answer asks them a question, end with that question.",
-    "Then say, in a few words, that the full version is in the chat.",
+    "Finish with a few words saying the details and sources are in the chat.",
   ].join("\n");
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -726,7 +750,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
             { role: "user", content: clip(options.answer, BRIEF_MAX_CHARS) },
           ],
           stream: true,
-          max_tokens: 200,
+          max_tokens: 500,
           temperature: 0.2,
         }),
         signal: controller.signal,

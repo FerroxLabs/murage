@@ -66,7 +66,29 @@ export function pendingApprovals(messages: Message[]): Pending[] {
 /** Routine cards can carry every instruction the user asked for (up to
  * 20,000 characters). Calls should announce the concise, visible title and
  * let the user review those details on screen instead of reading them all. */
-export function spokenApprovalPrompt(pending: Pending, requester: string): string {
+/** What a tool approval asks for, as a person would say it. Engines name
+ *  the same action many ways (Grok's web search arrives as tool "other",
+ *  detail "Agents_web_search"); none of those names is ever read aloud. */
+export function spokenToolAction(tool: string, detail: string): string {
+  const words = (text: string) => text.replace(/^mcp__[^_]+__/, "").replace(/^agents?_/i, "").replace(/[_-]+/g, " ").trim();
+  const both = `${words(tool)} ${words(detail)}`.toLowerCase();
+  const url = detail.match(/https?:\/\/([^/\s]+)/i)?.[1]?.replace(/^www\./, "");
+  const file = detail.match(/(?:^|[\s/])([\w.-]+\.\w{1,6})\b/)?.[1];
+  if (/web ?search|search tool|search the web|google/.test(both)) return "search the web";
+  if (/fetch|browse|open url|web page|read url/.test(both)) return url ? `open a page on ${url}` : "open a web page";
+  if (/\b(bash|shell|terminal|command|exec)\b/.test(both)) return "run a command on your computer";
+  if (/\b(write|edit|patch|create file|apply)\b/.test(both)) return file ? `change ${file}` : "change a file";
+  if (/\b(read|view|open file)\b/.test(both)) return file ? `read ${file}` : "read a file";
+  const name = words(tool.toLowerCase() === "other" ? detail : tool).toLowerCase();
+  return name && name.length <= 40 && /^[\w .]+$/.test(name) ? `use ${name}` : "use a tool";
+}
+
+/**
+ * An approval, spoken on a call. On a one-to-one call the bot is the one
+ * talking, so it asks in its own voice ("Can I search the web?"); in a
+ * group the listener needs to know which bot is asking.
+ */
+export function spokenApprovalPrompt(pending: Pending, requester: string, firstPerson = false): string {
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   if (isSkillRequest) {
@@ -78,7 +100,8 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
     return `${requester} wants to use this computer: your screen, mouse and keyboard. Should I allow it for this bot from now on?`;
   }
   if (!isRoutineRequest) {
-    return `${requester} wants to ${pending.tool}. ${pending.detail}. Should I allow it?`;
+    const action = spokenToolAction(pending.tool, pending.detail);
+    return firstPerson ? `Can I ${action}? Yes or no.` : `${requester} would like to ${action}. Yes or no?`;
   }
   const title = pending.message.card?.title.trim() || "Confirm this routine?";
   return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the schedule and instructions on screen. Should I confirm it?`;
