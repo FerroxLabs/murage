@@ -16362,7 +16362,13 @@ const server = createServer(async (req, res) => {
       const file = join(STATIC_DIR, safe);
       try {
         const data = readFileSync(file);
-        res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+        const headers: Record<string, string> = { "content-type": MIME[extname(file)] ?? "application/octet-stream" };
+        // The chat's diagram frame (scripts/vite-render-plugin.ts). The app
+        // loads it in <iframe sandbox="allow-scripts">; this header makes it
+        // an opaque origin even when something opens it directly, so it can
+        // never run with the app's origin. Its own meta CSP blocks all network.
+        if (safe === "/mermaid-frame.html") headers["content-security-policy"] = "sandbox allow-scripts";
+        res.writeHead(200, headers);
         return res.end(data);
       } catch {
         // SPA fallback
