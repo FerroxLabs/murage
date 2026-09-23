@@ -21,6 +21,10 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
     // Program and most keys cannot run it yet -- a default that 404s is worse
     // than one that is merely a version behind.
     { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    // gpt-6-sol / gpt-6-luna: released 2026-09-22 (ids per models.dev). Same
+    // reasoning as Astra for not defaulting to them on release day.
+    { id: "gpt-6-sol", label: "GPT-6 Sol" },
+    { id: "gpt-6-luna", label: "GPT-6 Luna" },
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
