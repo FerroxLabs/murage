@@ -58,7 +58,7 @@ describe("workspace-files contract", () => {
 
 describe("output-publication contract", () => {
   it("freezes producers, stages, limits and forward-only transitions", () => {
-    expect([...OUTPUT_PRODUCERS]).toEqual(["shell-output", "image-operation", "assistant-image"]);
+    expect([...OUTPUT_PRODUCERS]).toEqual(["shell-output", "image-operation", "assistant-image", "voice-note"]);
     expect([...OUTPUT_RECEIPT_STAGES]).toEqual(["retained", "attached", "registered", "failed"]);
     expect(OUTPUT_PUBLICATION_LIMITS).toEqual({ maxFileBytes: 25 * 1024 * 1024, maxFilesPerTurn: 20, hostCardsPerTurn: 1 });
     expect(canAdvanceOutputStage("retained", "registered")).toBe(true);

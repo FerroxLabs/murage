@@ -6475,6 +6475,15 @@ function channelHumanAttention(bindingId:string|undefined){
   catch{return {humanBindingState:"link-required" as const,humanBindingAttention:"Link the verified channel account to yourself or another person in Memory settings before sending messages."};}
 }
 function channelHumanIsOwner(bindingId:string|undefined){try{return !!bindingId&&isWorkspaceOwner(resolveHumanBinding(bindingId));}catch{return false;}}
+/** Voice notes a channel turn made, for its channel to send after the text.
+ *  Only for a run still bound to its person (the same check as its result). */
+function channelVoiceNotes(runId: string): ChannelVoiceNote[] {
+  const run = routines!.listRuns().find(item => item.id === runId);
+  if (!run?.threadId) return [];
+  try { if (!run.humanPrincipal) return []; assertHumanPrincipal(run.humanPrincipal); } catch { return []; }
+  const from = store.bot(run.botId)?.name ?? "your bot";
+  return takeVoiceNotes(run.threadId, run.startedAt ?? run.createdAt).map(note => ({ name: note.name, mime: note.mime, bytes: note.bytes, text: note.text, from }));
+}
 const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefined) => TelegramApprovalActions = (targetBotId,bindingId) => {
     const boundBot=()=>{
       const id=bindingId?.();if(!channelHumanIsOwner(id))return null;
@@ -6528,15 +6537,6 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
       return outcome === "unavailable" ? { ok: false, error: "Your bot stopped waiting for this answer." } : { ok: true };
     } };
   };
-/** Voice notes a channel turn made, for its channel to send after the text.
- *  Only for a run still bound to its person (the same check as its result). */
-function channelVoiceNotes(runId: string): ChannelVoiceNote[] {
-  const run = routines!.listRuns().find(item => item.id === runId);
-  if (!run?.threadId) return [];
-  try { if (!run.humanPrincipal) return []; assertHumanPrincipal(run.humanPrincipal); } catch { return []; }
-  const from = store.bot(run.botId)?.name ?? "your bot";
-  return takeVoiceNotes(run.threadId, run.startedAt ?? run.createdAt).map(note => ({ name: note.name, mime: note.mime, bytes: note.bytes, text: note.text, from }));
-}
 const telegram = new TelegramService({ dataDir: DATA_DIR,
   isCurrentTarget: targetBotId => store.workspaceChief()?.id === targetBotId,
   approvals: targetBotId=>channelApprovalActions(targetBotId,()=>telegramHumanBindingId),
