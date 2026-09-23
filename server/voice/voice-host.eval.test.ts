@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
 import type { ProviderPreset } from "../../shared/provider-connections.ts";
-import { runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
+import { runVoiceBrief, runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
 import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 
 const home = (file: string | undefined) => file?.replace(/^~/, process.env.HOME ?? "");
@@ -124,6 +124,37 @@ describe.skipIf(!planned)("voice host, live routing", () => {
       expect(did).toBe(c.want);
     }, 30_000);
   }
+
+  it("a misheard name is answered, not corrected", async () => {
+    let spoken = "";
+    for await (const event of runVoiceHostTurn({ state: IDLE, history: [], said: "Hey Sabel, how are you doing?", host, lookup })) {
+      if (event.type === "sentence") spoken += `${event.text} `;
+    }
+    rows.push(`name  | said: ${spoken.trim()}`);
+    expect(spoken).not.toMatch(/clarif|actually|it'?s sable|i'?m sable|my name/i);
+  }, 30_000);
+
+  it("a long answer is told as a short brief", async () => {
+    const answer = [
+      "Here's the latest AI news, well-sourced stories first.",
+      "## Today's biggest story",
+      "**U.S. and China move toward a formal AI safety dialogue.** Reuters reports the two sides discussed an incident line for AI events that could rise to a national-security level. A follow-up meeting is planned in roughly two months in Shenzhen.",
+      "## Product launches",
+      "- **Google shipped a native Gemini app for Windows**, for Windows 10 and 11, with an Alt + Space hotkey.",
+      "- **IBM and NASA released an open-source lunar foundation model** (Sept 10) on Hugging Face.",
+      "- **Apple opened a public beta of its rebuilt, Gemini-powered Siri** (Sept 15).",
+      "Want me to narrow this down, e.g. just the U.S.-China story?",
+    ].join("\n\n");
+    const sentences: string[] = [];
+    for await (const event of runVoiceBrief({ state: IDLE, answer, host })) {
+      if (event.type === "error") throw new Error(event.message);
+      if (event.type === "sentence") sentences.push(event.text);
+    }
+    rows.push(`brief | ${sentences.join(" ")}`);
+    expect(sentences.length).toBeGreaterThan(0);
+    expect(sentences.length).toBeLessThanOrEqual(5);
+    expect(sentences.join(" ")).toMatch(/chat/i);
+  }, 30_000);
 
   it("report", () => {
     console.log(`\nhost: ${host.via} ${host.model}, lookup: ${lookup ? lookup.via : "none"}\n${rows.join("\n")}`);

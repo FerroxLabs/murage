@@ -27,7 +27,13 @@ export interface HostTurnInput {
   history: Array<{ role: "owner" | "host"; text: string }>;
   /** The approval card open right now, as it would be read aloud. */
   approval?: string;
+  /** `text` is a finished answer to tell in a few sentences, not speech. */
+  brief?: boolean;
 }
+
+/** A finished answer longer than this is told as a brief on a call rather
+ *  than read out: about sixty spoken words. */
+export const BRIEF_OVER_CHARS = 450;
 
 /** The host failures that will not fix themselves during this call: stop
  *  asking the host and let the engine take every turn, as calls did before. */

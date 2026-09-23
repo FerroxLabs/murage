@@ -14,8 +14,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Message } from "../store.ts";
 import {
+  BRIEF_MAX_CHARS,
+  runVoiceBrief,
   runVoiceHostTurn,
   warmVoiceHost,
+  type VoiceBriefOptions,
   type VoiceHostEvent,
   type VoiceHostOptions,
   type VoiceHostState,
@@ -48,8 +51,9 @@ export interface VoiceHostRouteDeps {
   needsYou(botId: string): Array<{ title: string; summary: string; at: number }>;
   readBody(req: IncomingMessage): Promise<any>;
   /** Where the host and lookups run right now (voice-routes.ts). */
-  endpoints(): { host: VoiceEndpoint | null; lookup: VoiceEndpoint | null };
+  endpoints(): { host: VoiceEndpoint | null; lookup: VoiceEndpoint[] };
   run?: (options: VoiceHostOptions) => AsyncGenerator<VoiceHostEvent>;
+  brief?: (options: VoiceBriefOptions) => AsyncGenerator<VoiceHostEvent>;
   warm?: (host: VoiceEndpoint | null) => Promise<void>;
   now?: () => number;
 }
@@ -133,9 +137,12 @@ export async function handleVoiceHostRoute(
     void (deps.warm ?? warmVoiceHost)(deps.endpoints().host);
     return sendJson(202, { ok: true });
   }
+  // `brief: true` carries a finished answer to tell in a few sentences,
+  // not something the owner said
+  const brief = body.brief === true;
   const said = typeof body.text === "string" ? body.text.trim() : "";
   if (!said) return sendJson(400, { error: "text required" });
-  if (said.length > SAID_MAX_CHARS) return sendJson(413, { error: "that is too long for one spoken turn" });
+  if (said.length > (brief ? BRIEF_MAX_CHARS : SAID_MAX_CHARS)) return sendJson(413, { error: "that is too long for one spoken turn" });
   const bot = deps.bot(match[1]);
   if (!bot) return sendJson(404, { error: "no such bot" });
   const threadId = typeof body.threadId === "string" && /^[\w-]+$/.test(body.threadId) ? body.threadId : bot.threadId;
@@ -153,9 +160,11 @@ export async function handleVoiceHostRoute(
     connection: "keep-alive",
     "x-accel-buffering": "no",
   });
-  const run = deps.run ?? runVoiceHostTurn;
   const { host, lookup } = deps.endpoints();
-  for await (const event of run({ state, history: parseHistory(body.history), said, host, lookup, signal: controller.signal })) {
+  const events = brief
+    ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, signal: controller.signal })
+    : (deps.run ?? runVoiceHostTurn)({ state, history: parseHistory(body.history), said, host, lookup, signal: controller.signal });
+  for await (const event of events) {
     if (controller.signal.aborted) break;
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   }

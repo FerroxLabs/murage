@@ -89,6 +89,29 @@ export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceE
   return voiceEndpoints(part, source)[0] ?? null;
 }
 
+/** A source answered that this part is not switched on for the account
+ *  (Flux while one of its voice capabilities is dark). The next source can
+ *  take over; the caller marks this one with `markUnavailable`. */
+export class VoiceUnavailable extends Error {}
+
+/** Sources that said a part is not switched on, and until when to skip them.
+ *  Without this every sentence or lookup of a call would pay a refused
+ *  request first. Rechecked after ten minutes, so a capability that switches
+ *  on is picked up without a restart. */
+const unavailable = new Map<string, number>();
+const UNAVAILABLE_MS = 10 * 60_000;
+const sourceId = (e: VoiceEndpoint) => `${e.via} ${e.baseUrl} ${e.model}`;
+export function markUnavailable(endpoint: VoiceEndpoint, now = Date.now()): void {
+  unavailable.set(sourceId(endpoint), now + UNAVAILABLE_MS);
+}
+export function isUnavailable(endpoint: VoiceEndpoint, now = Date.now()): boolean {
+  return (unavailable.get(sourceId(endpoint)) ?? 0) > now;
+}
+/** Test seam: forget every refusal. */
+export function resetUnavailable(): void {
+  unavailable.clear();
+}
+
 /** What the app may know: which provider serves each part, nothing more. */
 export function describeVoiceRoutes(source: ConnectionSource): Record<VoicePart, ProviderPreset | null> {
   return {

@@ -35,7 +35,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -368,13 +368,59 @@ function Call({ bot }: { bot: Bot }) {
     [listen, say],
   );
 
+  /** Tell the engine's finished answer. A long one is told the way people
+   *  do on the phone (the gist, then "the full version is in the chat")
+   *  through the host; a short one, or any failure, is read out as written. */
+  const tellReply = useCallback(
+    async (text: string) => {
+      if (!hostOn.current || text.length <= BRIEF_OVER_CHARS) return sayThenListen(text);
+      if (!alive.current || currentCall() !== bot.id) return;
+      const mine = ++sayGeneration.current;
+      move("speaking");
+      if (!duplex()) hush();
+      let stream: ReturnType<typeof speaker.stream> | null = null;
+      await hostTurn(
+        bot.id,
+        { text, threadId: bot.threadId, history: [], brief: true },
+        (event) => {
+          if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
+          if (event.type === "sentence") {
+            if (!stream) {
+              hostSpeaking.current = true;
+              stream = speaker.stream({ botId: bot.id, voiceId: bot.voice });
+              void stream.done.finally(() => {
+                hostSpeaking.current = false;
+              });
+            }
+            stream.push(event.text);
+          }
+        },
+      );
+      if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
+      if (!stream) return sayThenListen(text);
+      const told = stream as ReturnType<typeof speaker.stream>;
+      told.end();
+      // talked over or hung up: the owner has moved on
+      if (!(await told.done)) return;
+      if (sayGeneration.current !== mine || phaseRef.current !== "speaking") return;
+      // another answer landed while this one was being told: tell it next
+      const held = deferredReply.current;
+      deferredReply.current = null;
+      if (held) void tellNext.current(held);
+      else listen();
+    },
+    [bot.id, bot.threadId, bot.voice, hush, listen, move, sayThenListen],
+  );
+  const tellNext = useRef(tellReply);
+  tellNext.current = tellReply;
+
   /** Speak whatever was held back while the owner was talking, then listen. */
   const listenOrCatchUp = useCallback(() => {
     const held = deferredReply.current;
     deferredReply.current = null;
-    if (held) void sayThenListen(held);
+    if (held) void tellReply(held);
     else listen();
-  }, [listen, sayThenListen]);
+  }, [listen, tellReply]);
 
   /** One spoken turn through the voice host. Its sentences are voiced as
    * they stream; a hand-down becomes an ordinary send. Any failure hands
@@ -742,13 +788,13 @@ function Call({ bot }: { bot: Bot }) {
         hostOn.current &&
         (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
       if (busyTalking) deferredReply.current = reply.text;
-      else void sayThenListen(reply.text);
+      else void tellReply(reply.text);
     } else if (chip?.tool?.spoken && phase === "working" && !hostOn.current) {
       void say(chip.tool.spoken).then((stillMine) => {
         if (stillMine && phaseRef.current === "speaking") move("working");
       });
     }
-  }, [messages, approval, question, phase, bot.busy, bot.name, hush, listen, move, say, sayThenListen]);
+  }, [messages, approval, question, phase, bot.busy, bot.name, hush, listen, move, say, sayThenListen, tellReply]);
 
   // busy is the harness's word for "a turn is running"
   useEffect(() => {

@@ -27,7 +27,7 @@
 // used here speaks OpenAI-shaped streaming chat with tools, Anthropic through
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
-import type { VoiceEndpoint } from "./voice-routes.ts";
+import { isUnavailable, markUnavailable, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 
 /** Beyond this the host has stalled; the call falls back to the engine. */
 const FIRST_TOKEN_TIMEOUT_MS = 6_000;
@@ -123,6 +123,7 @@ export function voiceHostPrompt(state: VoiceHostState): string {
     "- Never say something is started, sent, booked or done unless you can see it below, and never estimate time or progress (no \"almost done\", no \"in a minute\"). After hand_down, say you are on it, not that it is done.",
     "- If work is already running and the owner asks how it is going, name only steps from the \"Steps so far\" list below, in plain words, and nothing else. If there is no list, say it is still working. If they ask to stop it, say so briefly and call cancel_task.",
     "- If an approval is waiting, tell the owner what it is and that a plain yes or no answers it.",
+    "- The owner's words reach you through speech recognition, which mishears names (yours included) and small words. Answer what they meant; never correct or remark on how something came through.",
     "- If the owner is just chatting, chat back briefly, in character.",
     "",
     `Snapshot (now: ${new Date(state.now).toISOString()}):`,
@@ -435,6 +436,8 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
   const bearer = { authorization: `Bearer ${endpoint.key}` };
   if (endpoint.via === "flux") {
     const res = await post("/voice/lookup", { query, instructions: LOOKUP_INSTRUCTIONS, model: endpoint.model }, bearer);
+    // 404: Flux's lookup capability is not switched on for this account yet
+    if (res.status === 404) throw new VoiceUnavailable("Flux lookups aren't switched on for this account yet.");
     if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
     for await (const part of readCompletion(res.body)) if (part.kind === "text") yield part.text;
     return;
@@ -486,8 +489,9 @@ export interface VoiceHostOptions {
   said: string;
   /** Where the host runs; null when no source can serve it. */
   host: VoiceEndpoint | null;
-  /** Where lookups run; null offers no lookup tool (the host hands down). */
-  lookup?: VoiceEndpoint | null;
+  /** Where lookups run, in the order to try them; none offers no lookup
+   *  tool (the host hands down). */
+  lookup?: VoiceEndpoint | VoiceEndpoint[] | null;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
@@ -504,7 +508,9 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
-  const lookupSource = options.lookup ?? null;
+  // a source that said lookups are not switched on is skipped for a while
+  const lookupSources = [options.lookup ?? []].flat().filter((source) => !isUnavailable(source));
+  const lookupSource = lookupSources.length > 0;
   const tools = lookupSource ? TOOLS : TOOLS.filter((tool) => tool.function.name !== "quick_lookup");
   const messages = [
     { role: "system", content: voiceHostPrompt(options.state) },
@@ -605,11 +611,20 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         const citations = new CitationFilter();
         let answered = false;
         try {
-          for await (const text of lookupText(query, lookupSource, call, lookup.signal)) {
-            for (const sentence of sentencesFrom(lookupSplitter, citations.push(text))) {
-              if (!answered) clearTimeout(deadline);
-              answered = true;
-              yield { type: "sentence", text: sentence };
+          for (const source of lookupSources) {
+            try {
+              for await (const text of lookupText(query, source, call, lookup.signal)) {
+                for (const sentence of sentencesFrom(lookupSplitter, citations.push(text))) {
+                  if (!answered) clearTimeout(deadline);
+                  answered = true;
+                  yield { type: "sentence", text: sentence };
+                }
+              }
+              break;
+            } catch (error) {
+              // not switched on, and nothing said yet: the next source takes it
+              if (!(error instanceof VoiceUnavailable) || answered) throw error;
+              markUnavailable(source);
             }
           }
           const tail = citations.flush();
@@ -625,6 +640,16 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         }
         if (options.signal?.aborted) return;
         if (!answered) yield { type: "hand_down", request: query };
+      } else if (name === "quick_lookup" && !handed) {
+        // asked for a lookup that is not on offer (every source refused):
+        // the engine takes the question rather than it going unanswered
+        handed = true;
+        let query = "";
+        try {
+          const parsed = JSON.parse(args || "{}");
+          query = typeof parsed?.query === "string" ? parsed.query.trim() : "";
+        } catch {}
+        yield { type: "hand_down", request: query || options.said };
       } else if (name === "cancel_task") {
         yield { type: "cancel" };
       } else if (name === "hand_down" && !handed) {
@@ -641,6 +666,89 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         yield { type: "hand_down", request: request || options.said };
       }
     }
+    yield { type: "done" };
+  } finally {
+    clearTimeout(firstToken);
+    clearTimeout(wholeTurn);
+    options.signal?.removeEventListener("abort", abort);
+  }
+}
+
+/** Longest finished answer the host is asked to brief (about 3,000 words). */
+export const BRIEF_MAX_CHARS = 20_000;
+
+export interface VoiceBriefOptions {
+  state: VoiceHostState;
+  /** The working self's finished answer, as it appears in the chat. */
+  answer: string;
+  host: VoiceEndpoint | null;
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+}
+
+/**
+ * A long finished answer, told the way a person would on the phone: the
+ * gist in two or three sentences, then that the full version is in the chat.
+ * A page of headings and bullets read aloud is minutes of listening to what
+ * the owner can skim in seconds. Same event stream as a host turn; any
+ * failure is an `error` event and the caller reads the answer out instead.
+ */
+export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator<VoiceHostEvent> {
+  const host = options.host;
+  if (!host) {
+    yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
+    return;
+  }
+  const prompt = [
+    `You are ${options.state.botName}, on a live voice call with the person you work for.`,
+    "Your working self just finished what they asked for and wrote the answer below into the chat, which they can read later.",
+    "Tell them the gist the way people talk on the phone: at most three short sentences, the most important point first, no lists, no markdown, no URLs, no reading out of headings.",
+    "Keep every fact exactly as written; add nothing. If the answer asks them a question, end with that question.",
+    "Then say, in a few words, that the full version is in the chat.",
+  ].join("\n");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  const firstToken = setTimeout(abort, FIRST_TOKEN_TIMEOUT_MS);
+  const wholeTurn = setTimeout(abort, TURN_TIMEOUT_MS);
+  const call = options.fetchImpl ?? fetch;
+  try {
+    let res: Response;
+    try {
+      res = await call(`${host.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model: host.model,
+          messages: [
+            { role: "system", content: prompt },
+            { role: "user", content: clip(options.answer, BRIEF_MAX_CHARS) },
+          ],
+          stream: true,
+          max_tokens: 200,
+          temperature: 0.2,
+        }),
+        signal: controller.signal,
+      });
+    } catch {
+      if (!options.signal?.aborted) yield { type: "error", reason: "upstream", message: "Couldn't reach the fast model." };
+      return;
+    }
+    if (!res.ok || !res.body) {
+      yield { type: "error", ...failure(res.status) };
+      return;
+    }
+    const splitter = new SentenceSplitter();
+    try {
+      for await (const part of readCompletion(res.body)) {
+        clearTimeout(firstToken);
+        if (part.kind === "text") for (const sentence of sentencesFrom(splitter, part.text)) yield { type: "sentence", text: sentence };
+      }
+    } catch {
+      if (!options.signal?.aborted) yield { type: "error", reason: "upstream", message: "The brief was cut off." };
+      return;
+    }
+    for (const sentence of sentencesFrom(splitter, null)) yield { type: "sentence", text: sentence };
     yield { type: "done" };
   } finally {
     clearTimeout(firstToken);

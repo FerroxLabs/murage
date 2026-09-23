@@ -16,7 +16,7 @@
 //
 // Runs on the HARNESS only: the key must not leave the server.
 import type { Audio, Voice } from "./elevenlabs.ts";
-import type { VoiceEndpoint } from "../voice/voice-routes.ts";
+import { VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 
 /** A test seam for the Flux base only; production uses the resolved route. */
 function baseFor(endpoint: VoiceEndpoint): string {
@@ -49,7 +49,7 @@ export function isFluxVoice(id: string | undefined): boolean {
 
 /** The provider answered, but speech is not switched on for this account
  *  (Flux while its speech capability is dark). The next source can take over. */
-export class SpeechUnavailable extends Error {}
+export class SpeechUnavailable extends VoiceUnavailable {}
 
 async function said(res: Response): Promise<string> {
   try {

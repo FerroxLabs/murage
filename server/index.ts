@@ -15932,7 +15932,7 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && VOICE_HOST_PATH.test(path)) {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
       await handleVoiceHostRoute(method, path, req, res, {
-        endpoints: () => ({ host: voiceRouteFor("host"), lookup: voiceRouteFor("lookup") }),
+        endpoints: () => ({ host: voiceRouteFor("host"), lookup: voiceRoutesFor("lookup") }),
         bot: (id) => store.bot(id),
         activePath: (threadId) => store.activePath(threadId),
         lastActivityAt: (threadId) => store.lastActivityAt(threadId),

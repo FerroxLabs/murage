@@ -42,9 +42,9 @@ export function callNoteText(log: CallLogEntry[], durationMs: number): string | 
   const lines = [`**Call notes** (${minutes(durationMs)})`, ""];
   for (const e of entries) {
     const said = quote(e.said);
-    if (e.outcome === "answered") lines.push(`- You asked ${said}. Answered on the call${e.detail ? `: ${quote(e.detail)}` : "."}`);
-    else if (e.outcome === "looked_up") lines.push(`- You asked ${said}. Looked it up on the web${e.detail ? `: ${quote(e.detail)}` : "."}`);
-    else if (e.outcome === "handed_down") lines.push(`- You asked ${said}. Started as a task${e.detail ? `: ${quote(e.detail)}` : "."}`);
+    if (e.outcome === "answered") lines.push(`- You said ${said}. Answered on the call${e.detail ? `: ${quote(e.detail)}` : "."}`);
+    else if (e.outcome === "looked_up") lines.push(`- You said ${said}. Looked it up on the web${e.detail ? `: ${quote(e.detail)}` : "."}`);
+    else if (e.outcome === "handed_down") lines.push(`- You said ${said}. Started as a task${e.detail ? `: ${quote(e.detail)}` : "."}`);
     else if (e.outcome === "decision") lines.push(`- You answered an approval: ${said}.`);
     else lines.push(`- You said ${said}. Sent as a message.`);
   }

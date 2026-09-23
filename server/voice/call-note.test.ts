@@ -17,9 +17,9 @@ describe("call note", () => {
       [
         "**Call notes** (4 min)",
         "",
-        '- You asked "What\'s on the board?". Answered on the call: "Three meetings today."',
-        '- You asked "Where did the S&P close?". Looked it up on the web: "7764.64 on September 22."',
-        '- You asked "Book a table at eight". Started as a task: "Book a table for two at 8pm"',
+        '- You said "What\'s on the board?". Answered on the call: "Three meetings today."',
+        '- You said "Where did the S&P close?". Looked it up on the web: "7764.64 on September 22."',
+        '- You said "Book a table at eight". Started as a task: "Book a table for two at 8pm"',
         '- You answered an approval: "yes".',
         "",
         "Anything started on the call continues in this conversation.",
@@ -46,7 +46,7 @@ describe("call note", () => {
     const r = fakeRes();
     await handleCallNoteRoute("POST", "/api/bots/b1/call-note", { body: { threadId: "t2", durationMs: 60_000, log: [{ said: "hi", outcome: "answered" }, { said: "x", outcome: "evil" }, "junk"] } } as any, r.res, deps);
     expect(r.status()).toBe(200);
-    expect(appended).toEqual([["t2", '**Call notes** (1 min)\n\n- You asked "hi". Answered on the call.']]);
+    expect(appended).toEqual([["t2", '**Call notes** (1 min)\n\n- You said "hi". Answered on the call.']]);
   });
 
   it("refuses another bot's task and an unknown bot", async () => {

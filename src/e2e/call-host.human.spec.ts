@@ -234,6 +234,30 @@ test("a Flux account without the capability falls back to the engine for the res
   expect(h.hostBodies.filter((b) => !b.warm).length).toBe(hostCalls);
 });
 
+test("a long answer from the engine is told as a brief, and a failed brief reads the answer out", async ({ page }) => {
+  const h = await harness(page);
+  const long = `## Today's AI news\n\n${"- A long bullet about a launch that goes on for a while. ".repeat(12)}`;
+  h.replies.push([{ type: "sentence", text: "Three big stories today." }, { type: "sentence", text: "The full version is in the chat." }, { type: "done" }]);
+  await page.evaluate((text) => (window as any).__setBot({ messages: [{ id: "n1", role: "bot", kind: "text", at: 1, text }] }), long);
+  await expect.poll(() => h.spoken).toEqual(["Three big stories today.", "The full version is in the chat."]);
+  expect(h.hostBodies.filter((b) => !b.warm).at(-1)).toMatchObject({ brief: true, text: long, threadId: "thread-1" });
+
+  // the fast model is unreachable: the owner still hears the answer. It
+  // lands while the brief is still being told, so it waits its turn.
+  h.spoken.length = 0;
+  h.replies.push([{ type: "error", reason: "upstream", message: "down" }]);
+  const second = long.replace("Today's", "Tonight's");
+  await page.evaluate((text) => (window as any).__setBot({ messages: [{ id: "n2", role: "bot", kind: "text", at: 2, text }] }), second);
+  await expect.poll(() => h.spoken.join(" ")).toContain("Tonight's AI news");
+
+  // a short answer is read as written, without asking the host
+  h.spoken.length = 0;
+  const asked = h.hostBodies.length;
+  await page.evaluate(() => (window as any).__setBot({ messages: [{ id: "n3", role: "bot", kind: "text", at: 3, text: "Booked Nara at 8pm for two." }] }));
+  await expect.poll(() => h.spoken).toEqual(["Booked Nara at 8pm for two."]);
+  expect(h.hostBodies.length).toBe(asked);
+});
+
 test("cancel from the host stops the running turn", async ({ page }) => {
   const h = await harness(page);
   await page.evaluate(() => (window as any).__setBot({ busy: true }));

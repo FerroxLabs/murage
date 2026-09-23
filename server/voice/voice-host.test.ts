@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 
-import { allowedSentence, CitationFilter, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
+import { allowedSentence, CitationFilter, runVoiceBrief, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
 import { handleVoiceHostRoute, voiceHostState, type VoiceHostRouteDeps } from "./voice-host-route.ts";
 import type { Message } from "../store.ts";
-import type { VoiceEndpoint } from "./voice-routes.ts";
+import { resetUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
+
+beforeEach(() => resetUnavailable());
 
 const NOW = Date.parse("2026-09-23T09:00:00Z");
 const HOST: VoiceEndpoint = { via: "flux", label: "Flux Router", baseUrl: "http://stub.invalid/v1", key: "test-key", model: "claude-haiku-4-5" };
@@ -145,6 +147,7 @@ describe("voice host", () => {
       async () => new Response("dark", { status: 404 }),
       async () => new Response(`data: ${JSON.stringify({ object: "flux.voice.lookup.error", error: { message: "x" } })}\n\n`, { status: 200 }),
     ]) {
+      resetUnavailable();
       const fetchImpl = (async (url: string, init: RequestInit) =>
         url.endsWith("/chat/completions") ? sse([tool(0, "quick_lookup", '{"query":"S&P close"}')])(url, init) : lookup()) as typeof fetch;
       const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "how did the market close", host: HOST, lookup: LOOKUP, fetchImpl }));
@@ -166,6 +169,30 @@ describe("voice host", () => {
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "market?", host: HOST, lookup, fetchImpl }));
     expect(events).toContainEqual({ type: "sentence", text: "It closed at 7764.64 on September 22." });
     expect(seen.at(-1)).toBe("http://xai.invalid/v1/responses");
+  });
+
+  it("when Flux lookups are not switched on, the owner's own xAI key answers, and Flux is skipped next time", async () => {
+    const seen: string[] = [];
+    const xaiLookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4-1-fast-non-reasoning" };
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen.push(url);
+      if (url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", '{"query":"AI news today"}')])(url, init);
+      if (url.endsWith("/voice/lookup")) return new Response("{}", { status: 404 });
+      return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Google shipped a Gemini app for Windows." })}\n\n`, { status: 200 });
+    }) as typeof fetch;
+    const turn = () => collect(runVoiceHostTurn({ state: STATE, history: [], said: "news?", host: HOST, lookup: [LOOKUP, xaiLookup], fetchImpl }));
+    expect(await turn()).toContainEqual({ type: "sentence", text: "Google shipped a Gemini app for Windows." });
+    expect(seen.filter((u) => !u.endsWith("/chat/completions"))).toEqual([`${LOOKUP.baseUrl}/voice/lookup`, "http://xai.invalid/v1/responses"]);
+    seen.length = 0;
+    await turn();
+    expect(seen.filter((u) => !u.endsWith("/chat/completions"))).toEqual(["http://xai.invalid/v1/responses"]);
+  });
+
+  it("with Flux the only lookup source and not switched on, the question is handed down", async () => {
+    const fetchImpl = (async (url: string, init: RequestInit) =>
+      url.endsWith("/chat/completions") ? sse([tool(0, "quick_lookup", '{"query":"AI news today"}')])(url, init) : new Response("{}", { status: 404 })) as typeof fetch;
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "news?", host: HOST, lookup: [LOOKUP], fetchImpl }));
+    expect(events).toContainEqual({ type: "hand_down", request: "AI news today" });
   });
 
   it("speaks whole sentences and drops the ones that promise time or progress", async () => {
@@ -244,7 +271,7 @@ describe("voice host route", () => {
     needsYou: () => [{ title: "Approve travel", summary: "Flight to Bangkok", at: NOW - 60_000 }],
     readBody: async (req: any) => req.body,
     now: () => NOW,
-    endpoints: () => ({ host: HOST, lookup: LOOKUP }),
+    endpoints: () => ({ host: HOST, lookup: [LOOKUP] }),
   };
 
   it("snapshots the running turn's steps, the other tasks and the inbox", () => {
@@ -300,10 +327,57 @@ describe("voice host route", () => {
     }
   });
 
+  it("tells a long finished answer as a brief, which may run past a spoken turn's length", async () => {
+    const answer = "## Today's AI news\n\n" + "- A launch story. ".repeat(200);
+    const r = fakeRes();
+    let told: any = null;
+    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { text: answer, brief: true } } as any, r.res, {
+      ...deps,
+      run: async function* () {
+        throw new Error("a brief is not a host turn");
+      },
+      brief: async function* (options) {
+        told = options;
+        yield { type: "sentence", text: "Three big stories." };
+        yield { type: "done" };
+      },
+    });
+    expect(told.answer).toBe(answer.trim());
+    expect(told.host).toBe(HOST);
+    expect(r.out()).toContain("Three big stories.");
+  });
+
   it("ignores every other path", async () => {
     const r = fakeRes();
     expect(await handleVoiceHostRoute("POST", "/api/bots/b1/messages", {} as any, r.res, deps)).toBe(false);
     expect(await handleVoiceHostRoute("GET", "/api/bots/b1/voice-host", {} as any, r.res, deps)).toBe(false);
+  });
+});
+
+describe("voice brief", () => {
+  it("asks for the gist in a few spoken sentences with no tools, and streams them", async () => {
+    let sent: any;
+    const events = await collect(
+      runVoiceBrief({
+        state: STATE,
+        answer: "## News\n\n- US and China discuss an AI incident line.\n- Google ships Gemini for Windows.",
+        host: HOST,
+        fetchImpl: sse([text("Two big stories. "), text("The full version is in the chat.")], { seen: (body) => (sent = body) }),
+      }),
+    );
+    expect(events).toEqual([
+      { type: "sentence", text: "Two big stories." },
+      { type: "sentence", text: "The full version is in the chat." },
+      { type: "done" },
+    ]);
+    expect(sent.tools).toBeUndefined();
+    expect(sent.messages[0].content).toContain("at most three short sentences");
+    expect(sent.messages[1].content).toContain("Gemini for Windows");
+  });
+
+  it("reports a failure as an event, so the caller reads the answer out", async () => {
+    expect((await collect(runVoiceBrief({ state: STATE, answer: "x", host: HOST, fetchImpl: sse([], { status: 500 }) })))[0]).toMatchObject({ type: "error" });
+    expect((await collect(runVoiceBrief({ state: STATE, answer: "x", host: null })))[0]).toMatchObject({ type: "error", reason: "key" });
   });
 });
 
@@ -318,7 +392,7 @@ describe("voice host warm-up", () => {
       lastActivityAt: () => undefined,
       needsYou: () => [],
       readBody: async (req: any) => req.body,
-      endpoints: () => ({ host: HOST, lookup: null }),
+      endpoints: () => ({ host: HOST, lookup: [] }),
       warm: async () => {
         calls += 1;
       },
