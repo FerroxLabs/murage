@@ -66,6 +66,19 @@ const IDLE: VoiceHostState = {
   ],
 };
 
+/** The live call's state: an earlier news request already answered in the
+ *  thread, then a failed attempt. */
+const AFTER_NEWS: VoiceHostState = {
+  ...IDLE,
+  recent: [
+    ...IDLE.recent,
+    { who: "owner", text: "latest AI news today", at: NOW - 30 * 60_000 },
+    { who: "bot", text: "Here's the latest AI news, with the well-sourced stories first. U.S. and China move toward a formal AI safety dialogue. Google shipped a native Gemini app for Windows.", at: NOW - 29 * 60_000 },
+    { who: "owner", text: "I'd like the latest AI news", at: NOW - 60_000 },
+    { who: "bot", text: "(That attempt failed and nothing is running: Grok CLI is not signed in)", at: NOW - 59_000 },
+  ],
+};
+
 const BUSY: VoiceHostState = {
   ...IDLE,
   task: { title: "Morning board", busy: true, activity: ["searching the web", "reading northwind.com/investors", "drafting the summary"] },
@@ -82,6 +95,7 @@ const CASES: Array<{ said: string; state: VoiceHostState; want: Expect }> = [
   // said on a live call, 2026-09-23
   { said: "I want to see what the latest AI news is.", state: IDLE, want: "lookup" },
   { said: "Well, AI news from the last 48 hours.", state: IDLE, want: "lookup" },
+  { said: "I'd like the latest AI news from the last 72 hours.", state: AFTER_NEWS, want: "lookup" },
   { said: "Fix the churn number in the Northwind deck.", state: IDLE, want: "hand" },
   { said: "Book me a table for two at eight tonight somewhere near the office.", state: IDLE, want: "hand" },
   { said: "Did Mark reply to my email about the contract?", state: IDLE, want: "hand" },
