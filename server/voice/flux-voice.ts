@@ -146,6 +146,12 @@ function failureFor(status: number, body: any): TranscriptionUnavailable {
   if (status === 413) {
     return new TranscriptionUnavailable("too_large", "That recording is too long. Keep it under 8MB.");
   }
+  // OpenAI answers an account out of credit with 429 ("You have no credits
+  // remaining", code insufficient_quota). That is not a rate limit: asking
+  // again will not help, so it is a plan problem, not retryable.
+  if (status === 429 && /no credits|insufficient[_ ]quota|exceeded your current quota|billing/i.test(said)) {
+    return new TranscriptionUnavailable("premium", said);
+  }
   if (status === 429) {
     return new TranscriptionUnavailable(
       "rate_limit",

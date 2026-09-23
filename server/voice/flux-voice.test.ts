@@ -163,6 +163,11 @@ describe("refusals", () => {
     expect((await reasonFor(502, {})).retryable).toBe(true);
     expect((await reasonFor(413, {})).retryable).toBe(false);
     expect((await reasonFor(400, {})).retryable).toBe(false);
+    // an account out of credit is a plan problem, not a rate limit
+    const broke = await reasonFor(429, { error: { message: "You have no credits remaining. Add credits to continue.", code: "insufficient_quota" } });
+    expect(broke.reason).toBe("premium");
+    expect(broke.retryable).toBe(false);
+    expect(broke.message).toContain("no credits");
   });
 
   it("never puts the key in a message it could show someone", async () => {
