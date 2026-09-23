@@ -51,7 +51,7 @@ and attached.
 | D1 | Imported skills land in the owner's own **Your skills** collection in Settings, are scanned once there, and are switched on per bot. |
 | D2 | Three verdicts: **No red flags**, **Needs a look** (switch on only after seeing the findings and confirming once), **Blocked** (cannot be switched on; read or delete only). |
 | D3 | The built-in library is scanned before it ships. Library skills that come out Blocked are removed from the library. |
-| D4 | The scanner starts from Ferrox Labs' Skill Guard (the Wayland desktop app's TypeScript scanner, brought in under Murage's AGPL-3.0-or-later license) plus Murage's own invisible-character check. NVIDIA SkillSpector is a possible later "deep scan", not part of this work. |
+| D4 | The scanner starts from Ferrox Labs' Skill Guard (the Wayland desktop app's TypeScript scanner, brought in under Murage's AGPL-3.0-or-later license) plus Murage's own invisible-character check, plus the static pattern tables of NVIDIA SkillSpector (Apache-2.0, credited). SkillSpector's code-flow and YARA analysis come later as a deep scan (see Later phases). |
 | D5 | One **New Bot** and one **New Team** menu item, each opening a describe-first chooser. "New Bot from Template" and the Library window's Bots and Teams tabs go away. |
 | D6 | **Settings → Skills** is one screen: search, Your skills, then the library; click a skill to read it, see its scan result and switch it on per bot; an Import skill button. The topic pills go away. |
 | D7 | In the bot window, **Add skill** opens the same search and reader *inside* the bot window, with one Add button. Needs a look shows its findings with one confirm step; Blocked has no Add button. |
@@ -144,6 +144,10 @@ and attached.
 
 ### Scanner: `server/skill-guard/`
 
+- `spector-patterns.generated.ts`: the static pattern tables of NVIDIA
+  SkillSpector (Apache-2.0), converted at a pinned commit by a script and
+  credited in NOTICE. Each pattern keeps its confidence score; a critical
+  finding blocks only at high confidence.
 - `rules.ts`: Skill Guard's seven rules (credential access, network
   exfiltration, shell execution, filesystem writes, instruction override,
   obfuscation, index poisoning) plus Murage's invisible and bidirectional
@@ -190,7 +194,8 @@ the bot window, the library add route, the GitHub route, `.murage` package
 import, team import, and a bot's own staged skill (`skill_manage`).
 
 Existing installed skills are scanned once on upgrade. A Blocked one is
-switched off and the owner gets one inbox item naming it and why.
+switched off and the bot says so in its own chat, naming the skill and why
+(inbox rows only come from request, connection, run and error messages).
 
 ### Routes (desktop only, like today's skill routes)
 
@@ -251,3 +256,16 @@ The existing per-bot routes stay for the bot window's list and history.
 4. New Bot / New Team chooser, then retire the Library window.
 
 Each step ships working on its own.
+
+## Later phases (agreed, separate plans)
+
+1. **MCP guard.** Scan every connected MCP server's tool names and
+   descriptions with the same pattern engine (tool poisoning), and pin a
+   fingerprint of its tool list when the owner approves it; a changed list
+   on a later connect is held until the owner looks again (rug pull).
+2. **Second opinion.** An opt-in "Get a second opinion" on Needs a look,
+   run on the owner's Flux key or the bot's own engine; never required, and
+   the static verdict stands when it fails.
+3. **Code in skills.** When skills may carry scripts: YARA signatures
+   (malware, webshells, miners) through a WebAssembly build, and code-flow
+   (taint) analysis through a pinned SkillSpector deep scan.
