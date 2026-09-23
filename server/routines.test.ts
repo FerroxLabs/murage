@@ -758,6 +758,93 @@ describe("RoutineManager", () => {
     expect(h.started).toHaveLength(2);
   });
 
+  // Upstream #1564 (e7e20663): skipping is the right default, but a routine
+  // that must not lose an occurrence can queue ONE behind the active run, and
+  // either way the owner can see how many occurrences were skipped.
+  describe("overlap: queue, skipped runs and failure streak", () => {
+    const monday = new Date(2026, 7, 17, 9, 0, 0).getTime();
+    const day = 24 * 60 * 60_000;
+    const daily = (h: ReturnType<typeof harness>, overlap?: "skip" | "queue") => h.manager.create({
+      name: "Daily brief", prompt: "Summarize", botId: "ember-daily",
+      schedule: { type: "daily", time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] }, ...(overlap ? { overlap } : {}),
+    });
+
+    it("counts each skipped occurrence and when the last one was due", async () => {
+      const h = harness();
+      daily(h);
+      h.setNow(monday); await h.manager.tick();
+      h.setNow(monday + day); await h.manager.tick();
+      h.setNow(monday + 2 * day); await h.manager.tick();
+      expect(h.manager.listRuns()).toHaveLength(1);
+      expect(h.manager.listRoutines()[0]).toMatchObject({ skippedRuns: 2, lastSkippedAt: monday + 2 * day });
+      expect(h.manager.listRoutines()[0]).not.toHaveProperty("overlap");
+      expect(new RoutineManager({ ...h.options, emit: () => {} }).listRoutines()[0]).toMatchObject({ skippedRuns: 2 });
+    });
+
+    it("queues at most one scheduled run, and starts it only after the active one settles", async () => {
+      const h = harness();
+      const routine = daily(h, "queue");
+      expect(routine.overlap).toBe("queue");
+      h.setNow(monday); await h.manager.tick();
+      h.setNow(monday + day); await h.manager.tick();
+      // The bot has free slots, but the queued run waits for its own routine.
+      expect(h.manager.listRuns().map((run) => run.status)).toEqual(["queued", "running"]);
+      expect(h.started).toHaveLength(1);
+      h.setNow(monday + 2 * day); await h.manager.tick();
+      expect(h.manager.listRuns()).toHaveLength(2);
+      expect(h.manager.listRoutines()[0]).toMatchObject({ skippedRuns: 1, lastSkippedAt: monday + 2 * day });
+
+      h.manager.failThread("thread-1", "Finished test run");
+      await h.manager.tick();
+      expect(h.started).toHaveLength(2);
+      expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", scheduledFor: monday + day });
+    });
+
+    it("stores skip as absence, and switching back to skip removes the key", () => {
+      const h = harness();
+      const routine = daily(h, "queue");
+      expect(JSON.parse(readFileSync(h.options.file!, "utf8")).routines[0].overlap).toBe("queue");
+      expect(h.manager.update(routine.id, { overlap: "skip" })).not.toHaveProperty("overlap");
+      expect(JSON.parse(readFileSync(h.options.file!, "utf8")).routines[0]).not.toHaveProperty("overlap");
+      expect(() => h.manager.update(routine.id, { overlap: "backlog" as never })).toThrow("Choose skip or queue");
+    });
+
+    it("loads older and hand-edited files safely", () => {
+      const h = harness();
+      daily(h);
+      const file = JSON.parse(readFileSync(h.options.file!, "utf8"));
+      file.routines[0] = { ...file.routines[0], overlap: "backlog", skippedRuns: -3, lastSkippedAt: "yesterday", failureStreak: 99 };
+      writeFileSync(h.options.file!, JSON.stringify(file));
+      const loaded = new RoutineManager({ ...h.options, emit: () => {} }).listRoutines()[0]!;
+      for (const key of ["overlap", "skippedRuns", "lastSkippedAt", "failureStreak"]) expect(loaded).not.toHaveProperty(key);
+    });
+
+    it("derives the failure streak from settled runs, ignoring cancelled and missed ones", async () => {
+      const h = harness();
+      const routine = h.manager.create({ name: "Flaky", prompt: "Try", botId: "ember-flaky", enabled: false, schedule: { type: "daily", time: "09:00", weekdays: [1] } });
+      const settle = async (ok: boolean) => {
+        h.manager.runNow(routine.id);
+        await h.manager.tick();
+        const threadId = h.started.at(-1)!.threadId;
+        h.manager.handleRuntimeEvent({ eventId: threadId, provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok, ...(ok ? {} : { stopReason: "crashed" }) });
+        h.setNow(h.nowValue() + 60_000);
+      };
+      await settle(false);
+      await settle(true);
+      expect(h.manager.listRoutines()[0]).not.toHaveProperty("failureStreak");
+      await settle(false);
+      await settle(false);
+      const cancelled = h.manager.runNow(routine.id)!;
+      await h.manager.cancelRun(cancelled.id);
+      expect(h.manager.listRoutines()[0]).toMatchObject({ failureStreak: 2 });
+      const frames = h.emitted.filter((frame) => frame.kind === "routine" && frame.routine.id === routine.id);
+      expect(frames.at(-1).routine.failureStreak).toBe(2);
+      expect(JSON.parse(readFileSync(h.options.file!, "utf8")).routines[0]).not.toHaveProperty("failureStreak");
+      await settle(true);
+      expect(h.manager.listRoutines()[0]).not.toHaveProperty("failureStreak");
+    });
+  });
+
   // #988 subset (adapted from OpenMausBot 1e6737b0): an edit that leaves the
   // schedule and the enabled state alone keeps the routine's cursor.
   // Recomputing it from "now" silently skipped an occurrence that had become
@@ -1756,6 +1843,56 @@ describe("RoutineManager", () => {
 
     h.manager.markSeen(h.failed[0].id);
     expect(h.failed).toHaveLength(1);
+  });
+
+  // Upstream #1629: the problems pill counted unseen failures but only
+  // opening each run one by one could clear it.
+  it("marks every unseen failed or missed run seen in one sweep", async () => {
+    const h = harness();
+    const broken = h.manager.create({ name: "Broken report", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.manager.create({ name: "Stale check", prompt: "Stale", botId: "ember-b", schedule: { type: "once", at: new Date(2026, 7, 16, 6, 0).getTime() } });
+    const fine = h.manager.create({ name: "Fine brief", prompt: "Brief", botId: "ember-c", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 3).getTime() } });
+    const acknowledged = h.manager.create({ name: "Old failure", prompt: "Try", botId: "ember-d", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 4).getTime() } });
+    const settle = (threadId: string, ok: boolean) => h.manager.handleRuntimeEvent({
+      eventId: threadId, provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok, ...(ok ? {} : { stopReason: "provider crashed" }),
+    });
+
+    await h.manager.tick(); // the long-past once routine is recorded as missed
+    h.setNow(broken.nextRunAt!); await h.manager.tick(); settle("thread-1", false);
+    h.setNow(fine.nextRunAt!); await h.manager.tick(); settle("thread-2", true);
+    h.setNow(acknowledged.nextRunAt!); await h.manager.tick(); settle("thread-3", false);
+    const byName = () => new Map(h.manager.listRuns().map((run) => [run.routineName, run]));
+    h.manager.markSeen(byName().get("Old failure")!.id);
+
+    h.emitted.length = 0;
+    const stampAt = new Date(2026, 7, 18, 8, 0).getTime();
+    h.setNow(stampAt);
+    const stamped = h.manager.markAllSeen();
+    expect(stamped.map((run) => run.routineName).sort()).toEqual(["Broken report", "Stale check"]);
+    expect(stamped.every((run) => run.seenAt === stampAt)).toBe(true);
+    expect(byName().get("Fine brief")!.seenAt).toBeUndefined();
+    expect(byName().get("Old failure")!.seenAt).toBeLessThan(stampAt);
+    expect(h.emitted.filter((frame) => frame.kind === "routine.run")).toHaveLength(2);
+
+    expect(h.manager.markAllSeen()).toEqual([]);
+    const reloaded = new Map(new RoutineManager(h.options).listRuns().map((run) => [run.routineName, run]));
+    expect(reloaded.get("Broken report")!.seenAt).toBe(stampAt);
+    expect(reloaded.get("Stale check")!.seenAt).toBe(stampAt);
+  });
+
+  it("rolls the mark-all sweep back when its save fails", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Broken report", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    h.manager.handleRuntimeEvent({ eventId: "broken", provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString(), type: "turn.completed", ok: false, stopReason: "provider crashed" });
+    h.emitted.length = 0;
+    const save = vi.spyOn(h.manager as unknown as { save(): void }, "save").mockImplementationOnce(() => { throw new Error("fixture disk full"); });
+    expect(() => h.manager.markAllSeen()).toThrow("fixture disk full");
+    expect(h.manager.listRuns()[0].seenAt).toBeUndefined();
+    expect(h.emitted).toHaveLength(0);
+    save.mockRestore();
+    expect(h.manager.markAllSeen()).toHaveLength(1);
   });
 
   it("fails, not completes, a run whose turn the host stopped (ok:true, stopReason cancelled) (STOP1)", async () => {

@@ -55,6 +55,12 @@ export interface Routine {
   /** Optional wall-clock safety limit. Missing means the run is unlimited. */
   timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
+  /** Absent means skip; see server/routines.ts. */
+  overlap?: "skip" | "queue";
+  skippedRuns?: number;
+  lastSkippedAt?: number;
+  /** Derived by the server from settled runs. */
+  failureStreak?: number;
   nextRunAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -109,4 +115,5 @@ export interface RoutineInput {
   /** `null` explicitly removes the limit; omission preserves it on updates. */
   timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
+  overlap?: "skip" | "queue";
 }

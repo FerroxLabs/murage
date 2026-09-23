@@ -6692,8 +6692,10 @@ describe("harness HTTP API", () => {
         }),
       });
       expect(unavailableCloud.status).toBe(409);
+      // Upstream #1554: the refusal points a VPS user back at the default
+      // destination instead of sending them after a Box key.
       expect(await unavailableCloud.json()).toMatchObject({
-        error: expect.stringMatching(/Box API key|Cloud VM runner/i),
+        error: expect.stringMatching(/Box API key.*self-hosted VPS, set run_on to murage/),
       });
 
       const proposed = await fetch(`${BASE}/api/internal/routine-requests`, {
@@ -6874,6 +6876,12 @@ describe("harness HTTP API", () => {
         // must not make the original conversation unread again. markSeen
         // re-emits the receipt without changing its lifecycle status.
         expect((await api("POST", `/api/bots/${bot.id}/read`, { threadId: bot.threadId })).status).toBe(200);
+        // "Mark all as read" (upstream #1629) stamps the same run from any
+        // signed-in surface, and a second sweep finds nothing left.
+        const sweep = await api("POST", "/api/routine-runs/seen-all");
+        expect(sweep.status).toBe(200);
+        expect(sweep.body.runs.find((run: { id: string }) => run.id === queued.body.run.id)?.seenAt).toBeTypeOf("number");
+        expect((await api("POST", "/api/routine-runs/seen-all")).body.runs).toEqual([]);
         expect((await api("POST", `/api/routine-runs/${queued.body.run.id}/seen`)).status).toBe(200);
         const afterSeen = (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id);
@@ -6905,6 +6913,8 @@ describe("harness HTTP API", () => {
           error: expect.stringMatching(/This bot's AI connection is unavailable.*App Settings/i),
           executionThreadId: runCards[0].routineRun.executionThreadId,
         });
+        // Run health (upstream #1564) reaches the bot with the routine.
+        expect(groundedBody.routines.find((routine) => routine.id === routineId)).toMatchObject({ overlap: "skip", failureStreak: 1 });
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
         await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,

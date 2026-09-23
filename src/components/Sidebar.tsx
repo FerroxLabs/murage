@@ -122,6 +122,7 @@ import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { NewTeamDialog } from "./NewTeamDialog";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
+import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
  *  quieter line: present when something about the thing that just happened
@@ -2754,7 +2755,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
               <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Routines</span>
-              {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
+              {state.routineRuns.some(isUnseenRoutineProblem) && (
                 <span className="size-2 rounded-full bg-danger" />
               )}
             </button>
@@ -2809,9 +2810,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 icon: <CalendarDays size={18} />,
                 active: state.activeView === "routines",
                 // folded away, this dot would otherwise vanish with the row
-                attention: state.routineRuns.some(
-                  (run) => ["failed", "missed"].includes(run.status) && !run.seenAt,
-                ),
+                attention: state.routineRuns.some(isUnseenRoutineProblem),
                 onSelect: () => dispatch({ type: "showRoutines" }),
               },
               {

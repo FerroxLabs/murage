@@ -726,6 +726,7 @@ export type Action =
   | { type: "runRoutine"; routineId: string }
   | { type: "cancelRoutineRun"; runId: string }
   | { type: "markRoutineRunSeen"; runId: string }
+  | { type: "markAllRoutineRunsSeen" }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
   | { type: "groupDeleted"; groupId: string }
   | {
@@ -1724,6 +1725,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "runRoutine":
     case "cancelRoutineRun":
     case "markRoutineRunSeen":
+    case "markAllRoutineRunsSeen":
       return state;
   }
 }
@@ -2104,6 +2106,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "markRoutineRunSeen":
           api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
+          break;
+        case "markAllRoutineRunsSeen":
+          // The server re-emits every stamped run, which clears the dots here.
+          api("/api/routine-runs/seen-all", { method: "POST" }).catch(showError);
           break;
         case "cancelQueued":
           void api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE" })

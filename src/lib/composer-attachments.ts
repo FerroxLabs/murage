@@ -456,3 +456,27 @@ export function engineAcceptsImages(
   if (instances.length === 0) return true;
   return instances.find((instance) => instance.instanceId === instanceId)?.capabilities?.images === true;
 }
+
+/**
+ * Whether the composer may pull keyboard focus back into its draft after the
+ * file picker closes (upstream #1599, c0318927). The dialog leaves focus on
+ * the attach button, so the writer had to click the draft again before
+ * typing on. The draft was their place when focus is still there, has
+ * fallen to the page, or sits on a control inside the composer such as that
+ * button. Focus the writer moved elsewhere, into a dialog or the sidebar, is
+ * left alone.
+ */
+export function composerShouldRefocus(active: FocusNode | null, input: ComposerInputNode): boolean {
+  if (!active || active === input) return true;
+  const root = input.ownerDocument;
+  if (active === root.body || active === root.documentElement) return true;
+  return Boolean(input.closest("[data-composer]")?.contains(active));
+}
+
+// This file is also compiled for the server, which has no DOM types; the rule
+// only needs these members of the real elements.
+type FocusNode = object;
+interface ComposerInputNode {
+  ownerDocument: { body: FocusNode | null; documentElement: FocusNode | null };
+  closest(selector: string): { contains(node: FocusNode | null): boolean } | null;
+}

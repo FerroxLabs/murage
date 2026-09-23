@@ -7,6 +7,7 @@ import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 import { createHash } from "node:crypto";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
+import { mentionedPeers, mentionsEveryone } from "../shared/mention-boundary.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
@@ -809,29 +810,14 @@ export function canReach(from: ReachableBot, to: ReachableBot): boolean {
 }
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
- * word, the name must end on a word boundary (so "@New Bottle" never matches
+ * mention (after whitespace, an opening bracket or a Markdown marker), the
+ * name must end on a Unicode word boundary (so "@New Bottle" never matches
  * "New Bot"), names match case-insensitively, longest name wins (so
  * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
- * deduped. Callers pre-filter the sender out of `peers`. */
+ * deduped. The rule lives in shared/mention-boundary.ts so the composer's
+ * preview routes the same way. Callers pre-filter the sender out of `peers`. */
 export function mentionedBots<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
-  const candidates = peers
-    .filter((p) => !p.hidden && p.name.trim())
-    .sort((a, b) => b.name.length - a.name.length);
-  const lower = text.toLowerCase();
-  const found: T[] = [];
-  let at = -1;
-  while ((at = lower.indexOf("@", at + 1)) !== -1) {
-    if (at > 0 && !/\s/.test(text[at - 1])) continue; // user@host, not a tag
-    const rest = lower.slice(at + 1);
-    const hit = candidates.find((p) => {
-      const name = p.name.toLowerCase();
-      if (!rest.startsWith(name)) return false;
-      const after = rest[name.length]; // must not run into a longer word
-      return after === undefined || !/[a-z0-9]/i.test(after);
-    });
-    if (hit && !found.includes(hit)) found.push(hit);
-  }
-  return found;
+  return mentionedPeers(text, peers);
 }
 
 /** Normalize persisted or API-provided routing. Old rooms did not have this
@@ -927,7 +913,7 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
   options: { byName?: boolean } = {},
 ): T[] {
   const available = members.filter((member) => !member.hidden);
-  if (/(?:^|\s)@everyone\b/i.test(text)) return available;
+  if (mentionsEveryone(text)) return available;
   const mentioned = mentionedBots(text, available);
   if (mentioned.length) return mentioned;
   const addressed = options.byName ? addressedMembers(text, available) : [];

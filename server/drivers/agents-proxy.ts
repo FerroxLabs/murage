@@ -217,8 +217,8 @@ const ROUTINE_FIELDS_SCHEMA = {
   schedule: ROUTINE_SCHEDULE_SCHEMA,
   run_on: {
     type: "string",
-    enum: ["ember", "cloud"],
-    description: "Where the routine runs. Defaults to ember (this Murage setup).",
+    enum: ["murage", "box"],
+    description: "Omit this for normal schedules. The default, murage, keeps the bot's selected model and configured computer, including a self-hosted VPS. box switches the routine to the Box-hosted runner; it needs Box set up and is not the VPS option.",
   },
   timeout_minutes: {
     type: "integer",
@@ -448,7 +448,7 @@ const TOOLS = [
         ...ROUTINE_FIELDS_SCHEMA,
         watch: {
           type: "object", additionalProperties: false, required: ["relative_path", "expires_at", "max_checks"],
-          description: "Only when the user asks to watch a chosen existing file in this bot's current working folder. Read-only change detection; use interval cadence >=5 minutes and run_on ember. No URLs, absolute paths, secrets or provider execution. Confirmation is still required.",
+          description: "Only when the user asks to watch a chosen existing file in this bot's current working folder. Read-only change detection; use interval cadence >=5 minutes and omit run_on (or pass murage). No URLs, absolute paths, secrets or provider execution. Confirmation is still required.",
           properties: { relative_path: { type: "string", minLength: 1, maxLength: 200 }, expires_at: { type: "string", format: "date-time" }, max_checks: { type: "integer", minimum: 1, maximum: 10000 } },
         },
         for_bot_id: {
@@ -578,6 +578,14 @@ function routineAction(value: unknown): RoutineAction | null {
     : null;
 }
 
+/** The stored routine destinations are "ember" (the bot's own setup) and
+ * "cloud" (the Box-hosted runner). Upstream #1554 (9c3691df) found models
+ * reading "cloud" as "my VPS" and asking VPS users for a Box key, and
+ * "ember" is an internal name. The tool now speaks murage/box; stored values
+ * and anything copied back from an older list_routines still work. */
+const RUN_ON_STORED: Record<string, "ember" | "cloud"> = { murage: "ember", box: "cloud", ember: "ember", cloud: "cloud" };
+const RUN_ON_SHOWN: Record<string, string> = { ember: "murage", cloud: "box" };
+
 function routineFields(args: Json): { fields: Json; error?: string } {
   const fields: Json = {};
   if (args.clear_timeout === true && typeof args.timeout_minutes === "number") {
@@ -590,7 +598,11 @@ function routineFields(args: Json): { fields: Json; error?: string } {
     if (normalized.error) return { fields, error: normalized.error };
     fields.schedule = normalized.schedule;
   }
-  if (typeof args.run_on === "string") fields.runOn = args.run_on;
+  if (typeof args.run_on === "string") {
+    const runOn = RUN_ON_STORED[args.run_on];
+    if (!runOn) return { fields, error: 'Omit run_on (or use "murage") to keep the bot\'s model and configured computer, including a self-hosted VPS. Use "box" only for the Box-hosted runner.' };
+    fields.runOn = runOn;
+  }
   if (args.clear_timeout === true) fields.timeoutMinutes = null;
   else if (typeof args.timeout_minutes === "number") fields.timeoutMinutes = args.timeout_minutes;
   return { fields };
@@ -885,7 +897,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "list_routines") {
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
     const r = await api(`/api/internal/routines?${query.toString()}`);
-    const routines = Array.isArray(r.routines) ? r.routines : [];
+    // Shown in the tool's own run_on words, so a copied-back definition
+    // round-trips and the internal name never reaches the model.
+    const routines = (Array.isArray(r.routines) ? r.routines : []).map((routine: unknown) =>
+      jsonRecord(routine) && typeof routine.runOn === "string" && RUN_ON_SHOWN[routine.runOn]
+        ? { ...routine, runOn: RUN_ON_SHOWN[routine.runOn] }
+        : routine);
     const now = typeof r.now === "string" ? r.now : new Date().toISOString();
     const timeZone = typeof r.timeZone === "string" && r.timeZone ? r.timeZone : "local computer timezone";
     if (!routines.length) {

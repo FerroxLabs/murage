@@ -14,6 +14,7 @@ import {
   mediaHintForPath,
   splitTranscriptAttachments,
   type ImageAttachment,
+  composerShouldRefocus,
 } from "./composer-attachments";
 
 /** Exercises the spacing and empty-draft cases for pasted text insertion. */
@@ -257,5 +258,48 @@ describe("engineAcceptsImages", () => {
     expect(engineAcceptsImages(loaded, "removed-engine")).toBe(false);
     expect(engineAcceptsImages(loaded, undefined)).toBe(false);
     expect(engineAcceptsImages([], undefined)).toBe(false);
+  });
+});
+
+// Upstream #1599: after the file picker closes, focus sits on the attach
+// button and the writer had to click the draft again before typing on.
+describe("composerShouldRefocus", () => {
+  // No DOM here, so plain objects stand in for the Element members it reads.
+  type Fake = { name: string; parent?: Fake; closest: (sel: string) => Fake | null; contains: (el: unknown) => boolean };
+  const node = (name: string, parent?: Fake): Fake => {
+    const self: Fake = {
+      name,
+      parent,
+      closest: (sel) => {
+        for (let cur: Fake | undefined = self; cur; cur = cur.parent) if (sel === "[data-composer]" && cur.name === "composer") return cur;
+        return null;
+      },
+      contains: (el) => {
+        for (let cur = el as Fake | undefined; cur; cur = cur.parent) if (cur === self) return true;
+        return false;
+      },
+    };
+    return self;
+  };
+  const html = node("html");
+  const body = node("body", html);
+  const composer = node("composer", body);
+  const attach = node("attach", composer);
+  const sidebar = node("sidebar", body);
+  const input = Object.assign(node("textarea", composer), { ownerDocument: { body, documentElement: html } });
+
+  it("refocuses when focus is on the draft, gone, or on the page itself", () => {
+    expect(composerShouldRefocus(input, input)).toBe(true);
+    expect(composerShouldRefocus(null, input)).toBe(true);
+    expect(composerShouldRefocus(body, input)).toBe(true);
+    expect(composerShouldRefocus(html, input)).toBe(true);
+  });
+
+  it("refocuses from the attach button the picker leaves focused", () => {
+    expect(composerShouldRefocus(attach, input)).toBe(true);
+  });
+
+  it("leaves focus alone when the writer moved elsewhere", () => {
+    expect(composerShouldRefocus(sidebar, input)).toBe(false);
   });
 });

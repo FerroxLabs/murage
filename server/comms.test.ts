@@ -53,6 +53,21 @@ describe("mentionedBots", () => {
     expect(mentionedBots("ask @New Bottle about it", peers)).toEqual([]);
     expect(mentionedBots("@Milindo is someone else", peers)).toEqual([]);
   });
+  // Upstream #1607: bots write Markdown, so `**@Milind**` is how a mention
+  // often arrives in a room. Opening brackets and Markdown markers are
+  // boundaries; a URL path or address is not.
+  it("routes Markdown- and bracket-wrapped mentions, not paths or addresses", () => {
+    expect(mentionedBots("**@Milind** please", peers).map((b) => b.id)).toEqual(["3"]);
+    expect(mentionedBots("(@Milind)", peers).map((b) => b.id)).toEqual(["3"]);
+    expect(mentionedBots("_@Milind_ and 【@New Bot】", peers).map((b) => b.id)).toEqual(["3", "1"]);
+    expect(mentionedBots("see example.com/@Milind or me@Milind", peers)).toEqual([]);
+  });
+  it("uses Unicode word boundaries, and keeps offsets after case folding", () => {
+    expect(mentionedBots("@Milind調査 is a different name", peers)).toEqual([]);
+    expect(mentionedBots("@Milindé", peers)).toEqual([]);
+    expect(mentionedBots("@Milind_bot", peers)).toEqual([]);
+    expect(mentionedBots("İ @Milind", peers).map((b) => b.id)).toEqual(["3"]);
+  });
 });
 
 describe("roomResponders", () => {
@@ -73,6 +88,13 @@ describe("roomResponders", () => {
     expect(roomResponders("hello", members, { kind: "everyone" })).toEqual(members);
     expect(roomResponders("hello", members, { kind: "mentions" })).toEqual([]);
     expect(roomResponders("@everyone hello", members, { kind: "mentions" })).toEqual(members);
+  });
+
+  it("applies the same mention boundaries to @everyone", () => {
+    expect(roomResponders("**@Everyone** hello", members, { kind: "mentions" })).toEqual(members);
+    expect(roomResponders("(@everyone)", members, { kind: "mentions" })).toEqual(members);
+    expect(roomResponders("@everyone調査 hello", members, { kind: "mentions" })).toEqual([]);
+    expect(roomResponders("me@everyone /@everyone", members, { kind: "mentions" })).toEqual([]);
   });
 
   it("routes a reply to a member's message to that member", () => {

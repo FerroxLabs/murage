@@ -4730,11 +4730,21 @@ function retryDelegationsWaitingOn(botId: string): void {
   delegationRetryBots.add(botId);
   queueMicrotask(() => {
     delegationRetryBots.delete(botId);
-    if (store.bot(botId)?.busy) return;
+    // A bot still busy in one thread may nevertheless have freed the slot a
+    // waiting handoff needs (upstream #1678). Returning here while `busy`,
+    // the union over every thread, held those handoffs until the whole bot
+    // went idle. Now a busy bot re-runs the same admission the drain asks
+    // (handoffCanStartNow) and releases only the handoffs that pass it, so
+    // no busy retry is spent on one whose own thread is still taken. Claims
+    // are unchanged: the drain still takes them at dispatch.
+    const stillBusy = store.bot(botId)?.busy === true;
     const threadId = store.bot(botId)?.threadId;
-    if (threadId) coordinationSlots.get(threadId)?.();
+    if (!stillBusy && threadId) coordinationSlots.get(threadId)?.();
     if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
-    for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
+    const released = stillBusy
+      ? releaseDelegationsWaitingOn(botId, (sourceThreadId) => handoffCanStartNow(botId, sourceThreadId))
+      : releaseDelegationsWaitingOn(botId);
+    for (const waitingThread of released) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });
@@ -6645,7 +6655,9 @@ async function cloudRoutineReadiness(): Promise<{ ready: boolean; reason?: strin
   if (!box.boxConfigured(cfg)) {
     return {
       ready: false,
-      reason: "Cloud VM needs a working Box API key in App Settings before this routine can run.",
+      // Upstream #1554: this reached VPS users whose model read "cloud" as
+      // their VPS, and they were sent after a Box key they did not need.
+      reason: "The Box-hosted runner needs a working Box API key in App Settings. To keep the bot's own model and configured computer, including a self-hosted VPS, set run_on to murage instead. Only ask for a Box key if the person wants the Box runner.",
     };
   }
   const instance = registry.instances().find((candidate) => candidate.driverKind === "boxAgent");
@@ -6719,6 +6731,11 @@ const agentRoutine = (
             weekdays: routine.schedule.weekdays.map((day) => ROUTINE_WEEKDAY_NAMES[day]),
           },
     nextRunAt: routine.nextRunAt === null ? null : new Date(routine.nextRunAt).toISOString(),
+    // Run health (upstream #1564), so a bot asked "is my routine working?"
+    // sees skipped occurrences and a failure streak, not only the latest run.
+    overlap: routine.overlap ?? "skip",
+    ...(routine.skippedRuns ? { skippedRuns: routine.skippedRuns, lastSkippedAt: routineTimestamp(routine.lastSkippedAt) } : {}),
+    ...(routine.failureStreak ? { failureStreak: routine.failureStreak } : {}),
     latestRun: latestRun
       ? {
           id: latestRun.id,
@@ -11348,6 +11365,11 @@ const server = createServer(async (req, res) => {
       return routines!.remove(routineMatch[1])
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such routine" });
+    }
+    // Marking seen only clears attention dots, so like the per-run route it
+    // is open to every signed-in surface, the phone included (#1629).
+    if (path === "/api/routine-runs/seen-all" && method === "POST") {
+      return json(res, 200, { runs: routines!.markAllSeen() });
     }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "./config.ts";
 import { listToolkits, setManagedBrokerAccess } from "./composio.ts";
 
-afterEach(() => { vi.unstubAllGlobals(); setManagedBrokerAccess(null); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setManagedBrokerAccess(null); });
 const project = (name: string): AppConfig => ({ composio: { apiKey: `fake-catalog-${name}` } });
 const incomplete = "The app catalog could not be loaded completely. Please retry.";
 
@@ -70,6 +70,47 @@ describe("marketplace catalog traversal", () => {
     vi.stubGlobal("fetch", oversized);
     await expect(listToolkits(project("records"))).rejects.toThrow(incomplete);
     expect(oversized).toHaveBeenCalledTimes(1);
+  });
+
+  // Upstream #1615: a walk that ends with no cursor on page 1 of 4, or that
+  // replays one page behind fresh cursors, used to pass for the whole
+  // catalog. It still fails closed, and now says how much arrived.
+  it.each(["project", "managed"])("refuses a %s catalog that stops before its own reported total, with N of M", async (backend) => {
+    if (backend === "managed") setManagedBrokerAccess({ url: "https://broker.example.test", token: "c".repeat(64) });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetcher = vi.fn(async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 4, total_items: 1540 }));
+    vi.stubGlobal("fetch", fetcher);
+    const cfg = backend === "managed" ? {} : project("stalled-total");
+    await expect(listToolkits(cfg)).rejects.toThrow(`${incomplete} Loaded 1 of 1,540 apps.`);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ended-short"));
+    // nothing partial was cached
+    await expect(listToolkits(cfg)).rejects.toThrow(incomplete);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a catalog that ends early with only page counts to reveal it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 4 }));
+    await expect(listToolkits(project("end-short"))).rejects.toThrow(`${incomplete} Loaded 1 apps.`);
+  });
+
+  it("stops at the first replayed page instead of walking fresh cursors to the ceiling", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let page = 0;
+    const stuck = vi.fn(async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 2, next_cursor: `fresh-${++page}` }));
+    vi.stubGlobal("fetch", stuck);
+    await expect(listToolkits(project("page-stuck"))).rejects.toThrow(incomplete);
+    expect(stuck).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts the reported last page even when a cursor is still offered, and counts raw records against the total", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => Response.json(new URL(String(input)).searchParams.has("cursor")
+      ? { items: [{ slug: "tail" }, { slug: "HEAD" }], current_page: 2, total_pages: 2, total_items: 3, next_cursor: "page-3" }
+      : { items: [{ slug: "head" }], current_page: 1, total_pages: 2, total_items: 3, next_cursor: "page-2" }));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await listToolkits(project("last-page"))).cards.map(card => card.slug)).toEqual(["head", "tail"]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("stops on cancellation using one shared deadline signal", async () => {

@@ -188,9 +188,16 @@ export function threadsWaitingOn(toBotId: string): string[] {
 
 /** Mark a target's observed busy period as finished and return the source
  * threads that should be retried. This makes retries count distinct busy
- * periods, not unrelated drain requests on the same source thread. */
-export function releaseDelegationsWaitingOn(toBotId: string): string[] {
-  const threads = threadsWaitingOn(toBotId);
+ * periods, not unrelated drain requests on the same source thread.
+ *
+ * `admit`, when given, limits the release to the source threads whose
+ * handoff could start right now. A bot still busy in one thread can free a
+ * slot another handoff could use (upstream #1678), but releasing every
+ * waiting handoff then would spend a busy retry on each one whose own
+ * thread is still taken, and MAX_BUSY_ATTEMPTS would cancel it while the
+ * teammate was only ever busy on something else. */
+export function releaseDelegationsWaitingOn(toBotId: string, admit?: (sourceThreadId: string) => boolean): string[] {
+  const threads = threadsWaitingOn(toBotId).filter((threadId) => !admit || admit(threadId));
   if (!threads.length) return threads;
   for (const threadId of threads) {
     for (const item of pendingDelegations.get(threadId) ?? []) {

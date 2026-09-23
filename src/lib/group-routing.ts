@@ -1,4 +1,5 @@
 import type { Bot, Group, GroupDefaultResponder } from "@/state/store";
+import { mentionedPeers, mentionsEveryone } from "../../shared/mention-boundary";
 
 /** Be defensive around rooms loaded while an older server is still running,
  * and around a lead removed by another client before the group patch arrives. */
@@ -46,8 +47,8 @@ export function roomRespondersForComposer<T extends { id: string; name: string; 
   replyToBotId?: string,
 ): T[] {
   const available = members.filter((member) => !member.hidden);
-  if (/(?:^|\s)@everyone\b/i.test(text)) return available;
-  const mentioned = mentionedMembers(text, available);
+  if (mentionsEveryone(text)) return available;
+  const mentioned = mentionedPeers(text, available);
   if (mentioned.length) return mentioned;
   const repliedTo = replyToBotId ? available.find((member) => member.id === replyToBotId) : undefined;
   if (repliedTo) return [repliedTo];
@@ -85,23 +86,3 @@ export function goalCoordinatorForComposer<
   return available.find((member) => member.chiefOfStaff) ?? available[0] ?? null;
 }
 
-function mentionedMembers<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
-  const candidates = peers
-    .filter((p) => !p.hidden && p.name.trim())
-    .sort((a, b) => b.name.length - a.name.length);
-  const lower = text.toLowerCase();
-  const found: T[] = [];
-  let at = -1;
-  while ((at = lower.indexOf("@", at + 1)) !== -1) {
-    if (at > 0 && !/\s/.test(text[at - 1])) continue;
-    const rest = lower.slice(at + 1);
-    const hit = candidates.find((p) => {
-      const name = p.name.toLowerCase();
-      if (!rest.startsWith(name)) return false;
-      const after = rest[name.length];
-      return after === undefined || !/[a-z0-9]/i.test(after);
-    });
-    if (hit && !found.includes(hit)) found.push(hit);
-  }
-  return found;
-}
