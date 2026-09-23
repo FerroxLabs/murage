@@ -87,6 +87,8 @@
 //                   (default "echo hi")
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
+//   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
+//                   (a refusal, or OpenCode's session-not-found shape)
 //   FAKE_ACP_PROMPT_DUMP  path to write the last session/prompt's content
 //                   blocks as JSON, so a test can assert what reached the
 //                   engine (text, and any inline image parts)
@@ -661,6 +663,10 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      if (process.env.FAKE_ACP_LOAD_ERROR) {
+        out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_LOAD_ERROR) });
+        break;
+      }
       if (process.env.FAKE_ACP_LOAD_NULL) {
         result(msg.id, null);
         break;

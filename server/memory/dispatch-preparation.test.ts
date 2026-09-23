@@ -284,6 +284,23 @@ it("uses post-reset bundle preparation in both real dispatch paths before receip
   }
 });
 
+// #1705: an ACP engine whose session/load fails replays the turn's
+// transcript into a new session, so a resumed direct turn must carry the
+// filtered history too, not only a turn that rebuilds its prompt.
+it("filters the transcript of a resumed direct turn before dispatch, not only a rebuilt one",()=>{
+  const source=readFileSync(new URL("../index.ts",import.meta.url),"utf8");
+  const direct=source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"),source.indexOf("      if (!markDirectTurnDispatching"));
+  const replay=direct.indexOf("if(needsReplay) {");
+  const resumed=direct.indexOf("} else {",replay);
+  const bundle=direct.indexOf("const query=",replay);
+  expect(replay).toBeGreaterThan(-1);
+  expect(resumed).toBeGreaterThan(replay);
+  expect(resumed).toBeLessThan(bundle);
+  const branch=direct.slice(resumed,bundle);
+  expect(branch).toContain("filterMemoryReplay(threadId,activeMessages,access)");
+  expect(branch).toMatch(/transcript=allowed\./);
+});
+
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{
   const f=fixture(),source=checkpoint("Evidence that the owner may forget.");
   const bundle=await buildMemoryBundle("result",f.access,bridge),receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");

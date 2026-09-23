@@ -5671,6 +5671,14 @@ async function startTurn(
             rewound,memoryRefreshed:revoked,fresh,externallyUpdated:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind)});
           turnText=rebuilt.turnText;
           if(revoked){resumeCursor=undefined;sessionReset=true;}
+        } else {
+          // A resumed turn still carries its transcript: an ACP engine whose
+          // session/load fails replays it into the new session (#1705), so
+          // it must be the authorized history, never the raw branch.
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;

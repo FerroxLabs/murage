@@ -343,8 +343,24 @@ function cutCodePoints(text: string, limit: number, keep: "head" | "tail" = "hea
   return text.slice(trail >= 0xdc00 && trail <= 0xdfff ? start + 1 : start);
 }
 
+/** Whether a session/load rejection is a refusal to surface rather than a
+ * missing session to replace. `classifyError` is the engine's own reading of
+ * a sign-in failure; -32602 is JSON-RPC invalid params, except OpenCode's
+ * ACPSessionNotFoundError, which is invalid params carrying only the
+ * rejected session id. */
+function loadRefusal(error: unknown, cursor: string, classify?: (error: unknown) => string | undefined): boolean {
+  const kind = classify?.(error);
+  if (kind === "invalid_credentials" || kind === "inactive_subscription") return true;
+  const { code, data } = (error && typeof error === "object" ? error : {}) as { code?: unknown; data?: unknown };
+  if (code !== -32602) return false;
+  const missingSession = data !== null && typeof data === "object" && !Array.isArray(data)
+    && Object.keys(data).length === 1 && (data as { sessionId?: unknown }).sessionId === cursor;
+  return !missingSession;
+}
+
 /** The engine's own explanation of a failed request: Fuigo 1.0.18 sends
- * `error.data` as `{ message, error_kind }`, Fuigo <=1.0.17 as a plain string.
+ * `error.data` as `{ message, error_kind }`, Fuigo <=1.0.17 as a plain string,
+ * OpenCode as `{ details }` and some vendors as `{ error: { message } }`.
  * Made safe for one line of transcript text: terminal escapes and controls,
  * any JSON body, links and credential-shaped values are removed, whitespace
  * collapses and the length is capped. Any other shape yields nothing.
@@ -381,9 +397,16 @@ function cutCodePoints(text: string, limit: number, keep: "head" | "tail" = "hea
  * a message that is only a JSON body yields nothing — and that is the
  * point of it. */
 export function acpEngineErrorText(data: unknown, options: EngineTextOptions = {}): string | undefined {
+  // Named text fields only, never a response body or config dump (upstream
+  // c61d7c86).
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as { message?: unknown; details?: unknown; error?: { message?: unknown } }
+    : undefined;
   const raw = typeof data === "string"
     ? data
-    : data && typeof data === "object" && !Array.isArray(data) ? (data as { message?: unknown }).message : undefined;
+    : typeof record?.message === "string" ? record.message
+      : typeof record?.details === "string" ? record.details
+        : record?.error && typeof record.error === "object" ? record.error.message : undefined;
   if (typeof raw !== "string") return undefined;
   const keep = options.keep ?? "head";
   let text = redactSecretsInText(stripVTControlCharacters(raw).replace(INVISIBLE_CONTROLS, " "));
@@ -1022,8 +1045,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId, memoryTools: Boolean(turn.integrations?.memory) }) : null;
         const grokBinding = support.driverKind === "grokAgent" ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
         if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
-        const replayGrokTurn = () => ({ ...turn, text: ["[The provider session binding changed. Continue from this authorised conversation history:]", "",
+        const replayTurn = (preamble: string) => ({ ...turn, text: [preamble, "",
           ...turn.transcript!.map(item => `${item.role === "user" ? "User" : "Assistant"}: ${item.text}`), "", "[Latest message:]", turn.text].join("\n") });
+        const replayGrokTurn = () => replayTurn("[The provider session binding changed. Continue from this authorised conversation history:]");
         let promptTurn = grokBinding?.replay ? replayGrokTurn() : turn;
         const resolvedModel = providerBinding?.model ?? support.resolveTurnModel?.(turn.model, env);
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
@@ -1871,7 +1895,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // sessionId to a dead id, skipped the session/new below, and
                 // prompted a session the agent had already forgotten.
                 if (sessionResult) sessionId = cursor;
-              } catch {
+              } catch (error) {
+                // A refusal is not a missing session (upstream c61d7c86,
+                // #1705). Starting fresh on a sign-in refusal or on invalid
+                // params (a bad model or config) silently dropped the
+                // conversation and hid the reason; fail the turn with the
+                // engine's own explanation instead. OpenCode reports a
+                // session it no longer has as invalid params whose data is
+                // exactly the rejected id, and that one IS a missing session.
+                if (loadRefusal(error, cursor, support.classifyError)) throw error;
                 /* session gone, load unsupported, or too slow — start fresh */
               }
             }
@@ -1879,6 +1911,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (grokBinding && cursor) {
                 if (!turn.transcript) throw new Error("Grok session could not be restored. Reload the conversation before continuing.");
                 promptTurn = replayGrokTurn();
+              } else if (cursor && turn.transcript?.length) {
+                // The new session has no history. Sending only the latest
+                // message made the bot forget the whole thread; replay the
+                // transcript the harness sent, which it has already passed
+                // through the memory replay filter (upstream c61d7c86).
+                promptTurn = replayTurn("[Your previous session could not be restored. Continue from this conversation history:]");
               }
               sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;

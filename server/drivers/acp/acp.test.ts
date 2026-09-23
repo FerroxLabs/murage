@@ -244,6 +244,9 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
     delete process.env.FAKE_ACP_LOAD_NULL;
+    delete process.env.FAKE_ACP_LOAD_ERROR;
+    delete process.env.FAKE_ACP_RPC_DUMP;
+    delete process.env.FAKE_ACP_PROMPT_DUMP;
     delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
     recorder?.stop();
     await instance?.dispose();
@@ -2320,6 +2323,60 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(started).toMatchObject({ sessionId: "fake-acp-session" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
+  });
+
+  // #1705: a fresh session after a failed session/load has no history, and
+  // sending only the latest message made the bot forget the whole thread.
+  // The transcript the harness sent (already through the memory replay
+  // filter) rides into the new session instead.
+  it.each(["null", "opencode-not-found"])("replays the thread into session/new when session/load fails (%s)", async (failure) => {
+    if (failure === "null") process.env.FAKE_ACP_LOAD_NULL = "1";
+    else process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify({ code: -32602, message: "Session not found", data: { sessionId: "missing-cursor" } });
+    const promptDump = join(scratch, "replayed-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    await create(GeminiAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-history",
+      text: "What did I say?",
+      resumeCursor: "missing-cursor",
+      transcript: [{ role: "user", text: "Remember ALPHA." }, { role: "assistant", text: "Remembered." }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>)
+      .filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    expect(text).toMatch(/could not be restored[\s\S]*User: Remember ALPHA\.\nAssistant: Remembered\.[\s\S]*What did I say\?$/);
+  });
+
+  // #1705: a sign-in refusal or invalid params is not a missing session.
+  // Treating it as one started a blank session, dropped the thread and hid
+  // the engine's reason.
+  it.each([
+    [-32000, "authentication required", undefined, "auth_required"],
+    // the key is assembled at runtime so no credential-shaped literal sits in the source
+    [-32602, "Invalid params", { details: "model m-bogus is not available; key sk-test-" + "SYNTHETICKEYCANARY".repeat(2) }, "rpc_error"],
+  ])("fails the turn visibly when session/load is refused (%s)", async (code, message, data, stopReason) => {
+    process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify({ code, message, ...(data ? { data } : {}) });
+    const rpcFile = join(scratch, "refused-load.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(ClassifiedErrorDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-load-refused", text: "Continue", resumeCursor: "saved-session",
+      transcript: [{ role: "user", text: "Prior message" }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason });
+    const methods = JSON.parse(readFileSync(rpcFile, "utf8")) as string[];
+    expect(methods).toContain("session/load");
+    expect(methods).not.toContain("session/new");
+    expect(methods).not.toContain("session/prompt");
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string; details?: string; setup?: boolean } | undefined;
+    expect(error?.details).toContain("ACP request: session/load");
+    if (data) {
+      // the engine's own reason, redacted, not the generic JSON-RPC message
+      expect(error?.message).toContain("model m-bogus is not available");
+      expect(JSON.stringify(recorder.events)).not.toContain("SYNTHETICKEYCANARY");
+    } else {
+      expect(error?.setup).toBe(true);
+    }
   });
 
   it("applyTurnEnv sees the picker model after resolveTurnModel", async () => {
