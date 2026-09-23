@@ -9,15 +9,40 @@
 //
 // MURAGE_VOICE_HOST_EVAL_XAI names a file holding an xAI key: lookups then run
 // live through xAI's own web search (Flux's lookup route is not deployed yet).
-// MURAGE_VOICE_HOST_EVAL_VIA=xai runs the HOST on that xAI key instead of Flux
-// (MURAGE_VOICE_HOST_MODEL picks the model).
-import { readFileSync } from "node:fs";
+// MURAGE_VOICE_HOST_EVAL_VIA=<provider> runs the HOST on that provider's own
+// key instead of Flux, with the model voice-routes.ts would pick
+// (MURAGE_VOICE_HOST_MODEL overrides it). xai reads the file above; anthropic,
+// openai and groq read ~/.config/murage-test/<provider>.key. Lookups then use
+// that provider's own web search when it has one, else xAI's.
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
+import type { ProviderPreset } from "../../shared/provider-connections.ts";
 import { runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
-import type { VoiceEndpoint } from "./voice-routes.ts";
+import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 
-const keyFile = process.env.MURAGE_VOICE_HOST_EVAL?.replace(/^~/, process.env.HOME ?? "");
+const home = (file: string | undefined) => file?.replace(/^~/, process.env.HOME ?? "");
+const keyFile = home(process.env.MURAGE_VOICE_HOST_EVAL);
+const via = (process.env.MURAGE_VOICE_HOST_EVAL_VIA || "flux") as ProviderPreset;
+const keyFiles: Partial<Record<ProviderPreset, string | undefined>> = {
+  flux: keyFile,
+  xai: home(process.env.MURAGE_VOICE_HOST_EVAL_XAI),
+  ...Object.fromEntries((["anthropic", "openai", "groq"] as const).map((p) => [p, home(`~/.config/murage-test/${p}.key`)])),
+};
+const keyFor = (p: ProviderPreset) => {
+  const file = keyFiles[p];
+  return file && existsSync(file) ? readFileSync(file, "utf8").trim() : "";
+};
+
+/** The route voice-routes.ts picks when `presets` are the only saved connections. */
+function routeVia(part: "host" | "lookup", presets: ProviderPreset[]): VoiceEndpoint | null {
+  const saved = presets.filter((p) => keyFor(p));
+  return voiceEndpoint(part, {
+    list: () => saved.map((p) => ({ id: p, preset: p, label: p, enabled: true })),
+    resolve: (id) => ({ baseUrl: PROVIDER_PRESETS[id as ProviderPreset].baseUrl, key: keyFor(id as ProviderPreset), preset: id as ProviderPreset, label: id }),
+  });
+}
 const NOW = Date.now();
 
 const IDLE: VoiceHostState = {
@@ -62,17 +87,12 @@ const CASES: Array<{ said: string; state: VoiceHostState; want: Expect }> = [
   { said: "Actually, stop that, never mind.", state: BUSY, want: "cancel" },
 ];
 
-describe.skipIf(!keyFile)("voice host, live routing", () => {
-  const xaiFile = process.env.MURAGE_VOICE_HOST_EVAL_XAI?.replace(/^~/, process.env.HOME ?? "");
-  const fluxKey = keyFile ? readFileSync(keyFile, "utf8").trim() : "";
-  const xaiKey = xaiFile ? readFileSync(xaiFile, "utf8").trim() : "";
-  const viaXai = process.env.MURAGE_VOICE_HOST_EVAL_VIA === "xai" && xaiKey;
-  const host: VoiceEndpoint = viaXai
-    ? { via: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", key: xaiKey, model: process.env.MURAGE_VOICE_HOST_MODEL || "grok-4-fast-non-reasoning" }
-    : { via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: fluxKey, model: process.env.MURAGE_VOICE_HOST_MODEL || "claude-haiku-4-5" };
-  const lookup: VoiceEndpoint | null = xaiKey
-    ? { via: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", key: xaiKey, model: "grok-4-fast-non-reasoning" }
-    : null;
+const planned = routeVia("host", [via]);
+
+describe.skipIf(!planned)("voice host, live routing", () => {
+  const host: VoiceEndpoint = { ...planned!, model: process.env.MURAGE_VOICE_HOST_MODEL || planned!.model };
+  // Flux's own lookup route is not deployed yet: Flux runs use xAI's search.
+  const lookup = (via !== "flux" && routeVia("lookup", [via])) || routeVia("lookup", ["xai"]);
   const rows: string[] = [];
 
   for (const c of CASES) {
