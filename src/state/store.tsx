@@ -445,7 +445,7 @@ export interface ConfigStatus {
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
    * never echoed back. */
-  tts?: { configured: boolean; ready: boolean; voice: string; provider?: "elevenlabs" | "system" };
+  tts?: { configured: boolean; ready: boolean; voice: string; provider?: "flux" | "elevenlabs" | "system" };
   /** Shared write-only credential for on-demand GPT Image avatars. */
   imageGen?: { configured: boolean };
   /** Flux Router key. Presence only — the key itself is never sent to the

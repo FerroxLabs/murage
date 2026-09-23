@@ -2,13 +2,10 @@
 //
 // WHY THIS FILE EXISTS, AND WHAT FLUX ACTUALLY OFFERS
 // ---------------------------------------------------
-// Flux Router exposes exactly one audio capability: TRANSCRIPTION, at
-// `POST /v1/audio/transcriptions` (flux-router `src/audio_route.py:90`,
-// mounted by `src/audio_route_registrar.py:113`). There is NO synthesis
-// endpoint. No `/v1/audio/speech`, no ElevenLabs passthrough, no voice ids
-// of any kind anywhere in that service. So this file does not, and must
-// not, grow a `speak()`: the ElevenLabs path in `../tts/elevenlabs.ts`
-// stays the only way Murage turns text into audio, on the user's own key.
+// This file is TRANSCRIPTION, at `POST /v1/audio/transcriptions`
+// (flux-router `src/audio_route.py`). Speech in the other direction is its
+// own file, `../tts/flux-speech.ts`, on Flux's `POST /v1/audio/speech`,
+// alongside the ElevenLabs and system voices in `../tts/`.
 //
 // What it DOES buy is the half Murage cannot do today. Dictation is a
 // native macOS helper (`electron/resources/Murage Speech.app`, driven from

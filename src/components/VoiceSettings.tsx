@@ -42,6 +42,7 @@ export function VoiceSettings({
   // Windows owner could not switch on an engine that already worked.
   const hostPlatform = capabilities.host.platform;
   const provider = tts?.provider ?? "elevenlabs";
+  const fluxAvailable = Boolean(state.config?.flux?.configured);
   // Gate AND wording come from the shared module, which is where they can be
   // executed by a test: a node-environment suite cannot render this component,
   // so a rule written inline here could only ever be checked by grepping the
@@ -70,8 +71,8 @@ export function VoiceSettings({
     };
   }, [configured, provider]);
 
-  const setProvider = (next: "elevenlabs" | "system") => {
-    if (next === provider || switching || (next === "system" && !systemVoicesAvailable)) return;
+  const setProvider = (next: "flux" | "elevenlabs" | "system") => {
+    if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable)) return;
     setSwitching(true);
     setError(null);
     // the provider is a setting, not a secret — it rides the ordinary
@@ -112,21 +113,24 @@ export function VoiceSettings({
         {offer.sentence}
       </div>
 
-      {(systemVoicesAvailable || provider === "system") && (
+      {(fluxAvailable || provider === "flux" || systemVoicesAvailable || provider === "system") && (
         <div className="mt-4">
           <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
           <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
             {([
-              { value: "elevenlabs", label: "ElevenLabs", available: true },
-              { value: "system", label: offer.label, available: offer.available },
-            ] as const).map((option) => (
+              { value: "flux", label: "Flux", available: fluxAvailable, hint: "Add a Flux key in Settings to use Flux voices." },
+              { value: "elevenlabs", label: "ElevenLabs", available: true, hint: undefined },
+              { value: "system", label: offer.label, available: offer.available, hint: offer.unavailableHint },
+            ] as const)
+              .filter((option) => option.value !== "system" || systemVoicesAvailable || provider === "system")
+              .map((option) => (
               <button
                 key={option.value}
                 type="button"
                 role="radio"
                 aria-checked={provider === option.value}
                 disabled={switching || !option.available}
-                title={!option.available ? offer.unavailableHint : undefined}
+                title={!option.available ? option.hint : undefined}
                 onClick={() => setProvider(option.value)}
                 className={cn(
                   "rounded-lg px-3.5 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
@@ -137,6 +141,14 @@ export function VoiceSettings({
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {provider === "flux" && (
+        <div className="mt-3 text-[12.5px] text-ink-secondary">
+          {fluxAvailable
+            ? "Speaks through your Flux account, billed per character. No other key needed."
+            : "Add a Flux key in Settings to use Flux voices."}
         </div>
       )}
 

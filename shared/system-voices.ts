@@ -57,7 +57,7 @@ export const SYSTEM_VOICE_UNAVAILABLE_HINT = "Built-in voices are available on m
 
 export function systemVoiceOffer(
   platform: string | undefined,
-  provider: "elevenlabs" | "system",
+  provider: "flux" | "elevenlabs" | "system",
 ): SystemVoiceOffer {
   const available = platformHasSystemVoices(platform);
   // A Windows owner is never offered "Mac voices", and neither owner is told
@@ -69,7 +69,9 @@ export function systemVoiceOffer(
     provider === "system"
       ? available
         ? ` the voices are the ones already installed on ${source}.`
-        : " built-in voices are unavailable here. Switch to ElevenLabs to keep using voice."
-      : " the ElevenLabs key is shared by the workspace.";
+        : " built-in voices are unavailable here. Switch to Flux or ElevenLabs to keep using voice."
+      : provider === "flux"
+        ? " the voices come through the workspace's Flux account."
+        : " the ElevenLabs key is shared by the workspace.";
   return { available, label, source, sentence, unavailableHint: SYSTEM_VOICE_UNAVAILABLE_HINT };
 }

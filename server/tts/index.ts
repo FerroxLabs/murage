@@ -1,6 +1,8 @@
-// Voice, wired to config. Three engines live behind this file: ElevenLabs
-// (elevenlabs.ts, needs a key) and the two built-in voices that need no key
-// at all, the Mac's (system-voices.ts) and Windows' (windows-voices.ts).
+// Voice, wired to config. Four engines live behind this file: Flux
+// (flux-speech.ts, on the workspace's Flux key, the default when no other
+// engine was chosen), ElevenLabs (elevenlabs.ts, the owner's own key) and
+// the two built-in voices that need no key at all, the Mac's
+// (system-voices.ts) and Windows' (windows-voices.ts).
 // This file is only the part that reads ~/.murage/config.json, picks the
 // engine, and decides whether there is a voice at all.
 //
@@ -9,18 +11,18 @@
 // Nobody picking a voice should have to know which operating system wrote it.
 import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";
+import * as fluxSpeech from "./flux-speech.ts";
+import { fluxConfigured } from "../flux-config.ts";
 import * as systemVoices from "./system-voices.ts";
 import * as windowsVoices from "./windows-voices.ts";
 
 /** Whether this machine can speak without a key. Windows was missing before,
- *  which left a Windows owner with no voice at all on day one: ElevenLabs
- *  needs their key, and Flux Router has no synthesis endpoint (see the note
- *  at the top of server/voice/flux-voice.ts). */
+ *  which left a Windows owner with no voice at all on day one. */
 function platformCanSpeak(): boolean {
   return systemVoices.systemVoicesAvailable() || windowsVoices.windowsVoicesAvailable();
 }
 
-export type VoiceProvider = "elevenlabs" | "system";
+export type VoiceProvider = "flux" | "elevenlabs" | "system";
 
 export class NoVoiceConfigured extends Error {
   // a plain field rather than a constructor parameter property: the harness
@@ -38,18 +40,28 @@ export class NoVoiceConfigured extends Error {
   }
 }
 
-export function voiceProvider(cfg: AppConfig): VoiceProvider {
-  return cfg.tts?.provider === "system" ? "system" : "elevenlabs";
+/** An explicit choice always wins. With none, an owner who pasted an
+ *  ElevenLabs key keeps it; everyone else speaks through Flux. */
+export function voiceProvider(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): VoiceProvider {
+  const chosen = cfg.tts?.provider;
+  if (chosen === "system" || chosen === "flux" || chosen === "elevenlabs") return chosen;
+  if (cfg.tts?.key) return "elevenlabs";
+  return fluxConfigured(env) ? "flux" : "elevenlabs";
 }
 
 /** The system provider needs no credential — it is only ever offered where
  * the platform actually has it, so "configured" means "this engine can
  * speak", not "a key is on file". */
 export function providerConfigured(cfg: AppConfig): boolean {
-  return voiceProvider(cfg) === "system" ? platformCanSpeak() : Boolean(cfg.tts?.key);
+  const provider = voiceProvider(cfg);
+  if (provider === "system") return platformCanSpeak();
+  if (provider === "flux") return fluxConfigured();
+  return Boolean(cfg.tts?.key);
 }
 
 export function voiceConfigured(cfg: AppConfig): boolean {
+  // Flux always has a voice: an agent without one gets Flux's default.
+  if (voiceProvider(cfg) === "flux") return fluxConfigured();
   if (voiceProvider(cfg) === "system") {
     return platformCanSpeak() && Boolean(cfg.tts?.voice);
   }
@@ -59,6 +71,7 @@ export function voiceConfigured(cfg: AppConfig): boolean {
 /** A per-bot voice is a complete choice too; it should not be blocked just
  * because the app-wide fallback has not been selected yet. */
 export function voiceReady(cfg: AppConfig, voiceId?: string): boolean {
+  if (voiceProvider(cfg) === "flux") return fluxConfigured();
   if (voiceProvider(cfg) === "system") {
     return platformCanSpeak() && Boolean(voiceId || cfg.tts?.voice);
   }
@@ -81,6 +94,7 @@ export function verifyKey(key: string) {
 }
 
 export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Promise<elevenlabs.Voice[]> {
+  if (voiceProvider(cfg) === "flux") return fluxSpeech.FLUX_VOICES;
   if (voiceProvider(cfg) === "system") {
     return windowsVoices.windowsVoicesAvailable()
       ? windowsVoices.listWindowsVoices(run)
@@ -94,6 +108,10 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Pro
 /** Synthesize one utterance. Throws NoVoiceConfigured when there is nothing
  * to speak with, which the route turns into a 409 the client can explain. */
 export function speak(cfg: AppConfig, text: string, voiceId?: string, run?: systemVoices.Runner) {
+  if (voiceProvider(cfg) === "flux") {
+    if (!fluxConfigured()) throw new NoVoiceConfigured("key");
+    return fluxSpeech.synthesize(text, voiceId || cfg.tts?.voice || "marin");
+  }
   if (voiceProvider(cfg) === "system") {
     const voice = voiceId || cfg.tts?.voice;
     // An injected runner is the cross-platform test seam for the two native

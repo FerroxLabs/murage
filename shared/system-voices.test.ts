@@ -85,7 +85,7 @@ describe("what the voice settings card offers, run for each platform", () => {
       const offer = systemVoiceOffer(platform, "system");
       expect(offer.available).toBe(false);
       expect(offer.sentence).toContain("built-in voices are unavailable here");
-      expect(offer.sentence).toContain("Switch to ElevenLabs");
+      expect(offer.sentence).toContain("Switch to Flux or ElevenLabs");
     }
   });
 

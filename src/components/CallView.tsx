@@ -117,7 +117,7 @@ export function CallTargetButton({
       : !window.muragebox?.speechStart
         ? "The speech service is unavailable in this app build. Restart or update Murage."
         : !configured
-          ? "Add an ElevenLabs API key (or switch to the built-in Mac voices) so the bot can speak during calls."
+          ? "Add a Flux key, an ElevenLabs key, or switch to the built-in Mac voices so the bot can speak during calls."
           : !voiceReady
             ? voices.length > 1
               ? "Give every channel member a voice before starting a channel call."
