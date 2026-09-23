@@ -1104,7 +1104,7 @@ export function Composer({
                   type="button"
                   aria-pressed={effectiveChannelMode === "goal"}
                   aria-label="Finish together"
-                  title="Finish together — the team keeps working until the goal is complete"
+                  title="Finish together: the team keeps working until the goal is complete"
                   onClick={() => {
                     markDraftEdited(draftId);
                     // Typed "/goal …" and pressed the lit chip: that reads as
