@@ -444,6 +444,7 @@ import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-arc
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, searchFlux, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
+import { handleSkillsApi } from "./skills-api.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
@@ -12248,6 +12249,20 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
       }
+    }
+    // Settings → Skills (server/skills-api.ts). Desktop only: these routes
+    // import skills and switch them on for bots.
+    if (path === "/api/skills" || path.startsWith("/api/skills/")) {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const answer = await handleSkillsApi({
+        method, path, url,
+        readBody: () => readBody(req, 12 * 1024 * 1024),
+        bots: () => store.bots.map(bot => {
+          const driver = registry.get(bot.modelSelection.instanceId)?.driverKind;
+          return { id: bot.id, name: bot.name, canUseSkills: driver !== "grok" && driver !== "boxAgent" };
+        }),
+      });
+      if (answer) return json(res, answer.status, answer.body);
     }
     if (method === "GET" && path === "/api/library/browse") {
       // Browse takes no query at all — it is the answer for someone who does
