@@ -16,7 +16,8 @@
 // - Render a whole document. Text is bounded: a first slice, "Show more" up
 //   to a fixed ceiling, and the working file in the pane (Open here) or a
 //   Download for the rest.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Download, FolderOpen, MoreHorizontal, Pause, Play } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { mediaHintForPath } from "@/lib/composer-attachments";
 import { artifactReferenceSource } from "@/lib/image-reference";
@@ -224,6 +225,72 @@ export function InlineArtifactCard({ artifact, busy, onDownload, onNativeAction,
     onNativeAction={onNativeAction} />;
 }
 
+const clock = (seconds: number) => {
+  const whole = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 0;
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+};
+
+/**
+ * A voice note (server/voice/voice-notes.ts), shown as one: play, progress
+ * and length, with Download and Show in folder behind the menu. The owner,
+ * on seeing the full file card: "that's way too much for a voice note".
+ * The words are the message itself, so nothing else is said here.
+ */
+export function VoiceNoteBubble({ artifact, busy, onDownload, onReveal }: {
+  artifact: Artifact; busy: boolean; onDownload: () => void; onReveal?: () => void;
+}) {
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [at, setAt] = useState(0);
+  const [length, setLength] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setUrl(null); setFailed(false);
+    void resolveArtifactMedia(artifact.id, controller.signal).then(response => {
+      if (controller.signal.aborted) return;
+      const accepted = acceptedArtifactMedia(response);
+      if (accepted && accepted.asset.kind === "audio") setUrl(accepted.url); else setFailed(true);
+    }, () => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [artifact.id]);
+  const toggle = () => {
+    const element = audio.current;
+    if (!element) return;
+    if (element.paused) void element.play().catch(() => setFailed(true)); else element.pause();
+  };
+  const seek = (event: React.MouseEvent<HTMLDivElement>) => {
+    const element = audio.current;
+    if (!element || !length) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    element.currentTime = Math.min(length, Math.max(0, ((event.clientX - box.left) / box.width) * length));
+  };
+  const menuItem = "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-ink hover:bg-raised disabled:opacity-50";
+  return <div className="mt-2 flex max-w-[360px] items-center gap-2.5 rounded-full border border-hairline/40 bg-inset py-1.5 pl-1.5 pr-2" data-voice-note={artifact.id}>
+    {url && <audio ref={audio} src={url} preload="metadata"
+      onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setAt(0); }}
+      onTimeUpdate={event => setAt(event.currentTarget.currentTime)}
+      onLoadedMetadata={event => setLength(event.currentTarget.duration)} onError={() => setFailed(true)} />}
+    <button type="button" onClick={toggle} disabled={!url || failed} aria-label={playing ? t("voiceNote.pause") : t("voiceNote.play")}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white hover:brightness-110 disabled:opacity-40">
+      {playing ? <Pause size={14} /> : <Play size={14} className="translate-x-px" />}
+    </button>
+    <div role="slider" aria-label={t("voiceNote.position")} aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(at)} tabIndex={-1}
+      onClick={seek} className="relative h-1.5 min-w-[120px] flex-1 cursor-pointer rounded-full bg-control">
+      <div className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${length ? Math.min(100, (at / length) * 100) : 0}%` }} />
+    </div>
+    <span className="w-9 shrink-0 text-right text-[11.5px] tabular-nums text-ink-secondary">{failed ? "–" : clock(playing || at ? at : length)}</span>
+    <details className="relative">
+      <summary aria-label={t("voiceNote.more")} className="list-none cursor-pointer rounded-full p-1 text-ink-secondary hover:bg-raised hover:text-ink"><MoreHorizontal size={15} /></summary>
+      <div className="absolute right-0 top-full z-20 mt-1 w-[170px] rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl">
+        <button type="button" disabled={busy} onClick={onDownload} className={menuItem}><Download size={13} />{t("voiceNote.download")}</button>
+        {onReveal && <button type="button" disabled={busy} onClick={onReveal} className={menuItem}><FolderOpen size={13} />{t("voiceNote.reveal")}</button>}
+      </div>
+    </details>
+  </div>;
+}
+
 /** IDs are supplied only by the server after registration; never parse paths
  * or prose into cards. Metadata reads do not fetch or execute file content. */
 export function ArtifactCards({ ids }: { ids: string[] }) {
@@ -246,7 +313,11 @@ export function ArtifactCards({ ids }: { ids: string[] }) {
   const native = artifactNativeAction();
   return <div className="mt-3 space-y-2" aria-label="Saved files">
     {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
-    {artifacts.map(artifact => <InlineArtifactCard key={artifact.id} artifact={artifact} busy={busy}
+    {artifacts.map(artifact => artifact.producer === "voice-note" && artifact.savedState === "available"
+      ? <VoiceNoteBubble key={artifact.id} artifact={artifact} busy={busy}
+          onDownload={() => { void action(() => downloadSavedArtifact(artifact)); }}
+          onReveal={native ? () => { void action(() => native(artifact, "reveal")); } : undefined} />
+      : <InlineArtifactCard key={artifact.id} artifact={artifact} busy={busy}
       // Open here (F4-T3): the working file this version came from, in the
       // pane beside this chat, named by the identity the server registered.
       onOpenHere={() => dispatch({ type: "workspacePane", action: { type: "open", scope: { botId: artifact.botId, threadId: artifact.threadId }, relativePath: artifact.relativePath, mode: "preview" } })}

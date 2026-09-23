@@ -313,7 +313,7 @@ import {
   type FrameSubject,
 } from "./sse-visibility.ts";
 import * as tts from "./tts/index.ts";
-import { admitVoiceNote, createVoiceNote, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
+import { admitVoiceNote, createVoiceNote, managedAudioOutputPath, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
 import type { ChannelVoiceNote } from "./telegram-channel.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh, replaysTranscriptNatively } from "./turn-context.ts";
@@ -9190,6 +9190,10 @@ function artifactScopes(): ArtifactScope[] {
       ...store.groups.filter(group => group.memberIds.includes(bot.id)).flatMap(group => (group.tasks ?? [{ threadId: group.threadId }]).map(task => task.threadId)),
     ]);
     for (const threadId of imageThreads) scopes.push({ botId: bot.id, botName: bot.name, threadId, workspaceRoot: managedImageOutputPath(DATA_DIR, bot.id, threadId), managedOutput: true });
+    // Voice notes (server/voice/voice-notes.ts) the same way: without this a
+    // note in a live conversation read "The source conversation is no longer
+    // available" (seen live, 2026-09-23).
+    for (const threadId of imageThreads) scopes.push({ botId: bot.id, botName: bot.name, threadId, workspaceRoot: managedAudioOutputPath(DATA_DIR, bot.id, threadId), managedOutput: true });
     const retained = database().prepare("SELECT DISTINCT source_root FROM artifacts WHERE bot_id=?").all(bot.id);
     for (const row of retained) scopes.push({ botId: bot.id, botName: bot.name, workspaceRoot: String(row.source_root), threadAvailable: false });
   }

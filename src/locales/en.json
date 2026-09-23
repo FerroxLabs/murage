@@ -626,5 +626,11 @@
   "folderTrust.forget": "Forget",
   "folderTrust.forgetError": "Could not forget this folder's trust decision.",
   "chatLinks.findingFolder": "Still finding this conversation's folder. Try again in a moment.",
-  "chatLinks.folderUnavailable": "{path} is in this bot's working folder, which is not available here."
+  "chatLinks.folderUnavailable": "{path} is in this bot's working folder, which is not available here.",
+  "voiceNote.play": "Play voice note",
+  "voiceNote.pause": "Pause voice note",
+  "voiceNote.position": "Voice note position",
+  "voiceNote.more": "More voice note actions",
+  "voiceNote.download": "Download",
+  "voiceNote.reveal": "Show in folder"
 }

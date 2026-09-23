@@ -30,6 +30,12 @@ const inside = (root: string, path: string) => {
   return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail);
 };
 
+/** DATA_DIR/workspaces/<bot>/generated-audio/<thread>, without touching disk:
+ *  Files authorizes a conversation's saved voice notes by it. */
+export function managedAudioOutputPath(dataDir: string, botId: string, threadId: string): string {
+  return join(dataDir, "workspaces", botId, "generated-audio", threadId);
+}
+
 /** DATA_DIR/workspaces/<bot>/generated-audio/<thread>: every component a
  *  real directory inside DATA_DIR, never a link (as for generated images). */
 export function managedAudioRoot(dataDir: string, botId: string, threadId: string, create: boolean): string {

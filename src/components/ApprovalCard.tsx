@@ -8,6 +8,7 @@ import { Check, ShieldCheck, X } from "lucide-react";
 import { type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
+import { knownToolAction } from "@/components/PendingApproval";
 
 interface ToolLabels {
   [tool: string]: string;
@@ -111,7 +112,7 @@ export function ApprovalCard({
         <div className="text-[15px] font-semibold text-ink">
           {isHostConsent
             ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
-            : <>{bot ? `${bot.name} wants to ` : "Wants to "}{toolLabel(displayTool)}</>}
+            : <>{bot ? `${bot.name} wants to ` : "Wants to "}{(displayTool === "other" && knownToolAction("other", card.subtitle)) || toolLabel(displayTool)}</>}
         </div>
         {displayTool && !isHostConsent && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>

@@ -389,3 +389,17 @@ describe("tool approvals, spoken on a call", () => {
     expect(spokenApprovalPrompt(pending, "Ember")).toBe("Ember would like to search the web. Yes or no?");
   });
 });
+
+describe("ApprovalCard names a recognised action behind an ACP kind", () => {
+  const bot = { name: "Ember" } as Parameters<typeof ApprovalCard>[0]["bot"];
+  const render = (subtitle: string) => renderToStaticMarkup(createElement(ApprovalCard, { bot, message: {
+    id: "a", role: "bot", kind: "options", at: 1, card: { title: "Local computer approval", subtitle, options: ["Allow", "Deny"], tool: "other", requestId: "r" },
+  } as Message }));
+  it.each([
+    ["agents__send_voice_note", "Ember wants to send you a voice note"],
+    ["composio__COMPOSIO_MULTI_EXECUTE_TOOL", "Ember wants to use your connected apps"],
+    ["agents__list_bots", "Ember wants to use a tool"],
+  ])("%s → %s", (subtitle, sentence) => {
+    expect(render(subtitle)).toContain(sentence);
+  });
+});

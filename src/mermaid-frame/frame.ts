@@ -39,8 +39,11 @@ function load() {
     import("mermaid"),
     // @ts-ignore -- optional until the package is installed; see vite-render-plugin
     import("dompurify"),
-  ]).then(([mermaidModule, purifyModule]: [{ default?: MermaidApi }, { default?: PurifyApi }]) => {
-    const mermaid = mermaidModule?.default, purify = purifyModule?.default;
+  ]).then(([mermaidModule, purifyModule]: [unknown, unknown]) => {
+    // Only the few calls below are used, so the modules are read through
+    // these narrow shapes rather than the packages' full overloaded types.
+    const mermaid = (mermaidModule as { default?: MermaidApi } | undefined)?.default;
+    const purify = (purifyModule as { default?: PurifyApi } | undefined)?.default;
     if (!mermaid?.render || !purify?.sanitize) return null;
     // Nothing in a diagram may navigate: a link inside the frame would load a
     // page into it. Hrefs go; internal url(#marker) references are

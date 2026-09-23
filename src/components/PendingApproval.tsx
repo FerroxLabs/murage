@@ -70,6 +70,16 @@ export function pendingApprovals(messages: Message[]): Pending[] {
  *  the same action many ways (Grok's web search arrives as tool "other",
  *  detail "Agents_web_search"); none of those names is ever read aloud. */
 export function spokenToolAction(tool: string, detail: string): string {
+  const known = knownToolAction(tool, detail);
+  if (known) return known;
+  const words = (text: string) => text.replace(/^mcp__[^_]+__/, "").replace(/^agents?_/i, "").replace(/[_-]+/g, " ").trim();
+  const name = words(tool.toLowerCase() === "other" ? detail : tool).toLowerCase();
+  return name && name.length <= 40 && /^[\w .]+$/.test(name) ? `use ${name}` : "use a tool";
+}
+
+/** The action in plain words when it is one Murage recognises, else null
+ *  (the approval card then keeps its own generic wording). */
+export function knownToolAction(tool: string, detail: string): string | null {
   const words = (text: string) => text.replace(/^mcp__[^_]+__/, "").replace(/^agents?_/i, "").replace(/[_-]+/g, " ").trim();
   const both = `${words(tool)} ${words(detail)}`.toLowerCase();
   const url = detail.match(/https?:\/\/([^/\s]+)/i)?.[1]?.replace(/^www\./, "");
@@ -87,8 +97,7 @@ export function spokenToolAction(tool: string, detail: string): string {
   if (/\b(bash|shell|terminal|command|exec)\b/.test(both)) return "run a command on your computer";
   if (/\b(write|edit|patch|create file|apply)\b/.test(both)) return file ? `change ${file}` : "change a file";
   if (/\b(read|view|open file)\b/.test(both)) return file ? `read ${file}` : "read a file";
-  const name = words(tool.toLowerCase() === "other" ? detail : tool).toLowerCase();
-  return name && name.length <= 40 && /^[\w .]+$/.test(name) ? `use ${name}` : "use a tool";
+  return null;
 }
 
 /**
