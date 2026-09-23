@@ -1,5 +1,6 @@
 import { augmentedPath } from "./env-path.ts";
 import {
+  deleteEnvNames,
   PROVIDER_CREDENTIAL_ENV,
   stripWorkspaceCredentialEnv,
 } from "./config.ts";
@@ -23,7 +24,7 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
   stripWorkspaceCredentialEnv(env);
-  for (const key of PROVIDER_CREDENTIAL_ENV) delete env[key];
+  deleteEnvNames(env, PROVIDER_CREDENTIAL_ENV);
   Object.assign(env, server.env);
   return env;
 }

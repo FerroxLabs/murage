@@ -2,7 +2,7 @@
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1052,6 +1052,28 @@ describe("Store", () => {
     expect(messages.map((m) => m.parentId)).toEqual([null, "m1"]);
     expect(reloaded.activeLeaf(bot.threadId)).toBe("m2");
     expect(reloaded.activePath(bot.threadId).map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+});
+
+// Upstream #1620: the registries carry souls, project paths and per-bot
+// settings, and went through the atomic writer with no mode (0644).
+describe.skipIf(process.platform === "win32")("Store registry file modes", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("writes bots.json and groups.json owner only", () => {
+    const store = new Store(selection);
+    const a = store.createBot(), b = store.createBot();
+    store.createGroup("Crew", [a.id, b.id]);
+    for (const name of ["bots.json", "groups.json"]) expect(statSync(join(DATA_DIR, name)).mode & 0o777).toBe(0o600);
+  });
+
+  it("tightens loose registries left by an older release when it loads them", () => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    for (const name of ["bots.json", "groups.json"]) { writeFileSync(join(DATA_DIR, name), "[]"); chmodSync(join(DATA_DIR, name), 0o644); }
+    new Store(selection);
+    for (const name of ["bots.json", "groups.json"]) expect(statSync(join(DATA_DIR, name)).mode & 0o777).toBe(0o600);
   });
 });
 

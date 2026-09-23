@@ -21,7 +21,9 @@ export function parseConnectorRequests(body: { items?: unknown; slugs?: unknown 
     const rawSlug = value.slug ?? value.toolkit;
     if (typeof rawSlug !== "string") continue;
     const slug = rawSlug.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9_-]{0,80}$/.test(slug)) continue;
+    // A leading underscore is Composio's own spelling for a toolkit whose name
+    // starts with a digit (`_1password`), not noise (upstream #1602).
+    if (!/^[a-z0-9_][a-z0-9_-]{0,80}$/.test(slug)) continue;
     const alias = normalizeAccountAlias((value.alias ?? value.account) as string | null | undefined);
     const item = { slug, ...(alias ? { alias } : {}) };
     const key = connectorRequestKey(item);

@@ -24,6 +24,7 @@ import { customMcpServers,
   browserProfilePartitionTarget,
   browserProfileReplacementConflict,
   browserProfileRoutingConflict,
+  deleteEnvNames,
   stripRoutingEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
@@ -116,6 +117,29 @@ describe("explicit web search configuration", () => {
     const inherited = { TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
     stripWorkspaceCredentialEnv(inherited);
     expect(inherited).toEqual({ TAVILY_API_KEY: "ambient-engine-tavily-key", EXA_API_KEY: "ambient-engine-exa-key" });
+  });
+});
+
+// Upstream #1620: Windows environment names are case-insensitive, and a
+// spread copy of process.env keeps the casing the variable was set with.
+describe("child environment strip on Windows", () => {
+  it("drops credentials and routing switches whatever their casing on win32", () => {
+    const env: Record<string, string | undefined> = { Flux_Api_Key: "workspace-flux", murage_flux_composio_broker_token: "broker", Openai_Base_Url: "https://elsewhere.invalid", Path: "C:\\Windows", HOME: "C:\\Users\\me" };
+    stripWorkspaceCredentialEnv(env, "win32");
+    stripRoutingEnv(env, "win32");
+    expect(env).toEqual({ Path: "C:\\Windows", HOME: "C:\\Users\\me" });
+  });
+
+  it("keeps the exact-name compare on POSIX, where casing makes a different variable", () => {
+    const env: Record<string, string | undefined> = { FLUX_API_KEY: "workspace-flux", flux_api_key: "a different variable" };
+    stripWorkspaceCredentialEnv(env, "linux");
+    expect(env).toEqual({ flux_api_key: "a different variable" });
+  });
+
+  it("names only what the list names", () => {
+    const env: Record<string, string | undefined> = { XAI_API_KEY_BACKUP: "not listed", Xai_Api_Key: "listed" };
+    deleteEnvNames(env, ["XAI_API_KEY"], "win32");
+    expect(env).toEqual({ XAI_API_KEY_BACKUP: "not listed" });
   });
 });
 
@@ -330,13 +354,15 @@ describe("legacy directory migration scope", () => {
     expect(lstatSync(config.DATA_DIR).mode & 0o077).toBe(0);
   });
 
-  it.skipIf(process.platform === "win32")("takes group and other write access off an existing data folder", async () => {
+  // Group and other read goes too: the records inside are owner only
+  // (upstream #1620), and a 0755 folder still let other users list them.
+  it.skipIf(process.platform === "win32")("closes an existing data folder to its owner", async () => {
     const target = join(fixtureHome, ".murage");
     mkdirSync(target); chmodSync(target, 0o775);
     vi.stubEnv("MURAGE_DATA_DIR", target);
     const config = await import("./config.ts");
     config.ensureDirs();
-    expect(lstatSync(config.DATA_DIR).mode & 0o777).toBe(0o755);
+    expect(lstatSync(config.DATA_DIR).mode & 0o777).toBe(0o700);
   });
 
   it("does not migrate a legacy directory owned by another lease holder", async () => {

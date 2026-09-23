@@ -45,7 +45,6 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync } from "node:fs";
-import { writeFileAtomic } from "./atomic.ts";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
@@ -263,8 +262,10 @@ import {
   queueSteeredMessage,
   restoreSteerQueues,
   setSteerQueueMirror,
+  writeSteerQueueMirror,
   type SteerQueueEntries,
 } from "./steer-queue.ts";
+import { sendScreenshot } from "./screenshot-response.ts";
 import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
@@ -1441,7 +1442,7 @@ function hostComputerIntegration(botId: string, threadId: string, generation: st
 
 /** Run a turn on `targetBotId` and resolve with its assistant text — the
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
- * for that thread, resolves on turn.completed (or a 4-min ceiling). */
+ * for that thread, resolves on turn.completed (or the short inline wait budget). */
 type AskBotOutcome = {
   /** "stopped": the target's turn was stopped before it finished (STOP1). */
   status: "reply" | "failed" | "stopped" | "timeout" | "error";
@@ -3424,7 +3425,7 @@ const turnUsage = new Map<string, { input: number; output: number; cachedInput?:
 const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 256 });
 
 // ── stall watchdog ─────────────────────────────────────────────────────
-// ask_bot has a 4-minute ceiling, while room turns have a separately
+// ask_bot has a short inline wait budget, while room turns have a separately
 // configurable absolute ceiling. The main 1:1 path had none, so a wedged CLI
 // left its bot busy forever. The watchdog stops a turn whose thread has emitted NOTHING for stallMs —
 // activity-based, so an hour-long turn that keeps streaming is never
@@ -3432,7 +3433,10 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
-const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.MURAGE_ASK_BOT_TIMEOUT_MS) || 4 * 60_000);
+// Upstream #1589: four minutes held the asking bot's whole turn hostage to a
+// peer's slow answer. A quick reply still returns inline; anything slower is
+// converted to a delegation and delivered after the asker finishes its turn.
+const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.MURAGE_ASK_BOT_TIMEOUT_MS) || 15_000);
 // A goal waits for a busy teammate instead of failing, but never forever: a
 // bot parked on a permission card in another chat is "busy" until a human
 // returns. Past this cap the lead is told the teammate could not free up and
@@ -3545,10 +3549,7 @@ try {
 } catch { /* no mirror, or an unreadable one: the queue is simply empty */ }
 restoreSteerQueues([]);
 try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ }
-setSteerQueueMirror(entries => {
-  if (entries.length === 0) { try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ } return; }
-  writeFileAtomic(STEER_QUEUE_MIRROR, JSON.stringify(entries));
-});
+setSteerQueueMirror(entries => writeSteerQueueMirror(STEER_QUEUE_MIRROR, entries));
 reconcileInterruptedMemoryTurns();
 // F7: the same boot pass for ordinary 1:1 turns. Routines, memory turns and
 // team goals were already reconciled here; a direct turn was the one kind that
@@ -14849,7 +14850,7 @@ const server = createServer(async (req, res) => {
     }
     if (method === "POST" && path === "/api/local-computer/screenshot") {
       localVmIdleFor(SHARED_LOCAL_VM_TARGET).touch();
-      return json(res, 200, {
+      return sendScreenshot(res, {
         image: await containerComputerScreenshot(undefined, undefined, SHARED_LOCAL_VM_TARGET),
       });
     }
@@ -14918,7 +14919,7 @@ const server = createServer(async (req, res) => {
       if (!bot) return json(res, 404, { error: "no such bot" });
       const target = localVmTargetForBot(bot.id);
       localVmIdleFor(target).touch();
-      return json(res, 200, {
+      return sendScreenshot(res, {
         image: await containerComputerScreenshot(undefined, undefined, target),
       });
     }
@@ -16300,7 +16301,7 @@ const server = createServer(async (req, res) => {
           }
           return json(res, 200, await vps.vpsComputerJoin(cfg, botId));
         }
-        if (m[2] === "screenshot") return json(res, 200, await vps.vpsComputerScreenshot(cfg, botId));
+        if (m[2] === "screenshot") return sendScreenshot(res, await vps.vpsComputerScreenshot(cfg, botId));
         const action = m[2] === "provision" ? "provision" : m[2] === "remove" ? "remove" : "stop";
         return json(res, 200, await vps.vpsComputerAction(action, cfg, botId));
       }
@@ -16328,7 +16329,7 @@ const server = createServer(async (req, res) => {
           return json(res, 200, await box.execOnBox(cfg, botId, String(body.command ?? "")));
         }
         case "screenshot":
-          return json(res, 200, await box.screenshotBox(cfg, botId));
+          return sendScreenshot(res, await box.screenshotBox(cfg, botId));
       }
     }
 

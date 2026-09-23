@@ -22,6 +22,8 @@
 // stop-then-steer (queue a correction, hit Stop, the correction runs) is
 // the feature.
 
+import { unlinkSync } from "node:fs";
+import { writeFileAtomic } from "./atomic.ts";
 import { newId } from "./contracts.ts";
 import type { BotRecord, Message } from "./store.ts";
 
@@ -53,6 +55,14 @@ export function setSteerQueueMirror(write: ((entries: Array<[string, QueueEntry]
 
 function saveQueues(): void {
   try { mirror?.(Array.from(queues)); } catch { /* the queue is not worth failing a send over */ }
+}
+
+/** The server's mirror writer. The file holds the person's own unsent words,
+ * so it is owner only like the rest of the data folder's records (upstream
+ * #1620 left it at the 0644 default); an empty queue leaves no file. */
+export function writeSteerQueueMirror(file: string, entries: Array<[string, QueueEntry]>): void {
+  if (entries.length === 0) { try { unlinkSync(file); } catch { /* already gone */ } return; }
+  writeFileAtomic(file, JSON.stringify(entries), { mode: 0o600 });
 }
 
 /** Put a mirrored queue back after a restart. Returns the entries, newest

@@ -298,7 +298,7 @@ const TOOLS = [
   {
     name: "ask_bot",
     description:
-      "SYNCHRONOUS consultation: send a short question to another bot and stay blocked until its reply is returned inline. Use only when that reply is required to write your current response. Do not use for assigning work, background tasks, or potentially long work; use delegate_bot for those. Returns promptly with a note if that bot is busy.",
+      "Brief synchronous consultation: send a short question to another bot. Quick replies return inline; slow replies become asynchronous delegations and return automatically after you finish your turn. Use only when that reply is required to write your current response. Do not use for assigning work, background tasks, or potentially long work; use delegate_bot for those. Returns promptly with a note if that bot is busy.",
     inputSchema: {
       type: "object",
       properties: {
@@ -739,9 +739,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       // converted the ask into a delegation — the reply is not lost.
       const taskId = String(r.taskId ?? "").trim();
       if (taskId) delegationTaskIdsThisTurn.add(taskId);
-      const waitedMinutes = Math.max(1, Math.round((Number(r.waitedMs) || 0) / 60_000));
+      // The inline wait is 15 seconds (upstream #1589); "after 1 minute" for
+      // a 15-second wait told the model the peer had been slower than it was.
+      const waitedSeconds = Math.max(1, Math.round((Number(r.waitedMs) || 0) / 1000));
+      const amount = waitedSeconds < 60 ? waitedSeconds : Math.round(waitedSeconds / 60);
+      const unit = waitedSeconds < 60 ? "second" : "minute";
       return {
-        text: `${r.toBotName ?? "That bot"} is still working after ${waitedMinutes} minute${waitedMinutes === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
+        text: `${r.toBotName ?? "That bot"} is still working after ${amount} ${unit}${amount === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
       };
     }
     if (r.busy) {

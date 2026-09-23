@@ -1,4 +1,4 @@
 export function tightenOwnedDirectory(
   directory: string,
-  options?: { platform?: NodeJS.Platform; uid?: number; fileSystem?: typeof import("node:fs") },
+  options?: { platform?: NodeJS.Platform; uid?: number; fileSystem?: typeof import("node:fs"); mask?: number },
 ): boolean;

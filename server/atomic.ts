@@ -5,7 +5,7 @@
 // ones. Without this, an interrupted writeFileSync produces half-written JSON
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
 // Windows refuses a rename onto an existing path while anything else holds a
 // handle to either file, and a virus scanner or the search indexer opening a
@@ -79,5 +79,24 @@ export function writeFileAtomic(path: string, data: string, options: { mode?: nu
       /* best-effort cleanup */
     }
     throw e;
+  }
+}
+
+/** Owner state written by a release that passed no mode (or loosened by hand)
+ * is tightened to 0600 on load, as upstream #1620 does for the registries.
+ * Best effort: a file that cannot be tightened must never stop Murage from
+ * loading, and its next save replaces it with a 0600 one anyway. Windows has
+ * no POSIX mode bits. Returns whether the mode changed. */
+export function tightenOwnerOnlyFile(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === "win32") return false;
+  try {
+    // Only a plain file: a directory or link in a record's place is damaged
+    // state for recovery to report, and chmod would follow a link.
+    const stat = lstatSync(path);
+    if (!stat.isFile() || (stat.mode & 0o077) === 0) return false;
+    chmodSync(path, 0o600);
+    return true;
+  } catch {
+    return false; /* absent, or not ours to change */
   }
 }

@@ -36,14 +36,24 @@ export async function synthesizeClip(text: string, voice: string | undefined, en
     res = await call(`${endpoint.baseUrl.replace(/\/+$/, "")}/tts`, {
       method: "POST",
       headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json" },
-      body: JSON.stringify({ text, voice_id: chosen, language: "en" }),
+      // "auto" lets xAI detect the language (upstream #1587): a hard-coded
+      // "en" read every other language with an English voice.
+      body: JSON.stringify({ text, voice_id: chosen, language: "auto" }),
+      // The bearer key must never be replayed to wherever a redirect points.
+      redirect: "error",
       signal: AbortSignal.timeout(60_000),
     });
   } catch {
     throw new Error("Couldn't reach xAI to speak. Check your connection.");
   }
-  if (res.status === 401 || res.status === 403) throw new Error("xAI rejected the saved key. Paste a fresh one in Settings.");
-  if (res.status === 429) throw new Error("xAI is rate-limiting this account. Wait a moment and try again.");
-  if (!res.ok) throw new Error(`Speaking failed (${res.status})`);
+  if (!res.ok) {
+    // The body is never read: a remote error can echo the key or the text.
+    await res.body?.cancel().catch(() => undefined);
+    if (res.status === 401 || res.status === 403) throw new Error("xAI rejected the saved key. Paste a fresh one in Settings.");
+    if (res.status === 402) throw new Error("Your xAI account is out of credits. Add credits with xAI, then try again.");
+    if (res.status === 404) throw new Error("xAI couldn't find that voice. Pick a different voice in Settings.");
+    if (res.status === 429) throw new Error("xAI is rate-limiting this account. Wait a moment and try again.");
+    throw new Error(`Speaking failed (${res.status})`);
+  }
   return clipFrom(res, res.headers.get("content-type") || "audio/mpeg", streamed);
 }

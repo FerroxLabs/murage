@@ -15,7 +15,9 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 export const STATIC_GROK_MODELS: ModelCatalog = {
   default: "grok-4.6",
   options: [
-    { id: "grok-4.7", label: "Grok 4.7" },
+    // Upstream #1632: without a window the memory budget falls back to
+    // 20,480 tokens (index.ts) for a model that takes 500k.
+    { id: "grok-4.7", label: "Grok 4.7", contextWindow: 500_000 },
     { id: "grok-4.6", label: "Grok 4.6" },
     { id: "grok-4.5", label: "Grok 4.5" },
   ],

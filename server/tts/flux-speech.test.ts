@@ -155,7 +155,7 @@ describe("each agent's own voice service", () => {
     useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }), xai: () => XAI });
     const audio = await speak(cfg({ provider: "flux" }), "Morning, boss.", "rex", undefined, "xai");
     expect(audio.bytes).toEqual(new Uint8Array([9]));
-    expect(sent).toEqual({ url: "https://api.x.ai/v1/tts", body: { text: "Morning, boss.", voice_id: "rex", language: "en" } });
+    expect(sent).toEqual({ url: "https://api.x.ai/v1/tts", body: { text: "Morning, boss.", voice_id: "rex", language: "auto" } });
     // another service's voice id falls back to xAI's default
     await speak(cfg({ provider: "flux" }), "Hi.", "marin", undefined, "xai");
     expect(sent.body.voice_id).toBe("eve");

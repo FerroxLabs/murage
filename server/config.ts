@@ -516,8 +516,9 @@ export function ensureDirs() {
   migrateLegacyDataDirectory({ dataDir: DATA_DIR, legacyDataDir: LEGACY_DATA_DIR, enabled: process.env.MURAGE_DATA_DIR === undefined });
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   // A folder made before this (or under a umask of 002) can be writable by the
-  // user's group, which the closed-app backup correctly refuses.
-  tightenOwnedDirectory(DATA_DIR);
+  // user's group, which the closed-app backup correctly refuses. Group and
+  // other READ goes too: the records inside are owner only (upstream #1620).
+  tightenOwnedDirectory(DATA_DIR, { mask: 0o077 });
 }
 
 export function loadConfig(): AppConfig {
@@ -669,9 +670,19 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_USER_DATA",
 ] as const;
 
+/** Delete `names` from a child-process env (in place). Windows environment
+ * names are case-insensitive: `{ ...process.env }` keeps whatever casing the
+ * variable was set with, so a `Flux_Api_Key` would survive an exact-name
+ * delete and reach the child as FLUX_API_KEY (upstream #1620). */
+export function deleteEnvNames(env: Record<string, string | undefined>, names: Iterable<string>, platform: NodeJS.Platform = process.platform): void {
+  if (platform !== "win32") { for (const key of names) delete env[key]; return; }
+  const folded = new Set(Array.from(names, name => name.toUpperCase()));
+  for (const key of Object.keys(env)) if (folded.has(key.toUpperCase())) delete env[key];
+}
+
 /** Drop every workspace credential from a child-process env (in place). */
-export function stripWorkspaceCredentialEnv(env: Record<string, string | undefined>): void {
-  for (const key of WORKSPACE_CREDENTIAL_ENV) delete env[key];
+export function stripWorkspaceCredentialEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  deleteEnvNames(env, WORKSPACE_CREDENTIAL_ENV, platform);
 }
 
 /** Env names a provider CLI might read as its own billing identity. A spawned
@@ -731,8 +742,8 @@ export const ROUTING_ENV = [
 
 /** Drop every ambient routing switch from a child-process env (in place).
  * Runs *before* the harness applies its own routing, never after. */
-export function stripRoutingEnv(env: Record<string, string | undefined>): void {
-  for (const key of ROUTING_ENV) delete env[key];
+export function stripRoutingEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  deleteEnvNames(env, ROUTING_ENV, platform);
 }
 
 /** Merge a partial config into ~/.murage/config.json (secrets never
