@@ -9,6 +9,11 @@ import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 
 const JSON_COMPONENTS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json"]);
+// Present only in some installations: queued-messages.json exists only while a
+// message waits behind a turn, and setup.json only once first run has begun.
+// Copied when present, never reported missing. Kept in step with
+// installation-fidelity-snapshot.ts applicationRoots.
+const OPTIONAL_JSON_COMPONENTS = new Set(["setup.json", "queued-messages.json"]);
 const DIRECTORY_COMPONENTS = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
 const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
@@ -238,7 +243,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       for (const name of names) {
         if (name === "messages.db" || name === "messages.db-wal" || name === "messages.db-shm") continue;
         if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH");
-        if (JSON_COMPONENTS.has(name) || /^messages-[\w-]+\.json$/.test(name) || /^decisions\.ndjson(?:\.1)?$/.test(name)) copy(name);
+        if (JSON_COMPONENTS.has(name) || OPTIONAL_JSON_COMPONENTS.has(name) || /^messages-[\w-]+\.json$/.test(name) || /^decisions\.ndjson(?:\.1)?$/.test(name)) copy(name);
         else if (DIRECTORY_COMPONENTS.has(name)) walk(name);
         else omission(name, "Cache, native diagnostics, runtime state or unrecognized component excluded");
       }

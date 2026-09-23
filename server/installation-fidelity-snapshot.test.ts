@@ -64,3 +64,36 @@ it("keeps the pre-memory-v2 snapshot out of state and fidelity backups without f
     expect(existsSync(join(f.data,"messages.pre-memory-v2.db"))).toBe(true);
   });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
+// Every name Murage itself writes at the data-folder root must be classified.
+// setup.json (first run), queued-messages.json (F7), team-library/ and the
+// rest arrived after the inventory lists did, and any one of them made every
+// backup refuse with BACKUP_UNCLASSIFIED_COMPONENT.
+it("classifies every root name Murage writes, keeping owner state and leaving caches out",async()=>{
+  const f=backupFixture();
+  const files:Record<string,string>={"setup.json":JSON.stringify({version:1,startedAt:1,steps:{},chiefBotId:"bot"}),"queued-messages.json":JSON.stringify([["thread",{items:[{text:"sent while it was busy"}]}]]),
+    "coordination-roots.json":JSON.stringify({version:1,roots:[]}),"browser-control.json":"[]","flux-composio-broker-token.json":"{}","restore-review.json":"{}","restored-connections.json":"{}","perm-a1b2c3.sock":"",".DS_Store":""};
+  const directories:Record<string,string>={"provider-catalogs":"catalog.json","managed-engines":"engine.bin","team-library":"catalog.json","memory-model":"model.onnx","providers":"credentials.json","flux-hermes-home":"config.yaml","local-models":"local-servers.json","tools":"agent-browser","recovery-quarantine":"old.json",".memory-evolution-a1B2c3":"scratch",".package-import-Z9y8X7":"staged.json"};
+  for(const [name,body]of Object.entries(files))writeFileSync(join(f.data,name),body);
+  for(const [name,child]of Object.entries(directories)){mkdirSync(join(f.data,name));writeFileSync(join(f.data,name,child),"fixture");}
+  try{await withOfflineInstallation(f.data,async installation=>{
+    const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+    const inventory=await inventoryFidelity(installation,stage,selection);inventory.assertUnchanged();
+    for(const name of ["setup.json","queued-messages.json"]){
+      expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"included"}));
+      expect(stage.manifest.files.some(file=>file.path===name)).toBe(true);
+    }
+    for(const name of [...Object.keys(files).filter(name=>!["setup.json","queued-messages.json"].includes(name)),...Object.keys(directories)]){
+      expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
+      expect(inventory.sources.some(file=>file.path===name||file.path.startsWith(`${name}/`))).toBe(false);
+    }
+    // Present only when Murage closed with a message still waiting: never "missing".
+    expect(stage.manifest.missing).not.toContain("queued-messages.json");expect(stage.manifest.missing).not.toContain("setup.json");
+  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
+// An interrupted bot-package import is recovered at the next start. Until
+// then bots.json may be half-way between two rosters, so it stays refused.
+it("still refuses an unrecovered package-import transaction",async()=>{
+  const f=backupFixture();mkdirSync(join(f.data,".package-import-transaction"));writeFileSync(join(f.data,".package-import-transaction","journal.json"),"{}");
+  try{await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toThrow("BACKUP_UNCLASSIFIED_COMPONENT");
+  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
