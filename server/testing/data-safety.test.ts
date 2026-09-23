@@ -52,6 +52,7 @@ const ALLOWLIST: Record<string, string> = {
   "electron/speech.mjs": "removes the mkdtemp session directory under app.getPath('temp')",
   "server/bot-package-archive.ts": "removes the mkdtemp scratch beside the archive it is writing",
   "server/bot-package-import.ts": "removes the import staging directory it created",
+  "server/skill-collection.ts": "removes its own .incoming-<uuid> import staging and .replaced-<uuid> copy under DATA_DIR/skill-collection, and a deleted skill's DATA_DIR/skill-collection/<name> after isSkillName (no dots or slashes)",
   "server/drivers/claude.ts": "removes the per-session mkdtemp MCP config directory",
   "server/drivers/pi.ts": "removes the per-session mkdtemp MCP config directory",
   "server/engine-management.ts": "removes the mkdtemp scratch of an engine install probe",

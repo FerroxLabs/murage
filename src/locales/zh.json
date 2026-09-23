@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "搜索设置暂时不可用。请在连接恢复后重新打开设置。",
   "searchSettings.provider": "搜索服务商",
   "searchSettings.engineOption": "引擎工具 — 无需单独的搜索账户",
-  "searchSettings.offOption": "关闭 — Murage 原生搜索",
   "searchSettings.offHelp": "此选项仅关闭 Murage 原生搜索。引擎自带的搜索工具和独立的 MCP 搜索工具可能仍然可用。",
   "searchSettings.engineHelp": "引擎继续使用现有工具，无需 Tavily 或 Exa 账户。",
   "searchSettings.externalHelp": "搜索查询会发送给所选的第三方服务商，并可能产生额外费用。系统不会自动切换到其他服务商。",

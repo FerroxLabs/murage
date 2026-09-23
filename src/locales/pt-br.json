@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "As configurações de pesquisa ainda não estão disponíveis. Abra as Configurações novamente quando a conexão for restabelecida.",
   "searchSettings.provider": "Provedor de pesquisa",
   "searchSettings.engineOption": "Ferramentas do mecanismo — sem conta de pesquisa separada",
-  "searchSettings.offOption": "Desativada — pesquisa nativa do Murage",
   "searchSettings.offHelp": "Esta opção desativa apenas a pesquisa nativa do Murage. Ferramentas de pesquisa independentes do mecanismo e do MCP podem continuar disponíveis.",
   "searchSettings.engineHelp": "Seu mecanismo mantém as ferramentas atuais. Não é necessário ter uma conta no Tavily ou no Exa.",
   "searchSettings.externalHelp": "As consultas de pesquisa são enviadas ao provedor externo selecionado e podem gerar cobranças separadas. Não há troca automática para outro provedor em caso de falha.",

@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "Les paramètres de recherche ne sont pas encore disponibles. Rouvrez les paramètres une fois la connexion rétablie.",
   "searchSettings.provider": "Fournisseur de recherche",
   "searchSettings.engineOption": "Outils du moteur — aucun compte de recherche supplémentaire",
-  "searchSettings.offOption": "Désactivée — recherche intégrée de Murage",
   "searchSettings.offHelp": "Cette option désactive uniquement la recherche intégrée de Murage. Les outils de recherche indépendants du moteur et de MCP peuvent rester disponibles.",
   "searchSettings.engineHelp": "Votre moteur conserve ses outils existants. Aucun compte Tavily ou Exa n’est nécessaire.",
   "searchSettings.externalHelp": "Les requêtes de recherche sont envoyées au fournisseur tiers sélectionné et peuvent entraîner des frais supplémentaires. Aucun autre fournisseur n’est utilisé automatiquement en cas d’échec.",

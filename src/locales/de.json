@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "Die Sucheinstellungen sind noch nicht verfügbar. Öffne die Einstellungen erneut, sobald die Verbindung wiederhergestellt ist.",
   "searchSettings.provider": "Suchanbieter",
   "searchSettings.engineOption": "Engine-Tools — kein separates Suchkonto",
-  "searchSettings.offOption": "Aus — integrierte Suche von Murage",
   "searchSettings.offHelp": "Aus deaktiviert nur die integrierte Suche von Murage. Unabhängige Suchtools der Engine und von MCP können weiterhin verfügbar sein.",
   "searchSettings.engineHelp": "Deine Engine behält ihre bestehenden Tools. Ein Konto bei Tavily oder Exa ist nicht erforderlich.",
   "searchSettings.externalHelp": "Suchanfragen werden an den gewählten Drittanbieter gesendet und können zusätzliche Kosten verursachen. Es wird nicht automatisch auf einen anderen Anbieter ausgewichen.",

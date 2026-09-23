@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "Los ajustes de búsqueda aún no están disponibles. Vuelve a abrir Ajustes cuando se restablezca la conexión.",
   "searchSettings.provider": "Proveedor de búsqueda",
   "searchSettings.engineOption": "Herramientas del motor — sin cuenta de búsqueda adicional",
-  "searchSettings.offOption": "Desactivada — búsqueda integrada de Murage",
   "searchSettings.offHelp": "Esta opción solo desactiva la búsqueda integrada de Murage. Las herramientas de búsqueda independientes del motor y de MCP pueden seguir disponibles.",
   "searchSettings.engineHelp": "Tu motor conserva sus herramientas actuales. No necesitas una cuenta de Tavily ni de Exa.",
   "searchSettings.externalHelp": "Las consultas de búsqueda se envían al proveedor externo seleccionado y pueden generar cargos adicionales. No se cambia automáticamente a otro proveedor.",

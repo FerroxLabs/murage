@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "検索設定はまだ利用できません。接続が復旧してから設定を開き直してください。",
   "searchSettings.provider": "検索サービス",
   "searchSettings.engineOption": "エンジンのツール — 別の検索アカウントは不要",
-  "searchSettings.offOption": "オフ — Murage 標準の検索",
   "searchSettings.offHelp": "オフにすると、Murage 標準の検索だけが無効になります。エンジン独自の検索ツールや MCP の検索ツールは引き続き利用できる場合があります。",
   "searchSettings.engineHelp": "エンジンの既存のツールをそのまま使います。Tavily や Exa のアカウントは不要です。",
   "searchSettings.externalHelp": "検索クエリは選択した外部サービスに送信され、別途料金がかかる場合があります。別のサービスへ自動で切り替わることはありません。",

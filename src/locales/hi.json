@@ -320,7 +320,6 @@
   "searchSettings.unavailable": "खोज की सेटिंग अभी उपलब्ध नहीं हैं। कनेक्शन बहाल होने के बाद सेटिंग फिर खोलें।",
   "searchSettings.provider": "खोज प्रदाता",
   "searchSettings.engineOption": "इंजन के टूल — अलग खोज खाते की ज़रूरत नहीं",
-  "searchSettings.offOption": "बंद — Murage की अपनी खोज सुविधा",
   "searchSettings.offHelp": "यह विकल्प केवल Murage की अपनी खोज सुविधा बंद करता है। इंजन और MCP के स्वतंत्र खोज टूल फिर भी उपलब्ध हो सकते हैं।",
   "searchSettings.engineHelp": "आपके इंजन के मौजूदा टूल उपलब्ध रहते हैं। Tavily या Exa खाते की ज़रूरत नहीं है।",
   "searchSettings.externalHelp": "खोज अनुरोध चुने गए बाहरी प्रदाता को भेजे जाते हैं और उनका अलग शुल्क लग सकता है। विफल होने पर किसी दूसरे प्रदाता पर अपने-आप स्विच नहीं किया जाता।",
