@@ -116,7 +116,7 @@ test.beforeAll(async () => {
         if (id === "\0host-store") return STORE;
         if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};`;
         if (id === "\0host-push") return `export const usePushToTalk=()=>false;`;
-        if (id === "\0host-vad") return `export const SPEECH_CONFIDENCE=0.7;export class SileroVad{static async load(){return new SileroVad()}async push(f){window.__vadFrames=(window.__vadFrames||0)+1;let s=0;for(const x of f)s+=x*x;const loud=Math.sqrt(s/f.length)>0.01;if(window.__vadNoise)return 0;return new URLSearchParams(location.search).get("os")==="linux"?(loud?1:0):1}reset(){}}`;
+        if (id === "\0host-vad") return `export const SPEECH_CONFIDENCE=0.7;export class SileroVad{static async load(){return new SileroVad()}async push(f){window.__vadFrames=(window.__vadFrames||0)+1;let s=0;for(const x of f)s+=x*x;const loud=Math.sqrt(s/f.length)>0.01;if(window.__vadNoise)return 0;if(window.__vadSparse)return window.__vadFrames%6===0?1:0;return new URLSearchParams(location.search).get("os")==="linux"?(loud?1:0):1}reset(){}}`;
         // a Mac (on-device dictation) unless the page says otherwise
         if (id === "\0host-caps") return `export const useDesktopCapabilities=()=>({ready:true,capabilities:{dictation:{available:new URLSearchParams(location.search).get("os")!=="linux"},host:{platform:"darwin"}}});`;
         if (id !== "\0host-entry") return;
@@ -463,6 +463,41 @@ test("an uh-huh while the bot talks is listening, not interrupting", async ({ pa
   await page.evaluate(() => (window as any).__say("uh-huh"));
   await expect(page.getByText("It goes on for a while.")).toBeVisible({ timeout: 5_000 });
   expect(h.hostBodies.length).toBe(asked);
+});
+
+test("music that trips the speech model now and then does not stop the bot", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 4_000));
+  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's on the board?"));
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  const asked = h.hostBodies.length;
+  // instrumental music: an occasional frame reads as speech, and the
+  // recognizer invents a few words from it
+  await page.evaluate(() => { (window as any).__vadSparse = true; });
+  await page.waitForTimeout(1_600);
+  await page.evaluate(() => (window as any).__say("oh the", true));
+  await page.waitForTimeout(300);
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  expect(h.hostBodies.length).toBe(asked);
+});
+
+test("stop, stop, stop while the bot talks: it goes quiet, answers nothing and drops what was waiting", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 4_000));
+  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's on the board?"));
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  // an engine answer lands while it talks, and waits its turn
+  await page.evaluate(() => (window as any).__setBot({ messages: [{ id: "w1", role: "bot", kind: "text", at: Date.now(), text: "Your flight is booked." }] }));
+  const asked = h.hostBodies.length;
+  await page.evaluate(() => (window as any).__say("stop stop", true));
+  await page.evaluate(() => (window as any).__say("stop stop stop"));
+  await expect(page.getByText("Listening", { exact: true })).toBeVisible();
+  await page.evaluate(() => ((window as any).__clipMs = 60));
+  await page.waitForTimeout(800);
+  expect(h.hostBodies.length).toBe(asked);
+  expect(h.spoken).not.toContain("Your flight is booked.");
 });
 
 test("words the recognizer guesses from a noise (no speech heard) neither interrupt the bot nor start a turn", async ({ page }) => {

@@ -54,6 +54,10 @@ export interface CallMic {
   /** Whether speech (not just sound: Silero VAD) was heard within the last
    *  `ms`; null when no speech model runs here and only loudness is known. */
   speechWithin(ms: number): boolean | null;
+  /** The share (0 to 1) of the last `ms` of audio that was speech; null
+   *  without a speech model. Speech runs high; music trips the model now
+   *  and then, so its share stays low. */
+  speechShare(ms: number): number | null;
   close(): void;
 }
 
@@ -177,6 +181,8 @@ abstract class Capture {
   private vad: SileroVad | null = null;
   private vadQueue: Promise<void> = Promise.resolve();
   private lastSpeechAt = 0;
+  /** Recent frames: when, and whether each was speech. */
+  private recent: Array<{ at: number; speech: boolean }> = [];
 
   async open(): Promise<void> {
     if (this.stream) return;
@@ -212,6 +218,9 @@ abstract class Capture {
         // "was anyone speaking at all" uses a lower bar than "stop the bot",
         // so a quiet speaker's words are never thrown away as noise
         if (level > SPEECH_FLOOR_RMS && p >= ANY_SPEECH_CONFIDENCE) this.lastSpeechAt = Date.now();
+        const now = Date.now();
+        this.recent.push({ at: now, speech });
+        while (this.recent.length && now - this.recent[0].at > 5_000) this.recent.shift();
         const change = this.gate.pushSpeech(speech);
         if (change) emit(this.voices, change === "start");
         if (!this.muted && this.stream) this.frame(frame, speech, change);
@@ -229,6 +238,13 @@ abstract class Capture {
   speechWithin(ms: number): boolean | null {
     if (!this.vad) return null;
     return Date.now() - this.lastSpeechAt <= ms;
+  }
+
+  speechShare(ms: number): number | null {
+    if (!this.vad) return null;
+    const since = Date.now() - ms;
+    const frames = this.recent.filter((f) => f.at >= since);
+    return frames.length ? frames.filter((f) => f.speech).length / frames.length : 0;
   }
 
   setMuted(muted: boolean) {
@@ -416,6 +432,9 @@ class BridgeMic implements CallMic {
     return () => {};
   }
   speechWithin() {
+    return null;
+  }
+  speechShare() {
     return null;
   }
   close() {}

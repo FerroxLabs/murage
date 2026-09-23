@@ -51,6 +51,11 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
  * sentence that merely contained the word "sure". */
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
+/** Less than this share of the last 1.5 s being speech is not the owner
+ *  talking (music, a TV). Tuned from the call-diag log lines. */
+const MIN_SPEECH_SHARE = 0.35;
+/** Only asking for quiet: "stop", "stop, stop, stop", "shut up", "enough". */
+const STOP_ONLY = /^(?:(?:ok(?:ay)?|please|hey|no|just|all right|alright)[,.!\s]*)*(?:(?:stop(?: talking| it| that)?|shut up|be quiet|quiet|hush|enough|that'?s enough|pause|hold on|wait)[,.!\s]*)+$/i;
 /** Listening noises while the bot talks: "uh-huh", "yeah", "mm", "right". */
 const BACKCHANNEL = /^(u+h+[- ]?h+u+h+|m+h?m+|mm+[- ]?h+m+|yeah|yep|yes|right|okay|ok|sure|got it|i see|oh|ah|wow|nice|cool|uh|um)[.!?]*$/i;
 /** A yes that covers this kind of request until the call ends. */
@@ -318,6 +323,8 @@ function Call({ bot }: { bot: Bot }) {
    *  only here: never saved, gone when the call ends. Not the permanent
    *  "Always allow" the trust design rules out. */
   const callGrants = useRef(new Set<string>());
+  /** When the owner last cut the bot off. */
+  const interruptedAt = useRef(0);
   const offeredForCall = useRef(false);
   const approvalRef = useRef(approval);
   approvalRef.current = approval;
@@ -392,6 +399,7 @@ function Call({ bot }: { bot: Bot }) {
 
   /** The owner talked over the bot: stop speaking and listen to them. */
   const bargeIn = useCallback(() => {
+    interruptedAt.current = Date.now();
     if (maybeOwner.current?.timer) clearTimeout(maybeOwner.current.timer);
     maybeOwner.current = null;
     sayGeneration.current += 1;
@@ -806,6 +814,16 @@ function Call({ bot }: { bot: Bot }) {
           resumeBot();
           return;
         }
+        // Music trips the speech model now and then and the recognizer
+        // invents words from it; a person talking keeps it busy. Too little
+        // of the last moment was speech: not the owner. Logged, numbers
+        // only, so the threshold can be tuned from real calls.
+        const share = mic.speechShare(1_500);
+        console.warn(`[call-diag] talk-over: ${words.length} words, speech share ${share === null ? "n/a" : share.toFixed(2)} -> ${share !== null && share < MIN_SPEECH_SHARE ? "ignored" : "stop"}`);
+        if (share !== null && share < MIN_SPEECH_SHARE) {
+          resumeBot();
+          return;
+        }
         bargeIn();
       }
       lastSpeechAt.current = Date.now();
@@ -888,6 +906,20 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
 
+      // "Stop", "stop, stop", "be quiet" while the bot was talking: be quiet.
+      // Heard live: each "stop" became a turn the bot answered out loud, and
+      // answers waiting their turn were then spoken too. Now nothing is
+      // said and nothing held is spoken. With work running and the bot not
+      // talking, "stop" still goes to the host, which stops the work.
+      if (STOP_ONLY.test(said) && (Date.now() - interruptedAt.current < 10_000 || speaker.isSpeaking() || hostSpeaking.current)) {
+        sayGeneration.current += 1;
+        hostSpeaking.current = false;
+        speaker.stop();
+        deferredReplies.current = [];
+        callLog.current.push({ said, outcome: "answered", detail: "(stopped talking)" });
+        listen();
+        return;
+      }
       if (hostOn.current) {
         void hostReply(said);
         return;
