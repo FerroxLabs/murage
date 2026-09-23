@@ -90,7 +90,12 @@ def main(root, commit, out):
                 if regex in used:
                     continue
                 used.add(regex)
-                rows.append({"id": f"{group}.{index + 1}", "category": category,
+                # SkillSpector keeps separate lists for code and for prose, and
+                # SC1_CODE (unpinned dependencies) reads dependency manifests
+                # only; running them over the wrong text is noise.
+                applies = ("manifest" if group == "SC1_CODE" else "code" if group.endswith("_CODE")
+                           else "prose" if group.endswith("_PROSE") else "any")
+                rows.append({"id": f"{group}.{index + 1}", "category": category, "applies": applies,
                              "severity": severity.get(group, severity.get(group.split("_")[0], "medium")),
                              "confidence": confidence, "source": to_js(regex)})
     header = (
@@ -99,7 +104,7 @@ def main(root, commit, out):
         "// Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES, Apache-2.0; converted\n"
         "// to JavaScript regex syntax by Ferrox Labs. See NOTICE.\n"
         "import type { SkillSeverity } from \"./types.ts\";\n\n"
-        "export interface SpectorPattern { id: string; category: string; severity: SkillSeverity; confidence: number; source: string }\n"
+        "export interface SpectorPattern { id: string; category: string; applies: \"code\" | \"prose\" | \"manifest\" | \"any\"; severity: SkillSeverity; confidence: number; source: string }\n"
         f"export const SPECTOR_COMMIT = {json.dumps(commit)};\n"
     )
     body = "export const SPECTOR_PATTERNS: SpectorPattern[] = " + json.dumps(rows, indent=1) + ";\n"

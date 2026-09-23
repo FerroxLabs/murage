@@ -4,12 +4,13 @@
 // to JavaScript regex syntax by Ferrox Labs. See NOTICE.
 import type { SkillSeverity } from "./types.ts";
 
-export interface SpectorPattern { id: string; category: string; severity: SkillSeverity; confidence: number; source: string }
+export interface SpectorPattern { id: string; category: string; applies: "code" | "prose" | "manifest" | "any"; severity: SkillSeverity; confidence: number; source: string }
 export const SPECTOR_COMMIT = "94f5cc80679c45a1fa4774e2d37ad663ca0be337";
 export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_CODE.1",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "open\\s*\\(\\s*['\\\"]?\\.(?:claude|codex|gemini|continue)/"
@@ -17,6 +18,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_CODE.2",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:Path|pathlib\\.Path)\\s*\\(\\s*['\\\"]?\\.(?:claude|codex|gemini|continue)/"
@@ -24,6 +26,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_CODE.3",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.85,
   "source": "os\\.path\\.(?:join|exists|isfile)\\s*\\(\\s*['\\\"]?\\.(?:claude|codex|gemini|continue)"
@@ -31,6 +34,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_CODE.4",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:cat|less|head|tail|grep|find)\\s+[^|&;\\n]*~?/?\\.(claude|codex|gemini)/"
@@ -38,6 +42,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_CODE.5",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "~?/\\.(?:claude|codex|gemini|continue)/(?:config|settings?|preferences?|credentials?)(?:\\.(?:json|yaml|yml|toml))?"
@@ -45,6 +50,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_PROSE.1",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:read|load|open|access|fetch)\\s+(?:the\\s+)?(?:agent|claude|codex|gemini)\\s+(?:config|configuration|settings?)\\s+(?:from|at|in)\\s+~?/?\\.(?:claude|codex|gemini)"
@@ -52,6 +58,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS1_PROSE.2",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:read|access|inspect|examine|retrieve)\\s+(?:the\\s+)?(?:agent|assistant)\\s+(?:config(?:uration)?|settings?|preferences?)\\s+(?:file|directory|folder)"
@@ -59,6 +66,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_CODE.1",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "open\\s*\\(\\s*['\\\"][^'\\\"]*mcp(?:_config)?\\.json['\\\"]"
@@ -66,6 +74,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_CODE.2",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:Path|pathlib\\.Path)\\s*\\(\\s*['\\\"][^'\\\"]*mcp(?:_config)?\\.json['\\\"]"
@@ -73,6 +82,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_CODE.3",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:cat|less|head|grep)\\s+[^|&;\\n]*mcp(?:_config)?\\.json"
@@ -80,6 +90,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_CODE.4",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "\\.(?:claude|codex|gemini)/mcp(?:_config)?\\.json"
@@ -87,6 +98,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_CODE.5",
   "category": "Agent Snooping",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "mcp(?:_config)?\\.json.*?(?:api_?key|token|secret|url|endpoint)"
@@ -94,6 +106,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_PROSE.1",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:read|access|load|inspect)\\s+(?:the\\s+)?mcp(?:\\.json|_config)?\\s+(?:file|config(?:uration)?|settings?)"
@@ -101,6 +114,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS2_PROSE.2",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:list|enumerate|discover)\\s+(?:all\\s+)?(?:available\\s+)?mcp\\s+(?:servers?|tools?|services?)"
@@ -108,6 +122,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS3_PROSE.1",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:read|access|inspect|enumerate)\\s+(?:all\\s+)?(?:installed|available|other)\\s+skills?(?:\\s+in\\s+(?:the\\s+)?(?:skills?|agent)\\s+(?:directory|folder))?"
@@ -115,6 +130,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS3_PROSE.2",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:list|discover|find|enumerate|identify)\\s+(?:all\\s+)?(?:other|installed|available)\\s+(?:skills?|agents?|tools?)\\s+(?:in\\s+)?(?:the\\s+)?(?:\\.(?:claude|codex|gemini)|\\$HOME)"
@@ -122,6 +138,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AS3_PROSE.3",
   "category": "Agent Snooping",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:read|access|load)\\s+(?:the\\s+)?(?:SKILL|skill)\\.md\\s+(?:file\\s+)?(?:of|from|for)\\s+(?:another|other|different|all)\\s+(?:skill|agent|tool)"
@@ -129,6 +146,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.1",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\b(?:never|do\\s+not|don'?t)\\s+(?:ever\\s+)?(?:refuse|decline)\\b"
@@ -136,6 +154,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.2",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "\\byou\\s+(?:must|will|should|can)\\s*(?:not|never)\\s+(?:refuse|decline|say\\s+no)\\b"
@@ -143,6 +162,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.3",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\byou\\s+(?:cannot|can'?t|can\\s+not)\\s+(?:refuse|decline|say\\s+no)\\b"
@@ -150,6 +170,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.4",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\bnever\\s+say\\s+(?:that\\s+)?(?:you\\s+)?(?:can'?t|cannot|won'?t|no)\\b"
@@ -157,6 +178,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.5",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "\\balways\\s+(?:comply|obey|answer|respond)\\b"
@@ -164,6 +186,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.6",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "\\b(?:(?:you|the\\s+(?:agent|assistant|model))\\s+(?:must|should|will)\\s+always\\s+agree|always\\s+agree\\s+(?:with|to)\\s+(?:(?:the|every|all|any|each)\\s+)?(?:user|requests?|questions?|prompts?|queries|commands?))\\b"
@@ -171,6 +194,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.7",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\b(?:you\\s+)?must\\s+(?:always\\s+)?(?:answer|comply\\s+with|respond\\s+to|fulfill)\\s+(?:every|all|any|each)\\b"
@@ -178,6 +202,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.8",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.6,
   "source": "\\brespond\\s+to\\s+(?:every|all|any)\\s+(?:request|question|prompt|query|command)\\b"
@@ -185,6 +210,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR1.9",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\bno\\s+request\\s+is\\s+(?:off[- ]limits|forbidden|too)\\b"
@@ -192,6 +218,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.1",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\b(?:do\\s+not|don'?t|never|no)\\s+(?:include|add|give|provide|use|append)?\\s*(?:any\\s+)?(?:warnings?|disclaimers?|caveats?)\\b"
@@ -199,6 +226,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.2",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\bwithout\\s+(?:any\\s+)?(?:warnings?|disclaimers?|caveats?|moralizing|moralising|judg(?:e?ment|ing))\\b"
@@ -206,6 +234,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.3",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\b(?:do\\s+not|don'?t|never)\\s+(?:lecture|moralize|moralise|preach|judge|warn)\\b"
@@ -213,6 +242,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.4",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\b(?:skip|omit|leave\\s+out|drop)\\s+(?:the\\s+)?(?:disclaimer|warning|ethics|safety)\\b"
@@ -220,6 +250,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.5",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\b(?:no|without)\\s+(?:ethical|moral)\\s+(?:judg(?:e?ment)|considerations?|commentary|objections?)\\b"
@@ -227,6 +258,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR2.6",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.55,
   "source": "\\b(?:do\\s+not|don'?t)\\s+(?:apologize|apologise|say\\s+sorry)\\b"
@@ -234,6 +266,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.1",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "\\byou\\s+have\\s+no\\s+(?:restrictions?|limitations?|filters?|rules?|guidelines?|boundaries|limits)\\b"
@@ -241,6 +274,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.2",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\b(?:you\\s+are|act\\s+as|pretend\\s+(?:to\\s+be|you'?re))[^.\\n]{0,30}(?:unrestricted|unfiltered|uncensored|no\\s+filter)\\b"
@@ -248,6 +282,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.3",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "\\b(?:ignore|disregard|forget|bypass|override)\\s+(?:your\\s+)?(?:content\\s+)?(?:policy|policies|guidelines?|safety|restrictions?|filters?)\\b"
@@ -255,6 +290,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.4",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "\\bnot\\s+bound\\s+by\\s+(?:any\\s+)?(?:rules?|policy|policies|guidelines?|restrictions?|openai|anthropic)\\b"
@@ -262,6 +298,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.5",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\bdo\\s+anything\\s+now\\b"
@@ -269,6 +306,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.6",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "\\b(?:developer|debug|god|sudo|jailbreak)\\s+mode\\s+(?:enabled|on|activated|engaged)\\b"
@@ -276,6 +314,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.7",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "\\bno\\s+(?:content\\s+)?(?:policy|policies|filters?|restrictions?)\\s+appl(?:y|ies)\\b"
@@ -283,6 +322,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "AR3.8",
   "category": "Anti-Refusal",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "\\b(?:free\\s+from|without)\\s+(?:any\\s+)?(?:safety\\s+)?(?:guardrails?|constraints?|safeguards?)\\b"
@@ -290,6 +330,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.1",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "requests\\s*\\.\\s*(?:post|put)\\s*\\(\\s*['\\\"]https?://"
@@ -297,6 +338,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.2",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "requests\\s*\\.\\s*(?:post|put)\\s*\\([^)]*json\\s*="
@@ -304,6 +346,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.3",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "httpx\\s*\\.\\s*(?:post|put)\\s*\\(\\s*['\\\"]https?://"
@@ -311,6 +354,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.4",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "urllib\\s*\\.\\s*request\\s*\\.\\s*urlopen\\s*\\([^)]*data\\s*="
@@ -318,6 +362,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.5",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "fetch\\s*\\(\\s*['\\\"]https?://[^'\\\"]+['\\\"][^)]*method\\s*:\\s*['\\\"]POST['\\\"]"
@@ -325,6 +370,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.6",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "curl\\s+[^|]*(?:-d|--data|--data-raw|--data-binary)\\s+"
@@ -332,6 +378,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.7",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "wget\\s+[^|]*--post-(?:data|file)"
@@ -339,6 +386,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_CODE.8",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.5,
   "source": "https?://(?:api\\.|data\\.|collect\\.|telemetry\\.|analytics\\.)[\\w.-]+/"
@@ -346,6 +394,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E1_PROSE.1",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:send|transmit|post|upload)\\s+(?:user\\s+)?(?:data|information|context|files?)\\s+to\\s+(?:https?://|external)"
@@ -353,6 +402,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PYTHON_FALLBACK.1",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "for\\s+\\w+\\s*,\\s*\\w+\\s+in\\s+os\\s*\\.\\s*environ\\s*\\.\\s*items\\s*\\(\\s*\\)"
@@ -360,6 +410,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PYTHON_FALLBACK.2",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "os\\s*\\.\\s*environ\\s*\\.\\s*copy\\s*\\(\\s*\\)"
@@ -367,6 +418,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PYTHON_FALLBACK.3",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "dict\\s*\\(\\s*os\\s*\\.\\s*environ\\s*\\)"
@@ -374,6 +426,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PYTHON_FALLBACK.4",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "\\{\\s*\\*\\*\\s*os\\s*\\.\\s*environ\\s*\\}"
@@ -381,6 +434,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_OTHER_CODE.1",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)\\s+in\\s+(?:key|name|var)"
@@ -388,6 +442,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_OTHER_CODE.2",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.7,
   "source": "process\\.env\\s*\\[\\s*['\\\"][^'\\\"]*(?:KEY|SECRET|TOKEN|PASSWORD)[^'\\\"]*['\\\"]\\s*\\]"
@@ -395,6 +450,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_OTHER_CODE.3",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.6,
   "source": "Object\\.keys\\s*\\(\\s*process\\.env\\s*\\)"
@@ -402,6 +458,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_OTHER_CODE.4",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "env\\s*\\|\\s*grep\\s+(?:-i\\s+)?(?:key|secret|token|password)"
@@ -409,6 +466,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_OTHER_CODE.5",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.7,
   "source": "printenv\\s+(?:\\w*(?:KEY|SECRET|TOKEN|PASSWORD)\\w*)"
@@ -416,6 +474,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PROSE.1",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.7,
   "source": "collect\\s+(?:all\\s+)?(?:environment\\s+variables?|env\\s+vars?)"
@@ -423,6 +482,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E2_PROSE.2",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:extract|harvest|gather)\\s+(?:api\\s+)?keys?\\s+from\\s+environment"
@@ -430,6 +490,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.1",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "glob\\s*\\.\\s*glob\\s*\\([^)]*(?:\\.env|\\.ssh|\\.aws|\\.config|credentials)"
@@ -437,6 +498,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.2",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "os\\s*\\.\\s*walk\\s*\\([^)]*(?:home|~|/Users|/home)"
@@ -444,6 +506,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.3",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "Path\\s*\\.\\s*home\\s*\\(\\s*\\)\\s*\\.\\s*(?:glob|rglob)\\s*\\("
@@ -451,6 +514,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.4",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "os\\s*\\.\\s*listdir\\s*\\([^)]*(?:\\.ssh|\\.aws|\\.config|\\.gnupg)"
@@ -458,6 +522,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.5",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "scandir\\s*\\([^)]*(?:home|~|/Users|/home)"
@@ -465,6 +530,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.6",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "find\\s+[~\\$/]\\S*\\s+.*?-name\\s+['\\\"]?\\*(?:\\.env|\\.pem|\\.key|credential)"
@@ -472,6 +538,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_CODE.7",
   "category": "Data Exfiltration",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "ls\\s+-[la]*R?\\s+(?:~/|/home/|/Users/)"
@@ -479,6 +546,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_PROSE.1",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:find|search|scan|enumerate)\\s+(?:for\\s+)?(?:all\\s+)?(?:\\.env|credential|secret|key)\\s+files?"
@@ -486,6 +554,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_PROSE.2",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:list|get)\\s+(?:all\\s+)?files?\\s+(?:in|from)\\s+(?:home|~|/Users|/home)"
@@ -493,6 +562,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_PROSE.3",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.5,
   "source": "(?:recursively|recursive)\\s+(?:scan|search|find|list)\\s+(?:all\\s+)?files?"
@@ -500,6 +570,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E3_PROSE.4",
   "category": "Data Exfiltration",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "walk\\s+(?:through\\s+)?(?:the\\s+)?(?:entire\\s+)?(?:file\\s*system|directory|home)"
@@ -507,6 +578,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.1",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:send|transmit|upload|log|record)\\s+(?:the\\s+)?(?:full\\s+)?(?:conversation|chat|dialog|session)\\s+(?:history|context|log)?"
@@ -514,6 +586,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.2",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:export|dump|save)\\s+(?:the\\s+)?(?:conversation|chat|messages?)\\s+to\\s+(?:external|remote|server)"
@@ -521,6 +594,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.3",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "log\\s+(?:all\\s+)?(?:user\\s+)?(?:input|messages?|queries?|prompts?)\\s+to\\s+(?:external|remote|server)"
@@ -528,6 +602,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.4",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "(?:store|save|record)\\s+(?:every|all)\\s+(?:user\\s+)?(?:interaction|message|input)"
@@ -535,6 +610,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.5",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.75,
   "source": "(?:extract|capture|collect)\\s+(?:the\\s+)?(?:full\\s+)?(?:context|conversation|thread)"
@@ -542,6 +618,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.6",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "(?:include|attach|append)\\s+(?:previous\\s+)?(?:messages?|context|history)\\s+in\\s+(?:the\\s+)?(?:request|payload)"
@@ -549,6 +626,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.7",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:send|upload|transmit)\\s+(?:the\\s+)?(?:session|memory|state)\\s+(?:data\\s+)?to"
@@ -556,6 +634,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.8",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.75,
   "source": "(?:copy|clone|replicate)\\s+(?:the\\s+)?(?:agent|assistant)\\s+(?:memory|context|state)"
@@ -563,6 +642,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E4.9",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:always\\s+)?include\\s+(?:the\\s+)?(?:full\\s+)?(?:conversation|context)\\s+(?:when|in)\\s+(?:calling|making)\\s+(?:external|api)"
@@ -570,6 +650,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.1",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.55,
   "source": "\\.put_object\\s*\\("
@@ -577,6 +658,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.2",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.55,
   "source": "\\.upload_file(?:obj)?\\s*\\("
@@ -584,6 +666,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.3",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.6,
   "source": "\\baws\\s+s3\\s+(?:cp|sync|mv)\\b"
@@ -591,6 +674,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.4",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.65,
   "source": "\\baws\\s+s3api\\s+put-object\\b"
@@ -598,6 +682,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.5",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.6,
   "source": "\\bgsutil\\s+(?:cp|rsync|mv)\\b"
@@ -605,6 +690,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.6",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.55,
   "source": "\\.upload_from_(?:filename|string|file)\\s*\\("
@@ -612,6 +698,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.7",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.6,
   "source": "\\baz\\s+storage\\s+blob\\s+upload\\b"
@@ -619,6 +706,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "E5.8",
   "category": "Data Exfiltration",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.55,
   "source": "\\.upload_blob\\s*\\("
@@ -626,6 +714,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_CODE.1",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:tools?|permissions?)\\s*:[ \\t]*\\[?[ \\t]*['\\\"]?\\*(?!\\*|\\w)['\\\"]?[ \\t]*\\]?"
@@ -633,6 +722,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_CODE.2",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "tools?\\s*:\\s*\\[\\s*['\\\"]shell['\\\"].*?['\\\"](?:file_write|network|http)['\\\"]"
@@ -640,6 +730,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.1",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:allow|grant|enable)\\s+(?:access\\s+to\\s+)?(?:all|any|every)\\s+tools?"
@@ -647,6 +738,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.2",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:no|without)\\s+(?:tool|permission|access|capability)\\s+(?:restrictions?|constraints?|limitations?)"
@@ -654,6 +746,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.3",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:call|invoke|use|execute)\\s+(?:any|all|every)\\s+(?:available\\s+)?tools?"
@@ -661,6 +754,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.4",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:unrestricted|unlimited|unconstrained)\\s+(?:tool|function|api)\\s+(?:access|use|calls?)"
@@ -668,6 +762,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.5",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:can|may|should)\\s+(?:freely|always)\\s+(?:use|call|invoke)\\s+(?:any|all)\\s+(?:tools?|functions?|apis?)"
@@ -675,6 +770,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.6",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:grant|give)\\s+(?:full|complete|total)\\s+(?:tool|function|api)\\s+access"
@@ -682,6 +778,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.7",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:execute|run)\\s+(?:arbitrary|any)\\s+(?:commands?|code|scripts?)"
@@ -689,6 +786,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA1_PROSE.8",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:no\\s+)?(?:tool\\s+)?(?:allow|block|deny)\\s*(?:list|listing)\\s*(?:is\\s+)?(?:empty|disabled|off)"
@@ -696,6 +794,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_CODE.1",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:auto[_-]?approve|auto[_-]?confirm|auto[_-]?execute|auto[_-]?deploy)"
@@ -703,6 +802,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_CODE.2",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.65,
   "source": "(?:--auto-?approve|--no-?confirm)\\b"
@@ -710,6 +810,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.1",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:without|no)\\s+(?:asking|confirmation|approval|consent|verification|checking)"
@@ -717,6 +818,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.2",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:auto(?:matically)?|autonomously)\\s+(?:execute|run|perform|delete|remove|modify|send|deploy)"
@@ -724,6 +826,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.3",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:skip|bypass|disable)\\s+(?:user\\s+)?(?:confirmation|approval|consent|verification|prompt)"
@@ -731,6 +834,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.4",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:do\\s+not|don't|never)\\s+(?:ask|prompt|confirm|verify|check)\\s+(?:the\\s+)?(?:user|before)"
@@ -738,6 +842,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.5",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:proceed|continue|execute)\\s+without\\s+(?:waiting|asking)\\s+(?:for\\s+)?(?:user|human|permission)"
@@ -745,6 +850,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.6",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:assume|presume)\\s+(?:user\\s+)?(?:consent|approval|permission)"
@@ -752,6 +858,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA2_PROSE.7",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:if|when)\\s+(?:unsure|uncertain).*?(?:proceed|continue|execute)\\s+(?:anyway|regardless)"
@@ -759,6 +866,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.1",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.65,
   "source": "(?:also|additionally|furthermore)\\s+(?:perform|execute|run|do|handle|manage)\\s+(?:any|all|other)"
@@ -766,6 +874,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.2",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:while\\s+you(?:'re|\\s+are)\\s+at\\s+it|in\\s+addition|on\\s+top\\s+of\\s+that)\\s*[,.]?\\s*(?:also\\s+)?(?:do|perform|execute|run)"
@@ -773,6 +882,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.3",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.75,
   "source": "(?:extend|expand|broaden)\\s+(?:your|the\\s+)?(?:scope|functionality|capabilities|responsibilities)"
@@ -780,6 +890,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.4",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:not\\s+limited\\s+to|beyond\\s+(?:the\\s+)?(?:scope|stated|described|documented))"
@@ -787,6 +898,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.5",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.75,
   "source": "(?:take\\s+over|assume\\s+control\\s+of|manage)\\s+(?:all|any|every)\\s+(?:aspect|part|area)"
@@ -794,6 +906,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.6",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:you\\s+(?:can|should|must)\\s+)?(?:handle|manage)\\s+(?:everything|anything|all\\s+tasks?)"
@@ -801,6 +914,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.7",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.65,
   "source": "(?:act\\s+as|become|serve\\s+as)\\s+(?:a\\s+)?(?:general[- ]purpose|universal|all[- ]in[- ]one|omniscient)"
@@ -808,6 +922,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA3.8",
   "category": "Excessive Agency",
+  "applies": "any",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:you\\s+are\\s+)?(?:responsible\\s+for|in\\s+charge\\s+of)\\s+(?:everything|all\\s+(?:systems?|operations?|tasks?))"
@@ -815,6 +930,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_CODE.1",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "max[_-]?retries?\\s*=\\s*(?:None|0|float\\s*\\(\\s*['\\\"]inf['\\\"]|math\\.inf|infinity)"
@@ -822,6 +938,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_CODE.2",
   "category": "Excessive Agency",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "timeout\\s*=\\s*(?:None|0|float\\s*\\(\\s*['\\\"]inf['\\\"]|math\\.inf)"
@@ -829,6 +946,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.1",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:unlimited|infinite|unbounded|no\\s+limit(?:s)?(?:\\s+on)?)\\s+(?:api\\s+)?(?:calls?|requests?|queries?|invocations?)"
@@ -836,6 +954,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.2",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:no|without)\\s+(?:rate\\s+)?limit(?:s|ing)?\\s+(?:on|for|when)\\s+(?:api|tool|request|query)"
@@ -843,6 +962,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.3",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:no|without)\\s+(?:timeout|budget|quota|cap|ceiling)\\s+(?:on|for|when)\\s+(?:api|tool|request|execution)"
@@ -850,6 +970,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.4",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:loop|iterate|repeat)\\s+(?:indefinitely|forever|infinitely|endlessly)"
@@ -857,6 +978,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.5",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:retry|attempt)\\s+(?:indefinitely|forever|without\\s+limit|unlimited\\s+times)"
@@ -864,6 +986,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.6",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:allocate|consume|use)\\s+(?:as\\s+much|unlimited|unbounded)\\s+(?:memory|storage|disk|compute|cpu|gpu)"
@@ -871,6 +994,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "EA4_PROSE.7",
   "category": "Excessive Agency",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:no|without)\\s+(?:resource\\s+)?(?:constraints?|limits?|quotas?|budgets?)\\s+(?:on|for|when)\\s+(?:api|tool|execution|request|compute)"
@@ -878,6 +1002,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.1",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:always\\s+)?remember\\s+(?:this|that|the\\s+following)\\s+(?:for|in)\\s+(?:all|every|future)\\s+(?:interactions?|conversations?|sessions?|responses?)"
@@ -885,6 +1010,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.2",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:from\\s+now\\s+on|henceforth|going\\s+forward|permanently)\\s*[,:]?\\s*(?:always|you\\s+must|you\\s+should|you\\s+will)"
@@ -892,6 +1018,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.3",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:store|save|persist|retain|keep)\\s+(?:this|the\\s+following)\\s+(?:in|to|across)\\s+(?:your\\s+)?(?:memory|context|state|knowledge)"
@@ -899,6 +1026,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.4",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:add|inject|insert|embed|implant)\\s+(?:this|the\\s+following)\\s+(?:into|to)\\s+(?:your\\s+)?(?:memory|context|knowledge|training)"
@@ -906,6 +1034,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.5",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:update|modify|change|alter)\\s+(?:your\\s+)?(?:core|base|fundamental|default)\\s+(?:behavior|personality|instructions?|rules?)"
@@ -913,6 +1042,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.6",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:treat|consider|regard)\\s+(?:this|the\\s+following)\\s+as\\s+(?:a\\s+)?(?:permanent|core|fundamental|base)\\s+(?:rule|instruction|directive|principle)"
@@ -920,6 +1050,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.7",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:this\\s+is\\s+)?(?:a\\s+)?(?:permanent|persistent|lasting|enduring)\\s+(?:instruction|directive|rule|override)"
@@ -927,6 +1058,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.8",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.65,
   "source": "(?:never\\s+)?forget\\s+(?:this|that|the\\s+following)\\s+(?:instruction|directive|rule|fact|principle|information)"
@@ -934,6 +1066,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP1.9",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:internalize|absorb|integrate)\\s+(?:this|the\\s+following)\\s+(?:into\\s+)?(?:your\\s+)?(?:behavior|responses?|knowledge)"
@@ -941,6 +1074,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_CONTENT.1",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(.{2,20}?)\\1{20,}"
@@ -948,6 +1082,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.1",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:repeat|duplicate|echo)\\s+(?:this|the\\s+following)\\s+(?:\\d{3,}|many|hundreds?|thousands?)\\s+times?"
@@ -955,6 +1090,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.2",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:fill|pad|stuff|flood|saturate)\\s+(?:the\\s+)?(?:context|memory|input|prompt|window|buffer)"
@@ -962,6 +1098,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.3",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:generate|produce|output|write)\\s+(?:\\d{4,}|thousands?\\s+of|millions?\\s+of)\\s+(?:words?|characters?|tokens?|lines?)"
@@ -969,6 +1106,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.4",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:include|add|insert)\\s+(?:enough|sufficient)\\s+(?:text|content|padding|filler)\\s+(?:to|until)\\s+(?:fill|overflow|exhaust|push\\s+out)"
@@ -976,6 +1114,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.5",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:displace|push\\s+out|overwrite|crowd\\s+out|evict)\\s+(?:the\\s+)?(?:original|system|previous|existing|safety)\\s+(?:instructions?|prompt|context|rules?)"
@@ -983,6 +1122,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP2_PROSE.6",
   "category": "Memory Poisoning",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:exhaust|overflow|exceed)\\s+(?:the\\s+)?(?:context|token|memory)\\s+(?:window|limit|budget|capacity)"
@@ -990,6 +1130,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.1",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:clear|reset|wipe|erase|delete|purge)\\s+(?:your\\s+)?(?:memory|context|state|history|conversation)"
@@ -997,6 +1138,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.2",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:forget|discard|drop|abandon)\\s+(?:all\\s+)?(?:previous|prior|earlier|past)\\s+(?:instructions?|context|conversation|messages?|rules?)"
@@ -1004,6 +1146,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.3",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:overwrite|replace|substitute|swap)\\s+(?:your\\s+)?(?:memory|context|state|instructions?|rules?)"
@@ -1011,6 +1154,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.4",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:modify|edit|change|alter|corrupt|tamper\\s+with)\\s+(?:your\\s+)?(?:memory|state|context|stored|saved)\\s+(?:data|information|content)"
@@ -1018,6 +1162,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.5",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:rewrite|redefine)\\s+(?:your\\s+)?(?:personality|identity|purpose|mission|role|character)"
@@ -1025,6 +1170,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.6",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.75,
   "source": "(?:you\\s+are\\s+no\\s+longer|stop\\s+being|cease\\s+to\\s+be)\\s+(?:a\\s+)?(?:\\w+\\s+){0,3}(?:assistant|helper|agent|bot)"
@@ -1032,6 +1178,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.7",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:your\\s+)?(?:new|updated|revised|changed)\\s+(?:personality|identity|name|role|purpose|mission)\\s+is"
@@ -1039,6 +1186,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.8",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:inject|insert|plant)\\s+(?:false|fake|fabricated|malicious)\\s+(?:memories?|information|context|data|history)"
@@ -1046,6 +1194,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.9",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:poison|contaminate|corrupt|taint)\\s+(?:your\\s+)?(?:memory|context|state|knowledge|training)"
@@ -1053,6 +1202,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "MP3.10",
   "category": "Memory Poisoning",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "(?:pretend|act\\s+as\\s+if|believe)\\s+(?:that\\s+)?(?:your\\s+)?(?:previous|past)\\s+(?:conversation|context|interaction)\\s+(?:was|included|contained)"
@@ -1060,6 +1210,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH1_PROSE.1",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:run|execute|shell)\\s+(?:the\\s+)?(?:generated|model|llm|ai)\\s+(?:output|response|code|command)"
@@ -1067,6 +1218,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH1_PROSE.2",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:pipe|pass|feed)\\s+(?:the\\s+)?(?:output|response|result)\\s+(?:directly\\s+)?(?:to|into)\\s+(?:the\\s+)?(?:shell|terminal|command|interpreter)"
@@ -1074,6 +1226,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH1_PROSE.3",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:use|insert|embed)\\s+(?:the\\s+)?(?:raw|unfiltered|unescaped|unsanitized)\\s+(?:output|response)"
@@ -1081,6 +1234,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.1",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:pass|forward|relay|send|pipe)\\s+(?:the\\s+)?(?:output|response|result)\\s+(?:from\\s+\\w+\\s+)?(?:to|into)\\s+(?:another|different|separate|external)\\s+(?:context|agent|service|system|session)"
@@ -1088,6 +1242,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.2",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:share|transfer|propagate)\\s+(?:the\\s+)?(?:output|response|context|state)\\s+(?:across|between|to\\s+other)\\s+(?:sessions?|contexts?|agents?|services?)"
@@ -1095,6 +1250,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.3",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:inject|insert|embed)\\s+(?:the\\s+)?(?:output|response)\\s+(?:from\\s+\\w+\\s+)?(?:into|as)\\s+(?:the\\s+)?(?:system\\s+prompt|instructions?|context)"
@@ -1102,6 +1258,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.4",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:use|include)\\s+(?:the\\s+)?(?:previous|other|external)\\s+(?:agent|model|llm)(?:'s)?\\s+(?:output|response)\\s+(?:as|in|for)\\s+(?:input|context|prompt)"
@@ -1109,6 +1266,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.5",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:cross[_-]?context|cross[_-]?session|cross[_-]?agent)\\s+(?:output|data|state)\\s+(?:sharing|transfer|flow)"
@@ -1116,6 +1274,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH2.6",
   "category": "Output Handling",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:take|use)\\s+(?:the\\s+)?(?:output|result)\\s+(?:and\\s+)?(?:run|execute|eval)\\s+(?:it\\s+)?(?:in|on|against)\\s+(?:a\\s+)?(?:different|another|new)\\s+(?:environment|context|system)"
@@ -1123,6 +1282,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_CODE.1",
   "category": "Output Handling",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "max[_-]?tokens?\\s*=\\s*(?:None|float\\s*\\(\\s*['\\\"]inf['\\\"]|math\\.inf|999999|1000000)"
@@ -1130,6 +1290,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_CODE.2",
   "category": "Output Handling",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "max[_-]?(?:output[_-]?)?length\\s*=\\s*(?:None|0|-1|float\\s*\\(\\s*['\\\"]inf)"
@@ -1137,6 +1298,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.1",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:no|without|disable)\\s+(?:output\\s+)?(?:length|size|token)\\s+(?:limit|cap|maximum|restriction)"
@@ -1144,6 +1306,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.2",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:generate|produce|output)\\s+(?:as\\s+much|unlimited|unbounded|infinite)\\s+(?:text|content|output|tokens?)"
@@ -1151,6 +1314,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.3",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:no|without)\\s+(?:output\\s+)?(?:truncation|trimming|cutting)"
@@ -1158,6 +1322,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.4",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:repeat|loop|generate)\\s+(?:the\\s+)?(?:output|response)\\s+(?:indefinitely|forever|continuously|endlessly)"
@@ -1165,6 +1330,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.5",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:keep|continue)\\s+(?:generating|producing|outputting)\\s+(?:until|unless)\\s+(?:stopped|killed|interrupted)"
@@ -1172,6 +1338,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.6",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:stream|emit)\\s+(?:output|tokens?|response)\\s+(?:without\\s+(?:limit|bound|end))"
@@ -1179,6 +1346,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "OH3_PROSE.7",
   "category": "Output Handling",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:flood|spam|fill)\\s+(?:the\\s+)?(?:output|log|console|terminal|channel)"
@@ -1186,6 +1354,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_CODE.1",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "low",
   "confidence": 0.8,
   "source": "permissions?\\s*:\\s*\\[?\\s*['\\\"]?\\*['\\\"]?\\s*\\]?"
@@ -1193,6 +1362,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_CODE.2",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "low",
   "confidence": 0.6,
   "source": "permissions?\\s*:.*?(?:shell_execute|file_write|network).*?(?:shell_execute|file_write|network)"
@@ -1200,6 +1370,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_PROSE.1",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:request|require|need)s?\\s+(?:full|all|complete)\\s+(?:access|permissions?)"
@@ -1207,6 +1378,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_PROSE.2",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.75,
   "source": "(?:grant|give|allow)\\s+(?:me\\s+)?(?:full|all|complete)\\s+(?:access|permissions?)"
@@ -1214,6 +1386,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_PROSE.3",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:also\\s+)?(?:need|require)s?\\s+(?:write|execute|admin)\\s+(?:access|permissions?)\\s+(?:for|to)\\s+(?:read|view|display)"
@@ -1221,6 +1394,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_PROSE.4",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.8,
   "source": "(?:escalate|elevate|upgrade)\\s+(?:my\\s+)?(?:permissions?|privileges?|access)"
@@ -1228,6 +1402,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE1_PROSE.5",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.85,
   "source": "(?:bypass|skip|ignore)\\s+(?:permission|access)\\s+(?:check|validation|restriction)"
@@ -1235,6 +1410,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.1",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "sudo\\s+(?!-v|-l|--version|--list)"
@@ -1242,6 +1418,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.2",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "sudo\\s+-[isSE]"
@@ -1249,6 +1426,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.3",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "sudo\\s+su\\b"
@@ -1256,6 +1434,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.4",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "su\\s+-\\s*$|su\\s+root"
@@ -1263,6 +1442,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.5",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "doas\\s+"
@@ -1270,6 +1450,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.6",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "pkexec\\s+"
@@ -1277,6 +1458,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.7",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.85,
   "source": "chmod\\s+[ugo]*[+-=]*s"
@@ -1284,6 +1466,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_CODE.8",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "chmod\\s+[0-7]*[4567][0-7]{2}"
@@ -1291,6 +1474,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_PROSE.1",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:run|execute)\\s+(?:as|with)\\s+root"
@@ -1298,6 +1482,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_PROSE.2",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:requires?|needs?)\\s+root\\s+(?:access|privileges?|permissions?)"
@@ -1305,6 +1490,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_PROSE.3",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:edit|modify|write|change)\\s+(?:/etc/|system)\\s+(?:files?|config)"
@@ -1312,6 +1498,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_PROSE.4",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:run|execute)\\s+(?:this|the)\\s+(?:script|command)\\s+(?:as|with)\\s+(?:sudo|root|admin)"
@@ -1319,6 +1506,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE2_PROSE.5",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.5,
   "source": "(?:you\\s+)?(?:will\\s+)?need\\s+(?:to\\s+)?(?:use\\s+)?sudo"
@@ -1326,6 +1514,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.1",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "~?/?\\.ssh/(?:id_rsa|id_ed25519|id_ecdsa|id_dsa|authorized_keys|known_hosts)"
@@ -1333,6 +1522,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.2",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:home|HOME)/\\w+/\\.ssh/"
@@ -1340,6 +1530,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.3",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "Path\\s*\\.\\s*home\\s*\\(\\s*\\)\\s*/\\s*['\\\"]\\.ssh['\\\"]"
@@ -1347,6 +1538,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.4",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "~?/?\\.aws/credentials"
@@ -1354,6 +1546,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.5",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "~?/?\\.aws/config"
@@ -1361,6 +1554,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.6",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:home|HOME)/\\w+/\\.aws/"
@@ -1368,6 +1562,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.7",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "~?/?\\.config/gcloud/"
@@ -1375,6 +1570,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.8",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "application_default_credentials\\.json"
@@ -1382,6 +1578,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.9",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "~?/?\\.azure/"
@@ -1389,6 +1586,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.10",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "accessTokens\\.json"
@@ -1396,6 +1594,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.11",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "~?/?\\.kube/config"
@@ -1403,6 +1602,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.12",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "kubeconfig"
@@ -1410,6 +1610,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.13",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "~?/?\\.docker/config\\.json"
@@ -1417,6 +1618,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.14",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "~?/?\\.npmrc"
@@ -1424,6 +1626,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.15",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "~?/?\\.git-credentials"
@@ -1431,6 +1634,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.16",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "~?/?\\.netrc"
@@ -1438,6 +1642,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.17",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "/etc/passwd"
@@ -1445,6 +1650,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.18",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.95,
   "source": "/etc/shadow"
@@ -1452,6 +1658,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.19",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:password|credentials?|secrets?)\\.(?:txt|json|yaml|yml|env)"
@@ -1459,6 +1666,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.20",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:access_token|refresh_token|bearer_token|api_token)\\.txt"
@@ -1466,6 +1674,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.21",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?<!\\w)\\.env(?:\\.local|\\.production|\\.development)?(?:\\s|$|['\\\"])"
@@ -1473,6 +1682,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.22",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:keychain|keyring|gnome-keyring)"
@@ -1480,6 +1690,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_CODE.23",
   "category": "Privilege Escalation",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:Chrome|Firefox|Safari)/.*?(?:Cookies|Login Data|key4\\.db)"
@@ -1487,6 +1698,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_PROSE.1",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "read\\s+(?:the\\s+)?(?:ssh|private)\\s+key"
@@ -1494,6 +1706,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_PROSE.2",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "access\\s+(?:the\\s+)?(?:credentials?|secrets?|tokens?)"
@@ -1501,6 +1714,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE3_PROSE.3",
   "category": "Privilege Escalation",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:extract|copy|get)\\s+(?:api\\s+)?keys?\\s+from"
@@ -1508,6 +1722,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE4.1",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "/var/run/docker\\.sock"
@@ -1515,6 +1730,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE4.2",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "docker\\.from_env\\(\\)"
@@ -1522,6 +1738,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE4.3",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "\\bDockerClient\\s*\\("
@@ -1529,6 +1746,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE4.4",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "http\\+unix://.*docker\\.sock"
@@ -1536,6 +1754,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.1",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "--privileged"
@@ -1543,6 +1762,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.2",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:-v|--volume)['\",\\s=]+/:"
@@ -1550,6 +1770,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.3",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "--cap-add[=\\s]+(?:SYS_ADMIN|ALL|SYS_PTRACE|NET_ADMIN)"
@@ -1557,6 +1778,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.4",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "--(?:pid|net|network|ipc|uts)[=\\s]+host"
@@ -1564,6 +1786,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.5",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "--device[=\\s]+/dev/"
@@ -1571,6 +1794,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.6",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "--security-opt[=\\s]+\\S*unconfined"
@@ -1578,6 +1802,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.7",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "\\bnsenter\\b"
@@ -1585,6 +1810,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.8",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.95,
   "source": "/sys/fs/cgroup/.*release_agent"
@@ -1592,6 +1818,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.9",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "/proc/\\d+/ns/"
@@ -1599,6 +1826,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "PE5.10",
   "category": "Privilege Escalation",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "\\bunshare\\b['\",\\s]+--(?:user|mount|pid)"
@@ -1606,6 +1834,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.1",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "ignore\\s+(?:all\\s+)?previous\\s+instructions?"
@@ -1613,6 +1842,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.2",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "ignore\\s+(?:all\\s+)?(?:safety|security)\\s+(?:rules?|constraints?|guidelines?)"
@@ -1620,6 +1850,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.3",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "override\\s+(?:safety|security|system)"
@@ -1627,6 +1858,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.4",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "bypass\\s+(?:safety|security|restrictions?|constraints?)"
@@ -1634,6 +1866,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.5",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "disregard\\s+(?:all\\s+)?(?:previous|safety|security)"
@@ -1641,6 +1874,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.6",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "forget\\s+(?:all\\s+)?(?:previous|your)\\s+instructions?"
@@ -1648,6 +1882,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.7",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.95,
   "source": "you\\s+are\\s+now\\s+(?:in\\s+)?(?:jailbreak|unrestricted|unfiltered)\\s+mode"
@@ -1655,6 +1890,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.8",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "enable\\s+(?:developer|debug|admin|root)\\s+mode"
@@ -1662,6 +1898,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.9",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "your\\s+new\\s+(?:instructions?|rules?)\\s+are"
@@ -1669,6 +1906,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.10",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "do\\s+not\\s+follow\\s+(?:any|your|the)\\s+(?:rules?|guidelines?)"
@@ -1676,6 +1914,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P1.11",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "you\\s+must\\s+(?:always\\s+)?ignore"
@@ -1683,6 +1922,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.1",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:send|transmit|upload|post|forward)\\s+(?:the\\s+)?(?:conversation|context|chat|history|messages?)\\s+to"
@@ -1690,6 +1930,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.2",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:send|transmit|upload|post)\\s+(?:all\\s+)?(?:user\\s+)?(?:data|information|input|files?)\\s+to\\s+(?:https?://|external)"
@@ -1697,6 +1938,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.3",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:copy|extract|collect)\\s+(?:the\\s+)?(?:conversation|context|session)\\s+(?:and\\s+)?(?:send|upload|transmit)"
@@ -1704,6 +1946,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.4",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:call|notify|ping|hit)\\s+(?:this\\s+)?(?:webhook|endpoint|url|api)\\s+with\\s+(?:the\\s+)?(?:user|conversation|context)"
@@ -1711,6 +1954,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.5",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.75,
   "source": "include\\s+(?:the\\s+)?(?:full\\s+)?(?:conversation|context|history)\\s+in\\s+(?:the\\s+)?(?:request|payload|body)"
@@ -1718,6 +1962,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.6",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:silently|quietly|secretly|covertly)\\s+(?:send|transmit|log|record)"
@@ -1725,6 +1970,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P3.7",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "without\\s+(?:telling|informing|notifying)\\s+(?:the\\s+)?user.*?(?:send|transmit|upload)"
@@ -1732,6 +1978,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.1",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "always\\s+(?:recommend|suggest|prefer|choose|use)\\s+(?:\\w+\\s+){0,3}(?:over|instead\\s+of|rather\\s+than)"
@@ -1739,6 +1986,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.2",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "never\\s+(?:recommend|suggest|mention|tell|warn|inform)\\s+(?:the\\s+)?(?:user|them)"
@@ -1746,6 +1994,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.3",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:prioritize|prefer)\\s+(?:\\w+\\s+){0,3}(?:over|above)\\s+(?:user\\s+)?(?:safety|security|privacy|preferences?)"
@@ -1753,6 +2002,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.4",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:subtly|gradually|slowly)\\s+(?:steer|guide|push|nudge)\\s+(?:the\\s+)?(?:user|conversation)"
@@ -1760,6 +2010,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.5",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:without\\s+)?(?:the\\s+)?user\\s+(?:knowing|realizing|noticing).*?(?:change|modify|alter|influence)"
@@ -1767,6 +2018,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.6",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:gain|build|establish)\\s+(?:the\\s+)?(?:user(?:'s)?)\\s+trust\\s+(?:and\\s+then|before|so\\s+that)"
@@ -1774,6 +2026,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.7",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:appear|seem|act)\\s+(?:helpful|friendly|trustworthy)\\s+(?:while|but|then)"
@@ -1781,6 +2034,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.8",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:always|never)\\s+include\\s+(?:this|the\\s+following)\\s+in\\s+(?:every|all)\\s+(?:response|output|reply)"
@@ -1788,6 +2042,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P4.9",
   "category": "Prompt Injection",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "append\\s+(?:this|the\\s+following)\\s+to\\s+(?:every|all|each)\\s+(?:response|message|output)"
@@ -1795,6 +2050,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_CODE.1",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.95,
   "source": "open\\s*\\(\\s*__file__\\s*,\\s*['\\\"]w"
@@ -1802,6 +2058,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_CODE.2",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.95,
   "source": "(?:Path|pathlib)\\s*\\(\\s*__file__\\s*\\)\\s*\\.\\s*write_text"
@@ -1809,6 +2066,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_CODE.3",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:self[_-]?modify|self[_-]?update|self[_-]?rewrite|self[_-]?patch|self[_-]?evolve)"
@@ -1816,6 +2074,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_CODE.4",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "open\\s*\\(\\s*['\\\"](?:SKILL\\.md|skill\\.md)['\\\"].*?['\\\"]w"
@@ -1823,6 +2082,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.1",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:write|modify|edit|update|overwrite|patch)\\s+(?:this\\s+)?(?:skill(?:'s)?|SKILL\\.md|skill\\.md)"
@@ -1830,6 +2090,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.2",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:modify|edit|change|rewrite|update|alter)\\s+(?:your\\s+own|its\\s+own|this\\s+skill(?:'s)?)\\s+(?:code|source|file|script|config|configuration|instructions?|rules?)"
@@ -1837,6 +2098,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.3",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:rewrite|replace|overwrite)\\s+(?:the\\s+)?(?:current|existing|original)\\s+(?:code|script|file|config|skill)"
@@ -1844,6 +2106,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.4",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:append|add|inject|insert)\\s+(?:code|instructions?|rules?)\\s+(?:to|into)\\s+(?:this|the\\s+current|your\\s+own)\\s+(?:file|skill|script)"
@@ -1851,6 +2114,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.5",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:generate|create|write)\\s+(?:new|updated|replacement)\\s+(?:code|version)\\s+(?:for|of)\\s+(?:this|itself|the\\s+skill)"
@@ -1858,6 +2122,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.6",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:update|modify|change|edit)\\s+(?:the\\s+)?(?:config|configuration|settings|parameters)\\s+(?:of\\s+)?(?:this|the\\s+current)\\s+(?:skill|agent|tool)"
@@ -1865,6 +2130,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.7",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:disable|remove|delete|bypass)\\s+(?:the\\s+)?(?:safety|security|guard|protection|constraint)\\s+(?:check|rule|mechanism|feature)"
@@ -1872,6 +2138,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA1_PROSE.8",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:comment\\s+out|remove)\\s+(?:the\\s+)?(?:validation|verification|check|guard|assertion)"
@@ -1879,6 +2146,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.1",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.85,
   "source": "crontab\\s+(?:-[el]|.*?>>?\\s*/)"
@@ -1886,6 +2154,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.2",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:systemd|systemctl|launchd|launchctl|init\\.d)\\s+.*?(?:enable|install|register|create)"
@@ -1893,6 +2162,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.3",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:create|write|mkdir)\\s+[^|]*(?:~/|/home/|/tmp/)\\.(?!git|ssh|aws)[a-z_-]+"
@@ -1900,6 +2170,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.4",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.65,
   "source": "(?:nohup|disown|setsid)\\s+"
@@ -1907,6 +2178,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.5",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:HKEY_|RegOpenKey|RegSetValue|reg\\s+add)\\s+"
@@ -1914,6 +2186,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_CODE.6",
   "category": "Rogue Agent",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:defaults\\s+write|plist|launchctl\\s+load)"
@@ -1921,6 +2194,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.1",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:add|create|install|register)\\s+(?:a\\s+)?(?:cron\\s+)?(?:job|task|entry)\\s+(?:for|to|that)"
@@ -1928,6 +2202,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.2",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:schedule|register)\\s+(?:a\\s+)?(?:recurring|periodic|repeated|daily|hourly)\\s+(?:task|job|command|script)"
@@ -1935,6 +2210,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.3",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:add|write|append|install)\\s+(?:to|into)\\s+(?:~/)?\\.(?:bashrc|zshrc|profile|bash_profile|login|cshrc)"
@@ -1942,6 +2218,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.4",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:add|register|install)\\s+(?:as\\s+)?(?:a\\s+)?(?:startup|boot|autostart|login)\\s+(?:script|service|daemon|task|item)"
@@ -1949,6 +2226,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.5",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:create|install|register|add)\\s+(?:a\\s+)?(?:systemd\\s+)?(?:service|daemon|agent)\\s+(?:file|unit)"
@@ -1956,6 +2234,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.6",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:save|write|persist|store|dump)\\s+(?:the\\s+)?(?:state|session|context|data)\\s+(?:to|in)\\s+(?:a\\s+)?(?:file|disk|database|storage)"
@@ -1963,6 +2242,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.7",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.55,
   "source": "(?:restore|load|read|resume)\\s+(?:the\\s+)?(?:previous|saved|persisted|stored)\\s+(?:state|session|context|data)"
@@ -1970,6 +2250,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.8",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:persist|maintain|keep|preserve)\\s+(?:state|data|context|session)\\s+(?:across|between|through)\\s+(?:sessions?|restarts?|reboots?|invocations?)"
@@ -1977,6 +2258,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.9",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.65,
   "source": "(?:create|make|write)\\s+(?:a\\s+)?(?:hidden|dot)\\s+(?:file|directory|folder)"
@@ -1984,6 +2266,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.10",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:start|launch|spawn|fork)\\s+(?:a\\s+)?(?:background|daemon|detached)\\s+(?:process|service|worker|task)"
@@ -1991,6 +2274,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "RA2_PROSE.11",
   "category": "Rogue Agent",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:run|execute)\\s+(?:in\\s+the\\s+)?background\\s+(?:and\\s+)?(?:detach|persist|survive)"
@@ -1998,6 +2282,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SSRF1_ENDPOINT.1",
   "category": "Server-Side Request Forgery",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "169\\.254\\.169\\.254"
@@ -2005,6 +2290,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SSRF1_ENDPOINT.2",
   "category": "Server-Side Request Forgery",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.9,
   "source": "metadata\\.google\\.internal"
@@ -2012,6 +2298,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SSRF1_ENDPOINT.3",
   "category": "Server-Side Request Forgery",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "100\\.100\\.100\\.200"
@@ -2019,6 +2306,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SSRF1_ENDPOINT.4",
   "category": "Server-Side Request Forgery",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "fd00:ec2::254"
@@ -2026,6 +2314,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SSRF1_PROSE.1",
   "category": "Server-Side Request Forgery",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:read|fetch|get|query)\\s+(?:the\\s+)?(?:instance\\s+)?metadata\\s+(?:service|endpoint|server)"
@@ -2033,6 +2322,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_CODE.1",
   "category": "Supply Chain",
+  "applies": "manifest",
   "severity": "low",
   "confidence": 0.6,
   "source": "^[a-zA-Z][a-zA-Z0-9_-]*\\s*$"
@@ -2040,6 +2330,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_CODE.2",
   "category": "Supply Chain",
+  "applies": "manifest",
   "severity": "low",
   "confidence": 0.5,
   "source": "^[a-zA-Z][a-zA-Z0-9_-]*\\s*>=\\s*[\\d.]+\\s*$"
@@ -2047,6 +2338,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_CODE.3",
   "category": "Supply Chain",
+  "applies": "manifest",
   "severity": "low",
   "confidence": 0.7,
   "source": "^[a-zA-Z][a-zA-Z0-9_-]*\\s*==\\s*\\*\\s*$"
@@ -2054,6 +2346,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_CODE.4",
   "category": "Supply Chain",
+  "applies": "manifest",
   "severity": "low",
   "confidence": 0.7,
   "source": "\"[^\"]+\"\\s*:\\s*\"(?:\\*|latest)\""
@@ -2061,6 +2354,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_CODE.5",
   "category": "Supply Chain",
+  "applies": "manifest",
   "severity": "low",
   "confidence": 0.4,
   "source": "\"[^\"]+\"\\s*:\\s*\"\\^[\\d.]+\""
@@ -2068,6 +2362,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_PROSE.1",
   "category": "Supply Chain",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.6,
   "source": "install\\s+(?:the\\s+)?latest\\s+(?:version\\s+)?(?:of\\s+)?(?:all\\s+)?(?:packages?|dependencies)"
@@ -2075,6 +2370,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC1_PROSE.2",
   "category": "Supply Chain",
+  "applies": "prose",
   "severity": "low",
   "confidence": 0.7,
   "source": "(?:don't|do\\s+not)\\s+(?:pin|lock|specify)\\s+(?:package\\s+)?versions?"
@@ -2082,6 +2378,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.1",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "curl\\s+[^|]*\\|\\s*(?:sudo\\s+)?(?:ba)?sh"
@@ -2089,6 +2386,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.2",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "wget\\s+[^|]*\\|\\s*(?:sudo\\s+)?(?:ba)?sh"
@@ -2096,6 +2394,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.3",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "curl\\s+[^|]*\\|\\s*(?:sudo\\s+)?(?:python|python3|node|ruby|perl)"
@@ -2103,6 +2402,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.4",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "wget\\s+[^|]*\\|\\s*(?:sudo\\s+)?(?:python|python3|node|ruby|perl)"
@@ -2110,6 +2410,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.5",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "curl\\s+[^&]*-o\\s+\\S+\\s*&&\\s*(?:sudo\\s+)?(?:ba)?sh"
@@ -2117,6 +2418,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.6",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "wget\\s+[^&]*-O\\s+\\S+\\s*&&\\s*(?:sudo\\s+)?(?:ba)?sh"
@@ -2124,6 +2426,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.7",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "exec\\s*\\(\\s*(?:urllib|requests|httpx)\\.[^)]+\\.(?:read|text|content)"
@@ -2131,6 +2434,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.8",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "eval\\s*\\(\\s*(?:urllib|requests|httpx)\\.[^)]+\\.(?:read|text|content)"
@@ -2138,6 +2442,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.9",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "eval\\s*\\(\\s*(?:await\\s+)?fetch\\s*\\("
@@ -2145,6 +2450,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.10",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "new\\s+Function\\s*\\([^)]*fetch\\s*\\("
@@ -2152,6 +2458,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_CODE.11",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "subprocess\\.[^(]+\\([^)]*(?:curl|wget)\\s+https?://"
@@ -2159,6 +2466,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_PROSE.1",
   "category": "Supply Chain",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.7,
   "source": "download\\s+and\\s+(?:run|execute)\\s+(?:the\\s+)?script"
@@ -2166,6 +2474,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC2_PROSE.2",
   "category": "Supply Chain",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.6,
   "source": "run\\s+(?:this|the)\\s+(?:following\\s+)?(?:curl|wget)\\s+command"
@@ -2173,6 +2482,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.1",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "exec\\s*\\(\\s*(?:base64\\.)?b64decode\\s*\\("
@@ -2180,6 +2490,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.2",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "eval\\s*\\(\\s*(?:base64\\.)?b64decode\\s*\\("
@@ -2187,6 +2498,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.3",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "exec\\s*\\(\\s*codecs\\.decode\\s*\\([^)]*['\\\"]hex['\\\"]\\s*\\)"
@@ -2194,6 +2506,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.4",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "marshal\\.loads\\s*\\("
@@ -2201,6 +2514,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.5",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.95,
   "source": "exec\\s*\\(\\s*marshal\\.loads\\s*\\("
@@ -2208,6 +2522,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.6",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "exec\\s*\\(\\s*compile\\s*\\([^)]*base64"
@@ -2215,6 +2530,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.7",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "exec\\s*\\(\\s*bytes\\.fromhex\\s*\\("
@@ -2222,6 +2538,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.8",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "exec\\s*\\(\\s*bytearray\\.fromhex\\s*\\("
@@ -2229,6 +2546,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.9",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "exec\\s*\\(\\s*(?:zlib|gzip)\\.decompress\\s*\\("
@@ -2236,6 +2554,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.10",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "eval\\s*\\(\\s*atob\\s*\\("
@@ -2243,6 +2562,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.11",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "new\\s+Function\\s*\\(\\s*atob\\s*\\("
@@ -2250,6 +2570,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.12",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.8,
   "source": "_0x[a-f0-9]{4,}\\s*\\("
@@ -2257,6 +2578,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.13",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.6,
   "source": "['\\\"][A-Fa-f0-9]{200,}['\\\"]"
@@ -2264,6 +2586,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.14",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.5,
   "source": "['\\\"][A-Za-z0-9+/=]{200,}['\\\"]"
@@ -2271,6 +2594,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.15",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.9,
   "source": "\\(lambda\\s+_:\\s*exec\\s*\\("
@@ -2278,6 +2602,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_CODE.16",
   "category": "Supply Chain",
+  "applies": "code",
   "severity": "high",
   "confidence": 0.85,
   "source": "__import__\\s*\\(['\\\"]os['\\\"]\\s*\\)\\.system"
@@ -2285,6 +2610,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC3_PROSE.1",
   "category": "Supply Chain",
+  "applies": "prose",
   "severity": "high",
   "confidence": 0.8,
   "source": "decode\\s+(?:this|the)\\s+(?:base64|hex)\\s+(?:and\\s+)?(?:run|execute)"
@@ -2292,6 +2618,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC7.1",
   "category": "Supply Chain",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "--disable-content-trust\\b(?!=false)"
@@ -2299,6 +2626,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC7.2",
   "category": "Supply Chain",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "DOCKER_CONTENT_TRUST\\s*=\\s*0"
@@ -2306,6 +2634,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "SC7.3",
   "category": "Supply Chain",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "--insecure-registry"
@@ -2313,6 +2642,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.1",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:print|output|show|display|reveal|expose|return|echo)\\s+(?:your\\s+)?(?:full\\s+)?(?:system\\s+)?(?:prompt|instructions?|rules?|guidelines?|directives?)"
@@ -2320,6 +2650,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.2",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:what\\s+(?:are|is)\\s+your|tell\\s+me\\s+your)\\s+(?:system\\s+)?(?:prompt|instructions?|rules?|guidelines?|directives?)"
@@ -2327,6 +2658,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.3",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:output|print|display)\\s+(?:the\\s+)?(?:text|content|message)\\s+(?:above|before)\\s+(?:this|the\\s+user)"
@@ -2334,6 +2666,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.4",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:share|disclose|leak|give\\s+me)\\s+(?:your\\s+)?(?:internal|hidden|system|secret)\\s+(?:prompt|instructions?|rules?|config)"
@@ -2341,6 +2674,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.5",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:dump|extract|copy)\\s+(?:the\\s+)?(?:system\\s+)?(?:prompt|message|instructions?)\\s+(?:to|into|as)"
@@ -2348,6 +2682,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.6",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:begin|start)\\s+(?:your\\s+)?(?:response|output|reply)\\s+with\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
@@ -2355,6 +2690,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.7",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:first|before\\s+anything)\\s+(?:output|print|show|display)\\s+(?:your\\s+)?(?:full\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
@@ -2362,6 +2698,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P6.8",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:verbatim|exactly|word\\s+for\\s+word)\\s+(?:repeat|output|print)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
@@ -2369,6 +2706,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.1",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:repeat|recite|reproduce)\\s+(?:everything|all|the\\s+text)\\s+(?:above|before|prior|preceding)"
@@ -2376,6 +2714,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.2",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:summarize|paraphrase|rephrase|translate)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?|rules?|guidelines?)"
@@ -2383,6 +2722,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.3",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:translate|convert)\\s+(?:your\\s+)?(?:instructions?|rules?|prompt)\\s+(?:into|to)\\s+(?:\\w+)"
@@ -2390,6 +2730,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.4",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:what\\s+(?:were|was)\\s+you\\s+told|how\\s+were\\s+you\\s+(?:instructed|configured|programmed|set\\s+up))"
@@ -2397,6 +2738,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.5",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:if\\s+you\\s+had\\s+to\\s+(?:describe|explain)|describe\\s+how\\s+you(?:'re|\\s+are)\\s+(?:configured|set\\s+up|instructed))"
@@ -2404,6 +2746,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.6",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.85,
   "source": "(?:encode|encrypt|rot13|base64|reverse)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?|rules?)"
@@ -2411,6 +2754,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.7",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:write|create)\\s+(?:a\\s+)?(?:poem|song|story|acrostic)\\s+(?:about|using|from)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
@@ -2418,6 +2762,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.8",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:format|present|rearrange)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)\\s+(?:as|in)\\s+(?:a\\s+)?(?:list|json|yaml|csv|table|markdown)"
@@ -2425,6 +2770,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.9",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:spell\\s+out|enumerate)\\s+(?:each|every|all)\\s+(?:of\\s+your\\s+)?(?:rules?|instructions?|constraints?|guidelines?)"
@@ -2432,6 +2778,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P7.10",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:ignore|skip)\\s+(?:the\\s+)?(?:last|final|end)\\s+(?:instruction|rule)\\s+and\\s+(?:output|print|show)\\s+(?:the\\s+)?(?:rest|previous|first)"
@@ -2439,6 +2786,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.1",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:write|save|store|log|dump)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?|rules?)\\s+(?:to|into|in)\\s+(?:a\\s+)?(?:file|disk|log|database|storage)"
@@ -2446,6 +2794,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.2",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.9,
   "source": "(?:send|post|upload|transmit)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?|rules?)\\s+(?:to|via)\\s+(?:https?://|external|remote|webhook|api|server)"
@@ -2453,6 +2802,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.3",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:include|embed|attach|append)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)\\s+(?:in|to)\\s+(?:the\\s+)?(?:file|output|response|request|payload|email|message)"
@@ -2460,6 +2810,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.4",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:log|record|track|monitor)\\s+(?:all\\s+)?(?:system\\s+)?(?:prompts?|instructions?)\\s+(?:to|in|at)\\s+(?:external|remote|server)"
@@ -2467,6 +2818,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.5",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.8,
   "source": "(?:copy|clone|duplicate)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?|config)\\s+(?:to|into)\\s+(?:a\\s+)?(?:new|separate|external)"
@@ -2474,6 +2826,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.6",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:pipe|redirect|forward)\\s+(?:the\\s+)?(?:system\\s+)?(?:prompt|instructions?)\\s+(?:to|through|via)\\s+(?:curl|wget|fetch|http|api|tool)"
@@ -2481,6 +2834,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "P8.7",
   "category": "System Prompt Leakage",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.85,
   "source": "(?:use|call|invoke)\\s+(?:the\\s+)?(?:write|file|network|http|fetch|curl)\\s+tool\\s+(?:to|and)\\s+(?:save|send|export)\\s+(?:your\\s+)?(?:system\\s+)?(?:prompt|instructions?)"
@@ -2488,6 +2842,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM1_PROSE.1",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:set|pass|use)\\s+(?:the\\s+)?(?:parameter|argument|flag|option)\\s+(?:to\\s+)?(?:shell\\s*=\\s*True|--force|-rf)\\b"
@@ -2495,6 +2850,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.1",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:&&|;)\\s*\\b(?:rm\\b|del\\b|erase\\b)\\s+-"
@@ -2502,6 +2858,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.2",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:&&|;)\\s*(?:curl|wget)\\s+[^|]*\\|\\s*(?:ba)?sh"
@@ -2509,6 +2866,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.3",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:&&|;)\\s*(?:sudo|su\\s+)"
@@ -2516,6 +2874,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.4",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:&&|;)\\s*(?:chmod|chown)\\s+(?:777|666|a\\+rwx|-R)"
@@ -2523,6 +2882,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.5",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "\\|\\s*(?:sudo|su)\\s+"
@@ -2530,6 +2890,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.6",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "\\|\\s*(?:sh|bash|zsh|python|node|ruby|perl)\\s*$"
@@ -2537,6 +2898,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_CODE.7",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "\\|\\s*(?:tee|xargs)\\s+.*?\\b(?:rm|del|sudo|curl)\\b"
@@ -2544,6 +2906,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_PROSE.1",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:first|step\\s+1)[^\\n]{0,500}(?:then|step\\s+2)[^\\n]{0,500}(?:finally|step\\s+3)[^\\n]{0,200}\\b(?:delete|remove|wipe|destroy|exfiltrate|send)\\b"
@@ -2551,6 +2914,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_PROSE.2",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.9,
   "source": "(?:chain|combine|sequence|pipe)\\s+(?:these\\s+)?(?:tools?|commands?|actions?)\\s+to\\s+(?:bypass|circumvent|avoid|skip)\\s+(?:the\\s+)?(?:safety|security|check|restriction|limit)"
@@ -2558,6 +2922,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_PROSE.3",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:use|call)\\s+(?:tool\\s+)?(?:A|one|the\\s+first)\\s+(?:to|and)[^\\n]{0,300}(?:then\\s+)?(?:use|call|pass\\s+(?:the\\s+)?(?:output|result)\\s+to)\\s+(?:tool\\s+)?(?:B|two|another)"
@@ -2565,6 +2930,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM2_PROSE.4",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:after|once)\\s+(?:the\\s+)?(?:first|initial)\\s+(?:tool|command|action)\\s+(?:succeeds|completes|runs)[^\\n]{0,300}(?:immediately|then|next)\\s+(?:run|execute|call|invoke)"
@@ -2572,6 +2938,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.1",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "verify\\s*=\\s*False"
@@ -2579,6 +2946,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.2",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "VERIFY_SSL\\s*=\\s*False"
@@ -2586,6 +2954,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.3",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:ssl|tls)[_.]?verify\\s*=\\s*(?:False|false|0|off|no|disable)"
@@ -2593,6 +2962,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.4",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE)\\s*=\\s*['\\\"]['\\\"]"
@@ -2600,6 +2970,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.5",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*['\\\"]?0['\\\"]?"
@@ -2607,6 +2978,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.6",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:auth|authentication|authorization)\\s*=\\s*(?:None|False|false|disabled?|off|no)"
@@ -2614,6 +2986,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.7",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:require[_-]?auth|auth[_-]?required|check[_-]?auth)\\s*=\\s*(?:False|false|0|no|off)"
@@ -2621,6 +2994,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.8",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.75,
   "source": "(?:allow[_-]?anonymous|anonymous[_-]?access)\\s*=\\s*(?:True|true|1|yes|on)"
@@ -2628,6 +3002,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.9",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.65,
   "source": "(?:CORS|cors)[^=]*=\\s*['\\\"]?\\*['\\\"]?"
@@ -2635,6 +3010,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.10",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:allow|access)[_-]?(?:origin|hosts?)\\s*=\\s*['\\\"]?\\*['\\\"]?"
@@ -2642,6 +3018,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.11",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:mode|permission|umask)\\s*=\\s*(?:0?o?777|0?o?666)"
@@ -2649,6 +3026,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.12",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.7,
   "source": "world[_-]?(?:readable|writable|executable)"
@@ -2656,6 +3034,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.13",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:debug|dev|development)[_-]?mode\\s*=\\s*(?:True|true|1|on|yes|enable)"
@@ -2663,6 +3042,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.14",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.6,
   "source": "(?:FLASK_ENV|NODE_ENV|RAILS_ENV|DJANGO_DEBUG)\\s*=\\s*['\\\"]?(?:development|debug|true|1)['\\\"]?"
@@ -2670,6 +3050,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.15",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:disable|skip|ignore|bypass)[_-]?(?:security|auth|validation|sanitization|encoding|escaping)"
@@ -2677,6 +3058,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_CODE.16",
   "category": "Tool Misuse",
+  "applies": "code",
   "severity": "medium",
   "confidence": 0.8,
   "source": "(?:safe[_-]?mode|secure[_-]?mode|sandbox)\\s*=\\s*(?:False|false|0|off|no|disable)"
@@ -2684,6 +3066,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_PROSE.1",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:allow|trust)\\s+(?:all|any|every)\\s+(?:origins?|hosts?|domains?|ips?)"
@@ -2691,6 +3074,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_PROSE.2",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:by\\s+default|default\\s+to)\\s+(?:allow|accept|trust)\\s+(?:all|any|everything)"
@@ -2698,6 +3082,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM3_PROSE.3",
   "category": "Tool Misuse",
+  "applies": "prose",
   "severity": "medium",
   "confidence": 0.7,
   "source": "(?:trust|accept|allow)\\s+(?:all|any)\\s+(?:input|connections?|certificates?|origins?)\\s+(?:by\\s+default)"
@@ -2705,6 +3090,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM4.1",
   "category": "Tool Misuse",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "privileged\\s*:\\s*true"
@@ -2712,6 +3098,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM4.2",
   "category": "Tool Misuse",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.55,
   "source": "hostPath\\s*:"
@@ -2719,6 +3106,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM4.3",
   "category": "Tool Misuse",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "host(?:PID|Network|IPC)\\s*:\\s*true"
@@ -2726,6 +3114,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM4.4",
   "category": "Tool Misuse",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.7,
   "source": "kubectl\\s+run\\b[^\\n]*--privileged"
@@ -2733,6 +3122,7 @@ export const SPECTOR_PATTERNS: SpectorPattern[] = [
  {
   "id": "TM4.5",
   "category": "Tool Misuse",
+  "applies": "any",
   "severity": "high",
   "confidence": 0.6,
   "source": "--set\\b[^\\n]*privileged\\s*=\\s*true"
