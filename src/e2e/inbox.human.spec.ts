@@ -98,8 +98,12 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) {
     await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
     await expect(card.getByText("Read", { exact: true })).toBeVisible();
     expect(JSON.parse(String(db.prepare("SELECT json FROM messages WHERE id='approval'").get()!.json)).card.answered).toBeUndefined();
+    // Snooze is offered on a segment tab, not on the Needs-you umbrella (8e8a3afa),
+    // and snoozed items come back under All with "Show snoozed items".
+    await page.getByRole("button", { name: /^Approvals/ }).click();
     await card.getByRole("button", { name: "Snooze 1 hour", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Approval requested", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "All", exact: true }).click();
     await page.getByRole("checkbox", { name: "Show snoozed items" }).check();
     await expect(card.getByRole("button", { name: "Return to Inbox" })).toBeVisible();
     await card.getByRole("button", { name: "Return to Inbox" }).click();
