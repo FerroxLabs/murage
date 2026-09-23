@@ -222,16 +222,21 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     const ref = parseRef(one[1]!);
     if (!ref) return { status: 404, body: { error: "No such skill." } };
     const bots = request.bots();
+    // Every bot, for the reader's "Use with" switches.
+    const forBots = (users: SkillSummary["usedBy"]) =>
+      bots.map((bot) => ({ botId: bot.id, botName: bot.name, canUseSkills: bot.canUseSkills, enabled: users.find((u) => u.botId === bot.id)?.enabled ?? false }));
     if (ref.kind === "collection") {
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
-      return { status: 200, body: { ...collectionSummary(skill, bots), text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan } };
+      const summary = collectionSummary(skill, bots);
+      return { status: 200, body: { ...summary, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy) } };
     }
     const library = libraryScan(ref.name);
     if (!library) return { status: 404, body: { error: "No such skill." } };
+    const summary = librarySummary({ id: ref.name, name: ref.name, description: library.description }, bots);
     return {
       status: 200,
-      body: { ...librarySummary({ id: ref.name, name: ref.name, description: library.description }, bots), verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan },
+      body: { ...summary, verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan, bots: forBots(summary.usedBy) },
     };
   }
 

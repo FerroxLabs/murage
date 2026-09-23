@@ -17,7 +17,14 @@ export interface SkillSummary {
   source: string;
   usedBy: Array<{ botId: string; botName: string; enabled: boolean }>;
 }
-export interface SkillDetail extends SkillSummary { text: string; files: string[]; skipped: string[]; scan: SkillScan }
+export interface SkillDetail extends SkillSummary {
+  text: string;
+  files: string[];
+  skipped: string[];
+  scan: SkillScan;
+  /** Every bot, and whether this skill is on for it. */
+  bots: Array<{ botId: string; botName: string; canUseSkills: boolean; enabled: boolean }>;
+}
 export interface SkillsPage { yours: SkillSummary[]; library: SkillSummary[]; categories: Array<{ name: string; count: number }>; libraryReady: boolean }
 export type ImportInput =
   | { link: string; replace?: boolean }
