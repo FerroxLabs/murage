@@ -54,6 +54,8 @@ const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 /** Less than this share of the last 1.5 s being speech is not the owner
  *  talking (music, a TV). Tuned from the call-diag log lines. */
 const MIN_SPEECH_SHARE = 0.35;
+/** Unmistakable as heard, even mid-utterance: "stop", "shut up", "be quiet". */
+const STOP_NOW = /^(?:(?:ok(?:ay)?|please|hey|no|just)[,.!\s]*)*(?:(?:stop(?: talking)?|shut up|be quiet|quiet|enough|that'?s enough)[,.!\s]*)+$/i;
 /** Only asking for quiet: "stop", "stop, stop, stop", "shut up", "enough". */
 const STOP_ONLY = /^(?:(?:ok(?:ay)?|please|hey|no|just|all right|alright)[,.!\s]*)*(?:(?:stop(?: talking| it| that)?|shut up|be quiet|quiet|hush|enough|that'?s enough|pause|hold on|wait)[,.!\s]*)+$/i;
 /** Listening noises while the bot talks: "uh-huh", "yeah", "mm", "right". */
@@ -325,6 +327,8 @@ function Call({ bot }: { bot: Bot }) {
   const callGrants = useRef(new Set<string>());
   /** When the owner last cut the bot off. */
   const interruptedAt = useRef(0);
+  /** When the owner began the utterance now being heard over the bot. */
+  const utteranceStart = useRef(0);
   const offeredForCall = useRef(false);
   const approvalRef = useRef(approval);
   approvalRef.current = approval;
@@ -799,6 +803,22 @@ function Call({ bot }: { bot: Bot }) {
         if (line.partial === false && !bargeable) listenOrCatchUp();
         return;
       }
+      if (bargeable && !utteranceStart.current) utteranceStart.current = Date.now();
+      if (line.partial === false) utteranceStart.current = 0;
+      // "Stop" while the bot talks, with speech heard behind it: stop now.
+      // Music and beeps score near zero on the speech model, so the check
+      // above already guards this; the share test below would not, since a
+      // one-word command is too short to fill it.
+      if (bargeable && STOP_NOW.test(line.text.trim())) {
+        diag("stop word: quiet now");
+        bargeIn();
+        deferredReplies.current = [];
+        if (line.partial === false) {
+          callLog.current.push({ said: line.text.trim(), outcome: "answered", detail: "(stopped talking)" });
+          listen();
+        }
+        return;
+      }
       if (bargeable) {
         // a word could be a cough the recognizer guessed at: hold the bot
         // and wait; two words, or a finished sentence, is the owner
@@ -835,7 +855,11 @@ function Call({ bot }: { bot: Bot }) {
         // invents words from it; a person talking keeps it busy. Too little
         // of the last moment was speech: not the owner. Logged, numbers
         // only, so the threshold can be tuned from real calls.
-        const share = mic.speechShare(1_500);
+        // Share of speech since the owner started this utterance, not over a
+        // fixed 1.5 s: a spoken "stop" lasts a third of a second, and the
+        // silence before it read as 8% speech, under the bar (measured live).
+        const since = utteranceStart.current ? Date.now() - utteranceStart.current + 400 : 1_500;
+        const share = mic.speechShare(Math.min(1_500, Math.max(600, since)));
         console.warn(`[call-diag] talk-over: ${words.length} words, speech share ${share === null ? "n/a" : share.toFixed(2)} -> ${share !== null && share < MIN_SPEECH_SHARE ? "ignored" : "stop"}`);
         if (share !== null && share < MIN_SPEECH_SHARE) {
           resumeBot();
