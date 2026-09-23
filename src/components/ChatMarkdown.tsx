@@ -7,7 +7,12 @@
 // fence is very likely complete), then highlights and caches — so the settled
 // bubble, a fresh component instance, mounts straight from cache instead of
 // popping from plain to highlighted.
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+//
+// Math ($$…$$, \[…\], \(…\); never a single $) is drawn by KaTeX in
+// ChatMath.tsx, and a ```mermaid fence is drawn in a sandboxed, opaque-origin
+// frame by MermaidDiagram.tsx. Neither puts diagram or model HTML in this
+// window unsanitized.
+import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, Download, WrapText } from "lucide-react";
@@ -19,6 +24,9 @@ import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import { relativeFileLink } from "@/lib/workspace-links";
 import { conversationLinkPath } from "@/lib/media-resolve";
 import { api } from "@/state/store";
+import { extractMath, rehypeChatMath } from "@/lib/chat-math";
+import { ChatMath } from "./ChatMath";
+import { MermaidDiagram } from "./MermaidDiagram";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
@@ -356,12 +364,24 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
    * it, file links keep exactly today's Save a copy behaviour. */
   scope?: WorkspaceScopeRef;
 }) {
+  // $$…$$, \[…\] and \(…\) come out before Markdown parses the text; a
+  // single $ never does (lib/chat-math.ts). Each span comes back as a
+  // <span data-chat-math="n"> that the span renderer below hands to KaTeX.
+  const { text: source, spans } = useMemo(() => extractMath(text), [text]);
+  const rehypePlugins = useMemo(() => [rehypeChatMath(spans)], [spans]);
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
         remarkPlugins={[remarkGfm, remarkWindowsPathDestinations]}
+        rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
         components={{
+          span({ node: _node, ...props }: ComponentProps<"span"> & { node?: unknown }) {
+            const index = (props as Record<string, unknown>)["data-chat-math"];
+            const span = typeof index === "string" ? spans[Number(index)] : undefined;
+            if (span) return <ChatMath span={span} />;
+            return <span {...props} />;
+          },
           pre({ children }: { children?: ReactNode }) {
             // fenced code arrives as <pre><code class="language-x">…</code></pre>
             const child: any = Array.isArray(children) ? children[0] : children;
@@ -372,6 +392,9 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
             const flat = (n: any): string =>
               typeof n === "string" ? n : Array.isArray(n) ? n.map(flat).join("") : (n?.props?.children ? flat(n.props.children) : "");
             const code = flat(child?.props?.children).replace(/\n$/, "");
+            // a mermaid fence is a picture: drawn in a sandboxed frame, never
+            // in this window (MermaidDiagram.tsx)
+            if (lang.toLowerCase() === "mermaid") return <MermaidDiagram code={code} streaming={streaming} />;
             return <CodeBlock code={code} lang={lang} streaming={streaming} />;
           },
           img({ src, alt }: { src?: string; alt?: string }) {
@@ -464,7 +487,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
           },
         }}
       >
-        {text}
+        {source}
       </Markdown>
     </div>
   );

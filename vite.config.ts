@@ -2,9 +2,12 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { murageRenderPlugins } from "./scripts/vite-render-plugin";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // murageRenderPlugins: the sandboxed diagram frame page, and the lazy
+  // katex/mermaid/dompurify imports that fall back to source when missing
+  plugins: [react(), tailwindcss(), murageRenderPlugins()],
   test: {
     environment: "node",
     include: [
