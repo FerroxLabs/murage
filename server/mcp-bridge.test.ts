@@ -231,6 +231,55 @@ describe("near-side MCP ping", () => {
   });
 });
 
+// #1390: every engine hands a tool's inputSchema to its provider, and a
+// strict one (OpenAI, a Flux-routed OpenAI-compatible model) refuses a root
+// that is not a plain object, failing the whole turn. The real bridge
+// rewrites the tools/list answer and leaves every other frame alone.
+describe("runMcpBridge tools/list schemas", () => {
+  it("hands the agent a provider-safe tools/list and passes other results through byte-for-byte", async () => {
+    const driver = `const readline = require('node:readline');
+      const awkward = {properties:{pid:{type:'integer'},mode:{type:['string','null']}},
+        anyOf:[{required:['pid']},{required:['mode'],properties:{name:{type:'string'}}}]};
+      readline.createInterface({input: process.stdin}).on('line', (line) => {
+        const m = JSON.parse(line);
+        const result = m.method === 'tools/list'
+          ? {tools:[{name:'browser_prepare',inputSchema:awkward},{name:'click',inputSchema:{type:'object',properties:{}}}]}
+          : {echo:{inputSchema:awkward}};
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result}) + '\\n');
+      });`;
+    const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
+      runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture'});`;
+    const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    let errors = "";
+    bridge.stdout.on("data", (chunk) => { output += chunk; });
+    bridge.stderr.on("data", (chunk) => { errors += chunk; });
+    const timer = setTimeout(() => bridge.kill("SIGKILL"), 5000);
+    try {
+      const closed = new Promise<number | null>((resolve, reject) => {
+        bridge.on("error", reject);
+        bridge.on("close", resolve);
+      });
+      bridge.stdin.end('{"jsonrpc":"2.0","id":"list-1","method":"tools/list"}\n' +
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"browser_prepare"}}\n');
+      expect(await closed, errors).toBe(0);
+      const [listLine, callLine] = output.trim().split("\n");
+      const [prepare, click] = JSON.parse(listLine!).result.tools;
+      expect(prepare.inputSchema).toEqual({
+        type: "object",
+        properties: { pid: { type: "integer" }, mode: { type: ["string", "null"] }, name: { type: "string" } },
+      });
+      expect(click.inputSchema).toEqual({ type: "object", properties: {} });
+      // a tool result that merely contains a schema is not a tools/list answer
+      expect(JSON.parse(callLine!).result.echo.inputSchema).toHaveProperty("anyOf");
+    } finally {
+      clearTimeout(timer);
+      if (bridge.exitCode === null && bridge.signalCode === null) bridge.kill("SIGKILL");
+    }
+  });
+});
+
 describe("runLivenessProbe", () => {
   it("maps exit status to liveness and treats an unspawnable probe as dead", async () => {
     await expect(
