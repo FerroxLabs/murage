@@ -13,6 +13,12 @@ describe("account-scoped connector requests", () => {
     expect(connectorRequestKey({ slug: "gmail", alias: "Work" })).not.toBe(connectorRequestKey({ slug: "gmail", alias: "Personal" }));
   });
 
+  // Upstream #1602: Composio spells a toolkit that starts with a digit with a
+  // leading underscore, and the request card dropped every one of them.
+  it("keeps underscore-prefixed toolkit slugs and still drops malformed ones", () => {
+    expect(parseConnectorRequests({ slugs: ["_1password", " _21RISK ", "-dash", "", "bad slug"] })).toEqual([{ slug: "_1password" }, { slug: "_21risk" }]);
+  });
+
   it("uses the existing alias validation instead of silently dropping invalid account intent", () => {
     for (const alias of [123, " ", "\ninvalid", "x".repeat(65)]) {
       // Leading whitespace is normalized by Composio, so use an embedded control character.

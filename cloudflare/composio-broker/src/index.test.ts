@@ -931,6 +931,33 @@ describe("the gate's place in the route table", () => {
     }
   });
 
+  // Upstream #1602: Composio prefixes slugs that would otherwise lead with a
+  // digit, so 1Password is `_1password` and 21RISK is `_21risk`. The catalog
+  // lists them, but the connector routes demanded [a-z0-9] first and sent
+  // every one of them to the 404 branch at Connect.
+  it("routes underscore-prefixed toolkit slugs instead of 404ing them", async () => {
+    const { env, ctx } = routeEnv(installRow());
+    const fetchCalls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      const url = String(input);
+      fetchCalls.push(url);
+      if (url.endsWith("/link")) return Response.json({ redirect_url: "https://connect.composio.dev/link/_1password" });
+      if (url.includes("/connected_accounts")) return Response.json({ items: [] });
+      if (url.includes("/toolkits")) return Response.json({ items: [] });
+      return Response.json(session("trs_multi", "murage_stable"));
+    });
+    const authorizeResponse = await route(new Request("https://broker.test/v1/connectors/_1password/authorize", { method: "POST", headers: { ...authorized, "content-type": "application/json" }, body: JSON.stringify({ alias: "work" }) }), env as never, ctx as never);
+    expect(authorizeResponse.status).not.toBe(404);
+    expect(fetchCalls.some(url => url.endsWith("/link"))).toBe(true);
+    for (const request of [
+      new Request("https://broker.test/v1/connectors/_1password", { method: "DELETE", headers: authorized }),
+      new Request("https://broker.test/v1/connectors/_21risk/accounts/ca_work", { method: "DELETE", headers: authorized }),
+    ]) {
+      const response = await route(request, env as never, ctx as never);
+      expect(response.status).not.toBe(404);
+    }
+  });
+
   it("still answers claims after the data cut-off", async () => {
     const row = installRow({ last_claim_jti: "55555555-5555-4555-8555-555555555555" });
     const { env, ctx } = routeEnv(row, { LEGACY_BROKER_UNTIL: new Date(Date.now() - 1000).toISOString() });
