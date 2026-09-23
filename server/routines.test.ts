@@ -1758,6 +1758,56 @@ describe("RoutineManager", () => {
     expect(h.failed).toHaveLength(1);
   });
 
+  // Upstream #1629: the problems pill counted unseen failures but only
+  // opening each run one by one could clear it.
+  it("marks every unseen failed or missed run seen in one sweep", async () => {
+    const h = harness();
+    const broken = h.manager.create({ name: "Broken report", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.manager.create({ name: "Stale check", prompt: "Stale", botId: "ember-b", schedule: { type: "once", at: new Date(2026, 7, 16, 6, 0).getTime() } });
+    const fine = h.manager.create({ name: "Fine brief", prompt: "Brief", botId: "ember-c", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 3).getTime() } });
+    const acknowledged = h.manager.create({ name: "Old failure", prompt: "Try", botId: "ember-d", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 4).getTime() } });
+    const settle = (threadId: string, ok: boolean) => h.manager.handleRuntimeEvent({
+      eventId: threadId, provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok, ...(ok ? {} : { stopReason: "provider crashed" }),
+    });
+
+    await h.manager.tick(); // the long-past once routine is recorded as missed
+    h.setNow(broken.nextRunAt!); await h.manager.tick(); settle("thread-1", false);
+    h.setNow(fine.nextRunAt!); await h.manager.tick(); settle("thread-2", true);
+    h.setNow(acknowledged.nextRunAt!); await h.manager.tick(); settle("thread-3", false);
+    const byName = () => new Map(h.manager.listRuns().map((run) => [run.routineName, run]));
+    h.manager.markSeen(byName().get("Old failure")!.id);
+
+    h.emitted.length = 0;
+    const stampAt = new Date(2026, 7, 18, 8, 0).getTime();
+    h.setNow(stampAt);
+    const stamped = h.manager.markAllSeen();
+    expect(stamped.map((run) => run.routineName).sort()).toEqual(["Broken report", "Stale check"]);
+    expect(stamped.every((run) => run.seenAt === stampAt)).toBe(true);
+    expect(byName().get("Fine brief")!.seenAt).toBeUndefined();
+    expect(byName().get("Old failure")!.seenAt).toBeLessThan(stampAt);
+    expect(h.emitted.filter((frame) => frame.kind === "routine.run")).toHaveLength(2);
+
+    expect(h.manager.markAllSeen()).toEqual([]);
+    const reloaded = new Map(new RoutineManager(h.options).listRuns().map((run) => [run.routineName, run]));
+    expect(reloaded.get("Broken report")!.seenAt).toBe(stampAt);
+    expect(reloaded.get("Stale check")!.seenAt).toBe(stampAt);
+  });
+
+  it("rolls the mark-all sweep back when its save fails", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Broken report", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    h.manager.handleRuntimeEvent({ eventId: "broken", provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString(), type: "turn.completed", ok: false, stopReason: "provider crashed" });
+    h.emitted.length = 0;
+    const save = vi.spyOn(h.manager as unknown as { save(): void }, "save").mockImplementationOnce(() => { throw new Error("fixture disk full"); });
+    expect(() => h.manager.markAllSeen()).toThrow("fixture disk full");
+    expect(h.manager.listRuns()[0].seenAt).toBeUndefined();
+    expect(h.emitted).toHaveLength(0);
+    save.mockRestore();
+    expect(h.manager.markAllSeen()).toHaveLength(1);
+  });
+
   it("fails, not completes, a run whose turn the host stopped (ok:true, stopReason cancelled) (STOP1)", async () => {
     const h = harness();
     const routine = h.manager.create({

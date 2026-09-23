@@ -6876,6 +6876,12 @@ describe("harness HTTP API", () => {
         // must not make the original conversation unread again. markSeen
         // re-emits the receipt without changing its lifecycle status.
         expect((await api("POST", `/api/bots/${bot.id}/read`, { threadId: bot.threadId })).status).toBe(200);
+        // "Mark all as read" (upstream #1629) stamps the same run from any
+        // signed-in surface, and a second sweep finds nothing left.
+        const sweep = await api("POST", "/api/routine-runs/seen-all");
+        expect(sweep.status).toBe(200);
+        expect(sweep.body.runs.find((run: { id: string }) => run.id === queued.body.run.id)?.seenAt).toBeTypeOf("number");
+        expect((await api("POST", "/api/routine-runs/seen-all")).body.runs).toEqual([]);
         expect((await api("POST", `/api/routine-runs/${queued.body.run.id}/seen`)).status).toBe(200);
         const afterSeen = (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id);

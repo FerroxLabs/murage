@@ -11360,6 +11360,11 @@ const server = createServer(async (req, res) => {
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such routine" });
     }
+    // Marking seen only clears attention dots, so like the per-run route it
+    // is open to every signed-in surface, the phone included (#1629).
+    if (path === "/api/routine-runs/seen-all" && method === "POST") {
+      return json(res, 200, { runs: routines!.markAllSeen() });
+    }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {
       const run = runMatch[2] === "cancel"

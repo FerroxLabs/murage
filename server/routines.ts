@@ -15,6 +15,7 @@ import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, R
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -1211,6 +1212,25 @@ export class RoutineManager {
     }
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
+  }
+
+  /** Clear every problem indicator at once (upstream #1629): stamp seenAt on
+   * each unseen failed or missed run in one committed save, then emit the
+   * updated runs so connected clients drop their dots. A failed save rolls
+   * the stamps back, so a retry still finds them. */
+  markAllSeen(): RoutineRun[] {
+    if (!this.runs.some(isUnseenRoutineProblem)) return [];
+    const stampAt = this.now();
+    const updated: RoutineRun[] = [];
+    this.commitMutation(() => {
+      for (const run of this.runs) {
+        if (!isUnseenRoutineProblem(run)) continue;
+        run.seenAt = stampAt;
+        updated.push(run);
+      }
+    });
+    for (const run of updated) this.emitRun(run);
+    return updated.map(cloneRun);
   }
 
   markSeen(id: string): RoutineRun | null {
