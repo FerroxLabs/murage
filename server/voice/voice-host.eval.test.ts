@@ -141,7 +141,7 @@ describe.skipIf(!planned)("voice host, live routing", () => {
       }
       const total = performance.now() - start;
       rows.push(`${did === c.want ? "ok  " : "MISS"} ${String(Math.round(first ?? total)).padStart(5)}ms first, ${String(Math.round(total)).padStart(5)}ms all | ${c.said}\n       said: ${spoken.trim() || "(nothing)"}${request ? `\n       hand_down: ${request}` : ""}`);
-      expect(did).toBe(c.want);
+      expect(did, `said: ${spoken.trim() || "(nothing)"}`).toBe(c.want);
     }, 30_000);
   }
 
@@ -201,7 +201,7 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     }
     rows.push(`refused | said: ${spoken.trim()}`);
     expect(handed).toBe(false);
-    expect(spoken).toMatch(/nothing is running|couldn'?t start|didn'?t start|failed/i);
+    expect(spoken.replace(/[‘’]/g, "'")).toMatch(/nothing(?: is|'s) running|couldn'?t start|didn'?t start|failed/i);
   }, 30_000);
 
   it("a long answer is told item by item, briefly", async () => {

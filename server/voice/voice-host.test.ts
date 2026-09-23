@@ -70,6 +70,24 @@ describe("voice host", () => {
     expect(body.tools.map((t: any) => t.function.name)).toEqual(["hand_down", "quick_lookup", "cancel_task"]);
   });
 
+  it("says a reply once when the model says it twice (gpt-6-luna without reasoning)", async () => {
+    const reply = "The Q3 invoice run has 12 invoices ready to send. Should I send them?";
+    const events = await collect(
+      runVoiceHostTurn({
+        state: STATE,
+        history: [],
+        said: "Send the Q3 invoices.",
+        host: HOST, lookup: LOOKUP,
+        fetchImpl: sse([text(reply), text("\n"), text(reply)]),
+      }),
+    );
+    expect(events).toEqual([
+      { type: "sentence", text: "The Q3 invoice run has 12 invoices ready to send." },
+      { type: "sentence", text: "Should I send them?" },
+      { type: "done" },
+    ]);
+  });
+
   it("assembles a hand-down from pieces and hands it down once", async () => {
     const events = await collect(
       runVoiceHostTurn({

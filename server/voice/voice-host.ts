@@ -205,6 +205,8 @@ export function allowedSentence(sentence: string): boolean {
 /** Split streamed text into sentences as they complete. */
 export class SentenceSplitter {
   private pending = "";
+  /** Sentences already given out, in a plain form, for sentencesFrom. */
+  readonly said = new Set<string>();
 
   push(delta: string): string[] {
     this.pending += delta;
@@ -279,7 +281,13 @@ async function* readCompletion(body: ReadableStream<Uint8Array>): AsyncGenerator
 function* sentencesFrom(splitter: SentenceSplitter, text: string | null): Generator<string> {
   for (const raw of text === null ? splitter.flush() : splitter.push(text)) {
     const sentence = spokenText(raw);
-    if (sentence && allowedSentence(sentence)) yield sentence;
+    if (!sentence || !allowedSentence(sentence)) continue;
+    // gpt-6-luna without reasoning says its whole reply twice, a line apart
+    // (seen in the raw stream, 2026-09-23): a sentence is said once a reply
+    const plain = sentence.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (splitter.said.has(plain)) continue;
+    splitter.said.add(plain);
+    yield sentence;
   }
 }
 
@@ -345,8 +353,26 @@ function providerName(endpoint: VoiceEndpoint): string {
  * max_completion_tokens) and any temperature but the default; every other
  * provider here takes the classic pair.
  */
-function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number> {
-  return endpoint.via === "openai" ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens, temperature: 0.2 };
+/** A refused request (400) is our request's fault, and the provider says
+ *  which part: logged for whoever reads the server log, never spoken. */
+async function logRefusal(res: Response, provider: string): Promise<void> {
+  if (res.status !== 400) return;
+  const said = await res.text().catch(() => "");
+  let message = said;
+  try {
+    const body = JSON.parse(said);
+    message = body?.error?.message ?? body?.message ?? said;
+  } catch {
+    // not JSON: the text as sent
+  }
+  console.warn(`[voice-host] ${provider} refused the request: ${String(message).replace(/\s+/g, " ").slice(0, 300)}`);
+}
+
+function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number | string> {
+  // OpenAI's current models reason by default, and refuse function tools on
+  // this endpoint while they do ("set reasoning_effort to 'none'", its own
+  // words for gpt-6-luna, 2026-09-23). A voice host must not think first.
+  return endpoint.via === "openai" ? { max_completion_tokens: maxTokens, reasoning_effort: "none" } : { max_tokens: maxTokens, temperature: 0.2 };
 }
 
 /**
@@ -484,7 +510,10 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     const res = await post("/voice/lookup", { query, instructions: LOOKUP_INSTRUCTIONS, model: endpoint.model }, bearer);
     // 404: Flux's lookup capability is not switched on for this account yet
     if (res.status === 404) throw new VoiceUnavailable("Flux lookups aren't switched on for this account yet.");
-    if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
+    if (!res.ok || !res.body) {
+      await logRefusal(res, providerName(endpoint));
+      throw new Error(`lookup ${res.status}`);
+    }
     for await (const part of readCompletion(res.body)) if (part.kind === "text") yield part.text;
     return;
   }
@@ -495,6 +524,9 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
         model: endpoint.model,
         stream: true,
         max_output_tokens: 300,
+        // OpenAI reasons first by default: 7.9-9 s for a news lookup, 4.6-5.8 s
+        // without (measured 2026-09-23)
+        ...(endpoint.via === "openai" ? { reasoning: { effort: "none" } } : {}),
         tools: [{ type: "web_search" }],
         input: [
           { role: "system", content: LOOKUP_INSTRUCTIONS },
@@ -503,7 +535,10 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
       },
       bearer,
     );
-    if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
+    if (!res.ok || !res.body) {
+      await logRefusal(res, providerName(endpoint));
+      throw new Error(`lookup ${res.status}`);
+    }
     yield* responsesText(res.body);
     return;
   }
@@ -520,7 +555,10 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
       },
       { "x-api-key": endpoint.key, "anthropic-version": "2023-06-01" },
     );
-    if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
+    if (!res.ok || !res.body) {
+      await logRefusal(res, providerName(endpoint));
+      throw new Error(`lookup ${res.status}`);
+    }
     yield* anthropicText(res.body);
     return;
   }
@@ -601,6 +639,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
       return;
     }
     if (!res.ok || !res.body) {
+      await logRefusal(res, providerName(host));
       yield { type: "error", ...failure(res.status, providerName(host)) };
       return;
     }
@@ -858,6 +897,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
       return;
     }
     if (!res.ok || !res.body) {
+      await logRefusal(res, providerName(host));
       yield { type: "error", ...failure(res.status, providerName(host)) };
       return;
     }
