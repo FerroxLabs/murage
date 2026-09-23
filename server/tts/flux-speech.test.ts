@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { synthesize, synthesizeClip, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
+import { synthesize, synthesizeClip, FLUX_GROK_MODEL, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
 import { availableProviders, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
@@ -61,7 +61,6 @@ describe("Flux speech", () => {
   it("says what is wrong in the owner's terms", async () => {
     for (const [status, words] of [
       [404, "aren't switched on"],
-      [402, "need a paid plan"],
       [401, "rejected the saved key"],
       [429, "rate-limiting"],
     ] as const) {
@@ -69,6 +68,32 @@ describe("Flux speech", () => {
       await expect(synthesize("Hi.", "marin", FLUX, call)).rejects.toThrow(words);
     }
     await expect(synthesize("Hi.", "marin", null)).rejects.toThrow("Add a Flux key, or an OpenAI key");
+  });
+
+  it("tells a plan without voices apart from an empty balance (Flux 402 codes)", async () => {
+    const refuse = (code: string) => (async () => new Response(JSON.stringify({ error: { code, message: code === "premium_locked" ? "Premium" : "Insufficient balance" } }), { status: 402 })) as unknown as typeof fetch;
+    await expect(synthesize("Hi.", "marin", FLUX, refuse("premium_locked"))).rejects.toThrow("need a paid plan");
+    await expect(synthesize("Hi.", "marin", FLUX, refuse("insufficient_balance"))).rejects.toThrow("Check the account's balance");
+  });
+
+  it("never hands a reply that is not audio to the player", async () => {
+    const page = (async () => new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+    await expect(synthesize("Hi.", "marin", FLUX, page)).rejects.toThrow("something other than audio");
+    const wav = (async () => new Response(new Uint8Array([1, 2]), { status: 200, headers: { "content-type": "audio/wav" } })) as unknown as typeof fetch;
+    expect((await synthesize("Hi.", "marin", FLUX, wav)).mime).toBe("audio/wav");
+  });
+
+  it("speaks xAI's voices on Flux's xAI alias, with Flux's own request shape", async () => {
+    let sent: any;
+    const call = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body));
+      return new Response(new Uint8Array([1]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    }) as unknown as typeof fetch;
+    await synthesize("Hi.", "rex", { ...FLUX, model: FLUX_GROK_MODEL }, call);
+    expect(sent).toEqual({ model: "flux-voice-speak-grok", input: "Hi.", voice: "rex", response_format: "mp3" });
+    // an OpenAI voice name on the xAI alias gets xAI's default, not a 400
+    await synthesize("Hi.", "marin", { ...FLUX, model: FLUX_GROK_MODEL }, call);
+    expect(sent.voice).toBe("eve");
   });
 
   it("reads Flux's \"key is valid, not permitted\" 403 as speech not switched on, and a plain 403 as a bad key", async () => {

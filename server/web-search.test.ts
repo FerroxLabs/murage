@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { searchWeb } from "./web-search.ts";
+import { searchFlux, searchWeb } from "./web-search.ts";
 
 const input = { provider: "tavily" as const, apiKey: "fake-secret-canary", query: "fixture query" };
 const response = (results: unknown) => Response.json({ results });
@@ -96,5 +96,44 @@ describe("bounded provider-neutral web search", () => {
     await expect(searchWeb(input, { fetch: fetcher })).rejects.toMatchObject({ code: "unavailable" });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1]?.redirect).toBe("error");
+  });
+});
+
+describe("web search through Flux Router (/v1/search, 2026-09-23 contract)", () => {
+  const flux = { baseUrl: "https://api.fluxrouter.ai/v1/", apiKey: "fake-flux-canary", query: "What changed in the latest release?" };
+  it("sends Flux's own request, with no model or tools, and keeps the answer, sources and actual charge", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      answer: "Here is the latest update.", citations: ["https://example.com/source", "javascript:alert(1)", "https://www.news.test/a"],
+      provider: "xai", searches: 3, cost_microcents: 36240, cost_usd: "0.036240",
+    }));
+    const result = await searchFlux(flux, { fetch: fetcher });
+    expect(fetcher.mock.calls[0][0]).toBe("https://api.fluxrouter.ai/v1/search");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", redirect: "error", headers: { authorization: "Bearer fake-flux-canary" } });
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({ query: flux.query, provider: "xai" });
+    expect(result).toMatchObject({ provider: "flux", answer: "Here is the latest update.", costUsd: "0.036240", searches: 3, untrusted: true });
+    expect(result.results).toEqual([
+      { title: "example.com", url: "https://example.com/source", snippet: "" },
+      { title: "news.test", url: "https://www.news.test/a", snippet: "" },
+    ]);
+    expect(result.costNotice).toContain("several searches");
+  });
+  it("never turns an empty or incomplete answer into an empty success", async () => {
+    for (const body of [{ answer: "", citations: [] }, { answer: "Something." }, { citations: ["https://example.com/"] }]) {
+      await expect(searchFlux(flux, { fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(body)) })).rejects.toMatchObject({ code: "invalid-response" });
+    }
+  });
+  it("keeps Flux's error codes: a plan without search is not an empty balance", async () => {
+    const refuse = (status: number, code = "") => vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: { code, message: "no" } }, { status }));
+    await expect(searchFlux(flux, { fetch: refuse(402, "premium_locked") })).rejects.toMatchObject({ code: "plan", providerCode: "premium_locked" });
+    await expect(searchFlux(flux, { fetch: refuse(402, "insufficient_balance") })).rejects.toMatchObject({ code: "quota", providerCode: "insufficient_balance" });
+    await expect(searchFlux(flux, { fetch: refuse(401) })).rejects.toMatchObject({ code: "auth" });
+    await expect(searchFlux(flux, { fetch: refuse(429) })).rejects.toMatchObject({ code: "rate-limit" });
+    await expect(searchFlux(flux, { fetch: refuse(503) })).rejects.toMatchObject({ code: "unavailable" });
+  });
+  it("refuses without a Flux key, and a query over Flux's 2,000 characters, before sending anything", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(searchFlux({ ...flux, apiKey: "" }, { fetch: fetcher })).rejects.toMatchObject({ code: "missing-config" });
+    await expect(searchFlux({ ...flux, query: "q".repeat(2001) }, { fetch: fetcher })).rejects.toMatchObject({ code: "invalid-request" });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

@@ -2210,6 +2210,12 @@ describe("harness HTTP API", () => {
       expect(free.status).toBe(200);
       expect(await free.json()).toMatchObject({ provider: "parallel", fallbackUsed: false, untrusted: true,
         results: [{ title: "Free fixture source", url: "https://example.com/free" }] });
+      // Flux search uses the Flux key saved under Models; with none it says
+      // so rather than falling back to another service
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "flux" } });
+      const noFlux = await search();
+      expect(noFlux.status).toBe(409);
+      expect(await noFlux.json()).toMatchObject({ code: "missing-config" });
       await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine" } });
       const engineBackup = await search();
       expect(engineBackup.status).toBe(200);
@@ -2250,14 +2256,14 @@ describe("harness HTTP API", () => {
       expect(switched.status).toBe(200);
       expect((await fetch(`${BASE}/api/internal/agents?self=${activeBotId}`, { headers: activeTurn.headers })).status).toBe(200);
       const frame = await events.until(frame => frame.kind === "config" && frame.webSearch?.provider === "exa");
-      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
+      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
       expect(JSON.stringify(frame)).not.toContain(secret);
       // FOLLOW5: the pushed frame replaces the renderer's config wholesale,
       // so the harness announcement must ride on it too, not only on the GET.
       expect(frame.harness).toEqual({ platform: process.platform });
       for (const get of [api, desktopApi]) {
         const visible = await get("GET", "/api/config");
-        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
+        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
         expect(JSON.stringify(visible.body)).not.toContain(secret);
       }
       const persisted = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
@@ -2265,7 +2271,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", "/api/config", { webSearch: { provider: "automatic-paid-fallback" } })).status).toBe(400);
       const cleared = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off", tavilyApiKey: "", exaApiKey: "", firecrawlApiKey: "" } });
       expect(cleared.status).toBe(200);
-      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: false });
+      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: false, fluxConfigured: false });
     } finally {
       events.close();
       if (activeBotId) {

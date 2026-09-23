@@ -441,7 +441,7 @@ import { listStarterProfiles, starterProfileContents, STARTER_PROFILE_IDS } from
 import { firstRunImportAllowed } from "../shared/seed-workspace.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
-import { searchWeb, SearchError } from "./web-search.ts";
+import { searchWeb, searchFlux, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
@@ -9038,7 +9038,8 @@ function configStatus() {
     // one-reader-for-one-fact change, not a bug fix.
     flux: { configured: fluxConfigured() },
     webSearch: { provider: cfg.webSearch?.provider ?? "engine",
-      tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey), firecrawlConfigured: Boolean(cfg.webSearch?.firecrawlApiKey) },
+      tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey), firecrawlConfigured: Boolean(cfg.webSearch?.firecrawlApiKey),
+      fluxConfigured: Boolean(connectionFor("flux", providerConnections)) },
     notifications: resolveNotificationPreferences(cfg.notifications),
     telegram: { configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status(),...channelHumanAttention(telegramHumanBindingId) },
     slack: slackStatus(),
@@ -10311,8 +10312,13 @@ const server = createServer(async (req, res) => {
         res.once("close", disconnected);
         const revoked = setInterval(() => { if (!internalCapabilities.isActive(internalClaim)) controller.abort(); }, 100);
         try {
+          // Flux search uses the Flux key saved under Models; MURAGE_FLUX_SEARCH_API
+          // is a test seam that points it at a local stub.
+          const flux = provider === "flux" ? connectionFor("flux", providerConnections) : null;
           const result = provider === "auto" || provider === "engine"
             ? await searchFreeWeb({ query: body.query, maxResults: body.maxResults, signal: controller.signal })
+            : provider === "flux"
+              ? await searchFlux({ baseUrl: process.env.MURAGE_FLUX_SEARCH_API?.trim() || flux?.baseUrl, apiKey: flux?.key, query: body.query, maxResults: body.maxResults, signal: controller.signal })
             : await searchWeb({ provider,
             apiKey: provider === "tavily" ? cfg.webSearch?.tavilyApiKey : provider === "exa" ? cfg.webSearch?.exaApiKey : cfg.webSearch?.firecrawlApiKey,
             query: body.query, maxResults: body.maxResults, signal: controller.signal });
@@ -10321,8 +10327,8 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           if (error instanceof FreeWebSearchError) return json(res, error.code === "invalid-request" ? 400 : error.code === "cancel" ? 409 : 502,
             { error: error.message, code: error.code });
-          if (error instanceof SearchError) return json(res, error.code === "invalid-request" ? 400 : ["cancel", "missing-config"].includes(error.code) ? 409 : 502,
-            { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
+          if (error instanceof SearchError) return json(res, error.code === "invalid-request" ? 400 : ["cancel", "missing-config", "plan"].includes(error.code) ? 409 : 502,
+            { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status, ...(error.providerCode ? { providerCode: error.providerCode } : {}) });
           throw error;
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }

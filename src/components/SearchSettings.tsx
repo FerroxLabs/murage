@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
 
-type SearchProvider = "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off";
+type SearchProvider = "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off";
 type KeyProvider = "tavily" | "exa" | "firecrawl";
 const labels = { tavily: "Tavily", exa: "Exa", firecrawl: "Firecrawl" } as const;
 const keyFields = { tavily: "tavilyApiKey", exa: "exaApiKey", firecrawl: "firecrawlApiKey" } as const;
@@ -57,8 +57,9 @@ export function SearchSettings() {
     <select id="web-search-provider" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
       onChange={event => void choose(event.target.value as SearchProvider)}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
-      <option value="engine">Engine search first — free backup if needed</option>
-      <option value="auto">Free search — Parallel, then DuckDuckGo</option>
+      <option value="engine">Engine search first, free backup if needed</option>
+      <option value="auto">Free search: Parallel, then DuckDuckGo</option>
+      <option value="flux">{t("searchSettings.fluxOption")}</option>
       <option value="tavily">Tavily</option>
       <option value="exa">Exa</option>
       <option value="firecrawl">Firecrawl</option>
@@ -68,6 +69,8 @@ export function SearchSettings() {
       ? t("searchSettings.offHelp")
       : search?.provider === "auto"
         ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Free-service availability may change."
+      : search?.provider === "flux"
+        ? t(search.fluxConfigured ? "searchSettings.fluxHelp" : "searchSettings.fluxNoKey")
       : search?.provider === "engine"
         ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; paid keys are never used automatically."
         : t("searchSettings.externalHelp")}</p>

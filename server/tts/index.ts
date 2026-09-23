@@ -34,6 +34,27 @@ export function useVoiceRoutes(routes: {
   resetUnavailable();
 }
 const hostedSpeech = () => speechRoutes().length > 0;
+/** xAI's voices through Flux, for an owner with a Flux key and no xAI key of
+ *  their own. Null when Flux does not serve speech here. */
+function fluxGrokRoute(): VoiceEndpoint | null {
+  const flux = speechRoutes().find((route) => route.via === "flux");
+  return flux ? { ...flux, model: fluxSpeech.FLUX_GROK_MODEL } : null;
+}
+const xaiVoicesAvailable = () => xaiRoute() !== null || fluxGrokRoute() !== null;
+
+/** xAI's voices: on the owner's own xAI key when there is one, else on
+ *  their Flux key through Flux's xAI alias. */
+async function speakXai(text: string, voice: string | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
+  const own = xaiRoute();
+  const flux = own ? null : fluxGrokRoute();
+  if (!flux || isUnavailable(flux)) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
+  try {
+    return await fluxSpeech.synthesizeClip(text, voice ?? "eve", flux, streamed);
+  } catch (error) {
+    if (error instanceof fluxSpeech.SpeechUnavailable) markUnavailable(flux);
+    throw error;
+  }
+}
 
 /** Hosted speech, one source after another. When every source refuses as
  *  not switched on, the computer's own voice speaks rather than nothing:
@@ -77,7 +98,7 @@ export function effectiveProvider(cfg: AppConfig, own?: VoiceProvider): VoicePro
 
 /** Which voice services can speak right now; the settings panel offers these. */
 export function availableProviders(cfg: AppConfig): Record<VoiceProvider, boolean> {
-  return { flux: hostedSpeech(), xai: xaiRoute() !== null, elevenlabs: Boolean(cfg.tts?.key), system: platformCanSpeak() };
+  return { flux: hostedSpeech(), xai: xaiVoicesAvailable(), elevenlabs: Boolean(cfg.tts?.key), system: platformCanSpeak() };
 }
 
 export class NoVoiceConfigured extends Error {
@@ -129,7 +150,7 @@ export function voiceConfigured(cfg: AppConfig): boolean {
 export function voiceReady(cfg: AppConfig, voiceId?: string, own?: VoiceProvider): boolean {
   const provider = effectiveProvider(cfg, own);
   if (provider === "flux") return hostedSpeech();
-  if (provider === "xai") return xaiRoute() !== null;
+  if (provider === "xai") return xaiVoicesAvailable();
   if (provider === "system") {
     return platformCanSpeak() && Boolean(voiceId || cfg.tts?.voice);
   }
@@ -185,7 +206,7 @@ export function speakStreamed(cfg: AppConfig, written: string, voiceId?: string,
 function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined, run: systemVoices.Runner | undefined, own: VoiceProvider | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   const text = pronounceable(written);
   const provider = effectiveProvider(cfg, own);
-  if (provider === "xai") return xaiSpeech.synthesizeClip(text, voiceId, xaiRoute(), streamed);
+  if (provider === "xai") return speakXai(text, voiceId, streamed);
   if (provider === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
     return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run, streamed);

@@ -212,7 +212,8 @@ export function jobTag(missing: readonly FirstRunJobNeed[]): FirstRunJobTag {
  *   which is anonymous Parallel Search with a DuckDuckGo fallback and no API
  *   key of any kind. Only an explicitly chosen `tavily`, `exa` or
  *   `firecrawl` reaches `searchWeb`, which refuses outright without that
- *   provider's own key.
+ *   provider's own key, and only an explicitly chosen `flux` reaches
+ *   `searchFlux`, which refuses without a saved Flux key.
  *
  * So on an unconfigured machine, which is every first run, searching uses
  * nothing of the person's. That is `anonymous`, and `research` is offered
@@ -228,8 +229,10 @@ export type FirstRunSearchRouting = "anonymous" | "own-account" | "unconfigured"
  *  whether each one is there (server/index.ts, `tavilyConfigured` and its
  *  two siblings). */
 export interface FirstRunSearchConfig {
-  provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off";
+  provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off";
   tavilyConfigured?: boolean;
+  /** A Flux key is saved in Settings, Models (Flux search uses it). */
+  fluxConfigured?: boolean;
   exaConfigured?: boolean;
   firecrawlConfigured?: boolean;
 }
@@ -238,7 +241,9 @@ export function firstRunSearchRouting(config: FirstRunSearchConfig | null | unde
   const provider = config?.provider ?? "engine";
   if (provider === "off") return "off";
   if (provider === "engine" || provider === "auto") return "anonymous";
-  const configured = provider === "tavily"
+  const configured = provider === "flux"
+    ? config?.fluxConfigured
+    : provider === "tavily"
     ? config?.tavilyConfigured
     : provider === "exa"
       ? config?.exaConfigured

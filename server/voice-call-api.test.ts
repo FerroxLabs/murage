@@ -32,6 +32,11 @@ beforeAll(async () => {
         res.end("data: [DONE]\n\n");
         return;
       }
+      if (req.url?.endsWith("/audio/speech")) {
+        res.writeHead(200, { "content-type": "audio/mpeg" });
+        res.end(Buffer.from([0xff, 0xf3, 0x44, 0xc4]));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
     });
@@ -154,13 +159,14 @@ it("each agent speaks with its own voice service, chosen on the agent", async ()
   const bot = body.bot;
   const patched = await api("PATCH", `/api/bots/${bot.id}`, { voiceProvider: "xai", voice: "rex" });
   expect(patched.status).toBe(200);
-  // this workspace has no xAI key: the request went to xAI's voices, not
-  // the workspace's Flux voices, and says what to connect
+  // this workspace has no xAI key of its own but has Flux: xAI's voice
+  // "rex" is spoken through Flux's xAI alias, not swapped for an OpenAI voice
+  const before = seen.length;
   const spoke = await api("POST", "/api/tts/speak", { text: "Morning.", voiceId: "rex", botId: bot.id });
-  expect(spoke.status).toBe(502);
-  expect(spoke.body.error).toContain("xAI");
+  expect(spoke.status).toBe(200);
+  expect(seen.slice(before)).toEqual([{ path: "/v1/audio/speech", body: { model: "flux-voice-speak-grok", input: "Morning.", voice: "rex", response_format: "mp3" } }]);
   const voices = await api("GET", `/api/tts/voices?provider=xai`);
   expect(voices.body.voices).toHaveLength(28);
   const config = await api("GET", "/api/config");
-  expect(config.body.tts.available).toMatchObject({ xai: false });
+  expect(config.body.tts.available).toMatchObject({ xai: true });
 });

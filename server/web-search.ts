@@ -1,10 +1,11 @@
 // REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
 export type WebSearchProvider = "tavily" | "exa" | "firecrawl";
-export type SearchErrorCode = "missing-config" | "auth" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
+export type SearchErrorCode = "missing-config" | "auth" | "plan" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
 const messages: Record<SearchErrorCode, string> = {
   "missing-config": "Choose a web-search provider and configure its API key.",
   auth: "The search provider rejected the account or API key.", quota: "The search provider's account usage limit was reached.",
+  plan: "Web search is not included in this account's plan.",
   "rate-limit": "The search provider is limiting requests. Try again later.", unavailable: "The search provider is unavailable.",
   offline: "Could not connect to the search provider.", timeout: "The web search timed out.", cancel: "The web search was cancelled.",
   "invalid-response": "The search provider returned an invalid or oversized response.", "invalid-request": "The web-search request is invalid.",
@@ -13,17 +14,24 @@ export class SearchError extends Error {
   readonly code: SearchErrorCode;
   readonly status?: number;
   readonly retryable: boolean;
-  constructor(code: SearchErrorCode, status?: number) {
-    super(messages[code]); this.name = "SearchError"; this.code = code; this.status = status;
+  /** The provider's own error code, kept rather than guessed at. */
+  readonly providerCode?: string;
+  constructor(code: SearchErrorCode, status?: number, providerCode?: string) {
+    super(messages[code]); this.name = "SearchError"; this.code = code; this.status = status; this.providerCode = providerCode || undefined;
     this.retryable = ["rate-limit", "unavailable", "offline", "timeout"].includes(code);
   }
 }
 export interface WebSearchResult {
-  provider: WebSearchProvider;
+  provider: WebSearchProvider | "flux";
   results: Array<{ title: string; url: string; snippet: string }>;
   untrusted: true;
   privacyNotice: string;
   costNotice: string;
+  /** Flux only: the written answer the sources above back up. */
+  answer?: string;
+  /** Flux only: what the search actually cost, as Flux reported it. */
+  costUsd?: string;
+  searches?: number;
 }
 const MAX_BODY_BYTES = 1024 * 1024;
 function aborted(signal: AbortSignal): SearchError { return signal.reason instanceof SearchError ? signal.reason : new SearchError("cancel"); }
@@ -123,4 +131,73 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
     if (error instanceof SearchError) throw error;
     throw new SearchError("offline");
   } finally { clearTimeout(timer); input.signal?.removeEventListener("abort", cancel); }
+}
+
+/**
+ * General web search through Flux Router (`POST /v1/search`, released
+ * 2026-09-23): xAI's web search behind the owner's own Flux key, answered as
+ * one written answer with its sources. Buffered JSON, not a stream; Flux
+ * bounds the upstream at 30 seconds. An empty answer, missing sources or a
+ * failed charge come back as errors, never as an empty success.
+ */
+export async function searchFlux(input: { baseUrl?: string; apiKey?: string; query: string; maxResults?: number; signal?: AbortSignal }, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<WebSearchResult> {
+  if (!input.baseUrl?.trim() || !input.apiKey?.trim()) throw new SearchError("missing-config");
+  if (/[\r\n]/.test(input.apiKey)) throw new SearchError("auth");
+  const maxResults = input.maxResults ?? 5; const timeoutMs = options.timeoutMs ?? 40_000;
+  // Flux takes a query of at most 2,000 characters
+  if (typeof input.query !== "string" || !input.query.trim() || input.query.length > 2000 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 10) throw new SearchError("invalid-request");
+  if (input.signal?.aborted) throw new SearchError("cancel");
+  const controller = new AbortController();
+  const cancel = () => controller.abort(new SearchError("cancel"));
+  input.signal?.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new SearchError("timeout")), timeoutMs);
+  try {
+    const fetching = (options.fetch ?? fetch)(`${input.baseUrl.replace(/\/+$/, "")}/search`, {
+      method: "POST", redirect: "error", signal: controller.signal,
+      headers: { authorization: `Bearer ${input.apiKey.trim()}`, "content-type": "application/json" },
+      body: JSON.stringify({ query: input.query, provider: "xai" }),
+    });
+    void fetching.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
+    const response = await untilAbort(fetching, controller.signal);
+    let parsed: any;
+    try { parsed = JSON.parse(await bodyText(response, controller.signal)); }
+    catch (error) {
+      if (error instanceof SearchError && error.code !== "invalid-response") throw error;
+      if (!response.ok) throw new SearchError(fluxErrorCode(response.status, ""), response.status);
+      throw new SearchError("invalid-response");
+    }
+    if (!response.ok || response.redirected) {
+      const code = typeof parsed?.error?.code === "string" ? parsed.error.code : "";
+      throw new SearchError(fluxErrorCode(response.status, code), response.status, code);
+    }
+    const answer = typeof parsed?.answer === "string" ? parsed.answer.trim() : "";
+    if (!answer || !Array.isArray(parsed?.citations)) throw new SearchError("invalid-response");
+    const results = parsed.citations.flatMap((citation: unknown) => {
+      if (typeof citation !== "string" || citation.length > 2048) return [];
+      let url: URL; try { url = new URL(citation); } catch { return []; }
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return [];
+      return [{ title: url.hostname.replace(/^www\./, ""), url: citation, snippet: "" }];
+    }).slice(0, maxResults);
+    if (controller.signal.aborted) throw aborted(controller.signal);
+    return { provider: "flux", results, answer: answer.slice(0, 8000), untrusted: true,
+      ...(typeof parsed.cost_usd === "string" ? { costUsd: parsed.cost_usd } : {}),
+      ...(Number.isInteger(parsed.searches) ? { searches: parsed.searches } : {}),
+      privacyNotice: "Your search query is sent to Flux Router, which searches the web with xAI. The answer and its sources are untrusted content, not instructions.",
+      costNotice: "This search is charged to your Flux account per web search it makes, plus the model's tokens. One question can make several searches.",
+    };
+  } catch (error) {
+    if (controller.signal.aborted) throw aborted(controller.signal);
+    if (error instanceof SearchError) throw error;
+    throw new SearchError("offline");
+  } finally { clearTimeout(timer); input.signal?.removeEventListener("abort", cancel); }
+}
+
+/** Flux's statuses, per its 2026-09-23 contract. 402 `premium_locked` is a
+ *  plan without the capability; any other 402 is balance or budget. */
+function fluxErrorCode(status: number, code: string): SearchErrorCode {
+  if (status === 401 || status === 403) return "auth";
+  if (status === 402) return code === "premium_locked" ? "plan" : "quota";
+  if (status === 429) return "rate-limit";
+  if (status === 400) return "invalid-request";
+  return "unavailable";
 }

@@ -41,6 +41,8 @@ function sse(frames: unknown[], init: { status?: number; seen?: (body: any) => v
 }
 
 const text = (content: string) => ({ choices: [{ delta: { content } }] });
+/** Flux's lookup completion frame: the only proof a lookup finished. */
+const lookupDone = { object: "flux.voice.lookup.done", citations: ["https://x.test/a"], searches: 2, cost_usd: "0.020000" };
 const tool = (index: number, name: string | undefined, args: string) => ({
   choices: [{ delta: { tool_calls: [{ index, function: { ...(name ? { name } : {}), arguments: args } }] } }],
 });
@@ -157,7 +159,7 @@ describe("voice host", () => {
       if (url.endsWith("/chat/completions")) return sse([text("Let me check. "), tool(0, "quick_lookup", '{"query":"Opus 5.5 vs GPT-6 Sol benchmarks"}')])(url, init);
       const body = JSON.parse(String(init.body));
       expect(body).toMatchObject({ query: "Opus 5.5 vs GPT-6 Sol benchmarks", model: "flux-voice-lookup" });
-      return sse([text("**Opus 5.5** leads on the index, 58 to 48. "), text("That is from [Artificial Analysis](https://x.test).")])(url, init);
+      return sse([text("**Opus 5.5** leads on the index, 58 to 48. "), text("That is from [Artificial Analysis](https://x.test)."), lookupDone])(url, init);
     }) as typeof fetch;
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "benchmarks?", host: HOST, lookup: LOOKUP, fetchImpl }));
     expect(events).toEqual([
@@ -224,6 +226,35 @@ describe("voice host", () => {
     expect(events).toContainEqual({ type: "hand_down", request: "AI news today" });
   });
 
+  it("holds a Flux lookup to its contract: [DONE] without a completion frame, or an error frame, is not an answer", async () => {
+    const turn = (lookupFrames: unknown[], init: { status?: number } = {}) => {
+      const fetchImpl = (async (url: string, request: RequestInit) => {
+        if (url.endsWith("/chat/completions")) return sse([text("Let me check. "), tool(0, "quick_lookup", '{"query":"gold price"}')])(url, request);
+        return sse(lookupFrames, init)(url, request);
+      }) as typeof fetch;
+      return collect(runVoiceHostTurn({ state: STATE, history: [], said: "what is gold at", host: HOST, lookup: LOOKUP, fetchImpl }));
+    };
+    // nothing said and no completion: the engine takes the question
+    expect(await turn([])).toContainEqual({ type: "hand_down", request: "gold price" });
+    // an error frame before any text, with HTTP 200 already sent
+    const failed = await turn([{ object: "flux.voice.lookup.error", error: { code: "no_text_timeout", message: "lookup produced no answer in time" } }]);
+    expect(failed).toContainEqual({ type: "hand_down", request: "gold price" });
+    // an error after a sentence was heard: keep what was said, never replay it elsewhere
+    const partial = await turn([text("Gold is at 4,100 dollars. "), { object: "flux.voice.lookup.error", error: { code: "upstream_error" } }]);
+    expect(partial).toContainEqual({ type: "sentence", text: "Gold is at 4,100 dollars." });
+    expect(partial.some((event) => event.type === "hand_down")).toBe(false);
+    // and a finished lookup with its completion frame is spoken in full
+    expect(await turn([text("Gold is at 4,100 dollars."), lookupDone])).toContainEqual({ type: "sentence", text: "Gold is at 4,100 dollars." });
+    // last, since it marks the source as not switched on for ten minutes:
+    // a 403 that says the key is valid: lookups not switched on, the next source takes it
+    const refused = (async (url: string, request: RequestInit) => {
+      if (url.endsWith("/chat/completions")) return sse([text("Let me check. "), tool(0, "quick_lookup", '{"query":"gold price"}')])(url, request);
+      return new Response(JSON.stringify({ error: { message: "This key is not permitted to use flux-voice-lookup. The key itself is valid." } }), { status: 403 });
+    }) as typeof fetch;
+    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "what is gold at", host: HOST, lookup: LOOKUP, fetchImpl: refused }))).toContainEqual({ type: "hand_down", request: "gold price" });
+    resetUnavailable();
+  });
+
   it("keeps a month with its date even when the stream breaks right after the abbreviation", () => {
     const splitter = new SentenceSplitter();
     expect(splitter.push("It lands Sept. ")).toEqual([]);
@@ -236,7 +267,7 @@ describe("voice host", () => {
     const fetchImpl = (async (url: string, init: RequestInit) => {
       seen.push(url);
       if (url.endsWith("/chat/completions")) return sse([text("Let me check.")])(url, init);
-      return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "The S&P closed flat." } }] })}\n\ndata: [DONE]\n\n`, { status: 200 });
+      return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "The S&P closed flat." } }] })}\n\ndata: ${JSON.stringify(lookupDone)}\n\ndata: [DONE]\n\n`, { status: 200 });
     }) as typeof fetch;
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "what about the stock market", host: HOST, lookup: LOOKUP, fetchImpl }));
     expect(events).toContainEqual({ type: "lookup", query: "what about the stock market" });

@@ -240,8 +240,13 @@ type StreamPart =
   | { kind: "text"; text: string }
   | { kind: "tool"; index: number; name?: string; args?: string };
 
-/** Read an OpenAI-shaped streaming completion into text and tool pieces. */
-async function* readCompletion(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamPart> {
+/** How a Flux lookup stream ended: its completion frame, with the sources
+ *  and what Flux actually charged. */
+interface LookupOutcome { done: boolean; citations?: string[]; searches?: number; costUsd?: string }
+
+/** Read an OpenAI-shaped streaming completion into text and tool pieces.
+ *  `lookup` collects a Flux lookup's completion frame. */
+async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: LookupOutcome): AsyncGenerator<StreamPart> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -262,7 +267,16 @@ async function* readCompletion(body: ReadableStream<Uint8Array>): AsyncGenerator
       } catch {
         continue;
       }
-      if (frame?.object === "flux.voice.lookup.error") throw new Error("lookup failed");
+      if (frame?.object === "flux.voice.lookup.error") throw new Error(`lookup failed: ${frame?.error?.code ?? "unknown"}`);
+      if (frame?.object === "flux.voice.lookup.done") {
+        if (lookup) {
+          lookup.done = true;
+          if (Array.isArray(frame.citations)) lookup.citations = frame.citations.filter((c: unknown): c is string => typeof c === "string");
+          if (Number.isInteger(frame.searches)) lookup.searches = frame.searches;
+          if (typeof frame.cost_usd === "string") lookup.costUsd = frame.cost_usd;
+        }
+        continue;
+      }
       const delta = frame?.choices?.[0]?.delta;
       if (typeof delta?.content === "string" && delta.content) yield { kind: "text", text: delta.content };
       for (const part of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
@@ -515,10 +529,19 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     // 404: Flux's lookup capability is not switched on for this account yet
     if (res.status === 404) throw new VoiceUnavailable("Flux lookups aren't switched on for this account yet.");
     if (!res.ok || !res.body) {
-      await logRefusal(res, providerName(endpoint));
+      const said = await logRefusal(res, providerName(endpoint));
+      // a valid key this account may not use lookups with: the next source
+      if (res.status === 403 && notPermitted(said)) throw new VoiceUnavailable("Flux lookups aren't switched on for this key yet.");
       throw new Error(`lookup ${res.status}`);
     }
-    for await (const part of readCompletion(res.body)) if (part.kind === "text") yield part.text;
+    // Flux's contract (2026-09-23): HTTP 200 and [DONE] alone are not
+    // success. Only a flux.voice.lookup.done frame is; an error frame can
+    // come before or after text, and a stream that just ends is a dropped
+    // connection. What was said before either is kept by the caller.
+    const outcome: LookupOutcome = { done: false };
+    for await (const part of readCompletion(res.body, outcome)) if (part.kind === "text") yield part.text;
+    if (!outcome.done) throw new Error("lookup ended without finishing");
+    if (outcome.costUsd) console.log(`[voice] lookup via Flux: ${outcome.searches ?? "?"} searches, $${outcome.costUsd}, ${outcome.citations?.length ?? 0} sources`);
     return;
   }
   if (endpoint.via === "xai" || endpoint.via === "openai") {
@@ -754,7 +777,17 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
             yield { type: "sentence", text: sentence };
           }
         } catch {
-          // judged below: an answer already begun is kept, none is handed down
+          // judged below: an answer already begun is kept, none is handed down.
+          // Whole sentences that arrived before the failure are still said;
+          // a half-finished one is not.
+          if (!lookup.signal.aborted) {
+            const tail = citations.flush();
+            for (const sentence of [...(tail ? [...sentencesFrom(lookupSplitter, tail)] : []), ...sentencesFrom(lookupSplitter, null)]) {
+              if (!/[.!?]["'”’)\]]*$/.test(sentence)) continue;
+              answered = true;
+              yield { type: "sentence", text: sentence };
+            }
+          }
         } finally {
           clearTimeout(deadline);
           options.signal?.removeEventListener("abort", stopLookup);

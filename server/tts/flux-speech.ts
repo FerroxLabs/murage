@@ -17,6 +17,12 @@
 // Runs on the HARNESS only: the key must not leave the server.
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
+import { XAI_VOICES } from "./xai-speech.ts";
+
+/** Flux's alias for xAI's voices (2026-09-23): the same Flux request, xAI's
+ *  voice names. Flux translates it to xAI's own schema. */
+export const FLUX_GROK_MODEL = "flux-voice-speak-grok";
+const XAI_IDS = new Set(XAI_VOICES.map((v) => v.id));
 
 /** A test seam for the Flux base only; production uses the resolved route. */
 function baseFor(endpoint: VoiceEndpoint): string {
@@ -51,15 +57,19 @@ export function isFluxVoice(id: string | undefined): boolean {
  *  (Flux while its speech capability is dark). The next source can take over. */
 export class SpeechUnavailable extends VoiceUnavailable {}
 
-async function said(res: Response): Promise<string> {
+async function refusal(res: Response): Promise<{ message: string; code: string }> {
   try {
     const body: any = await res.json();
     const error = body?.error ?? body;
-    return (typeof error?.message === "string" && error.message.trim()) || "";
+    return {
+      message: (typeof error?.message === "string" && error.message.trim()) || "",
+      code: (typeof error?.code === "string" && error.code) || "",
+    };
   } catch {
-    return "";
+    return { message: "", code: "" };
   }
 }
+const said = async (res: Response) => (await refusal(res)).message;
 
 export async function synthesize(text: string, voice: string, endpoint: VoiceEndpoint | null, call: typeof fetch = fetch): Promise<Audio> {
   return (await synthesizeClip(text, voice, endpoint, false, call)) as Audio;
@@ -72,7 +82,9 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   const provider = endpoint.via === "flux" ? "Flux" : "OpenAI";
   // An agent that still carries a voice from another engine gets Flux's
   // default rather than a 400 for a voice Flux has never heard of.
-  const chosen = isFluxVoice(voice) ? voice : "marin";
+  // xAI's voices on Flux's xAI alias, OpenAI's everywhere else.
+  const grok = endpoint.via === "flux" && endpoint.model === FLUX_GROK_MODEL;
+  const chosen = grok ? (voice && XAI_IDS.has(voice) ? voice : "eve") : isFluxVoice(voice) ? voice : "marin";
   let res: Response;
   try {
     res = await call(`${baseFor(endpoint)}/audio/speech`, {
@@ -91,11 +103,24 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
   }
   if (res.status === 401) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
-  if (res.status === 402) throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
+  if (res.status === 402) {
+    // Flux: premium_locked is a plan without voices; any other 402 is the
+    // balance or a budget on the key, which a plan change would not fix.
+    const { message, code } = await refusal(res);
+    if (endpoint.via !== "flux" || code === "premium_locked") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
+    throw new Error(`${provider} couldn't charge for speech${message ? `: ${message}` : ""}. Check the account's balance and the key's budget.`);
+  }
   if (res.status === 429) throw new Error((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`);
   if (!res.ok) {
     const theirs = await said(res);
     throw new Error(theirs ? `Speaking failed: ${theirs}` : `Speaking failed (${res.status})`);
   }
-  return clipFrom(res, "audio/mpeg", streamed);
+  // A reply that is not audio (a proxy's error page, JSON sent with 200) must
+  // never reach the player as if it were sound.
+  const type = res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "audio/mpeg";
+  if (!type.startsWith("audio/")) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`Speaking failed: ${provider} sent something other than audio.`);
+  }
+  return clipFrom(res, type, streamed);
 }
