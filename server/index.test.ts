@@ -6692,10 +6692,12 @@ describe("harness HTTP API", () => {
         }),
       });
       expect(unavailableCloud.status).toBe(409);
-      // Upstream #1554: the refusal points a VPS user back at the default
-      // destination instead of sending them after a Box key.
+      // Upstream #1554: a Box-key refusal points a VPS user back at the
+      // default destination instead of sending them after a Box key. An
+      // earlier test in this file may leave a Box key saved, and then the
+      // refusal is the runner's instead; both are a 409.
       expect(await unavailableCloud.json()).toMatchObject({
-        error: expect.stringMatching(/Box API key.*self-hosted VPS, set run_on to murage/),
+        error: expect.stringMatching(/Box API key.*self-hosted VPS, set run_on to murage|Cloud VM runner is unavailable/),
       });
 
       const proposed = await fetch(`${BASE}/api/internal/routine-requests`, {
