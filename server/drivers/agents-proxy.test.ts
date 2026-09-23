@@ -309,7 +309,8 @@ describe("agents-proxy MCP surface", () => {
     const ask = list.result.tools.find((tool: { name: string }) => tool.name === "ask_bot");
     const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
     const wait = list.result.tools.find((tool: { name: string }) => tool.name === "wait_delegation");
-    expect(ask.description).toContain("SYNCHRONOUS consultation");
+    expect(ask.description).toContain("Brief synchronous consultation");
+    expect(ask.description).toContain("slow replies become asynchronous delegations");
     expect(ask.description).toContain("Do not use for assigning work");
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
@@ -654,11 +655,11 @@ describe("agents-proxy MCP surface", () => {
     expect(lastDelegationUrl).toBeNull();
   });
 
-  it("renders a timeout conversion with the task id and guidance", async () => {
-    askResponse = { timeout: true, taskId: "task-42", toBotName: "Helper", waitedMs: 240_000 };
+  it.each([[15_000, "15 seconds"], [240_000, "4 minutes"]])("renders a timeout conversion after %s ms with the task id and guidance", async (waitedMs, duration) => {
+    askResponse = { timeout: true, taskId: "task-42", toBotName: "Helper", waitedMs };
     const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
     const text = res.result.content[0].text;
-    expect(text).toContain("Helper is still working after 4 minutes");
+    expect(text).toContain(`Helper is still working after ${duration}`);
     expect(text).toContain("converted to a delegation");
     expect(text).toContain("task-42");
     expect(text).toContain("check_delegation");
