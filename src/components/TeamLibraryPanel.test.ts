@@ -56,7 +56,7 @@ describe("the library separates bots, teams and skills", () => {
     // to Bruce" and "browse teams" arrived at the same screen — a grid of Load
     // buttons that import a whole crew.
     expect(store).toContain('export type TeamLibraryView = "bots" | "teams" | "skills";');
-    expect(store).toContain('| { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }');
+    expect(store).toContain('| { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }');
     expect(source).toContain("initialView?: TeamLibraryView;");
     expect(source).toContain('useState<TeamLibraryView>(initialView ?? "teams")');
     expect(sidebar).toContain("initialView={state.teamLibrary.view}");

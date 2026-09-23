@@ -638,7 +638,7 @@ export interface AppState {
    *  Skills panel has to be able to open it with an agent already chosen —
    *  "add a skill to Bruce" is the same action as assigning from the library,
    *  entered from the other end. `botId` is that pre-fill. */
-  teamLibrary: { open: boolean; botId?: string; view?: TeamLibraryView };
+  teamLibrary: { open: boolean; botId?: string; view?: TeamLibraryView; tab?: "import" };
   connected: boolean;
   error: string | null;
   mascotMotion: {
@@ -733,7 +733,7 @@ export type Action =
     }
   | { type: "showRoutines" }
   | { type: "showTeamMap"; memory?: boolean }
-  | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }
+  | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
   | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
@@ -1173,6 +1173,7 @@ export function reducer(state: AppState, action: Action): AppState {
           // inherit the previous one's pre-fill, and the same goes for the view.
           ...(action.botId ? { botId: action.botId } : {}),
           ...(action.view ? { view: action.view } : {}),
+          ...(action.tab ? { tab: action.tab } : {}),
         },
       };
     case "hideTeamLibrary":

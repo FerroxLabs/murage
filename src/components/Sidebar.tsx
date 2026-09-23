@@ -20,7 +20,6 @@ import {
   Folder,
   FolderMinus,
   FolderPlus,
-  Library,
   Loader2,
   MoreHorizontal,
   Network,
@@ -120,6 +119,7 @@ import { InboxDialog } from "./InboxDialog";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { NewFromTemplateDialog, type TemplateKind } from "./NewFromTemplateDialog";
 import { NewTeamDialog } from "./NewTeamDialog";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
@@ -951,7 +951,6 @@ export function SidebarCreateMenu({
   archivedCount,
   archivedChannelCount = 0,
   onNewBot,
-  onTemplate,
   onNewTeam,
   onNewChannel,
   onNewProject,
@@ -961,8 +960,9 @@ export function SidebarCreateMenu({
 }: {
   archivedCount: number;
   archivedChannelCount?: number;
+  /** Opens the New Bot chooser (a template, or start blank). */
   onNewBot: () => void;
-  onTemplate: () => void;
+  /** Opens the New Team chooser (a template, or pick from my bots). */
   onNewTeam: () => void;
   onNewChannel: () => void;
   /** Required, not optional. A "+ New" menu that can be built without the
@@ -980,10 +980,6 @@ export function SidebarCreateMenu({
       <button autoFocus onClick={onNewBot} className={row}>
         <BotIcon size={16} className="text-ink-secondary" />
         New Bot
-      </button>
-      <button onClick={onTemplate} className={row}>
-        <Library size={16} className="text-ink-secondary" />
-        New Bot from Template
       </button>
       <button onClick={onNewTeam} className={row}>
         <Network size={16} className="text-ink-secondary" />
@@ -1919,6 +1915,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [newRoom, setNewRoom] = useState<"channel" | "project" | null>(null);
   const [archivedChannelsOpen, setArchivedChannelsOpen] = useState(false);
   const [newTeamOpen, setNewTeamOpen] = useState(false);
+  /** The New Bot / New Team chooser that is open, if any. */
+  const [chooser, setChooser] = useState<TemplateKind | null>(null);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2494,16 +2492,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   archivedCount={archivedBots.length}
                   onNewBot={() => {
                     setPlusOpen(false);
-                    track("bot_created");
-                    dispatch({ type: "newBot" });
-                  }}
-                  onTemplate={() => {
-                    setPlusOpen(false);
-                    dispatch({ type: "showTeamLibrary", view: "bots" });
+                    setChooser("bot");
                   }}
                   onNewTeam={() => {
                     setPlusOpen(false);
-                    setNewTeamOpen(true);
+                    setChooser("team");
                   }}
                   onNewChannel={() => {
                     setPlusOpen(false);
@@ -2954,11 +2947,34 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
+      {chooser && (
+        <NewFromTemplateDialog
+          kind={chooser}
+          onClose={() => setChooser(null)}
+          onBlank={() => {
+            const kind = chooser;
+            setChooser(null);
+            if (kind === "bot") {
+              track("bot_created");
+              dispatch({ type: "newBot" });
+            } else setNewTeamOpen(true);
+          }}
+          onOpenFile={() => {
+            setChooser(null);
+            dispatch({ type: "showTeamLibrary", tab: "import" });
+          }}
+          onCreated={(result) => {
+            setChooser(null);
+            setTeamFeedback(teamImportFeedback(result));
+          }}
+        />
+      )}
       {state.teamLibrary.open && (
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
           preselectedBotId={state.teamLibrary.botId}
           initialView={state.teamLibrary.view}
+          initialTab={state.teamLibrary.tab}
           initialUrl={teamInstallUrl ?? undefined}
           onClose={() => {
             dispatch({ type: "hideTeamLibrary" });

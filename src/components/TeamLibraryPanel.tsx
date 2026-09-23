@@ -438,6 +438,7 @@ export function TeamLibraryPanel({
   returnFocusRef,
   initialUrl,
   initialView,
+  initialTab,
   preselectedBotId,
 }: {
   onClose: () => void;
@@ -452,6 +453,8 @@ export function TeamLibraryPanel({
    *  was handed a team importer either imports the wrong thing or gives up.
    *  Absent = teams, the panel's own default. */
   initialView?: TeamLibraryView;
+  /** "import": open on the Import tab ("Open a file…" in New Bot / New Team). */
+  initialTab?: "import";
   /** SEAM — the agent this panel was opened "for", when the user arrived from
    *  an agent's Skills panel rather than from the sidebar. Assignment is one
    *  action, `assign(skillId, botId)`, with one end pre-filled by where the
@@ -465,7 +468,7 @@ export function TeamLibraryPanel({
   const { state, dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<TeamTab>("explore");
+  const [tab, setTab] = useState<TeamTab>(initialTab ?? "explore");
   /** Teams or skills. A real switch, not a derived one: the person who arrived
    *  here for a skill must be able to walk over to the teams and back without
    *  the panel deciding for them. */
