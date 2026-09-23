@@ -6730,6 +6730,11 @@ const agentRoutine = (
             weekdays: routine.schedule.weekdays.map((day) => ROUTINE_WEEKDAY_NAMES[day]),
           },
     nextRunAt: routine.nextRunAt === null ? null : new Date(routine.nextRunAt).toISOString(),
+    // Run health (upstream #1564), so a bot asked "is my routine working?"
+    // sees skipped occurrences and a failure streak, not only the latest run.
+    overlap: routine.overlap ?? "skip",
+    ...(routine.skippedRuns ? { skippedRuns: routine.skippedRuns, lastSkippedAt: routineTimestamp(routine.lastSkippedAt) } : {}),
+    ...(routine.failureStreak ? { failureStreak: routine.failureStreak } : {}),
     latestRun: latestRun
       ? {
           id: latestRun.id,

@@ -6913,6 +6913,8 @@ describe("harness HTTP API", () => {
           error: expect.stringMatching(/This bot's AI connection is unavailable.*App Settings/i),
           executionThreadId: runCards[0].routineRun.executionThreadId,
         });
+        // Run health (upstream #1564) reaches the bot with the routine.
+        expect(groundedBody.routines.find((routine) => routine.id === routineId)).toMatchObject({ overlap: "skip", failureStreak: 1 });
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
         await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,

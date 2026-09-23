@@ -46,6 +46,7 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import { RoutineWatchPicker } from "@/components/RoutineWatchPicker";
 import { RoutineProblemsList, unseenRoutineProblems } from "@/components/routines/RoutineProblemsList";
+import { routineHealthNotes, routineOverlapHelp } from "@/lib/routine-health";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
@@ -418,6 +419,7 @@ function EventEditor({
   const [routineTarget, setRoutineTarget] = useState<RoutineTarget>(existingRoutine?.target ?? "bot");
   const [groupId, setGroupId] = useState(existingRoutine?.groupId ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
+  const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
   );
@@ -505,6 +507,7 @@ function EventEditor({
           durationMinutes,
           timeoutMinutes,
           attachments: routineTarget === "room-goal" ? [] : attachments as RoutineContextAttachment[],
+          overlap,
         };
         const response = await api(existingRoutine ? `/api/routines/${existingRoutine.id}` : "/api/routines", {
           method: existingRoutine ? "PATCH" : "POST",
@@ -663,7 +666,7 @@ function EventEditor({
                     <span>.</span>
                   </div>
                   <div id="routine-interval-help" className="mt-2 text-[11px] leading-relaxed text-ink-secondary">
-                    The cadence continues from this starting point. If a run is still active, the next occurrence is skipped instead of queued.
+                    The cadence continues from this starting point. {routineOverlapHelp(overlap)}
                   </div>
                   {intervalInvalid && (
                     <div id="routine-interval-error" className="mt-2 text-[11px] text-danger">Choose a whole number from 5 to 1,440 minutes.</div>
@@ -684,6 +687,16 @@ function EventEditor({
                       </select>
                     </label>
                     <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">Optional. The clock starts when work actually begins and does not control how often the routine starts.</div>
+                    {recurrence !== "none" && <div className="mt-3">
+                      <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
+                        <span>If the last run is still going</span>
+                        <select aria-label="If the last run is still going" value={overlap} onChange={(event) => setOverlap(event.target.value === "queue" ? "queue" : "skip")} className="rounded-lg border border-hairline/50 bg-panel px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
+                          <option value="skip">Skip this time</option>
+                          <option value="queue">Queue one run</option>
+                        </select>
+                      </label>
+                      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineOverlapHelp(overlap)}</div>
+                    </div>}
                   </div>
                 </details>
               )}
@@ -1330,6 +1343,7 @@ function EventDetails({
           {description && <div className="flex items-start gap-3"><FileText size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink">{description}</div></div>}
           {attachments.length > 0 && <div className="flex items-start gap-3"><Paperclip size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="min-w-0 flex-1 space-y-2"><AttachmentChips attachments={attachments} />{call && <div className="text-[11px] leading-relaxed text-ink-secondary">{call.botIds.length > 1 ? "These references will be shared in the channel when the event starts." : "These references stay with the event and are available when you join the channel."}</div>}</div></div>}
           {!isCall && <div className="flex items-start gap-3"><Clock3 size={17} className="mt-1 shrink-0 text-ink-secondary" /><div><div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Run limit</div><div className="mt-1 text-[12.5px] text-ink">{safetyLimit == null ? "No time limit" : `Stops if still running after ${durationLabel(safetyLimit)}`}</div></div></div>}
+          {routine && routineHealthNotes(routine).map((note) => <div key={note.text} className={cn("flex items-start gap-2 text-[11.5px] leading-relaxed", note.tone === "danger" ? "text-danger" : "text-ink-secondary")}><CircleAlert size={13} className="mt-0.5 shrink-0" />{note.text}</div>)}
           {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you")}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
           {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">Needs your attention</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
           {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">{isRoomGoal ? "This team goal needs your answer. Open its channel task to continue the run." : "This bot needs your answer. Open its task to continue the run."}</div>}

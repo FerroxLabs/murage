@@ -88,6 +88,20 @@ export interface Routine {
   /** Optional safety cap for active work. Missing means no timeout. */
   timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
+  /** What a scheduled occurrence does while this routine's previous run is
+   * still queued, running or waiting (upstream #1564, e7e20663). Absent means
+   * skip, which older files already did. "queue" keeps at most ONE scheduled
+   * run waiting behind it; further occurrences are skipped until it starts.
+   * Manual, webhook and channel runs are separate requests either way. */
+  overlap?: "skip" | "queue";
+  /** How many scheduled occurrences were skipped because a run was still
+   * active, and when the last one was due. Absent means none. */
+  skippedRuns?: number;
+  lastSkippedAt?: number;
+  /** Consecutive failed runs, newest first, up to the last completed one.
+   * Derived from the retained run receipts on every read and never saved,
+   * so it cannot disagree with the history it summarises. */
+  failureStreak?: number;
   /** Conversation that created this routine in chat. Calendar/import-created
    * routines intentionally have no source, and older files migrate in place. */
   sourceThreadId?: string;
@@ -206,6 +220,7 @@ export interface RoutineInput {
   /** `null` deliberately removes an existing safety cap. */
   timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
+  overlap?: "skip" | "queue";
 }
 
 interface RoutineFile {
@@ -546,6 +561,9 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (runOn === "cloud" && attachments.length > 0) {
     throw new Error("Attachments can only run on this computer until cloud file staging is available");
   }
+  if (input.overlap !== undefined && input.overlap !== "skip" && input.overlap !== "queue") {
+    throw new Error("Choose skip or queue for overlapping runs");
+  }
   return {
     name,
     prompt,
@@ -558,6 +576,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
     durationMinutes: Math.min(240, Math.max(5, Math.round(Number(input.durationMinutes) || 30))),
     ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     attachments,
+    ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
   };
 }
 
@@ -592,7 +611,14 @@ export class RoutineManager {
               timeoutMinutes: loadTimeoutMinutes(routine.timeoutMinutes),
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
+              overlap: routine.overlap === "queue" ? "queue" : undefined,
+              skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
+              lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
+            // Absent rather than undefined keys, so a load and save round-trip
+            // leaves an older file's routines byte-for-byte shaped as before.
+            for (const key of ["overlap", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            delete loaded.failureStreak;
             if (routine.watch !== undefined) {
               try { loaded.watch = readRoutineWatchBinding(routine.watch, routine.id); }
               catch { return []; }
@@ -679,7 +705,19 @@ export class RoutineManager {
   }
 
   listRoutines(): Routine[] {
-    return this.routines.map(cloneRoutine);
+    return this.routines.map((routine) => this.routineWithHealth(routine));
+  }
+
+  /** A copy with the derived failure streak. Only failed and completed runs
+   * are attempts: a cancelled run was stopped on purpose and a missed one
+   * never started. */
+  private routineWithHealth(routine: Routine): Routine {
+    const outcomes = this.runs
+      .filter((run) => run.routineId === routine.id && (run.status === "failed" || run.status === "completed"))
+      .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt) || b.createdAt - a.createdAt);
+    const success = outcomes.findIndex((run) => run.status === "completed");
+    const failures = success < 0 ? outcomes.length : success;
+    return { ...cloneRoutine(routine), ...(failures ? { failureStreak: failures } : {}) };
   }
 
   listRuns(from?: number, to?: number): RoutineRun[] {
@@ -800,7 +838,7 @@ export class RoutineManager {
       const receipt = this.matchingRoutineRequestReceipt(request);
       if (receipt) {
         const committed = this.routines.find((routine) => routine.id === receipt.resultId);
-        if (committed) return cloneRoutine(committed);
+        if (committed) return this.routineWithHealth(committed);
         throw new Error("This routine request was already applied");
       }
     }
@@ -831,7 +869,7 @@ export class RoutineManager {
       if (request) this.rememberRoutineRequest(request, routine.id, at);
     });
     this.emitRoutine(routine);
-    return cloneRoutine(routine);
+    return this.routineWithHealth(routine);
   }
 
   update(
@@ -843,7 +881,7 @@ export class RoutineManager {
       const receipt = this.matchingRoutineRequestReceipt(request);
       if (receipt) {
         const committed = this.routines.find((routine) => routine.id === receipt.resultId);
-        return committed ? cloneRoutine(committed) : null;
+        return committed ? this.routineWithHealth(committed) : null;
       }
     }
     const routine = this.routines.find((r) => r.id === id);
@@ -862,6 +900,7 @@ export class RoutineManager {
       durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
       timeoutMinutes: Object.hasOwn(patch, "timeoutMinutes") ? patch.timeoutMinutes : routine.timeoutMinutes,
       attachments: patch.attachments ?? routine.attachments,
+      overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
     });
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
@@ -897,6 +936,8 @@ export class RoutineManager {
       if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
         delete routine.timeoutMinutes;
       }
+      // Object.assign cannot remove a key, and skip is stored as absence.
+      if (clean.overlap !== "queue") delete routine.overlap;
       if (patch.enabled === false) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
@@ -915,7 +956,7 @@ export class RoutineManager {
     });
     for (const run of cancelledRuns) this.emitRun(run);
     this.emitRoutine(routine);
-    return cloneRoutine(routine);
+    return this.routineWithHealth(routine);
   }
 
   /** Internal evaluated publication, deliberately narrower than update(). */
@@ -1335,7 +1376,12 @@ export class RoutineManager {
         const overlapping = routine.schedule.type !== "once" && this.runs.some(
           (run) => run.routineId === routine.id && ["queued", "running", "waiting"].includes(run.status),
         );
-        if (!overlapping) {
+        // "queue" (upstream #1564) lets ONE scheduled occurrence wait behind
+        // the active run, never a backlog: while a scheduled run is already
+        // queued, later occurrences are skipped as before.
+        const scheduledQueued = overlapping && this.runs.some((run) => run.routineId === routine.id && run.status === "queued" &&
+          (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule");
+        if (!overlapping || (routine.overlap === "queue" && !scheduledQueued)) {
           if (late > CATCH_UP_MS) {
             const missed = this.newRun(routine, scheduledFor, false);
             missed.status = "missed";
@@ -1347,6 +1393,11 @@ export class RoutineManager {
             const run = this.newRun(routine, scheduledFor, false);
             this.emitRun(run);
           }
+        } else {
+          // Counted so a routine that never gets to run says so, instead of
+          // its schedule silently doing nothing while an old run hangs.
+          routine.skippedRuns = Math.min(Number.MAX_SAFE_INTEGER, (routine.skippedRuns ?? 0) + 1);
+          routine.lastSkippedAt = scheduledFor;
         }
         routine.nextRunAt =
           routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, scheduledFor));
@@ -1399,7 +1450,13 @@ export class RoutineManager {
             this.emitRun(run);
           }
         }
-        const state = this.targetState(run);
+        // A queued occurrence waits for THIS routine's active run to finish,
+        // not merely for a free thread slot on its bot: the bot may have
+        // spare slots while the earlier run waits on a teammate. Resource
+        // admission is unchanged; this only holds the run before it.
+        const sameRoutineWorking = triggerSource === "schedule" && this.runs.some((other) =>
+          other.id !== run.id && other.routineId === run.routineId && ["running", "waiting"].includes(other.status));
+        const state = sameRoutineWorking ? "busy" : this.targetState(run);
         if (state === "busy") continue;
         if (state === "missing") {
           this.failRun(run, this.missingTargetMessage(run.target));
@@ -1705,12 +1762,17 @@ export class RoutineManager {
   }
 
   private emitRoutine(routine: Routine) {
-    this.options.emit?.({ kind: "routine", routine: cloneRoutine(routine) });
+    this.options.emit?.({ kind: "routine", routine: this.routineWithHealth(routine) });
   }
 
   private emitRun(run: RoutineRun) {
     this.options.emit?.({ kind: "routine.run", run: cloneRun(run) });
     this.notifyRunChanged(run);
+    // A settled attempt moves the routine's failure streak.
+    if (run.status === "completed" || run.status === "failed") {
+      const routine = this.routines.find((candidate) => candidate.id === run.routineId);
+      if (routine) this.emitRoutine(routine);
+    }
   }
 
   private notifyRunChanged(run: RoutineRun) {
