@@ -1,3 +1,6 @@
+import { scanSkill } from "./skill-guard/scan.ts";
+import { skillContentHash } from "./skill-guard/content-hash.ts";
+import { SKILL_SCANNER_VERSION, type SkillScan } from "./skill-guard/types.ts";
 import { validateProcedureEvaluationReceipt, procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt, type ProcedureReviewSnapshot, type ProcedureEvidence } from "./memory/procedure-review.ts";
 // Imported Agent Skills, per bot.
 //
@@ -385,6 +388,8 @@ interface SkillManifestEntry {
    * skills omit this and continue to use skills/<name>. */
   storageRevision?: string;
   privateRevision?: boolean;
+  /** Skill Guard's verdict on the stored content (server/skill-guard). */
+  scan?: SkillScan;
 }
 
 interface SkillManifest {
@@ -406,6 +411,11 @@ const skillManifestEntrySchema = z.object({
   appliedStageId: z.string().optional(),
   storageRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   privateRevision:z.boolean().optional(),
+  scan: z.object({
+    verdict: z.enum(["clean", "review", "blocked"]),
+    findings: z.array(z.object({ rule: z.string(), category: z.string(), severity: z.enum(["critical", "high", "medium", "low"]), confidence: z.number(), message: z.string(), evidence: z.string(), file: z.string(), source: z.enum(["skill-guard", "murage", "skillspector"]) })),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/), scannerVersion: z.number().int(), scannedAt: z.string(),
+  }).optional(),
 });
 const procedureEvidenceSchema=z.object({kind:z.enum(["source","record"]),id:z.string(),revision:z.number().int().positive(),scopeId:z.string()});
 const skillManifestSchema = z.record(z.string(), skillManifestEntrySchema.extend({scopedRevisions:z.record(z.string(),z.object({globalBaseRevision:z.string(),globalBaseSha256:z.string(),entry:skillManifestEntrySchema,evidence:z.array(procedureEvidenceSchema).max(64),receiptId:z.string(),snapshotDigest:z.string(),targetDigest:z.string()})).optional()}));
@@ -769,6 +779,8 @@ export interface SkillListing {
   compatibility?: string;
   warnings: string[];
   skippedFiles: string[];
+  /** Skill Guard's verdict; absent only for a skill not yet rescanned. */
+  scan?: SkillScan;
 }
 
 function skillContentMatches(botId: string, name: string, entry: SkillManifestEntry): boolean {
@@ -979,7 +991,38 @@ export function installSkillFromLibrary(
   return installPreparedSkill(botId, source, checked.prepared, { enabled: false });
 }
 
-export function setSkillEnabled(botId: string, name: string, enabled: boolean): SkillListing | { error: string } {
+const BLOCKED_MESSAGE = "This skill was blocked by the safety check and can't be switched on.";
+const NEEDS_LOOK_MESSAGE = "This skill needs a look before it can be switched on.";
+
+/** The skill's Skill Guard scan, redone when it is missing (installed before
+ *  the scanner), from an older scanner, or no longer matches the stored
+ *  instructions. Persisted on the manifest entry. */
+export function currentSkillScan(botId: string, name: string): SkillScan | null {
+  if (!isSkillName(name)) return null;
+  const manifest = readManifest(botId);
+  const entry = manifest[name];
+  if (!entry) return null;
+  const text = readSkillFile(botId, name);
+  if (text === null) return null;
+  const parsed = parseSkillMd(text);
+  const description = "error" in parsed ? entry.description : parsed.description;
+  const input = { name, description, triggerTerms: [], files: [{ path: "SKILL.md", content: text }] };
+  if (entry.scan && entry.scan.scannerVersion === SKILL_SCANNER_VERSION && entry.scan.contentHash === skillContentHash(input)) return entry.scan;
+  const fresh = scanSkill(input);
+  entry.scan = fresh;
+  writeManifest(botId, manifest);
+  return fresh;
+}
+
+/** Switching on goes through Skill Guard: never for a Blocked skill, and
+ *  for one that needs a look only with `acknowledged` set to the content
+ *  hash of exactly what the owner was shown. Switching off always works. */
+export function setSkillEnabled(
+  botId: string,
+  name: string,
+  enabled: boolean,
+  options: { acknowledged?: string } = {},
+): SkillListing | { error: string; code?: "blocked" | "needs-review"; scan?: SkillScan } {
   if (!isSkillName(name)) return { error: "invalid skill name" };
   const manifest = readManifest(botId);
   const entry = manifest[name];
@@ -987,10 +1030,40 @@ export function setSkillEnabled(botId: string, name: string, enabled: boolean): 
   if (enabled && !skillContentMatches(botId, name, entry)) {
     return { error: "stored SKILL.md changed after review — remove and import or learn it again" };
   }
-  entry.enabled = enabled;
-  writeManifest(botId, manifest);
+  if (enabled) {
+    const scan = currentSkillScan(botId, name);
+    if (!scan) return { error: `no imported skill named "${name}"` };
+    if (scan.verdict === "blocked") return { error: BLOCKED_MESSAGE, code: "blocked", scan };
+    if (scan.verdict === "review" && options.acknowledged !== scan.contentHash) return { error: NEEDS_LOOK_MESSAGE, code: "needs-review", scan };
+  }
+  // currentSkillScan may have written the manifest: read it again.
+  const latest = readManifest(botId);
+  const current = latest[name]!;
+  current.enabled = enabled;
+  writeManifest(botId, latest);
   syncSkillLinks(botId);
-  return skillListing(botId, name, entry);
+  return skillListing(botId, name, current);
+}
+
+/** Once at startup: every installed skill gets a current scan, and any that
+ *  is switched on but now Blocked is switched off. Returns those. */
+export function sweepSkillScans(botIds: string[]): Array<{ botId: string; name: string; scan: SkillScan }> {
+  const off: Array<{ botId: string; name: string; scan: SkillScan }> = [];
+  for (const botId of botIds) {
+    let changed = false;
+    for (const name of Object.keys(readManifest(botId))) {
+      const scan = currentSkillScan(botId, name);
+      if (!scan || scan.verdict !== "blocked") continue;
+      const manifest = readManifest(botId);
+      if (!manifest[name]?.enabled) continue;
+      manifest[name]!.enabled = false;
+      writeManifest(botId, manifest);
+      off.push({ botId, name, scan });
+      changed = true;
+    }
+    if (changed) syncSkillLinks(botId);
+  }
+  return off;
 }
 
 function removeReviewedRevision(botId: string, revision: string, sha256: string): void {
@@ -1164,6 +1237,9 @@ export interface PreparedSkillFiles {
    * value nobody read: measured 7.8 s of a ~8.4 s cold index build, on the
    * lazy path a user waits behind when the library panel first opens. */
   readonly warnings: string[];
+  /** Skill Guard's verdict on exactly these files. Lazy like `warnings`, and
+   * for the same reason: the search index validates the whole catalogue. */
+  readonly scan: SkillScan;
   skippedFiles: string[];
 }
 
@@ -1189,10 +1265,15 @@ function preparedSkillFiles(
     ),
   ];
   let warnings: string[] | undefined;
+  let scan: SkillScan | undefined;
   return {
     files: [{ path: "SKILL.md", content: skillMd.content }],
     parsed,
     skippedFiles,
+    get scan(): SkillScan {
+      scan ??= scanSkill({ name: parsed.name, description: parsed.description, triggerTerms: [], files: [{ path: "SKILL.md", content: skillMd.content }] });
+      return scan;
+    },
     get warnings(): string[] {
       warnings ??= [
         ...scanSkillText(skillMd.content),
@@ -1396,7 +1477,9 @@ function installPreparedSkill(
     }
     return { error: `a skill named "${name}" is already imported — choose a different name` };
   }
+  if (options.enabled && prepared.scan.verdict === "blocked") return { error: BLOCKED_MESSAGE };
   const entry: SkillManifestEntry = {
+    scan: prepared.scan,
     description: prepared.parsed.description,
     enabled: options.enabled,
     origin: source.startsWith(LEARN_SOURCE_PREFIX) ? "learned" : "imported",
@@ -1675,6 +1758,7 @@ export function applyStagedSkillWrite(
   if (sha256 !== staged.sha256 || (options.expectedSha256 && sha256 !== options.expectedSha256)) {
     return { error: "the staged skill changed after review — create a new proposal" };
   }
+  if (prepared.scan.verdict === "blocked") return { error: BLOCKED_MESSAGE };
   const installed = staged.action === "create"
     ? installPreparedSkill(botId, staged.source, prepared, {
         enabled: true,
