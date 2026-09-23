@@ -29,7 +29,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
@@ -89,6 +89,7 @@ if (kind === "version") { console.log("fuigo 1.0.4 (fake)"); process.exit(0); }
 if (kind === "models") { process.stdout.write(process.env.FUIGO_FAKE_MODELS ?? ""); process.exit(0); }
 const SID = "fake-fuigo-session";
 const send = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "spawns.log"), process.pid + "\\n");
 // MCP readiness, as 1.0.19/1.0.20 report it: session/new answers first and
 // \`_fuigo/mcp_initialized\` follows once the handed servers settle.
 // FUIGO_FAKE_MCP: "ready" (default, after the response), "before" (ahead of
@@ -126,6 +127,13 @@ process.stdin.on("data", (d) => {
         mcpReady("some-other-session");
         setTimeout(() => mcpReady(SID), Number(process.env.FUIGO_FAKE_MCP_DELAY_MS ?? 0));
       }
+    }
+    else if (m.method === "session/load") {
+      // A session this process already holds (the pool's reuse, #1575):
+      // re-applied servers are announced again, as 1.0.20 does.
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "loads.log"), JSON.stringify(m.params) + "\\n");
+      ok({});
+      if (Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length) mcpReady(m.params.sessionId);
     }
     else if (m.method === "session/prompt") {
       order("prompt");
@@ -802,5 +810,40 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
     expect(events).not.toContain("mcp_ready");
     expect(events).not.toContain("mcp_ready_timeout");
+  });
+});
+
+describe("Fuigo keeps one engine process per thread (upstream #1575)", () => {
+  it("a second turn on the thread reuses the process and hands it the new turn's tokens", async () => {
+    // the pool ships off (MURAGE_ACP_POOL=1 turns it on)
+    process.env.MURAGE_ACP_POOL = "1";
+    onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-pool",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const agents = (token: string): SendTurnInput["integrations"] => ({
+      agents: { command: process.execPath, args: ["never-started.js"], env: { MURAGE_COMMS_TOKEN: token } },
+    });
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-pool", text: "one", integrations: agents("turn-one") });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-fuigo-pool", text: "two", resumeCursor: "fake-fuigo-session", integrations: agents("turn-two"),
+    });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(done).toMatchObject({ ok: true });
+
+    const lines = (name: string) => readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean);
+    expect(lines("spawns.log")).toHaveLength(1);
+    const [load] = lines("loads.log").map((line) => JSON.parse(line));
+    expect(lines("loads.log")).toHaveLength(1);
+    expect(load).toMatchObject({ sessionId: "fake-fuigo-session", _meta: { noReplay: true } });
+    const token = (load.mcpServers as Array<{ name: string; env: Array<{ name: string; value: string }> }>)
+      .find((server) => server.name === "agents")?.env.find((entry) => entry.name === "MURAGE_COMMS_TOKEN")?.value;
+    expect(token).toBe("turn-two");
   });
 });

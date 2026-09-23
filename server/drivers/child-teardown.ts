@@ -71,7 +71,20 @@ export class ChildTeardown {
     // spawn() assigns the pid synchronously on success. No pid means the OS
     // never created a process (ENOENT, EACCES): there is nothing to close.
     this.#closed = child.pid === undefined;
-    child.once("close", () => { this.#rootClosed = true; this.#confirm(); });
+    child.once("close", this.#onRootClose);
+  }
+
+  readonly #onRootClose = () => { this.#rootClosed = true; this.#confirm(); };
+
+  /** The turn this observation belongs to has handed its still-running child
+   * back to a driver's idle session pool (the ACP pool, #1575): the turn no
+   * longer owns it, so every wait for the turn resolves confirmed. The child
+   * itself is tracked from then on by the pool's own teardown, which stopAll,
+   * dispose, reset and interrupt wait on. Never call this for a child that
+   * is still serving the turn. */
+  detach(): void {
+    this.child.removeListener("close", this.#onRootClose);
+    this.#markClosed();
   }
 
   get closed(): boolean {

@@ -102,6 +102,30 @@
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
 //                        under _meta (what opencode 1.18.18 actually does)
 //
+// Process pool fixtures (#1575):
+//   FAKE_ACP_SPAWN_LOG   append this child's pid, one line per process start,
+//                        so a test can count spawns across turns
+//   FAKE_ACP_RPC_LOG     append one JSON line per request or notification this
+//                        child receives,
+//                        {pid, method, noReplay?, agentsToken?}; unlike
+//                        FAKE_ACP_RPC_DUMP it survives a respawn
+//   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
+//                        already live in this process (an engine that cannot
+//                        re-establish a resident session)
+//   FAKE_ACP_MCP_READY=1  announce `_fuigo/mcp_initialized {sessionId}` after
+//                        session/new or session/load hands it servers, and —
+//                        like Fuigo — after a resident load only when the
+//                        servers actually changed
+//   __fixture_cancel_ack__  (prompt marker) hold THIS prompt open and answer
+//                        it "cancelled" on session/cancel, staying alive: a
+//                        cooperative cancel on a process that is otherwise
+//                        in its ordinary mode
+//   __fixture_request_after_turn__  (prompt marker) finish the turn, then
+//                        ask for a permission 150 ms later, while idle
+//   Like Fuigo, session/load of the session this process already holds
+//   re-applies the `mcpServers` it carries (the agents server a peer-comms
+//   mode calls is the new one); a load on a fresh process is unchanged.
+//
 // Close-confirmed stop fixtures (A2):
 //   FAKE_ACP_MODE=cancel-ack  hold session/prompt open; answer it with
 //                        stopReason "cancelled" on session/cancel and stay alive
@@ -137,7 +161,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -425,6 +449,21 @@ const agentsMdForReply = () => {
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
+/** The session this process built or loaded, as Fuigo keeps it resident. */
+let liveSession: string | null = null;
+/** The serialized servers the live session was last handed. */
+let liveServers: string | null = null;
+let markerCancelAck = false;
+const announceMcpReady = (sessionId: string, servers: unknown) => {
+  if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
+  out({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
+};
+const agentsTokenOf = (servers: unknown): string | undefined => {
+  if (!Array.isArray(servers)) return undefined;
+  const agents = servers.find((s: any) => s?.name === "agents") as McpEntry | undefined;
+  return agents?.env?.find(entry => entry.name === "MURAGE_COMMS_TOKEN")?.value;
+};
+if (process.env.FAKE_ACP_SPAWN_LOG) appendFileSync(process.env.FAKE_ACP_SPAWN_LOG, `${process.pid}\n`);
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
@@ -603,6 +642,14 @@ function handle(msg: any) {
   }
   if (!msg.method) return;
   recordMethod(msg.method);
+  if (process.env.FAKE_ACP_RPC_LOG) {
+    const agentsToken = agentsTokenOf(msg.params?.mcpServers);
+    appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({
+      pid: process.pid, method: msg.method,
+      ...(msg.params?._meta?.noReplay === true ? { noReplay: true } : {}),
+      ...(agentsToken !== undefined ? { agentsToken } : {}),
+    }) + "\n");
+  }
 
   // Synthetic diagnostics: use the real request ID, but a spoofed provider
   // method and private canaries that must never enter runtime.error details.
@@ -654,15 +701,31 @@ function handle(msg: any) {
       }
       const opts = configOptions();
       const mdls = sessionModels();
+      liveSession = "fake-acp-session";
+      liveServers = JSON.stringify(servers);
       result(msg.id, {
         sessionId: "fake-acp-session",
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
       });
+      announceMcpReady("fake-acp-session", servers);
       afterSessionBuilt();
       break;
     }
     case "session/load": {
+      const resident = liveSession !== null && msg.params?.sessionId === liveSession;
+      if (resident && process.env.FAKE_ACP_REJECT_LIVE_LOAD) {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "session is already loaded" } });
+        break;
+      }
+      const loadServers = JSON.stringify(msg.params?.mcpServers ?? []);
+      const serversChanged = !resident || loadServers !== liveServers;
+      if (resident && Array.isArray(msg.params?.mcpServers)) {
+        // Fuigo's reconnect: the resident session takes the new servers
+        const servers: McpEntry[] = msg.params.mcpServers;
+        agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(servers, null, 2));
+      }
       if (process.env.FAKE_ACP_LOAD_ERROR) {
         out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_LOAD_ERROR) });
         break;
@@ -673,7 +736,10 @@ function handle(msg: any) {
       }
       const opts = configOptions();
       const mdls = sessionModels();
+      if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
+      liveServers = loadServers;
       result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });
+      if (serversChanged && typeof msg.params?.sessionId === "string") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
       // the real engine runs the trust prompt after session/load too
       // (`load_session_inner`), so a resumed turn is gated like a new one
       afterSessionBuilt();
@@ -877,6 +943,12 @@ function handle(msg: any) {
         }} });
         return;
       }
+      if (fixtureRequested(String(msg.params?.prompt?.[0]?.text ?? ""), "__fixture_cancel_ack__")) {
+        markerCancelAck = true;
+        pendingCancelAckPrompt = msg.id;
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
+        return;
+      }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
         setInterval(() => {}, 1_000);
@@ -967,6 +1039,18 @@ function handle(msg: any) {
       }
       // Bounded-ingress fixtures (A4), keyed on the prompt so one fake can
       // run an oversized turn beside an ordinary one.
+      if (fixtureRequested(promptText, "__fixture_request_after_turn__")) {
+        // background work that outlives the turn and asks for permission once
+        // the turn is over (a Fuigo background task or subagent)
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "started in the background" } } } });
+        complete();
+        setTimeout(() => out({
+          jsonrpc: "2.0", id: 9100, method: "session/request_permission",
+          params: { sessionId: msg.params?.sessionId, toolCall: { toolCallId: "late-1", title: "rm -rf build", kind: "execute" },
+            options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] },
+        }), 150);
+        return;
+      }
       if (fixtureRequested(promptText, "__fixture_oversize_frame__")) {
         // a VALID frame one KiB over the limit, then a clean success: the
         // driver must fail the turn rather than read past the dropped frame
@@ -1315,6 +1399,13 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
+      if (markerCancelAck && pendingCancelAckPrompt !== null) {
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        markerCancelAck = false;
+        result(id, { stopReason: "cancelled" });
+        break;
+      }
       if (mode === "cancel-rpc-error" && pendingCancelAckPrompt !== null) {
         out({ jsonrpc: "2.0", id: pendingCancelAckPrompt, error: { code: -32603, message: "Internal error", data: "empty response from model (reasoning_only)" } });
         pendingCancelAckPrompt = null;
