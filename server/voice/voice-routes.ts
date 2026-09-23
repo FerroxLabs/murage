@@ -97,6 +97,14 @@ export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceE
  *  take over; the caller marks this one with `markUnavailable`. */
 export class VoiceUnavailable extends Error {}
 
+/** A 403 that says the key is fine but may not use this feature (Flux,
+ *  2026-09-23: "This key is not permitted to use flux-voice-speak. The key
+ *  itself is valid"). That is a capability not switched on, like a 404, and
+ *  telling the owner to paste a fresh key would send them after a good one. */
+export function notPermitted(said: string): boolean {
+  return /not (permitted|allowed|enabled) (to use|for)|key itself is valid|does not have access|no access to|model[_ ]not[_ ]allowed|permission to use/i.test(said);
+}
+
 /** Sources that said a part is not switched on, and until when to skip them.
  *  Without this every sentence or lookup of a call would pay a refused
  *  request first. Rechecked after ten minutes, so a capability that switches

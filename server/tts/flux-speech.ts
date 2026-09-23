@@ -16,7 +16,7 @@
 //
 // Runs on the HARNESS only: the key must not leave the server.
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
-import { VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
+import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 
 /** A test seam for the Flux base only; production uses the resolved route. */
 function baseFor(endpoint: VoiceEndpoint): string {
@@ -85,7 +85,12 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     throw new Error(`Couldn't reach ${provider} to speak. Check your connection.`);
   }
   if (res.status === 404) throw new SpeechUnavailable(`${provider} voices aren't switched on for this account yet.`);
-  if (res.status === 401 || res.status === 403) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
+  if (res.status === 403) {
+    const theirs = await said(res);
+    if (notPermitted(theirs)) throw new SpeechUnavailable(`${provider} voices aren't switched on for this key yet.`);
+    throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
+  }
+  if (res.status === 401) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
   if (res.status === 402) throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
   if (res.status === 429) throw new Error((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`);
   if (!res.ok) {

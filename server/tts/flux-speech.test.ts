@@ -71,6 +71,15 @@ describe("Flux speech", () => {
     await expect(synthesize("Hi.", "marin", null)).rejects.toThrow("Add a Flux key, or an OpenAI key");
   });
 
+  it("reads Flux's \"key is valid, not permitted\" 403 as speech not switched on, and a plain 403 as a bad key", async () => {
+    const notPermitted = (async () => new Response(JSON.stringify({ error: { message: "This key is not permitted to use flux-voice-speak. The key itself is valid — regenerating it will not change this.", type: "permission_error" } }), { status: 403 })) as unknown as typeof fetch;
+    const refused = await synthesize("Hi.", "marin", FLUX, notPermitted).catch((e: Error) => e);
+    expect(refused).toBeInstanceOf(SpeechUnavailable);
+    expect((refused as Error).message).not.toMatch(/paste a fresh/i);
+    const badKey = (async () => new Response(JSON.stringify({ error: { message: "Invalid API key" } }), { status: 403 })) as unknown as typeof fetch;
+    await expect(synthesize("Hi.", "marin", FLUX, badKey)).rejects.toThrow("rejected the saved key");
+  });
+
   it("speaks the same voice on an owner's own OpenAI key when there is no Flux", async () => {
     let sent: any;
     const call = (async (url: string, init: RequestInit) => {

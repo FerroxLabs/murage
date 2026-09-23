@@ -27,7 +27,7 @@
 // used here speaks OpenAI-shaped streaming chat with tools, Anthropic through
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
-import { isUnavailable, markUnavailable, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
+import { isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 import { splitSentences } from "../tts/speech-text.ts";
 import { sameRequest } from "./hand-downs.ts";
 
@@ -333,8 +333,10 @@ const TOOLS = [
   },
 ] as const;
 
-function failure(status: number, provider = "Flux"): { reason: VoiceHostFailure; message: string } {
+function failure(status: number, provider = "Flux", said = ""): { reason: VoiceHostFailure; message: string } {
   const plan = provider === "Flux" ? "a paid Flux plan" : `credit on your ${provider} account`;
+  // the key is fine; this feature is not switched on for it
+  if (status === 403 && notPermitted(said)) return { reason: "unavailable", message: `Fast replies on calls are not switched on for this ${provider} key yet.` };
   if (status === 401 || status === 403) return { reason: "auth", message: `${provider} rejected the saved key.` };
   if (status === 402) return { reason: "premium", message: `Fast replies on calls need ${plan}.` };
   if (status === 404) return { reason: "unavailable", message: `Fast replies on calls are not available for this ${provider} account.` };
@@ -353,19 +355,21 @@ function providerName(endpoint: VoiceEndpoint): string {
  * max_completion_tokens) and any temperature but the default; every other
  * provider here takes the classic pair.
  */
-/** A refused request (400) is our request's fault, and the provider says
- *  which part: logged for whoever reads the server log, never spoken. */
-async function logRefusal(res: Response, provider: string): Promise<void> {
-  if (res.status !== 400) return;
+/** What the provider said when it refused. A 400 is our request's fault and
+ *  the provider says which part: logged for whoever reads the server log,
+ *  never spoken. */
+async function logRefusal(res: Response, provider: string): Promise<string> {
   const said = await res.text().catch(() => "");
   let message = said;
   try {
     const body = JSON.parse(said);
-    message = body?.error?.message ?? body?.message ?? said;
+    message = body?.error?.message ?? body?.message ?? body?.detail ?? said;
   } catch {
     // not JSON: the text as sent
   }
-  console.warn(`[voice-host] ${provider} refused the request: ${String(message).replace(/\s+/g, " ").slice(0, 300)}`);
+  message = String(message).replace(/\s+/g, " ").slice(0, 300);
+  if (res.status === 400) console.warn(`[voice-host] ${provider} refused the request: ${message}`);
+  return message;
 }
 
 function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number | string> {
@@ -639,8 +643,8 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
       return;
     }
     if (!res.ok || !res.body) {
-      await logRefusal(res, providerName(host));
-      yield { type: "error", ...failure(res.status, providerName(host)) };
+      const said = await logRefusal(res, providerName(host));
+      yield { type: "error", ...failure(res.status, providerName(host), said) };
       return;
     }
 
@@ -897,8 +901,8 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
       return;
     }
     if (!res.ok || !res.body) {
-      await logRefusal(res, providerName(host));
-      yield { type: "error", ...failure(res.status, providerName(host)) };
+      const said = await logRefusal(res, providerName(host));
+      yield { type: "error", ...failure(res.status, providerName(host), said) };
       return;
     }
     const splitter = new SentenceSplitter();

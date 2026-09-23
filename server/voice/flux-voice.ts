@@ -23,6 +23,7 @@
 // does: the key must not leave the server. `fluxKey()` is the one reader of
 // that credential and this file is a caller of it, never a second copy.
 import { fluxKey } from "../flux-config.ts";
+import { notPermitted } from "./voice-routes.ts";
 
 /** OpenAI-compatible base. Read per call, NOT captured at module load: a
  *  module-level const is resolved before a test's `beforeAll` can point it
@@ -129,6 +130,13 @@ function failureFor(status: number, body: any): TranscriptionUnavailable {
     return new TranscriptionUnavailable(
       "unavailable",
       "Voice typing is not switched on for this Flux account yet.",
+    );
+  }
+  // the key is valid, the feature is not switched on for it: not a bad key
+  if (status === 403 && notPermitted(said)) {
+    return new TranscriptionUnavailable(
+      "unavailable",
+      "Voice typing is not switched on for this Flux key yet.",
     );
   }
   if (status === 401 || status === 403) {

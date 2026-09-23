@@ -140,6 +140,16 @@ describe("voice host", () => {
     ]);
   });
 
+  it("reads a \"key is valid, not permitted\" 403 as fast replies not switched on, not a bad key", async () => {
+    const refused = (async () => new Response(JSON.stringify({ error: { message: "This key is not permitted to use flux-voice-host. The key itself is valid." } }), { status: 403 })) as unknown as typeof fetch;
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: HOST, lookup: LOOKUP, fetchImpl: refused }));
+    expect(events).toEqual([expect.objectContaining({ type: "error", reason: "unavailable" })]);
+    const badKey = (async () => new Response(JSON.stringify({ error: { message: "Invalid API key" } }), { status: 403 })) as unknown as typeof fetch;
+    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: HOST, lookup: LOOKUP, fetchImpl: badKey }))).toEqual([
+      expect.objectContaining({ type: "error", reason: "auth" }),
+    ]);
+  });
+
   it("answers a lookup through Flux, speaking the result sentence by sentence without markdown", async () => {
     const seen: string[] = [];
     const fetchImpl = (async (url: string, init: RequestInit) => {
