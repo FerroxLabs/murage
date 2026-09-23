@@ -202,6 +202,25 @@ describe("voice host", () => {
     expect(splitter.flush()).toEqual(["Then"]);
   });
 
+  it("a lead-in line without the call still gets the check it promised", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen.push(url);
+      if (url.endsWith("/chat/completions")) return sse([text("Let me check.")])(url, init);
+      return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "The S&P closed flat." } }] })}\n\ndata: [DONE]\n\n`, { status: 200 });
+    }) as typeof fetch;
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "what about the stock market", host: HOST, lookup: LOOKUP, fetchImpl }));
+    expect(events).toContainEqual({ type: "lookup", query: "what about the stock market" });
+    expect(events).toContainEqual({ type: "sentence", text: "The S&P closed flat." });
+    // "let me look into that" with no call is a hand-down
+    const handed = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "sort out the invoices", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Let me look into that.")]) }));
+    expect(handed).toContainEqual({ type: "hand_down", request: "sort out the invoices" });
+    // while work runs, "let me check" is about that work: nothing is started
+    const busy = { ...STATE, task: { ...STATE.task, busy: true } };
+    const quiet = await collect(runVoiceHostTurn({ state: busy, history: [], said: "how is it going", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Let me check.")]) }));
+    expect(quiet.map((e) => e.type)).toEqual(["sentence", "done"]);
+  });
+
   it("stops running work when asked and the reply says so, even without the cancel tool", async () => {
     const busy = { ...STATE, task: { ...STATE.task, busy: true } };
     const said = (state: VoiceHostState, words: string) =>

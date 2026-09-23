@@ -129,3 +129,16 @@ export function plainFailure(details: string): string {
   const clipped = first.replace(/…$/, "").trim();
   return clipped.length > 220 ? `${clipped.slice(0, 217).replace(/\s+\S*$/, "")}.` : clipped || "The engine reported an error.";
 }
+
+/**
+ * What to read out when a long answer could not be told briefly: its first
+ * paragraph of prose (not a heading, not a list), then that the rest is in
+ * the chat. Heard live: a failed brief read out a whole calendar, markdown
+ * and all.
+ */
+export function openingOf(answer: string): string {
+  const paragraphs = answer.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const prose = paragraphs.find((p) => !/^(#|[-*+]\s|\d+[.)]\s|\*\*[^*]+\*\*\s*$|\|)/.test(p)) ?? paragraphs[0] ?? "";
+  const clipped = prose.length > 450 ? `${prose.slice(0, 450).replace(/\s+\S*$/, "")}…` : prose;
+  return clipped ? `${clipped} The rest is in the chat.` : "It's in the chat.";
+}

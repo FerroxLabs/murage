@@ -234,8 +234,12 @@ export function narrateTool(toolName: string): string | null {
   // the harness writes these as chips too; they are already spoken elsewhere
   if (/^(auto-approved|error):/i.test(name)) return null;
 
-  const bare = name.toLowerCase();
+  const bare = name.toLowerCase().replace(/^composio__/, "");
   const verbs: Array<[RegExp, string]> = [
+    // connected apps (Composio) and engines' tool search: never read the id
+    [/^composio_search_tools$|^search_tools?$|^tool_search$/, "finding the right tool"],
+    [/^composio_(multi_)?execute_tool$|^composio_/, "working in your connected apps"],
+    [/^(python3?|node|ruby|perl)( |$)/, "running a small script"],
     [/^(bash|shell|terminal|run_command|execute|computer_exec)$/, "running a command"],
     [/^(read|read_file|view)$/, "reading a file"],
     [/^(write|create_file)$/, "writing a file"],
@@ -252,9 +256,12 @@ export function narrateTool(toolName: string): string | null {
   for (const [pattern, phrase] of verbs) {
     if (pattern.test(bare)) return phrase;
   }
-  // an unrecognized tool still deserves a beat, but not its raw argv
+  // an unrecognized tool still deserves a beat, but never its raw id or
+  // argv: SHOUTY_SNAKE, snake_case and namespaced names are for logs
   const short = shortenPaths(name).slice(0, 40);
-  return /^[\w .:/-]+$/.test(short) ? `running ${short}` : null;
+  if (!/^[\w .:/-]+$/.test(short)) return null;
+  if (/[A-Z]{3,}|__|[:/]/.test(short)) return "using a tool";
+  return `running ${short.replace(/_+/g, " ").toLowerCase()}`;
 }
 
 const MONTHS: Record<string, string> = {

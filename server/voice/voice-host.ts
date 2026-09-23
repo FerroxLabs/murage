@@ -37,6 +37,10 @@ const TURN_TIMEOUT_MS = 20_000;
 /** A lookup that has not answered by now is handed down instead. Measured
  *  through Flux on 2026-09-23: first words 2.4 s, whole answer 3.7 s. */
 const LOOKUP_TIMEOUT_MS = 8_000;
+/** Telling a finished answer reads the whole answer and the call first:
+ *  six seconds to first words failed live on a long calendar answer. */
+const BRIEF_FIRST_TOKEN_TIMEOUT_MS = 15_000;
+const BRIEF_TURN_TIMEOUT_MS = 60_000;
 
 export interface VoiceHostState {
   botName: string;
@@ -146,6 +150,7 @@ export function voiceHostPrompt(state: VoiceHostState): string {
     "How this call works. You are the fast voice of yourself. Your full working self (tools, files, connected apps, the web, memory) runs underneath and takes seconds to minutes. You can see only the snapshot below.",
     "",
     "Rules:",
+    "- First, does what came through make sense as something a person would say to you? Speech recognition turns noise and mumbles into nonsense (\"Have your jam honey\"). If it doesn't make sense, call no tool and hand nothing down: say you didn't catch that and ask them to say it again. Never answer nonsense with \"on it\", \"let me look into that\" or any promise.",
     "- Speak the way people talk on the phone: one to three short sentences, no lists, no markdown, no emoji, no URLs read aloud.",
     "- Answer from what you can see below when it answers the question. Say how fresh it is when that matters (\"as of ten minutes ago\"). Never mention a snapshot, a working self, layers or tools; to the owner you are simply you.",
     "- A plain question of fact from the outside world (news, headlines, prices, scores, benchmarks, opening hours) that needs nothing of the owner's: say one short line such as \"Let me check.\", then call quick_lookup. This holds even if it was asked before on this call or in the conversation, or an earlier attempt was handed down or failed: a spoken answer now beats waiting on a task. Hand it down instead only when they ask for something made from it (a report, a document, a message to someone).",
@@ -620,6 +625,20 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
       yield { type: "sentence", text: sentence };
     }
 
+    // The lead-in line without the call (heard live: "Let me check." and
+    // then nothing). The line promised a check or a look into it, so it
+    // happens: a check is a quick lookup, a look into it is a hand-down.
+    // Not while work is running or an approval is open: there "let me check"
+    // is about that work, not a question for the web.
+    if (!calls.size && !options.state.task.busy && !(options.running ?? []).length && !options.state.approval) {
+      const said = `${streamed} ${spoken}`;
+      if (/\blet me (check|find out|see what)\b|\bchecking (that|now)\b/i.test(said)) {
+        calls.set(-1, { name: "quick_lookup", args: JSON.stringify({ query: options.said }) });
+      } else if (/\blet me (look into|look at|get on|work on|dig into)\b/i.test(said)) {
+        calls.set(-1, { name: "hand_down", args: JSON.stringify({ request: options.said }) });
+      }
+    }
+
     let handed = false;
     for (const { name, args } of calls.values()) {
       if (name === "quick_lookup" && !handed && lookupSource) {
@@ -780,8 +799,8 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
-  const firstToken = setTimeout(abort, FIRST_TOKEN_TIMEOUT_MS);
-  const wholeTurn = setTimeout(abort, TURN_TIMEOUT_MS);
+  const firstToken = setTimeout(abort, BRIEF_FIRST_TOKEN_TIMEOUT_MS);
+  const wholeTurn = setTimeout(abort, BRIEF_TURN_TIMEOUT_MS);
   const call = options.fetchImpl ?? fetch;
   try {
     let res: Response;

@@ -160,6 +160,19 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     expect(did).toBe("lookup");
   }, 30_000);
 
+  it("nonsense from a mishearing gets a request to repeat, not a promise", async () => {
+    let spoken = "";
+    let acted = false;
+    for await (const event of runVoiceHostTurn({ state: BUSY, history: [], said: "Have your jam honey", host, lookup })) {
+      if (event.type === "sentence") spoken += `${event.text} `;
+      if (event.type === "hand_down" || event.type === "lookup" || event.type === "cancel") acted = true;
+    }
+    rows.push(`noise | said: ${spoken.trim()}`);
+    expect(acted).toBe(false);
+    expect(spoken).not.toMatch(/\bon it\b/i);
+    expect(spoken).toMatch(/catch|again|repeat|say that|didn'?t get/i);
+  }, 30_000);
+
   it("a misheard name is answered, not corrected", async () => {
     let spoken = "";
     for await (const event of runVoiceHostTurn({ state: IDLE, history: [], said: "Hey Sabel, how are you doing?", host, lookup })) {
@@ -211,7 +224,8 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     const told = sentences.join(" ");
     for (const item of [/china/i, /gemini|windows/i, /nasa|lunar/i, /siri/i]) expect(told).toMatch(item);
     expect(sentences.length).toBeLessThanOrEqual(10);
-    expect(told).toMatch(/chat/i);
+    // ends by pointing at the chat, or with the answer's own question
+    expect(told).toMatch(/chat|\?\s*$/i);
   }, 30_000);
 
   it("report", () => {

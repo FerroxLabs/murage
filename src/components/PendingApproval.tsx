@@ -74,6 +74,13 @@ export function spokenToolAction(tool: string, detail: string): string {
   const both = `${words(tool)} ${words(detail)}`.toLowerCase();
   const url = detail.match(/https?:\/\/([^/\s]+)/i)?.[1]?.replace(/^www\./, "");
   const file = detail.match(/(?:^|[\s/])([\w.-]+\.\w{1,6})\b/)?.[1];
+  // connected apps (Composio) and its tool search: heard live as
+  // "composio multi execute tool"
+  if (/composio.*(search tools|tool search)/.test(both)) return "look up which app tools to use";
+  if (/composio/.test(both)) return "use your connected apps";
+  if (/^\s*(python3?|node|ruby|perl)\s+-[ce]\b|\bscript\b/.test(`${words(detail)}`.toLowerCase()) || /\b(python3?|node) -[ce]\b/.test(detail)) {
+    return "run a small script on your computer";
+  }
   if (/web ?search|search tool|search the web|google/.test(both)) return "search the web";
   if (/fetch|browse|open url|web page|read url/.test(both)) return url ? `open a page on ${url}` : "open a web page";
   if (/\b(bash|shell|terminal|command|exec)\b/.test(both)) return "run a command on your computer";

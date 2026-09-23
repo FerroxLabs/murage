@@ -35,7 +35,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -470,7 +470,7 @@ function Call({ bot }: { bot: Bot }) {
         },
       );
       if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
-      if (!stream) return sayThenListen(text);
+      if (!stream) return sayThenListen(openingOf(text));
       const told = stream as ReturnType<typeof speaker.stream>;
       told.end();
       const heardAll = await told.done;
@@ -653,6 +653,7 @@ function Call({ bot }: { bot: Bot }) {
   useEffect(() => {
     let said = 0;
     let lastSaidAt = 0;
+    let lastStep = "";
     let busySince = 0;
     let checkedIn = false;
     const tick = setInterval(() => {
@@ -660,6 +661,7 @@ function Call({ bot }: { bot: Bot }) {
       if (!busyRef.current) {
         busySince = 0;
         said = 0;
+        lastStep = "";
         checkedIn = false;
         return;
       }
@@ -675,9 +677,16 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
       if (said >= STILL_ON_IT_MAX || now - lastSaidAt < STILL_ON_IT_EVERY_MS) return;
+      // a new step is news; the same step again, or one not worth naming, is
+      // one plain "still working" at most (heard live: the same raw tool id
+      // read out over and over)
+      const named = step && step !== "using a tool" && !/[A-Z]{3,}|_/.test(step) ? step : "";
+      const line = named && named !== lastStep ? `Still on it: ${named}.` : lastStep === "(generic)" ? "" : "Still working on it.";
+      if (!line) return;
       said += 1;
       lastSaidAt = now;
-      void sayThenListen(step ? `Still on it: ${step}.` : "Still working on it.");
+      lastStep = named && named !== lastStep ? named : "(generic)";
+      void sayThenListen(line);
     }, 1_000);
     return () => clearInterval(tick);
   }, [bot.id, sayThenListen]);

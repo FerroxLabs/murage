@@ -136,7 +136,14 @@ describe("narrateTool", () => {
   });
 
   it("falls back to naming an unknown tool, without reading its argv", () => {
-    expect(narrateTool("deploy_thing")).toBe("running deploy_thing");
+    expect(narrateTool("deploy_thing")).toBe("running deploy thing");
+    // an engine's internal ids are never read out (heard live: "running
+    // COMPOSIO_MULTI_EXECUTE_TOOL")
+    expect(narrateTool("COMPOSIO_MULTI_EXECUTE_TOOL")).toBe("working in your connected apps");
+    expect(narrateTool("composio__COMPOSIO_SEARCH_TOOLS")).toBe("finding the right tool");
+    expect(narrateTool("search_tool")).toBe("finding the right tool");
+    expect(narrateTool('python3 -c "import json"')).toBe("running a small script");
+    expect(narrateTool("SOME_VENDOR_THING")).toBe("using a tool");
     expect(narrateTool('curl -X POST "https://x/y" --data @{}')).toBeNull();
   });
 });
