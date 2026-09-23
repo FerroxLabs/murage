@@ -45,7 +45,6 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync } from "node:fs";
-import { writeFileAtomic } from "./atomic.ts";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
@@ -263,6 +262,7 @@ import {
   queueSteeredMessage,
   restoreSteerQueues,
   setSteerQueueMirror,
+  writeSteerQueueMirror,
   type SteerQueueEntries,
 } from "./steer-queue.ts";
 import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
@@ -3545,10 +3545,7 @@ try {
 } catch { /* no mirror, or an unreadable one: the queue is simply empty */ }
 restoreSteerQueues([]);
 try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ }
-setSteerQueueMirror(entries => {
-  if (entries.length === 0) { try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ } return; }
-  writeFileAtomic(STEER_QUEUE_MIRROR, JSON.stringify(entries));
-});
+setSteerQueueMirror(entries => writeSteerQueueMirror(STEER_QUEUE_MIRROR, entries));
 reconcileInterruptedMemoryTurns();
 // F7: the same boot pass for ordinary 1:1 turns. Routines, memory turns and
 // team goals were already reconciled here; a direct turn was the one kind that

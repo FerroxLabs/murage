@@ -12,7 +12,7 @@ import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../sha
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
+import { tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
 import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
@@ -983,6 +983,10 @@ export class Store {
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+    // The registries carry souls, project paths and per-bot settings: owner
+    // only like routines and webhooks (upstream #1620). Older releases wrote
+    // them 0644.
+    for (const file of [BOTS_FILE, GROUPS_FILE]) tightenOwnerOnlyFile(file);
     // Validate both inputs before any migration can save either collection.
     // Only an absent file is a fresh install; damaged state needs recovery.
     this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);
@@ -1229,7 +1233,7 @@ export class Store {
       const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
       return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
     });
-    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized)));
+    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized), { mode: 0o600 }));
     for (const next of normalized) {
       this.accessRoles.set(next.id, accessRoleBinding({ ...next, accessRoleEpoch: 0 }));
       const supplied = bots.find(bot => bot.id === next.id);
@@ -1276,7 +1280,7 @@ export class Store {
   }
 
   private saveGroups() {
-    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2)));
+    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600 }));
   }
 
   // ── groups ────────────────────────────────────────────────────────────

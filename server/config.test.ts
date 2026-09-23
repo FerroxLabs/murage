@@ -330,13 +330,15 @@ describe("legacy directory migration scope", () => {
     expect(lstatSync(config.DATA_DIR).mode & 0o077).toBe(0);
   });
 
-  it.skipIf(process.platform === "win32")("takes group and other write access off an existing data folder", async () => {
+  // Group and other read goes too: the records inside are owner only
+  // (upstream #1620), and a 0755 folder still let other users list them.
+  it.skipIf(process.platform === "win32")("closes an existing data folder to its owner", async () => {
     const target = join(fixtureHome, ".murage");
     mkdirSync(target); chmodSync(target, 0o775);
     vi.stubEnv("MURAGE_DATA_DIR", target);
     const config = await import("./config.ts");
     config.ensureDirs();
-    expect(lstatSync(config.DATA_DIR).mode & 0o777).toBe(0o755);
+    expect(lstatSync(config.DATA_DIR).mode & 0o777).toBe(0o700);
   });
 
   it("does not migrate a legacy directory owned by another lease holder", async () => {

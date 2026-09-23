@@ -516,8 +516,9 @@ export function ensureDirs() {
   migrateLegacyDataDirectory({ dataDir: DATA_DIR, legacyDataDir: LEGACY_DATA_DIR, enabled: process.env.MURAGE_DATA_DIR === undefined });
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   // A folder made before this (or under a umask of 002) can be writable by the
-  // user's group, which the closed-app backup correctly refuses.
-  tightenOwnedDirectory(DATA_DIR);
+  // user's group, which the closed-app backup correctly refuses. Group and
+  // other READ goes too: the records inside are owner only (upstream #1620).
+  tightenOwnedDirectory(DATA_DIR, { mask: 0o077 });
 }
 
 export function loadConfig(): AppConfig {
