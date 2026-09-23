@@ -745,6 +745,15 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
       if (typeof line.text !== "string") return;
+      // Words with no speech behind them are the recognizer guessing at a
+      // noise (a TradingView alert beep interrupted a live call). Silero
+      // heard no speech: the line is dropped, whatever it says.
+      const noSpeech = mic.speechWithin(bargeable ? 1_500 : 8_000) === false;
+      if (noSpeech && line.text.trim()) {
+        if (bargeable) resumeBot();
+        if (line.partial === false && !bargeable) listenOrCatchUp();
+        return;
+      }
       if (bargeable) {
         // a word could be a cough the recognizer guessed at: hold the bot
         // and wait; two words, or a finished sentence, is the owner

@@ -106,6 +106,9 @@ test.beforeAll(async () => {
         for (const [alias, key] of Object.entries(map)) if (id === alias || id.endsWith("/src/" + alias.slice(2))) return "\0host-" + key;
         // CallView imports it by a relative path
         if (id === "./DesktopCapabilities") return "\0host-caps";
+        // Silero: the fake mic plays a tone, not speech. Sound counts as
+        // speech unless the page says it is noise (window.__vadNoise).
+        if (id === "./silero-vad") return "\0host-vad";
         if (id === "/__call.js") return "\0host-entry";
       },
       load(id) {
@@ -113,6 +116,7 @@ test.beforeAll(async () => {
         if (id === "\0host-store") return STORE;
         if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};`;
         if (id === "\0host-push") return `export const usePushToTalk=()=>false;`;
+        if (id === "\0host-vad") return `export const SPEECH_CONFIDENCE=0.7;export class SileroVad{static async load(){return new SileroVad()}async push(f){window.__vadFrames=(window.__vadFrames||0)+1;let s=0;for(const x of f)s+=x*x;const loud=Math.sqrt(s/f.length)>0.01;if(window.__vadNoise)return 0;return new URLSearchParams(location.search).get("os")==="linux"?(loud?1:0):1}reset(){}}`;
         // a Mac (on-device dictation) unless the page says otherwise
         if (id === "\0host-caps") return `export const useDesktopCapabilities=()=>({ready:true,capabilities:{dictation:{available:new URLSearchParams(location.search).get("os")!=="linux"},host:{platform:"darwin"}}});`;
         if (id !== "\0host-entry") return;
@@ -189,6 +193,9 @@ async function harness(page: Page, os: "mac" | "linux" = "mac") {
   // the microphone opens asynchronously; a Mac call is ready once the
   // recognizer has been started
   if (os === "mac") await expect.poll(() => page.evaluate(() => (window as any).__speech.starts)).toBeGreaterThan(0);
+  // and Silero has judged some audio (in the app the recognizer is fed only
+  // audio Silero has already judged, so words never arrive before it)
+  await expect.poll(() => page.evaluate(() => (window as any).__vadFrames ?? 0)).toBeGreaterThan(0);
   return { spoken, hostBodies, replies, transcribed, heard };
 }
 
@@ -416,6 +423,25 @@ test("a stray word pauses the bot and it carries on; the owner's words stop it, 
     role: "host",
     text: "Here is a long summary of the whole board. It goes on for a while… [the owner cut in here]",
   });
+});
+
+test("words the recognizer guesses from a noise (no speech heard) neither interrupt the bot nor start a turn", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => ((window as any).__clipMs = 4_000));
+  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("What's on the board?"));
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  const asked = h.hostBodies.length;
+  // a TradingView beep, which the recognizer hears as words; Silero hears no speech
+  await page.evaluate(() => { (window as any).__vadNoise = true; });
+  await page.waitForTimeout(1_700);
+  await page.evaluate(() => (window as any).__say("have your", true));
+  await page.evaluate(() => (window as any).__say("have your jam honey"));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as any).__pauses)).toBe(0);
+  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  expect(h.hostBodies.length).toBe(asked);
+  expect(await actions(page)).toEqual([]);
 });
 
 test("on Windows and Linux the app finds the end of the utterance and Flux transcribes it", async ({ page }) => {

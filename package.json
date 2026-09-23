@@ -108,6 +108,7 @@
     "clsx": "^2.1.1",
     "discord.js": "14.27.0",
     "lucide-react": "^0.539.0",
+    "onnxruntime-web": "1.30.0",
     "posthog-js": "^1.415.6",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",

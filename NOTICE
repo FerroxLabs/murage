@@ -370,6 +370,11 @@ no source file was copied whole.
     (processors/aggregators/async_tool_messages.py).
     Murage: server/voice/hand-downs.ts, server/voice/voice-host.ts
 
+  Silero VAD model (https://github.com/snakers4/silero-vad), MIT License.
+    public/vad/silero_vad.onnx; see third_party/silero-vad/. Run in the
+    call window through ONNX Runtime Web (onnxruntime-web, MIT License).
+    Murage: src/lib/silero-vad.ts, src/lib/call-mic.ts
+
 --------------------------------------------------------------------------
 
 This distribution also includes third-party components under third_party/,

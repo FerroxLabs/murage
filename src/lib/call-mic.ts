@@ -21,6 +21,8 @@
 //     utterance and Flux transcribes it (POST /api/voice/transcribe). No
 //     partial words, about 1.5-3 s after you stop, but it works everywhere.
 
+import { SileroVad, SPEECH_CONFIDENCE } from "./silero-vad";
+
 export interface MicLine {
   text?: string;
   partial?: boolean;
@@ -49,6 +51,9 @@ export interface CallMic {
   /** Called with true while sustained speech is heard, false after it ends.
    *  The call screen uses it to stop the bot when the owner talks over it. */
   onVoice(fn: (speaking: boolean) => void): () => void;
+  /** Whether speech (not just sound: Silero VAD) was heard within the last
+   *  `ms`; null when no speech model runs here and only loudness is known. */
+  speechWithin(ms: number): boolean | null;
   close(): void;
 }
 
@@ -60,6 +65,11 @@ const FRAME = 1024; // 64 ms at 16 kHz
 const VOICE_RMS = 0.02;
 const VOICE_FRAMES_ON = 6; // ~0.38 s
 const VOICE_FRAMES_OFF = 8; // ~0.5 s
+/** With Silero deciding each frame is speech: ~0.19 s (Pipecat: 0.2 s). */
+const SPEECH_FRAMES_ON = 3;
+/** Below this, a frame is silence whatever a model says about it. */
+const SPEECH_FLOOR_RMS = 0.004;
+const ANY_SPEECH_CONFIDENCE = 0.5;
 const PREROLL_FRAMES = 6; // keep ~0.38 s before speech was detected
 const MAX_UTTERANCE_FRAMES = Math.round((30 * RATE) / FRAME);
 
@@ -119,10 +129,20 @@ export class VoiceGate {
 
   /** Returns "start" or "end" on a transition, else null. */
   push(level: number): "start" | "end" | null {
-    if (level > VOICE_RMS) {
+    return this.decide(level > VOICE_RMS, VOICE_FRAMES_ON);
+  }
+
+  /** The same, from a speech model's yes or no per frame. A model needs
+   *  less confirmation than loudness does (Pipecat starts after 0.2 s). */
+  pushSpeech(speech: boolean): "start" | "end" | null {
+    return this.decide(speech, SPEECH_FRAMES_ON);
+  }
+
+  private decide(voiced: boolean, framesOn: number): "start" | "end" | null {
+    if (voiced) {
       this.above += 1;
       this.below = 0;
-      if (!this.speaking && this.above >= VOICE_FRAMES_ON) {
+      if (!this.speaking && this.above >= framesOn) {
         this.speaking = true;
         return "start";
       }
@@ -153,6 +173,10 @@ abstract class Capture {
   private context: AudioContext | null = null;
   private node: ScriptProcessorNode | null = null;
   private gate = new VoiceGate();
+  /** Silero, once loaded; until then (or if it cannot run) loudness. */
+  private vad: SileroVad | null = null;
+  private vadQueue: Promise<void> = Promise.resolve();
+  private lastSpeechAt = 0;
 
   async open(): Promise<void> {
     if (this.stream) return;
@@ -167,12 +191,31 @@ abstract class Capture {
     // file in the bundle, and 64 ms frames are light work for the main
     // thread. (Deprecated in the spec, still supported by Chromium.)
     this.node = this.context.createScriptProcessor(FRAME, 1, 1);
+    void SileroVad.load().then((vad) => {
+      if (this.stream) this.vad = vad;
+    });
     this.node.onaudioprocess = (event) => {
-      const frame = event.inputBuffer.getChannelData(0);
+      const frame = new Float32Array(event.inputBuffer.getChannelData(0));
       const level = this.muted ? 0 : rms(frame);
-      const change = this.gate.push(level);
-      if (change) emit(this.voices, change === "start");
-      if (!this.muted) this.frame(new Float32Array(frame), level, change);
+      const vad = this.vad;
+      if (!vad) {
+        const change = this.gate.push(level);
+        if (change) emit(this.voices, change === "start");
+        if (!this.muted) this.frame(frame, level > VOICE_RMS, change);
+        return;
+      }
+      // Speech, not sound: a beep or a keyboard is loud but is not the
+      // owner. Frames are judged in order, a millisecond or so each.
+      this.vadQueue = this.vadQueue.then(async () => {
+        const p = this.muted ? 0 : await vad.push(frame).catch(() => 0);
+        const speech = level > SPEECH_FLOOR_RMS && p >= SPEECH_CONFIDENCE;
+        // "was anyone speaking at all" uses a lower bar than "stop the bot",
+        // so a quiet speaker's words are never thrown away as noise
+        if (level > SPEECH_FLOOR_RMS && p >= ANY_SPEECH_CONFIDENCE) this.lastSpeechAt = Date.now();
+        const change = this.gate.pushSpeech(speech);
+        if (change) emit(this.voices, change === "start");
+        if (!this.muted && this.stream) this.frame(frame, speech, change);
+      });
     };
     source.connect(this.node);
     // a ScriptProcessor only runs while connected to an output; it writes
@@ -180,11 +223,20 @@ abstract class Capture {
     this.node.connect(this.context.destination);
   }
 
-  protected abstract frame(frame: Float32Array, level: number, change: "start" | "end" | null): void;
+  /** One captured frame; `voiced` is speech (or, without a model, sound). */
+  protected abstract frame(frame: Float32Array, voiced: boolean, change: "start" | "end" | null): void;
+
+  speechWithin(ms: number): boolean | null {
+    if (!this.vad) return null;
+    return Date.now() - this.lastSpeechAt <= ms;
+  }
 
   setMuted(muted: boolean) {
     this.muted = muted;
-    if (muted) this.gate.reset();
+    if (muted) {
+      this.gate.reset();
+      this.vad?.reset();
+    }
   }
 
   onLine(fn: (line: MicLine) => void) {
@@ -282,7 +334,7 @@ class FluxMic extends Capture implements CallMic {
     this.pending = null;
   }
 
-  protected frame(frame: Float32Array, level: number, change: "start" | "end" | null) {
+  protected frame(frame: Float32Array, voiced: boolean, change: "start" | "end" | null) {
     if (!this.live) return;
     const pcm = toInt16(frame);
     if (!this.recording) {
@@ -296,7 +348,7 @@ class FluxMic extends Capture implements CallMic {
       return;
     }
     this.recording.push(pcm);
-    this.silentFrames = level > VOICE_RMS ? 0 : this.silentFrames + 1;
+    this.silentFrames = voiced ? 0 : this.silentFrames + 1;
     if (this.silentFrames >= this.endpointFrames || this.recording.length >= MAX_UTTERANCE_FRAMES) {
       const clip = wavFrom(this.recording);
       this.recording = null;
@@ -362,6 +414,9 @@ class BridgeMic implements CallMic {
   }
   onVoice() {
     return () => {};
+  }
+  speechWithin() {
+    return null;
   }
   close() {}
 }
