@@ -164,10 +164,19 @@ export async function handleVoiceHostRoute(
   const events = brief
     ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, signal: controller.signal })
     : (deps.run ?? runVoiceHostTurn)({ state, history: parseHistory(body.history), said, host, lookup, signal: controller.signal });
+  // One line per turn in the harness log: what the host chose and how fast,
+  // never what was said. A live call is otherwise a black box afterwards.
+  const started = Date.now();
+  let first: number | null = null;
+  const chose = new Set<string>();
   for await (const event of events) {
     if (controller.signal.aborted) break;
+    if (first === null && event.type !== "done") first = Date.now() - started;
+    chose.add(event.type === "error" ? `error:${event.reason}` : event.type);
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   }
+  chose.delete("done");
+  console.log(`[voice-host] ${brief ? "brief" : "turn"} via ${host?.via ?? "none"}: ${[...chose].join(",") || "nothing"}; first ${first ?? "-"} ms, all ${Date.now() - started} ms${controller.signal.aborted ? " (hung up)" : ""}`);
   res.end();
   return true;
 }

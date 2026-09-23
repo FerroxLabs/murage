@@ -79,6 +79,9 @@ const CASES: Array<{ said: string; state: VoiceHostState; want: Expect }> = [
   { said: "Morning! How are you doing?", state: IDLE, want: "answer" },
   { said: "What are the benchmarks saying about Opus 5.5 versus GPT 6 Sol?", state: IDLE, want: "lookup" },
   { said: "Where did the S&P 500 close yesterday?", state: IDLE, want: "lookup" },
+  // said on a live call, 2026-09-23
+  { said: "I want to see what the latest AI news is.", state: IDLE, want: "lookup" },
+  { said: "Well, AI news from the last 48 hours.", state: IDLE, want: "lookup" },
   { said: "Fix the churn number in the Northwind deck.", state: IDLE, want: "hand" },
   { said: "Book me a table for two at eight tonight somewhere near the office.", state: IDLE, want: "hand" },
   { said: "Did Mark reply to my email about the contract?", state: IDLE, want: "hand" },
