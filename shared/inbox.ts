@@ -94,6 +94,10 @@ export interface InboxItem {
   read: boolean;
   snoozedUntil: number | null;
   duplicates: number;
+  /** An open request to connect an app, which the owner may set aside the
+   *  way the card's own "Not now" does (connector-cards/:id/dismiss). Old
+   *  ones from routines that stopped days ago had no way out of the Inbox. */
+  dismissible?: true;
   link: InboxLink;
 }
 export interface InboxQuery { view?: InboxView; query?: string; page?: number; pageSize?: number; includeSnoozed?: boolean }

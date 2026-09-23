@@ -464,3 +464,20 @@ it("never raises provider weather, however long it lasts", () => {
   expect(listInbox(db, { view: "routines" }, morning, now).routines, "still reported, loudly")
     .toMatchObject([{ routineName: "RWA night watch", verdict: "stuck", cause: "upstream" }]);
 });
+
+it("an open request to connect an app can be set aside, and then stops being owed", () => {
+  const { db } = fixture();
+  const connector = { resumeKey: "resume", slug: "gmail", status: "required", label: "Gmail", description: "Read mail" };
+  put(db, { id: "connect", kind: "connector", connector });
+  put(db, {});
+  const page = listInbox(db, { view: "connections" }, access);
+  expect(page.items).toHaveLength(1);
+  expect(page.items[0]).toMatchObject({ kind: "connection", dismissible: true, botId: "bot" });
+  // an approval is answered, never dismissed from here
+  expect(listInbox(db, { view: "approvals" }, access).items[0].dismissible).toBeUndefined();
+  // what connector-cards/:id/dismiss writes
+  put(db, { id: "connect", kind: "connector", connector: { ...connector, dismissed: true } });
+  expect(listInbox(db, { view: "connections" }, access)).toMatchObject({ total: 0, connections: 0 });
+  expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")).toMatchObject({ status: "resolved" });
+  expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")?.dismissible).toBeUndefined();
+});

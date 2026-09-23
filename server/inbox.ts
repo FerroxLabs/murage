@@ -235,6 +235,7 @@ function item(row: Row, access: InboxAccess): InboxItem {
     decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
+    ...(row.kind === "connector" && row.status === "pending" && source.botId ? { dismissible: true as const } : {}),
     link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}), ...(row.kind === "text" ? { artifactId: message.artifactIds[0] as string } : {}) } };
 }
 function queryValues(query: InboxQuery) {

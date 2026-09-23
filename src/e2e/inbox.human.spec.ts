@@ -12,6 +12,9 @@ import type { InboxQuery, InboxStateUpdate } from "../../shared/inbox.ts";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let vite: ViteDevServer, origin: string, root: string, db: DatabaseSync;
+/** Engines here and signed out of (GET /api/setup), and what was turned off. */
+let signedOut: Array<{ id: string; name: string; signInCommand?: string }> = [];
+const turnedOff: string[] = [];
 const proof = "inbox-fixture-proof";
 const scope: InboxAccess = { owner: true, threads: [{ threadId: "old-task", label: "Research bot", botId: "research" }] };
 function source(id: string, kind: string, content: Record<string, unknown>, thread = "old-task", at = Date.now()) {
@@ -33,6 +36,27 @@ test.beforeAll(async () => {
         const url = new URL(req.url ?? "/", "http://fixture");
         if (url.pathname === "/__inbox") { res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__inbox.js"></script>'); return; }
         if (url.pathname === "/api/desktop-secret") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ secret: proof })); return; }
+        if (url.pathname === "/api/setup") {
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ steps: [], conversationLive: false, next: null, signedOutAgents: signedOut })); return;
+        }
+        const engine = /^\/api\/instances\/([\w.-]+)$/.exec(url.pathname);
+        if (engine && req.method === "PATCH") {
+          let body = ""; for await (const chunk of req) body += String(chunk);
+          if (JSON.parse(body).enabled === false) { turnedOff.push(engine[1]); signedOut = signedOut.filter(row => row.id !== engine[1]); }
+          res.setHeader("content-type", "application/json"); res.end("{}"); return;
+        }
+        // what the harness's connector-cards/:id/dismiss writes: the card's own "Not now"
+        const dismiss = /^\/api\/bots\/([\w-]+)\/connector-cards\/([\w-]+)\/dismiss$/.exec(url.pathname);
+        if (dismiss && req.method === "POST") {
+          let body = ""; for await (const chunk of req) body += String(chunk);
+          const { threadId } = JSON.parse(body);
+          const row = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, dismiss[2]) as { json: string } | undefined;
+          if (!row || dismiss[1] !== "research") { res.statusCode = 404; res.end("{}"); return; }
+          const message = JSON.parse(row.json);
+          db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?").run(JSON.stringify({ ...message, connector: { ...message.connector, dismissed: true } }), threadId, dismiss[2]);
+          res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ dismissed: true })); return;
+        }
         if (!url.pathname.startsWith("/api/inbox")) return next();
         let encoded = "";
         for await (const chunk of req) { encoded += String(chunk); if (encoded.length > 16_384) { res.statusCode = 413; res.end(); return; } }
@@ -96,3 +120,34 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) {
     await page.screenshot({ path: testInfo.outputPath(`inbox-${width}-${skin}.png`), fullPage: true });
   });
 }
+
+test("old requests to connect an app can be dismissed, one or all, and an engine the owner does not use can be turned off", async ({ page }) => {
+  const days = 24 * 60 * 60 * 1000;
+  for (const [id, slug] of [["connect-1", "trustpilot"], ["connect-2", "gmail"], ["connect-3", "slack"]]) {
+    source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
+  }
+  signedOut = [{ id: "opencode", name: "OpenCode", signInCommand: "opencode auth login" }];
+  await page.goto(origin + "/__inbox");
+  await page.getByRole("button", { name: /^Connections/ }).click();
+  const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
+  await expect(requests).toHaveCount(3);
+
+  // one
+  await requests.first().getByRole("button", { name: "Dismiss", exact: true }).click();
+  await expect(requests).toHaveCount(2);
+  // the rest
+  await page.getByRole("button", { name: "Dismiss all 2 connection requests" }).click();
+  await expect(requests).toHaveCount(0);
+  const dismissed = db.prepare("SELECT json FROM messages WHERE thread_id='old-task' AND kind='connector'").all() as Array<{ json: string }>;
+  expect(dismissed.map(row => JSON.parse(row.json).connector.dismissed)).toEqual([true, true, true]);
+
+  // an engine: asked first, then turned off, and its row goes
+  const engine = page.getByRole("listitem").filter({ hasText: "OpenCode is here, and nobody is signed in to it." });
+  await engine.getByRole("button", { name: "I don't use OpenCode" }).click();
+  await expect(engine.getByText(/Turn off OpenCode\? Bots stop using it/)).toBeVisible();
+  expect(turnedOff).toEqual([]);
+  await engine.getByRole("button", { name: "Turn it off" }).click();
+  await expect.poll(() => turnedOff).toEqual(["opencode"]);
+  await expect(page.getByText("OpenCode is here, and nobody is signed in to it.")).toHaveCount(0, { timeout: 15_000 });
+  signedOut = [];
+});

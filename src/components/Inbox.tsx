@@ -215,6 +215,40 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     } finally { changing.current = false; }
   };
   const chooseView = (next: InboxView) => { setView(next); setPage(0); };
+  // Setting aside a request to connect an app: the same call as the card's
+  // own "Not now" in the chat, one card or every one on this page.
+  const dismiss = async (items: InboxItem[]) => {
+    if (changing.current || busy || !items.length) return;
+    changing.current = true; setBusy(true); setError(null);
+    try {
+      for (const item of items) {
+        await api(`/api/bots/${encodeURIComponent(item.botId!)}/connector-cards/${encodeURIComponent(item.link.messageId)}/dismiss`, {
+          method: "POST", body: JSON.stringify({ threadId: item.link.threadId }),
+        });
+      }
+      setRevision(current => current + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "That request could not be dismissed.");
+      setBusy(false);
+    } finally { changing.current = false; }
+  };
+  // An engine the owner does not use: turned off, exactly as Settings >
+  // Engines does, so it stops asking to be signed in to. Confirmed first,
+  // because a bot set to that engine stops working with it.
+  const [turningOff, setTurningOff] = useState<string | null>(null);
+  const turnOff = async (engineId: string) => {
+    if (changing.current) return;
+    changing.current = true; setBusy(true); setError(null);
+    try {
+      await api(`/api/instances/${encodeURIComponent(engineId)}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
+      setTurningOff(null);
+      refreshSetup();
+      setRevision(current => current + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "That engine could not be turned off.");
+      setBusy(false);
+    } finally { changing.current = false; }
+  };
   const list = inboxCardItems(view, result?.items ?? []);
   const routineRows = result?.routines ?? [];
   const restoreRows = result?.restore ?? [];
@@ -222,7 +256,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   // server already computes this on every setup view and exactly one
   // component ever read it, so a login that expires on day two was reported
   // nowhere at all.
-  const { view: setupView } = useSetupView();
+  const { view: setupView, refresh: refreshSetup } = useSetupView();
   const signedOut = view === "connections" || view === "decisions" ? signedOutEngineRows(setupView) : [];
   // The counts the tabs read, with the live rows folded in. Both numbers or
   // neither: the three segments sum to the umbrella.
@@ -312,6 +346,13 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
               Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}
             </p>
             {engine.signInCommand && <code className="mt-2 block break-all rounded bg-control px-2 py-1 text-[12px] text-ink">{engine.signInCommand}</code>}
+            {turningOff === engine.id
+              ? <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
+                  <button className={button} disabled={busy} onClick={() => void turnOff(engine.id)}>Turn it off</button>
+                  <button className={button} disabled={busy} onClick={() => setTurningOff(null)}>Keep it</button>
+                </div>
+              : <button className={`${button} mt-2`} disabled={busy} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
           </li>
         ))}
       </ul>
@@ -345,6 +386,13 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         ))}
       </ul>
     )}
+    {list.filter(item => item.dismissible).length > 1 && (
+      <div className="mb-3 flex justify-end">
+        <button className={button} disabled={busy} onClick={() => void dismiss(list.filter(item => item.dismissible))}>
+          Dismiss all {list.filter(item => item.dismissible).length} connection requests
+        </button>
+      </div>
+    )}
     <ul className="space-y-3" aria-label="Inbox items">
       {list.map(item => {
         // The bot's own words head the card whenever the live request can be
@@ -370,6 +418,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         <div className="mt-3 flex flex-wrap gap-2">
           <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
           <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
+          {item.dismissible && <button className={button} disabled={busy} onClick={() => void dismiss([item])}>Dismiss</button>}
           {view !== "decisions" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
             ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
             : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
