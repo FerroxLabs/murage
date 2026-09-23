@@ -4729,11 +4729,21 @@ function retryDelegationsWaitingOn(botId: string): void {
   delegationRetryBots.add(botId);
   queueMicrotask(() => {
     delegationRetryBots.delete(botId);
-    if (store.bot(botId)?.busy) return;
+    // A bot still busy in one thread may nevertheless have freed the slot a
+    // waiting handoff needs (upstream #1678). Returning here while `busy`,
+    // the union over every thread, held those handoffs until the whole bot
+    // went idle. Now a busy bot re-runs the same admission the drain asks
+    // (handoffCanStartNow) and releases only the handoffs that pass it, so
+    // no busy retry is spent on one whose own thread is still taken. Claims
+    // are unchanged: the drain still takes them at dispatch.
+    const stillBusy = store.bot(botId)?.busy === true;
     const threadId = store.bot(botId)?.threadId;
-    if (threadId) coordinationSlots.get(threadId)?.();
+    if (!stillBusy && threadId) coordinationSlots.get(threadId)?.();
     if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
-    for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
+    const released = stillBusy
+      ? releaseDelegationsWaitingOn(botId, (sourceThreadId) => handoffCanStartNow(botId, sourceThreadId))
+      : releaseDelegationsWaitingOn(botId);
+    for (const waitingThread of released) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });

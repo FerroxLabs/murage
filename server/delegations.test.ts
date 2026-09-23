@@ -1128,6 +1128,34 @@ describe("a busy teammate with a free thread", () => {
     expect(_pendingCount(from.threadId)).toBe(0);
   });
 
+  // Upstream #1678: a thread settling on a still-busy teammate re-tests the
+  // waiting handoffs instead of holding them for whole-bot idle. Only the
+  // ones admission would now take are released, so a handoff whose own
+  // thread is still taken does not spend a busy retry on someone else's turn.
+  it("releases a waiting handoff when a slot frees on a still-busy teammate, and only one admission would take", async () => {
+    const bus = busWith(() => false);
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chips("waiting — they're busy") === 1);
+
+    // Its own thread is still taken: nothing is released, no retry is spent.
+    expect(releaseDelegationsWaitingOn(target.id, () => false)).toEqual([]);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(chips("waiting — they're busy")).toBe(1);
+    expect(chips("canceled — still busy after")).toBe(0);
+
+    // The thread it needs frees while the bot stays busy elsewhere.
+    const asked: string[] = [];
+    const released = releaseDelegationsWaitingOn(target.id, (sourceThreadId) => { asked.push(sourceThreadId); return true; });
+    expect(released).toEqual([from.threadId]);
+    expect(asked).toEqual([from.threadId]);
+    drainDelegations(busWith(() => true), approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(store.bot(target.id)?.busy).toBe(true);
+  });
+
   it("re-checks the same way after a human approval that sat there", async () => {
     // The card can sit for fifteen minutes, so everything checked before it
     // is a stale snapshot. That re-check must use the new rule too, or an
