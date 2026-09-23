@@ -12,7 +12,18 @@
 import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";
 import * as fluxSpeech from "./flux-speech.ts";
-import { fluxConfigured } from "../flux-config.ts";
+import type { VoiceEndpoint, VoicePart } from "../voice/voice-routes.ts";
+
+/** Where hosted speech runs (Flux, or an own OpenAI key) and which provider
+ *  serves each part of a call. Injected by the harness, which owns the model
+ *  connections; nothing here reads a key from config itself. */
+let speechRoute: () => VoiceEndpoint | null = () => null;
+let voiceRoutes: () => Record<VoicePart, string | null> | null = () => null;
+export function useVoiceRoutes(routes: { speech: () => VoiceEndpoint | null; describe: () => Record<VoicePart, string | null> }) {
+  speechRoute = routes.speech;
+  voiceRoutes = routes.describe;
+}
+const hostedSpeech = () => speechRoute() !== null;
 import * as systemVoices from "./system-voices.ts";
 import * as windowsVoices from "./windows-voices.ts";
 
@@ -42,11 +53,11 @@ export class NoVoiceConfigured extends Error {
 
 /** An explicit choice always wins. With none, an owner who pasted an
  *  ElevenLabs key keeps it; everyone else speaks through Flux. */
-export function voiceProvider(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): VoiceProvider {
+export function voiceProvider(cfg: AppConfig, hosted: boolean = hostedSpeech()): VoiceProvider {
   const chosen = cfg.tts?.provider;
   if (chosen === "system" || chosen === "flux" || chosen === "elevenlabs") return chosen;
   if (cfg.tts?.key) return "elevenlabs";
-  return fluxConfigured(env) ? "flux" : "elevenlabs";
+  return hosted ? "flux" : "elevenlabs";
 }
 
 /** The system provider needs no credential — it is only ever offered where
@@ -55,13 +66,13 @@ export function voiceProvider(cfg: AppConfig, env: NodeJS.ProcessEnv = process.e
 export function providerConfigured(cfg: AppConfig): boolean {
   const provider = voiceProvider(cfg);
   if (provider === "system") return platformCanSpeak();
-  if (provider === "flux") return fluxConfigured();
+  if (provider === "flux") return hostedSpeech();
   return Boolean(cfg.tts?.key);
 }
 
 export function voiceConfigured(cfg: AppConfig): boolean {
-  // Flux always has a voice: an agent without one gets Flux's default.
-  if (voiceProvider(cfg) === "flux") return fluxConfigured();
+  // Hosted speech always has a voice: an agent without one gets the default.
+  if (voiceProvider(cfg) === "flux") return hostedSpeech();
   if (voiceProvider(cfg) === "system") {
     return platformCanSpeak() && Boolean(cfg.tts?.voice);
   }
@@ -71,7 +82,7 @@ export function voiceConfigured(cfg: AppConfig): boolean {
 /** A per-bot voice is a complete choice too; it should not be blocked just
  * because the app-wide fallback has not been selected yet. */
 export function voiceReady(cfg: AppConfig, voiceId?: string): boolean {
-  if (voiceProvider(cfg) === "flux") return fluxConfigured();
+  if (voiceProvider(cfg) === "flux") return hostedSpeech();
   if (voiceProvider(cfg) === "system") {
     return platformCanSpeak() && Boolean(voiceId || cfg.tts?.voice);
   }
@@ -86,6 +97,8 @@ export function describeVoice(cfg: AppConfig) {
     ready: voiceConfigured(cfg),
     voice: cfg.tts?.voice ?? "",
     provider: voiceProvider(cfg),
+    /** Which provider serves each part of a call; never a key. */
+    routes: voiceRoutes(),
   };
 }
 
@@ -109,8 +122,9 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Pro
  * to speak with, which the route turns into a 409 the client can explain. */
 export function speak(cfg: AppConfig, text: string, voiceId?: string, run?: systemVoices.Runner) {
   if (voiceProvider(cfg) === "flux") {
-    if (!fluxConfigured()) throw new NoVoiceConfigured("key");
-    return fluxSpeech.synthesize(text, voiceId || cfg.tts?.voice || "marin");
+    const route = speechRoute();
+    if (!route) throw new NoVoiceConfigured("key");
+    return fluxSpeech.synthesize(text, voiceId || cfg.tts?.voice || "marin", route);
   }
   if (voiceProvider(cfg) === "system") {
     const voice = voiceId || cfg.tts?.voice;

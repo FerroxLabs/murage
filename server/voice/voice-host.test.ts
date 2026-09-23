@@ -4,9 +4,11 @@ import { PassThrough } from "node:stream";
 import { allowedSentence, CitationFilter, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
 import { handleVoiceHostRoute, voiceHostState, type VoiceHostRouteDeps } from "./voice-host-route.ts";
 import type { Message } from "../store.ts";
+import type { VoiceEndpoint } from "./voice-routes.ts";
 
 const NOW = Date.parse("2026-09-23T09:00:00Z");
-const ENV = { MURAGE_VOICE_HOST_KEY: "test-key", MURAGE_VOICE_HOST_API: "http://stub.invalid/v1" } as NodeJS.ProcessEnv;
+const HOST: VoiceEndpoint = { via: "flux", label: "Flux Router", baseUrl: "http://stub.invalid/v1", key: "test-key", model: "claude-haiku-4-5" };
+const LOOKUP: VoiceEndpoint = { ...HOST, model: "flux-voice-lookup" };
 
 const STATE: VoiceHostState = {
   botName: "Sable",
@@ -55,7 +57,7 @@ describe("voice host", () => {
         state: STATE,
         history: [],
         said: "How did the board summary look?",
-        env: ENV,
+        host: HOST, lookup: LOOKUP,
         fetchImpl: sse([text("Revenue is up "), text("four percent.")], { seen: (b) => (body = b) }),
       }),
     );
@@ -72,7 +74,7 @@ describe("voice host", () => {
         state: STATE,
         history: [],
         said: "Book me a table for two at eight",
-        env: ENV,
+        host: HOST, lookup: LOOKUP,
         fetchImpl: sse([
           text("Let me look into that."),
           tool(0, "hand_down", '{"request":"Book a table'),
@@ -90,30 +92,30 @@ describe("voice host", () => {
 
   it("hands down the owner's own words when the arguments are malformed", async () => {
     const events = await collect(
-      runVoiceHostTurn({ state: STATE, history: [], said: "check my mail", env: ENV, fetchImpl: sse([tool(0, "hand_down", "{not json")]) }),
+      runVoiceHostTurn({ state: STATE, history: [], said: "check my mail", host: HOST, lookup: LOOKUP, fetchImpl: sse([tool(0, "hand_down", "{not json")]) }),
     );
     expect(events).toContainEqual({ type: "hand_down", request: "check my mail" });
   });
 
   it("turns cancel_task into a cancel event", async () => {
     const events = await collect(
-      runVoiceHostTurn({ state: STATE, history: [], said: "stop that", env: ENV, fetchImpl: sse([tool(0, "cancel_task", "{}")]) }),
+      runVoiceHostTurn({ state: STATE, history: [], said: "stop that", host: HOST, lookup: LOOKUP, fetchImpl: sse([tool(0, "cancel_task", "{}")]) }),
     );
     expect(events).toEqual([{ type: "cancel" }, { type: "done" }]);
   });
 
   it("reports a missing key, a paid plan and a dark route as errors, never throws", async () => {
-    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", env: {} as NodeJS.ProcessEnv, fetchImpl: sse([]) }))).toEqual([
+    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: null, fetchImpl: sse([]) }))).toEqual([
       expect.objectContaining({ type: "error", reason: "key" }),
     ]);
     for (const [status, reason] of [[402, "premium"], [404, "unavailable"], [401, "auth"], [429, "rate_limit"], [500, "upstream"]] as const) {
-      const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", env: ENV, fetchImpl: sse([], { status }) }));
+      const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: HOST, lookup: LOOKUP, fetchImpl: sse([], { status }) }));
       expect(events).toEqual([expect.objectContaining({ type: "error", reason })]);
     }
     const unreachable = (async () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
-    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", env: ENV, fetchImpl: unreachable }))).toEqual([
+    expect(await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: HOST, lookup: LOOKUP, fetchImpl: unreachable }))).toEqual([
       expect.objectContaining({ type: "error", reason: "upstream" }),
     ]);
   });
@@ -127,7 +129,7 @@ describe("voice host", () => {
       expect(body).toMatchObject({ query: "Opus 5.5 vs GPT-6 Sol benchmarks", model: "flux-voice-lookup" });
       return sse([text("**Opus 5.5** leads on the index, 58 to 48. "), text("That is from [Artificial Analysis](https://x.test).")])(url, init);
     }) as typeof fetch;
-    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "benchmarks?", env: ENV, fetchImpl }));
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "benchmarks?", host: HOST, lookup: LOOKUP, fetchImpl }));
     expect(events).toEqual([
       { type: "sentence", text: "Let me check." },
       { type: "lookup", query: "Opus 5.5 vs GPT-6 Sol benchmarks" },
@@ -145,12 +147,12 @@ describe("voice host", () => {
     ]) {
       const fetchImpl = (async (url: string, init: RequestInit) =>
         url.endsWith("/chat/completions") ? sse([tool(0, "quick_lookup", '{"query":"S&P close"}')])(url, init) : lookup()) as typeof fetch;
-      const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "how did the market close", env: ENV, fetchImpl }));
+      const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "how did the market close", host: HOST, lookup: LOOKUP, fetchImpl }));
       expect(events).toEqual([{ type: "lookup", query: "S&P close" }, { type: "hand_down", request: "S&P close" }, { type: "done" }]);
     }
   });
 
-  it("uses the owner's own xAI key for lookups when one is configured", async () => {
+  it("looks up with the owner's own xAI key through xAI's web search", async () => {
     const seen: string[] = [];
     const xai = (events: unknown[]) =>
       new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), { status: 200 });
@@ -160,8 +162,8 @@ describe("voice host", () => {
       expect(JSON.parse(String(init.body)).tools).toEqual([{ type: "web_search" }]);
       return xai([{ type: "response.output_text.delta", delta: "It closed at 7764.64 on September 22." }, { type: "response.completed" }]);
     }) as typeof fetch;
-    const env = { ...ENV, MURAGE_VOICE_LOOKUP_XAI_KEY: "own", MURAGE_VOICE_LOOKUP_XAI_API: "http://xai.invalid/v1" } as NodeJS.ProcessEnv;
-    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "market?", env, fetchImpl }));
+    const lookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4-fast-non-reasoning" };
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "market?", host: HOST, lookup, fetchImpl }));
     expect(events).toContainEqual({ type: "sentence", text: "It closed at 7764.64 on September 22." });
     expect(seen.at(-1)).toBe("http://xai.invalid/v1/responses");
   });
@@ -172,7 +174,7 @@ describe("voice host", () => {
         state: STATE,
         history: [],
         said: "how's it going",
-        env: ENV,
+        host: HOST, lookup: LOOKUP,
         fetchImpl: sse([text("Still reading the pack. Should have it "), text("in a minute or two. Revenue was $1,240.50 last "), text("week")]),
       }),
     );
@@ -242,6 +244,7 @@ describe("voice host route", () => {
     needsYou: () => [{ title: "Approve travel", summary: "Flight to Bangkok", at: NOW - 60_000 }],
     readBody: async (req: any) => req.body,
     now: () => NOW,
+    endpoints: () => ({ host: HOST, lookup: LOOKUP }),
   };
 
   it("snapshots the running turn's steps, the other tasks and the inbox", () => {
@@ -315,11 +318,57 @@ describe("voice host warm-up", () => {
       lastActivityAt: () => undefined,
       needsYou: () => [],
       readBody: async (req: any) => req.body,
+      endpoints: () => ({ host: HOST, lookup: null }),
       warm: async () => {
         calls += 1;
       },
     });
     expect(r.head).toBe(202);
     expect(calls).toBe(1);
+  });
+});
+
+describe("voice host on the owner's own keys", () => {
+  it("runs on whatever endpoint it is handed, with that provider's model", async () => {
+    let seen: any;
+    const own: VoiceEndpoint = { via: "anthropic", label: "Anthropic", baseUrl: "http://anthropic.invalid/v1", key: "own-anthropic", model: "claude-haiku-4-5" };
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen = { url, auth: (init.headers as Record<string, string>).authorization, model: JSON.parse(String(init.body)).model };
+      return sse([text("Hello.")])(url, init);
+    }) as typeof fetch;
+    await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: own, lookup: null, fetchImpl }));
+    expect(seen).toEqual({ url: "http://anthropic.invalid/v1/chat/completions", auth: "Bearer own-anthropic", model: "claude-haiku-4-5" });
+  });
+
+  it("offers no lookup tool when nothing can look things up, so the host hands down instead", async () => {
+    let tools: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      tools = JSON.parse(String(init.body)).tools.map((t: any) => t.function.name);
+      return sse([text("Let me look into that."), tool(0, "quick_lookup", '{"query":"x"}')])(url, init);
+    }) as typeof fetch;
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "news?", host: HOST, lookup: null, fetchImpl }));
+    expect(tools).toEqual(["hand_down", "cancel_task"]);
+    expect(events.some((e) => e.type === "lookup")).toBe(false);
+  });
+
+  it("looks up through Anthropic's own web search tool", async () => {
+    let body: any;
+    let headers: Record<string, string> = {};
+    const lookup: VoiceEndpoint = { via: "anthropic", label: "Anthropic", baseUrl: "http://anthropic.invalid/v1", key: "own-anthropic", model: "claude-haiku-4-5" };
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", '{"query":"S&P close"}')])(url, init);
+      body = JSON.parse(String(init.body));
+      headers = init.headers as Record<string, string>;
+      const frames = [
+        { type: "content_block_start", content_block: { type: "server_tool_use" } },
+        { type: "content_block_delta", delta: { type: "text_delta", text: "It closed at 7764.64 yesterday." } },
+        { type: "message_stop" },
+      ];
+      return new Response(frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""), { status: 200 });
+    }) as typeof fetch;
+    const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "market?", host: HOST, lookup, fetchImpl }));
+    expect(events).toContainEqual({ type: "sentence", text: "It closed at 7764.64 yesterday." });
+    expect(body.tools).toEqual([{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]);
+    expect(headers["x-api-key"]).toBe("own-anthropic");
   });
 });

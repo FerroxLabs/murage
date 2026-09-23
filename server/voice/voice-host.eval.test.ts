@@ -7,13 +7,15 @@
 //
 //   MURAGE_VOICE_HOST_EVAL=~/.config/<key file> npx vitest run server/voice/voice-host.eval.test.ts
 //
-// Optional: MURAGE_VOICE_HOST_MODEL to try another model;
-// MURAGE_VOICE_HOST_EVAL_XAI names a file holding an xAI key, so lookups run
-// live through xAI's own web search until Flux's lookup route is deployed.
+// MURAGE_VOICE_HOST_EVAL_XAI names a file holding an xAI key: lookups then run
+// live through xAI's own web search (Flux's lookup route is not deployed yet).
+// MURAGE_VOICE_HOST_EVAL_VIA=xai runs the HOST on that xAI key instead of Flux
+// (MURAGE_VOICE_HOST_MODEL picks the model).
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
+import type { VoiceEndpoint } from "./voice-routes.ts";
 
 const keyFile = process.env.MURAGE_VOICE_HOST_EVAL?.replace(/^~/, process.env.HOME ?? "");
 const NOW = Date.now();
@@ -62,11 +64,15 @@ const CASES: Array<{ said: string; state: VoiceHostState; want: Expect }> = [
 
 describe.skipIf(!keyFile)("voice host, live routing", () => {
   const xaiFile = process.env.MURAGE_VOICE_HOST_EVAL_XAI?.replace(/^~/, process.env.HOME ?? "");
-  const env = {
-    ...process.env,
-    MURAGE_VOICE_HOST_KEY: keyFile ? readFileSync(keyFile, "utf8").trim() : "",
-    ...(xaiFile ? { MURAGE_VOICE_LOOKUP_XAI_KEY: readFileSync(xaiFile, "utf8").trim() } : {}),
-  };
+  const fluxKey = keyFile ? readFileSync(keyFile, "utf8").trim() : "";
+  const xaiKey = xaiFile ? readFileSync(xaiFile, "utf8").trim() : "";
+  const viaXai = process.env.MURAGE_VOICE_HOST_EVAL_VIA === "xai" && xaiKey;
+  const host: VoiceEndpoint = viaXai
+    ? { via: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", key: xaiKey, model: process.env.MURAGE_VOICE_HOST_MODEL || "grok-4-fast-non-reasoning" }
+    : { via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: fluxKey, model: process.env.MURAGE_VOICE_HOST_MODEL || "claude-haiku-4-5" };
+  const lookup: VoiceEndpoint | null = xaiKey
+    ? { via: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", key: xaiKey, model: "grok-4-fast-non-reasoning" }
+    : null;
   const rows: string[] = [];
 
   for (const c of CASES) {
@@ -76,7 +82,7 @@ describe.skipIf(!keyFile)("voice host, live routing", () => {
       let spoken = "";
       let did: Expect = "answer";
       let request = "";
-      for await (const event of runVoiceHostTurn({ state: c.state, history: [], said: c.said, env })) {
+      for await (const event of runVoiceHostTurn({ state: c.state, history: [], said: c.said, host, lookup })) {
         if (event.type === "error") throw new Error(`${event.reason}: ${event.message}`);
         if (first === null && (event.type === "sentence" || event.type === "hand_down" || event.type === "cancel")) first = performance.now() - start;
         if (event.type === "sentence") spoken += `${event.text} `;
@@ -98,6 +104,6 @@ describe.skipIf(!keyFile)("voice host, live routing", () => {
   }
 
   it("report", () => {
-    console.log(`\nmodel: ${process.env.MURAGE_VOICE_HOST_MODEL || "default"}\n${rows.join("\n")}`);
+    console.log(`\nhost: ${host.via} ${host.model}, lookup: ${lookup ? lookup.via : "none"}\n${rows.join("\n")}`);
   });
 });

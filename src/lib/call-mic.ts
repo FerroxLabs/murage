@@ -373,6 +373,7 @@ export function createFallbackMic(): CallMic {
 /** The recognizer this machine should use for a call, or null for none. */
 export function callMicKind(options: {
   appleSpeech: boolean;
+  /** The harness can transcribe (Flux, or an own Groq or OpenAI key). */
   fluxConfigured: boolean;
   capture: boolean;
 }): CallMic["kind"] | null {

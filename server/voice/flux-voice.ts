@@ -176,6 +176,10 @@ export interface TranscribeOptions {
    *  so an oversized prompt is a shorter prompt, never a 400. */
   prompt?: string;
   env?: NodeJS.ProcessEnv;
+  /** Where to transcribe (server/voice/voice-routes.ts). Absent means Flux on
+   *  the workspace key, as before. An owner's own Groq or OpenAI key serves
+   *  the same OpenAI-shaped request with that provider's own model. */
+  endpoint?: { via: string; baseUrl: string; key: string; model: string } | null;
   /** Injected for tests; production omits it. */
   fetchImpl?: typeof fetch;
 }
@@ -192,11 +196,12 @@ const TIMEOUT_MS = 60_000;
  * ones, so callers branch on `.reason` and never on a parsed message.
  */
 export async function transcribe(recording: Recording, options: TranscribeOptions = {}): Promise<Transcript> {
-  const key = fluxKey(options.env ?? process.env);
+  const own = options.endpoint && options.endpoint.via !== "flux" ? options.endpoint : null;
+  const key = options.endpoint?.key ?? fluxKey(options.env ?? process.env);
   if (!key) {
     throw new TranscriptionUnavailable(
       "key",
-      "Add a Flux key in Settings on the computer to turn on voice typing.",
+      "Add a Flux key, or an OpenAI or Groq key, in Settings on the computer to turn on voice typing.",
     );
   }
   if (recording.bytes.byteLength === 0) {
@@ -216,17 +221,18 @@ export async function transcribe(recording: Recording, options: TranscribeOption
   copy.set(recording.bytes);
   const part = new Blob([copy], { type: recording.mime || "application/octet-stream" });
   form.append("file", part, recording.filename);
-  form.append("model", options.model ?? "flux-voice");
+  form.append("model", own ? own.model : (options.model ?? "flux-voice"));
   // verbose_json is what carries `duration` and `language`; the flat `json`
   // shape would drop both and we would be guessing at the cost we report.
-  form.append("response_format", "verbose_json");
+  // OpenAI's gpt-4o transcription models accept only `json` or `text`.
+  form.append("response_format", own?.via === "openai" ? "json" : "verbose_json");
   if (options.language) form.append("language", options.language);
   if (options.prompt?.trim()) form.append("prompt", options.prompt.trim().slice(0, PROMPT_MAX_CHARS));
 
   const call = options.fetchImpl ?? fetch;
   let res: Response;
   try {
-    res = await call(`${apiBase()}/audio/transcriptions`, {
+    res = await call(`${options.endpoint ? options.endpoint.baseUrl.replace(/\/+$/, "") : apiBase()}/audio/transcriptions`, {
       method: "POST",
       // Bearer, not a vendor header: this is the same key the chat surfaces
       // use, and it must never be logged or echoed back to a renderer.

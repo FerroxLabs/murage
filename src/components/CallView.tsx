@@ -91,9 +91,13 @@ export function CallTargetButton({
   // A Mac recognizes speech on the device. Windows and Linux capture the
   // microphone in the app and transcribe through the workspace's Flux key.
   const macSpeech = capabilities.dictation.available && Boolean(window.muragebox?.speechStart);
-  const fluxSpeech =
-    Boolean(state.config?.flux?.configured) && typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
-  const supported = macSpeech || fluxSpeech;
+  // Windows and Linux transcribe through Flux or the owner's own Groq or
+  // OpenAI key, whichever the harness reports can serve it.
+  const hostedSpeech =
+    Boolean(state.config?.tts?.routes?.transcribe) &&
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
+  const supported = macSpeech || hostedSpeech;
   const configured = Boolean(state.config?.tts?.configured);
   const everyTargetHasVoice = voices.length > 0 && voices.every((voice) => Boolean(voice));
   const voiceReady =
@@ -109,7 +113,7 @@ export function CallTargetButton({
     : !capabilitiesReady
       ? t("calls.checkingAvailability")
       : !supported
-        ? "Add a Flux key in Settings to make calls on this computer"
+        ? "Add a Flux key, or an OpenAI or Groq key, in Settings to make calls on this computer"
         : !configured
           ? "Set up a voice in a bot's settings to make calls"
           : !voiceReady
@@ -121,7 +125,7 @@ export function CallTargetButton({
     : !supported
       ? capabilities.dictation.available
         ? "The speech service is unavailable in this app build. Restart or update Murage."
-        : "Calls on this computer understand you through Flux. Add a Flux key in Settings."
+        : "Calls on this computer understand you through Flux, or your own OpenAI or Groq key. Add one in Settings."
       : !configured
           ? "Add a Flux key, an ElevenLabs key, or switch to the built-in Mac voices so the bot can speak during calls."
           : !voiceReady
@@ -224,7 +228,7 @@ function Call({ bot }: { bot: Bot }) {
   if (!micRef.current) {
     const kind = callMicKind({
       appleSpeech: capabilities.dictation.available && Boolean(window.muragebox?.speechStart),
-      fluxConfigured: Boolean(state.config?.flux?.configured),
+      fluxConfigured: Boolean(state.config?.tts?.routes?.transcribe),
       capture: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),
     });
     micRef.current = kind ? createCallMic(kind) : createFallbackMic();
@@ -242,7 +246,7 @@ function Call({ bot }: { bot: Bot }) {
   // switched off for the rest of the call by a failure that will not fix
   // itself mid-call (no key, a plan without it); a network blip only sends
   // that one turn down the engine path.
-  const hostOn = useRef(Boolean(state.config?.flux?.configured));
+  const hostOn = useRef(Boolean(state.config?.tts?.routes?.host));
   const hostHistory = useRef<Array<{ role: "owner" | "host"; text: string }>>([]);
   const hostAbort = useRef<AbortController | null>(null);
   const heardRef = useRef("");

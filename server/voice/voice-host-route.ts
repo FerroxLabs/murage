@@ -21,6 +21,7 @@ import {
   type VoiceHostState,
   type VoiceHostTurn,
 } from "./voice-host.ts";
+import type { VoiceEndpoint } from "./voice-routes.ts";
 
 export const VOICE_HOST_PATH = /^\/api\/bots\/([\w-]+)\/voice-host$/;
 
@@ -46,10 +47,11 @@ export interface VoiceHostRouteDeps {
   /** Open decisions and unread news for this bot, newest first. */
   needsYou(botId: string): Array<{ title: string; summary: string; at: number }>;
   readBody(req: IncomingMessage): Promise<any>;
+  /** Where the host and lookups run right now (voice-routes.ts). */
+  endpoints(): { host: VoiceEndpoint | null; lookup: VoiceEndpoint | null };
   run?: (options: VoiceHostOptions) => AsyncGenerator<VoiceHostEvent>;
-  warm?: (env?: NodeJS.ProcessEnv) => Promise<void>;
+  warm?: (host: VoiceEndpoint | null) => Promise<void>;
   now?: () => number;
-  env?: NodeJS.ProcessEnv;
 }
 
 /** The snapshot the host speaks from. Exported for tests. */
@@ -128,7 +130,7 @@ export async function handleVoiceHostRoute(
   if (!body || typeof body !== "object" || Array.isArray(body)) return sendJson(400, { error: "body must be a JSON object" });
   if (body.warm === true) {
     if (!deps.bot(match[1])) return sendJson(404, { error: "no such bot" });
-    void (deps.warm ?? warmVoiceHost)(deps.env);
+    void (deps.warm ?? warmVoiceHost)(deps.endpoints().host);
     return sendJson(202, { ok: true });
   }
   const said = typeof body.text === "string" ? body.text.trim() : "";
@@ -152,7 +154,8 @@ export async function handleVoiceHostRoute(
     "x-accel-buffering": "no",
   });
   const run = deps.run ?? runVoiceHostTurn;
-  for await (const event of run({ state, history: parseHistory(body.history), said, env: deps.env, signal: controller.signal })) {
+  const { host, lookup } = deps.endpoints();
+  for await (const event of run({ state, history: parseHistory(body.history), said, host, lookup, signal: controller.signal })) {
     if (controller.signal.aborted) break;
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   }

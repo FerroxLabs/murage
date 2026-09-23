@@ -22,20 +22,12 @@
 // uses, under the same approvals. The host cannot change the world because
 // nothing it can reach is able to.
 //
-// Runs on the HARNESS, never the renderer: the Flux key must not leave the
-// server (see flux-config.ts).
-import { fluxKey } from "../flux-config.ts";
-
-/** OpenAI-compatible base. Read per call, never captured at module load, so a
- *  test can point it at a stub (the rule flux-voice.ts learned the hard way). */
-function apiBase(env: NodeJS.ProcessEnv): string {
-  return (env.MURAGE_VOICE_HOST_API || "https://api.fluxrouter.ai/v1").replace(/\/+$/, "");
-}
-
-/** The model that speaks. Measured through Flux on 2026-09-23: about 0.9 s to
- *  first token warm. An env override lets the model move without a release
- *  until Flux carries its own `flux-voice-host` alias. */
-export const DEFAULT_VOICE_HOST_MODEL = "claude-haiku-4-5";
+// WHERE IT RUNS: Flux by default, or the owner's own model connection
+// (voice-routes.ts picks; this file is handed the endpoint). Every provider
+// used here speaks OpenAI-shaped streaming chat with tools, Anthropic through
+// its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
+// keys must not leave the server.
+import type { VoiceEndpoint } from "./voice-routes.ts";
 
 /** Beyond this the host has stalled; the call falls back to the engine. */
 const FIRST_TOKEN_TIMEOUT_MS = 6_000;
@@ -316,14 +308,13 @@ function failure(status: number): { reason: VoiceHostFailure; message: string } 
  * about 1.3 s warm). One token, fire and forget; a failure here only means
  * the first reply is slower.
  */
-export async function warmVoiceHost(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const key = env.MURAGE_VOICE_HOST_KEY?.trim() || fluxKey(env);
-  if (!key) return;
-  await fetchImpl(`${apiBase(env)}/chat/completions`, {
+export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeof fetch = fetch): Promise<void> {
+  if (!host) return;
+  await fetchImpl(`${host.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
     body: JSON.stringify({
-      model: env.MURAGE_VOICE_HOST_MODEL?.trim() || DEFAULT_VOICE_HOST_MODEL,
+      model: host.model,
       messages: [{ role: "user", content: "Say ok." }],
       max_tokens: 1,
     }),
@@ -386,21 +377,73 @@ export class CitationFilter {
 const LOOKUP_INSTRUCTIONS =
   "You are answering aloud on a phone call. Answer in two or three short spoken sentences with the key facts and where they come from. No markdown, no URLs, no lists.";
 
+/** Text pieces from a Responses-API stream (xAI and OpenAI share the shape). */
+async function* responsesText(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  for await (const event of sseEvents(body)) {
+    if (event?.type === "response.output_text.delta" && typeof event.delta === "string") yield event.delta;
+    if (event?.type === "error" || event?.type === "response.failed") throw new Error("lookup failed");
+  }
+}
+
+/** Text pieces from an Anthropic Messages stream. */
+async function* anthropicText(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  for await (const event of sseEvents(body)) {
+    if (event?.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") yield event.delta.text;
+    if (event?.type === "error") throw new Error("lookup failed");
+  }
+}
+
+/** Parsed `data:` events of an SSE body. */
+async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<any> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+        // a malformed frame is skipped
+      }
+    }
+  }
+}
+
 /**
- * A web lookup, as text pieces. Flux's `/v1/voice/lookup` by default (xAI's
- * own web search behind a Flux alias; Flux's older search route never went
- * live). An owner's own xAI key, when configured, goes straight to xAI's
- * Responses API with the same tool: voice is Flux by default, own keys are
- * the option.
+ * A web lookup, as text pieces, on whichever source serves lookups: Flux's
+ * `/v1/voice/lookup` (xAI's web search behind Flux; Flux's older search route
+ * never went live), or the owner's own xAI, OpenAI or Anthropic key with that
+ * provider's own web search tool.
  */
-async function* lookupText(query: string, env: NodeJS.ProcessEnv, call: typeof fetch, signal: AbortSignal): AsyncGenerator<string> {
-  const ownXai = env.MURAGE_VOICE_LOOKUP_XAI_KEY?.trim();
-  if (ownXai) {
-    const res = await call(`${(env.MURAGE_VOICE_LOOKUP_XAI_API || "https://api.x.ai/v1").replace(/\/+$/, "")}/responses`, {
+async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof fetch, signal: AbortSignal): AsyncGenerator<string> {
+  const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+    call(`${endpoint.baseUrl}${path}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${ownXai}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: env.MURAGE_VOICE_LOOKUP_MODEL?.trim() || "grok-4-fast-non-reasoning",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal,
+    });
+  const bearer = { authorization: `Bearer ${endpoint.key}` };
+  if (endpoint.via === "flux") {
+    const res = await post("/voice/lookup", { query, instructions: LOOKUP_INSTRUCTIONS, model: endpoint.model }, bearer);
+    if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
+    for await (const part of readCompletion(res.body)) if (part.kind === "text") yield part.text;
+    return;
+  }
+  if (endpoint.via === "xai" || endpoint.via === "openai") {
+    const res = await post(
+      "/responses",
+      {
+        model: endpoint.model,
         stream: true,
         max_output_tokens: 300,
         tools: [{ type: "web_search" }],
@@ -408,44 +451,31 @@ async function* lookupText(query: string, env: NodeJS.ProcessEnv, call: typeof f
           { role: "system", content: LOOKUP_INSTRUCTIONS },
           { role: "user", content: query },
         ],
-      }),
-      signal,
-    });
+      },
+      bearer,
+    );
     if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buffer += decoder.decode(value, { stream: true });
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line.startsWith("data:")) continue;
-        try {
-          const event = JSON.parse(line.slice(5).trim());
-          if (event?.type === "response.output_text.delta" && typeof event.delta === "string") yield event.delta;
-          if (event?.type === "error") throw new Error("lookup failed");
-        } catch (error) {
-          if (error instanceof Error && error.message === "lookup failed") throw error;
-        }
-      }
-    }
+    yield* responsesText(res.body);
+    return;
   }
-  const key = env.MURAGE_VOICE_HOST_KEY?.trim() || fluxKey(env);
-  if (!key) throw new Error("no key");
-  const res = await call(`${apiBase(env)}/voice/lookup`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({ query, instructions: LOOKUP_INSTRUCTIONS, model: "flux-voice-lookup" }),
-    signal,
-  });
-  if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
-  for await (const part of readCompletion(res.body)) {
-    if (part.kind === "text") yield part.text;
+  if (endpoint.via === "anthropic") {
+    const res = await post(
+      "/messages",
+      {
+        model: endpoint.model,
+        stream: true,
+        max_tokens: 400,
+        system: LOOKUP_INSTRUCTIONS,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+        messages: [{ role: "user", content: query }],
+      },
+      { "x-api-key": endpoint.key, "anthropic-version": "2023-06-01" },
+    );
+    if (!res.ok || !res.body) throw new Error(`lookup ${res.status}`);
+    yield* anthropicText(res.body);
+    return;
   }
+  throw new Error(`no lookup on ${endpoint.via}`);
 }
 
 export interface VoiceHostOptions {
@@ -454,7 +484,10 @@ export interface VoiceHostOptions {
   history: VoiceHostTurn[];
   /** What the owner just said. */
   said: string;
-  env?: NodeJS.ProcessEnv;
+  /** Where the host runs; null when no source can serve it. */
+  host: VoiceEndpoint | null;
+  /** Where lookups run; null offers no lookup tool (the host hands down). */
+  lookup?: VoiceEndpoint | null;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
@@ -466,12 +499,13 @@ export interface VoiceHostOptions {
  * more path to forget.
  */
 export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerator<VoiceHostEvent> {
-  const env = options.env ?? process.env;
-  const key = env.MURAGE_VOICE_HOST_KEY?.trim() || fluxKey(env);
-  if (!key) {
-    yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key." };
+  const host = options.host;
+  if (!host) {
+    yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  const lookupSource = options.lookup ?? null;
+  const tools = lookupSource ? TOOLS : TOOLS.filter((tool) => tool.function.name !== "quick_lookup");
   const messages = [
     { role: "system", content: voiceHostPrompt(options.state) },
     ...options.history.slice(-12).map((turn) => ({
@@ -493,13 +527,13 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
   try {
     let res: Response;
     try {
-      res = await call(`${apiBase(env)}/chat/completions`, {
+      res = await call(`${host.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json" },
         body: JSON.stringify({
-          model: env.MURAGE_VOICE_HOST_MODEL?.trim() || DEFAULT_VOICE_HOST_MODEL,
+          model: host.model,
           messages,
-          tools: TOOLS,
+          tools,
           stream: true,
           max_tokens: 300,
           temperature: 0.2,
@@ -548,7 +582,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
 
     let handed = false;
     for (const { name, args } of calls.values()) {
-      if (name === "quick_lookup" && !handed) {
+      if (name === "quick_lookup" && !handed && lookupSource) {
         let query = "";
         try {
           const parsed = JSON.parse(args || "{}");
@@ -571,7 +605,7 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         const citations = new CitationFilter();
         let answered = false;
         try {
-          for await (const text of lookupText(query, env, call, lookup.signal)) {
+          for await (const text of lookupText(query, lookupSource, call, lookup.signal)) {
             for (const sentence of sentencesFrom(lookupSplitter, citations.push(text))) {
               if (!answered) clearTimeout(deadline);
               answered = true;

@@ -44,13 +44,12 @@ beforeAll(async () => {
   // endpoints inside the child before the server loads.
   fixture = await launchVerificationServer(process.env, undefined, {
     instrumentationSource: [
-      `process.env.MURAGE_VOICE_HOST_API=${JSON.stringify(stubUrl)};`,
-      `process.env.MURAGE_VOICE_HOST_KEY="stub-host-key";`,
+      `process.env.MURAGE_VOICE_ROUTE_BASE=${JSON.stringify(stubUrl)};`,
       `process.env.MURAGE_FLUX_AUDIO_API=${JSON.stringify(stubUrl)};`,
       `process.env.FLUX_API_KEY="stub-flux-key";`,
     ].join("\n"),
   });
-  const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json();
+  const proof = (await (await fetch(fixture.info.url + "/api/desktop-secret")).json()) as { secret: string };
   desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret, "content-type": "application/json" };
 }, 30_000);
 

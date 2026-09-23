@@ -42,7 +42,10 @@ export function VoiceSettings({
   // Windows owner could not switch on an engine that already worked.
   const hostPlatform = capabilities.host.platform;
   const provider = tts?.provider ?? "elevenlabs";
-  const fluxAvailable = Boolean(state.config?.flux?.configured);
+  // Hosted voices: Flux, or the owner's own OpenAI key (same voices).
+  const hostedVia = tts?.routes?.speech ?? null;
+  const fluxAvailable = Boolean(hostedVia);
+  const hostedLabel = hostedVia === "openai" ? "OpenAI" : "Flux";
   // Gate AND wording come from the shared module, which is where they can be
   // executed by a test: a node-environment suite cannot render this component,
   // so a rule written inline here could only ever be checked by grepping the
@@ -118,7 +121,7 @@ export function VoiceSettings({
           <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
           <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
             {([
-              { value: "flux", label: "Flux", available: fluxAvailable, hint: "Add a Flux key in Settings to use Flux voices." },
+              { value: "flux", label: hostedLabel, available: fluxAvailable, hint: "Add a Flux key, or an OpenAI key, in Settings to use these voices." },
               { value: "elevenlabs", label: "ElevenLabs", available: true, hint: undefined },
               { value: "system", label: offer.label, available: offer.available, hint: offer.unavailableHint },
             ] as const)
@@ -147,8 +150,10 @@ export function VoiceSettings({
       {provider === "flux" && (
         <div className="mt-3 text-[12.5px] text-ink-secondary">
           {fluxAvailable
-            ? "Speaks through your Flux account, billed per character. No other key needed."
-            : "Add a Flux key in Settings to use Flux voices."}
+            ? hostedVia === "openai"
+              ? "Speaks through your own OpenAI key, billed by OpenAI. No other key needed."
+              : "Speaks through your Flux account, billed per character. No other key needed."
+            : "Add a Flux key, or an OpenAI key, in Settings to use these voices."}
         </div>
       )}
 

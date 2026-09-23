@@ -43,7 +43,7 @@ import { useSyncExternalStore } from "react";
 const listeners = new Set();
 window.__bot = { id: "bot-1", name: "Sable", color: "green", busy: false, threadId: "thread-1", voice: "v1", messages: [] };
 window.__actions = [];
-window.__config = { flux: { configured: true }, tts: { configured: true, ready: true } };
+window.__config = { flux: { configured: true }, tts: { configured: true, ready: true, routes: { host: "flux", lookup: "flux", speech: "flux", transcribe: "flux" } } };
 window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; for (const l of listeners) l(); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const visibleMessages = (bot) => bot.messages;

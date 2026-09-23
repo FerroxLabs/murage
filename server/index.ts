@@ -60,6 +60,7 @@ import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
+import { describeVoiceRoutes, voiceEndpoint, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
@@ -332,6 +333,7 @@ import {
   setupView,
 } from "../shared/setup.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
+import { transcribe as transcribeWithFlux } from "./voice/flux-voice.ts";
 import {
   ensureWorkspace,
   ensureTaskWorkspace,
@@ -545,6 +547,14 @@ assertRestoreReviewed(DATA_DIR);
 // runs the store is inert, so no engine writer can see a user address.
 configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
+/** Where one part of a call runs: Flux first, then the owner's own model
+ *  connections (server/voice/voice-routes.ts). `MURAGE_VOICE_ROUTE_BASE` is a
+ *  test seam only: it points every resolved endpoint at a local stub. */
+function voiceRouteFor(part: VoicePart) {
+  const endpoint = voiceEndpoint(part, providerConnections);
+  const stub = process.env.MURAGE_VOICE_ROUTE_BASE?.trim();
+  return endpoint && stub ? { ...endpoint, baseUrl: stub.replace(/\/+$/, "") } : endpoint;
+}
 const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), resolveAlias: id => {
   const alias = cfg.flux?.connectionAliases?.find(row => row.id === id);
   return alias ? resolveFluxAlias(alias, fluxKey() ?? "", createHash("sha256").update(fluxKey() ?? "").digest("hex")) : null;
@@ -639,6 +649,9 @@ providerConnections.subscribe(changedIds => {
     noteHostStoppedTurn(threadId, active.botId, "the model connection it was using was changed or turned off");
   }
 });
+// Hosted speech and the per-part call routes come from the same model
+// connections (server/voice/voice-routes.ts).
+tts.useVoiceRoutes({ speech: () => voiceRouteFor("speech"), describe: () => describeVoiceRoutes(providerConnections) });
 
 let providerConfigBusy = false;
 let fluxMediaRequests = 0;
@@ -15917,6 +15930,7 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && VOICE_HOST_PATH.test(path)) {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
       await handleVoiceHostRoute(method, path, req, res, {
+        endpoints: () => ({ host: voiceRouteFor("host"), lookup: voiceRouteFor("lookup") }),
         bot: (id) => store.bot(id),
         activePath: (threadId) => store.activePath(threadId),
         lastActivityAt: (threadId) => store.lastActivityAt(threadId),
@@ -15954,7 +15968,14 @@ const server = createServer(async (req, res) => {
     if (path === "/api/voice/transcribe" && method === "POST") {
       if (providerConfigBusy) return json(res, 409, { error: "Credentials are being changed. Try again shortly." });
       fluxMediaRequests++;
-      try { if (await handleTranscribeRoute(method, url, req, res)) return; }
+      try {
+        // Flux on the workspace key by default; an owner's own Groq or OpenAI
+        // key when there is no Flux (server/voice/voice-routes.ts).
+        const endpoint = voiceRouteFor("transcribe");
+        if (await handleTranscribeRoute(method, url, req, res, endpoint && endpoint.via !== "flux"
+          ? { transcribe: (recording, options) => transcribeWithFlux(recording, { ...options, endpoint }) }
+          : undefined)) return;
+      }
       finally { fluxMediaRequests--; }
     }
 
