@@ -134,6 +134,21 @@ describe.skipIf(!planned)("voice host, live routing", () => {
     expect(spoken).not.toMatch(/clarif|actually|it'?s sable|i'?m sable|my name/i);
   }, 30_000);
 
+  it("after a refused hand-down, a progress question is answered honestly, not handed down again", async () => {
+    let spoken = "";
+    let handed = false;
+    const history = [
+      { role: "owner" as const, text: "Well AI news from the last 48 hours" },
+      { role: "host" as const, text: "Let me look into that. I couldn't start that. This bot's model needs an AI provider connected first." },
+    ];
+    for await (const event of runVoiceHostTurn({ state: IDLE, history, said: "Do you have any results yet?", host, lookup })) {
+      if (event.type === "sentence") spoken += `${event.text} `;
+      if (event.type === "hand_down" || event.type === "lookup") handed = true;
+    }
+    rows.push(`refused | said: ${spoken.trim()}`);
+    expect(handed).toBe(false);
+  }, 30_000);
+
   it("a long answer is told as a short brief", async () => {
     const answer = [
       "Here's the latest AI news, well-sourced stories first.",

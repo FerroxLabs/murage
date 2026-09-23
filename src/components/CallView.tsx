@@ -259,7 +259,10 @@ function Call({ bot }: { bot: Bot }) {
   /** The host is looking something up on the web right now. */
   const [lookingUp, setLookingUp] = useState(false);
   /** What happened to each thing the owner said: the call note's source. */
-  const callLog = useRef<Array<{ said: string; outcome: "answered" | "looked_up" | "handed_down" | "engine" | "decision"; detail?: string }>>([]);
+  const callLog = useRef<Array<{ said: string; outcome: "answered" | "looked_up" | "handed_down" | "engine" | "decision" | "not_started"; detail?: string }>>([]);
+  /** Sends the server refused, by what the owner said: the log records them
+   *  as not started even when the refusal beats the log entry. */
+  const refusedSends = useRef(new Map<string, string>());
   const callStartedAt = useRef(Date.now());
   const threadRef = useRef(bot.threadId);
   threadRef.current = bot.threadId;
@@ -368,6 +371,9 @@ function Call({ bot }: { bot: Bot }) {
     [listen, say],
   );
 
+  const sayThenListenRef = useRef(sayThenListen);
+  sayThenListenRef.current = sayThenListen;
+
   /** Tell the engine's finished answer. A long one is told the way people
    *  do on the phone (the gist, then "the full version is in the chat")
    *  through the host; a short one, or any failure, is read out as written. */
@@ -422,6 +428,44 @@ function Call({ bot }: { bot: Bot }) {
     else listen();
   }, [listen, tellReply]);
 
+  /** Send work to the engine from the call, and hear back if it was refused.
+   *  Without this a refused send (no model connected, a full queue) died
+   *  quietly while the call went on saying it was on it. */
+  const sendFromCall = useCallback(
+    (text: string, said: string) => {
+      dispatch({
+        type: "send",
+        botId: bot.id,
+        text,
+        threadId: bot.threadId,
+        onError: (error: unknown) => {
+          if (!alive.current || currentCall() !== bot.id) return false;
+          const reason = (error instanceof Error ? error.message : String(error)).trim() || "the request was refused";
+          refusedSends.current.set(said, reason);
+          for (const entry of callLog.current) {
+            if (entry.said === said && (entry.outcome === "handed_down" || entry.outcome === "engine")) {
+              entry.outcome = "not_started";
+              entry.detail = reason;
+            }
+          }
+          // the host must know nothing is running, or "is it done yet?" is
+          // answered as if it were
+          const line = `I couldn't start that. ${reason}`;
+          hostHistory.current.push({ role: "host", text: line });
+          hostSpeaking.current = false;
+          void sayThenListenRef.current(line);
+          return true;
+        },
+      });
+    },
+    [bot.id, bot.threadId, dispatch],
+  );
+  /** A log entry for work sent from the call, unless the send was refused. */
+  const sentEntry = (said: string, outcome: "handed_down" | "engine", detail?: string) => {
+    const refused = refusedSends.current.get(said);
+    return refused ? { said, outcome: "not_started" as const, detail: refused } : { said, outcome, detail };
+  };
+
   /** One spoken turn through the voice host. Its sentences are voiced as
    * they stream; a hand-down becomes an ordinary send. Any failure hands
    * the owner's words to the engine exactly as a call did before. */
@@ -466,7 +510,7 @@ function Call({ bot }: { bot: Bot }) {
           } else if (event.type === "hand_down" && !handed) {
             handed = true;
             handedRequest = event.request;
-            dispatch({ type: "send", botId: bot.id, text: event.request, threadId: bot.threadId });
+            sendFromCall(event.request, said);
           } else if (event.type === "cancel") {
             dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId });
           } else if (event.type === "error") {
@@ -482,13 +526,13 @@ function Call({ bot }: { bot: Bot }) {
       if (failed && !handed && !spoken) {
         // the host could not take this turn; the engine takes it, as before
         move("sending");
-        callLog.current.push({ said, outcome: "engine" });
-        dispatch({ type: "send", botId: bot.id, text: said, threadId: bot.threadId });
+        callLog.current.push(sentEntry(said, "engine"));
+        sendFromCall(said, said);
         return;
       }
       callLog.current.push(
         handed
-          ? { said, outcome: "handed_down", detail: handedRequest }
+          ? sentEntry(said, "handed_down", handedRequest)
           : lookedUp
             ? { said, outcome: "looked_up", detail: spoken.trim() }
             : { said, outcome: "answered", detail: spoken.trim() },
@@ -505,7 +549,7 @@ function Call({ bot }: { bot: Bot }) {
       }
       if (phaseRef.current === "speaking" || phaseRef.current === "sending") listenOrCatchUp();
     },
-    [bot.id, bot.threadId, bot.voice, dispatch, hush, listenOrCatchUp, move],
+    [bot.id, bot.threadId, bot.voice, hush, listenOrCatchUp, move, sendFromCall],
   );
 
   // Navigating away from this bot hangs up. Without ownership checking, the
@@ -524,7 +568,7 @@ function Call({ bot }: { bot: Bot }) {
       // part: an engine-only call is already fully in the transcript.
       const log = callLog.current;
       callLog.current = [];
-      if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up")) {
+      if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up" || entry.outcome === "not_started")) {
         void fetch(`/api/bots/${bot.id}/call-note`, {
           method: "POST",
           headers: callRouteHeaders(),
@@ -641,8 +685,8 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
       move("sending");
-      callLog.current.push({ said, outcome: "engine" });
-      dispatch({ type: "send", botId: bot.id, text: said, threadId: bot.threadId });
+      callLog.current.push(sentEntry(said, "engine"));
+      sendFromCall(said, said);
     });
     offEnd = mic.onEnd(({ code, reason }) => {
       micLive.current = false;
@@ -718,7 +762,7 @@ function Call({ bot }: { bot: Bot }) {
     // busy/approval are intentionally initial snapshots. Their live changes
     // are handled below without tearing down native event listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bargeIn, bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, openTurn, sayThenListen]);
+  }, [bargeIn, bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, openTurn, sayThenListen, sendFromCall]);
 
   // ── narrate the work, speak the answer, read the approvals ───────────
   useEffect(() => {

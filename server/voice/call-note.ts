@@ -13,7 +13,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 export const CALL_NOTE_PATH = /^\/api\/bots\/([\w-]+)\/call-note$/;
 
-export type CallOutcome = "answered" | "looked_up" | "handed_down" | "engine" | "decision";
+export type CallOutcome = "answered" | "looked_up" | "handed_down" | "engine" | "decision" | "not_started";
 
 export interface CallLogEntry {
   said: string;
@@ -46,6 +46,7 @@ export function callNoteText(log: CallLogEntry[], durationMs: number): string | 
     else if (e.outcome === "looked_up") lines.push(`- You said ${said}. Looked it up on the web${e.detail ? `: ${quote(e.detail)}` : "."}`);
     else if (e.outcome === "handed_down") lines.push(`- You said ${said}. Started as a task${e.detail ? `: ${quote(e.detail)}` : "."}`);
     else if (e.outcome === "decision") lines.push(`- You answered an approval: ${said}.`);
+    else if (e.outcome === "not_started") lines.push(`- You said ${said}. Couldn't start it${e.detail ? `: ${quote(e.detail)}` : "."}`);
     else lines.push(`- You said ${said}. Sent as a message.`);
   }
   if (entries.some((e) => e.outcome === "handed_down" || e.outcome === "engine")) {
@@ -62,7 +63,7 @@ export interface CallNoteDeps {
 
 function parseLog(raw: unknown): CallLogEntry[] {
   if (!Array.isArray(raw)) return [];
-  const outcomes = new Set<CallOutcome>(["answered", "looked_up", "handed_down", "engine", "decision"]);
+  const outcomes = new Set<CallOutcome>(["answered", "looked_up", "handed_down", "engine", "decision", "not_started"]);
   const out: CallLogEntry[] = [];
   for (const entry of raw.slice(-MAX_ENTRIES)) {
     const said = typeof entry?.said === "string" ? entry.said.slice(0, 2_000) : "";

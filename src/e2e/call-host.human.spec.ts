@@ -47,7 +47,11 @@ window.__config = { flux: { configured: true }, tts: { configured: true, ready: 
 window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; for (const l of listeners) l(); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const visibleMessages = (bot) => bot.messages;
-const dispatch = (a) => window.__actions.push(a);
+const dispatch = (a) => {
+  window.__actions.push(a);
+  // the harness refusing a send, as it does for a bot with no model connected
+  if (a.type === "send" && window.__refuseSends) setTimeout(() => a.onError?.(new Error(window.__refuseSends)), 20);
+};
 export const useStore = () => ({ state: { config: window.__config }, dispatch });
 export const api = async () => ({});
 export const useFixtureBot = () => useSyncExternalStore(subscribe, () => window.__bot);
@@ -256,6 +260,18 @@ test("a long answer from the engine is told as a brief, and a failed brief reads
   await page.evaluate(() => (window as any).__setBot({ messages: [{ id: "n3", role: "bot", kind: "text", at: 3, text: "Booked Nara at 8pm for two." }] }));
   await expect.poll(() => h.spoken).toEqual(["Booked Nara at 8pm for two."]);
   expect(h.hostBodies.length).toBe(asked);
+});
+
+test("a hand-down the harness refuses is said out loud, and the host is told nothing is running", async ({ page }) => {
+  const h = await harness(page);
+  await page.evaluate(() => { (window as any).__refuseSends = "This bot's model needs an AI provider connected first."; });
+  h.replies.push([{ type: "sentence", text: "Let me look into that." }, { type: "hand_down", request: "AI news from the last 48 hours" }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("AI news from the last 48 hours"));
+  await expect.poll(() => h.spoken).toContain("I couldn't start that. This bot's model needs an AI provider connected first.");
+  h.replies.push([{ type: "sentence", text: "Nothing is running yet." }, { type: "done" }]);
+  await page.evaluate(() => (window as any).__say("Do you have any results yet?"));
+  await expect.poll(() => h.spoken.at(-1)).toBe("Nothing is running yet.");
+  expect(h.hostBodies.at(-1).history).toContainEqual({ role: "host", text: "I couldn't start that. This bot's model needs an AI provider connected first." });
 });
 
 test("cancel from the host stops the running turn", async ({ page }) => {
