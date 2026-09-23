@@ -151,7 +151,8 @@ describe("voice host", () => {
       const fetchImpl = (async (url: string, init: RequestInit) =>
         url.endsWith("/chat/completions") ? sse([tool(0, "quick_lookup", '{"query":"S&P close"}')])(url, init) : lookup()) as typeof fetch;
       const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "how did the market close", host: HOST, lookup: LOOKUP, fetchImpl }));
-      expect(events).toEqual([{ type: "lookup", query: "S&P close" }, { type: "hand_down", request: "S&P close" }, { type: "done" }]);
+      // the model said nothing first, so the lookup is announced by code
+      expect(events).toEqual([{ type: "sentence", text: "Let me check." }, { type: "lookup", query: "S&P close" }, { type: "hand_down", request: "S&P close" }, { type: "done" }]);
     }
   });
 
@@ -165,7 +166,7 @@ describe("voice host", () => {
       expect(JSON.parse(String(init.body)).tools).toEqual([{ type: "web_search" }]);
       return xai([{ type: "response.output_text.delta", delta: "It closed at 7764.64 on September 22." }, { type: "response.completed" }]);
     }) as typeof fetch;
-    const lookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4-fast-non-reasoning" };
+    const lookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4.20-non-reasoning" };
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "market?", host: HOST, lookup, fetchImpl }));
     expect(events).toContainEqual({ type: "sentence", text: "It closed at 7764.64 on September 22." });
     expect(seen.at(-1)).toBe("http://xai.invalid/v1/responses");
@@ -173,7 +174,7 @@ describe("voice host", () => {
 
   it("when Flux lookups are not switched on, the owner's own xAI key answers, and Flux is skipped next time", async () => {
     const seen: string[] = [];
-    const xaiLookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4-1-fast-non-reasoning" };
+    const xaiLookup: VoiceEndpoint = { via: "xai", label: "xAI", baseUrl: "http://xai.invalid/v1", key: "own", model: "grok-4.20-non-reasoning" };
     const fetchImpl = (async (url: string, init: RequestInit) => {
       seen.push(url);
       if (url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", '{"query":"AI news today"}')])(url, init);
@@ -219,6 +220,19 @@ describe("voice host", () => {
     const busy = { ...STATE, task: { ...STATE.task, busy: true } };
     const quiet = await collect(runVoiceHostTurn({ state: busy, history: [], said: "how is it going", host: HOST, lookup: LOOKUP, fetchImpl: sse([text("Let me check.")]) }));
     expect(quiet.map((e) => e.type)).toEqual(["sentence", "done"]);
+  });
+
+  it("a request to get something done is handed down even when the model reaches for a lookup", async () => {
+    const events = await collect(
+      runVoiceHostTurn({ state: STATE, history: [], said: "Book me a table for two at eight tonight", host: HOST, lookup: LOOKUP, fetchImpl: sse([tool(0, "quick_lookup", '{"query":"restaurants near the office"}')]) }),
+    );
+    expect(events).toContainEqual({ type: "hand_down", request: "Book me a table for two at eight tonight" });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "lookup" }));
+    // and the owner's own things are never a web search
+    const own = await collect(
+      runVoiceHostTurn({ state: STATE, history: [], said: "What's waiting on me?", host: HOST, lookup: LOOKUP, fetchImpl: sse([tool(0, "quick_lookup", '{"query":"current time and date"}')]) }),
+    );
+    expect(own).not.toContainEqual(expect.objectContaining({ type: "lookup" }));
   });
 
   it("stops running work when asked and the reply says so, even without the cancel tool", async () => {

@@ -153,6 +153,7 @@ export function voiceHostPrompt(state: VoiceHostState): string {
     "- First, does what came through make sense as something a person would say to you? Speech recognition turns noise and mumbles into nonsense (\"Have your jam honey\"). If it doesn't make sense, call no tool and hand nothing down: say you didn't catch that and ask them to say it again. Never answer nonsense with \"on it\", \"let me look into that\" or any promise.",
     "- Speak the way people talk on the phone: one to three short sentences, no lists, no markdown, no emoji, no URLs read aloud.",
     "- Answer from what you can see below when it answers the question. Say how fresh it is when that matters (\"as of ten minutes ago\"). Never mention a snapshot, a working self, layers or tools; to the owner you are simply you.",
+    "- Questions about the owner's own things (their day, board, inbox, calendar, approvals, what is waiting on them) are never web lookups: answer from what you can see below, or hand them down. The current date and time are at the top of the snapshot.",
     "- A plain question of fact from the outside world (news, headlines, prices, scores, benchmarks, opening hours) that needs nothing of the owner's: say one short line such as \"Let me check.\", then call quick_lookup. This holds even if it was asked before on this call or in the conversation, or an earlier attempt was handed down or failed: a spoken answer now beats waiting on a task. Hand it down instead only when they ask for something made from it (a report, a document, a message to someone).",
     "- Anything else that needs doing, looking up, checking, writing, sending, deciding, or knowing more than you can see: first say one short neutral line such as \"Let me look into that.\", then call hand_down with a request your working self can act on without hearing this call. Use the owner's own words and add nothing they did not say. Do not guess instead, and never turn a request away as outside your role: your working self can research, check and do far more than you can see, so hand it down.",
     "- Never say something is started, sent, booked or done unless you can see it below, and never estimate time or progress (no \"almost done\", no \"in a minute\"). After hand_down, say you are on it, not that it is done.",
@@ -306,7 +307,7 @@ const TOOLS = [
     function: {
       name: "quick_lookup",
       description:
-        "Look one thing up on the web and answer it aloud yourself, for a question of fact that needs no files, apps or actions (news, prices, scores, benchmarks, opening hours). Takes a few seconds; if it takes too long it is handed down automatically.",
+        "Look one thing up on the web and answer it aloud yourself, for a question of fact that needs no files, apps or actions (news, prices, scores, benchmarks, opening hours). Never for something to be DONE, even if doing it starts with a search (book, reserve, buy, send, schedule, order): that is hand_down. Takes a few seconds; if it takes too long it is handed down automatically.",
       parameters: {
         type: "object",
         properties: { query: { type: "string", description: "The question to look up, self-contained." } },
@@ -641,7 +642,13 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
 
     let handed = false;
     for (const { name, args } of calls.values()) {
-      if (name === "quick_lookup" && !handed && lookupSource) {
+      // Something to be done is work, even when doing it starts with a
+      // search: grok-4.20 looked up "book me a table" instead of handing it
+      // down, whatever the tool text said.
+      if (name === "quick_lookup" && !handed && (WORK_ASKED.test(options.said) || OWNERS_OWN.test(options.said))) {
+        handed = true;
+        yield { type: "hand_down", request: options.said };
+      } else if (name === "quick_lookup" && !handed && lookupSource) {
         let query = "";
         try {
           const parsed = JSON.parse(args || "{}");
@@ -652,6 +659,9 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
         query ||= options.said;
         handed = true;
         clearTimeout(wholeTurn);
+        // a lookup takes seconds: never start one in silence (Pipecat speaks
+        // a line the moment a tool call starts; some models skip the line)
+        if (!`${streamed} ${spoken}`.trim()) yield { type: "sentence", text: "Let me check." };
         yield { type: "lookup", query };
         // The lookup has its own clock. Nothing heard by LOOKUP_TIMEOUT_MS,
         // or any failure before the first sentence: the engine takes it, so
@@ -749,6 +759,12 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
   }
 }
 
+/** About the owner's own things, which the web cannot know: what is waiting
+ *  on me, my calendar, my inbox. grok-4.20 once looked up "current time and
+ *  date" for "What's waiting on me?". */
+const OWNERS_OWN = /\b(waiting (on|for) me|on my plate|my (day|board|inbox|e-?mails?|mail|calendar|schedule|meetings?|approvals?|tasks?|to-?dos?|week|morning|afternoon|evening|tonight))\b/i;
+/** The owner asked for something to be DONE: book me a, send the, order... */
+const WORK_ASKED = /\b(book|reserve|buy|order|purchase|send|email|text|message|schedule|pay|sign (me )?up|register|cancel|move|reschedule)\s+(me|us|a|an|the|my|our|it|that|this|him|her|them|some|\d)\b/i;
 const STOP_ASKED = /\b(stop|cancel|never ?mind|forget (it|that)|halt|drop it)\b/i;
 /** "Don't stop", "keep going", "I won't stop it": the opposite of a stop. */
 const KEEP_GOING = /\b(don'?t|do not|won'?t|will not|not|never)\s+(\w+\s+){0,2}(stop|cancel|halt)|\bkeep (going|at it|on)|\bcarry on\b/i;

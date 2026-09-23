@@ -43,7 +43,10 @@ interface ConnectionSource {
 const PLAN: Record<VoicePart, Array<[ProviderPreset, string]>> = {
   host: [
     ["flux", "claude-haiku-4-5"], // measured: 13/13 routing, first words 1.2-2.2 s
-    ["xai", "grok-4-1-fast-non-reasoning"], // measured: 12/12 routing, first words 0.6-1.1 s
+    // xAI's current fast model (2026-09-23). grok-4-1-fast-non-reasoning
+    // still answers but is gone from xAI's model list; grok-4.7, the newest,
+    // reasons first: 2.5-6 s to first words and 4 of 21 checks missed.
+    ["xai", "grok-4.20-non-reasoning"], // measured: 20/21, first words 0.6-0.9 s
     ["anthropic", "claude-haiku-4-5"], // same model as Flux's default, direct
     ["openai", "gpt-6-luna"],
     ["groq", "openai/gpt-oss-120b"],
@@ -51,7 +54,7 @@ const PLAN: Record<VoicePart, Array<[ProviderPreset, string]>> = {
   ],
   lookup: [
     ["flux", "flux-voice-lookup"], // xAI web search behind Flux
-    ["xai", "grok-4-1-fast-non-reasoning"], // measured: answers with citations in 3-7 s
+    ["xai", "grok-4.20-non-reasoning"], // measured: web lookups 1.9-6 s (grok-4.7: 21-31 s)
     ["openai", "gpt-6-luna"], // Responses API web_search tool
     ["anthropic", "claude-haiku-4-5"], // Messages API web_search server tool
   ],
