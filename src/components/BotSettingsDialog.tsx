@@ -6,9 +6,9 @@ import { BOT_SETTINGS_SECTIONS, filterBotSettingsSections, type BotSettingsSecti
 import { BotSettingsDraftContext, BotSettingsNavigationContext, type BotSettingsDraft } from "./bot-settings-drafts";
 
 export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
-  const { dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
+  const { state, dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const [section, setSection] = useState<BotSettingsSection>("overview"), [query, setQuery] = useState("");
+  const [section, setSection] = useState<BotSettingsSection>(state.botSettingsIntent?.section ?? "overview"), [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
   const matches = useMemo(() => filterBotSettingsSections(query), [query]);
   const selected = BOT_SETTINGS_SECTIONS.find(item => item.id === section)!;

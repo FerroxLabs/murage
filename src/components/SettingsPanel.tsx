@@ -782,15 +782,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </SettingsSection>
 
 
-          {/* "Add a skill" is the other end of assignment: it opens the
-              library with THIS agent already chosen, so the person never has
-              to say which agent twice. */}
+          {/* "Add a skill" picks and adds skills right here, inside this
+              window (skills/SkillPicker): nothing to close, nothing behind. */}
           <SettingsSection id="skills" active={section}>
-          <BotSkillsPanel
-            key={`skills-${bot.id}`}
-            bot={bot}
-            onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }))}
-          />
+          <BotSkillsPanel key={`skills-${bot.id}`} bot={bot} />
           </SettingsSection>
 
 

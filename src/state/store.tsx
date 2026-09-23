@@ -606,6 +606,9 @@ export interface AppState {
   webhookAttempts: WebhookAttempt[];
   webhookIngress: WebhookIngressStatus | null;
   settingsOpen: boolean;
+  /** Where the bot window opens next: a section, and for Skills whether the
+   *  picker starts open ("Add a skill" from the sidebar). Read once. */
+  botSettingsIntent?: { section: "skills"; addSkill: boolean } | null;
   pluginsOpen: boolean;
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
@@ -893,7 +896,8 @@ export type Action =
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
-  | { type: "toggleSettings"; open?: boolean }
+  | { type: "toggleSettings"; open?: boolean; intent?: { section: "skills"; addSkill: boolean } }
+  | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
@@ -1538,11 +1542,14 @@ export function reducer(state: AppState, action: Action): AppState {
         error: action.message,
       };
     // bot settings, the computer panel, and app settings share the right slot
+    case "clearBotSettingsIntent":
+      return state.botSettingsIntent ? { ...state, botSettingsIntent: null } : state;
     case "toggleSettings": {
       const open = action.open ?? !state.settingsOpen;
       return {
         ...state,
         settingsOpen: open,
+        botSettingsIntent: open ? action.intent ?? null : null,
         computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
         appSettingsOpen: open ? false : state.appSettingsOpen,

@@ -7,6 +7,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/cn";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { SkillPicker } from "./skills/SkillPicker";
 import { Switch } from "./SettingsPrimitives";
 
 /** Mirrors SkillListing in server/skills.ts — the exact shape
@@ -23,6 +24,8 @@ export interface BotSkill {
   compatibility?: string;
   warnings: string[];
   skippedFiles: string[];
+  /** Skill Guard's verdict (server/skill-guard). */
+  scan?: { verdict: "clean" | "review" | "blocked"; findings: Array<{ message: string }>; contentHash: string };
 }
 
 /** stagedSkillListing() in server/index.ts strips files and the base hashes;
@@ -88,14 +91,15 @@ export function skillDescriptionLine(skill: BotSkill): string {
   return source || "No description";
 }
 
-/** What the owner reads before switching on a skill Skill Guard says needs a
- *  look: each finding once, in plain words. */
-export function skillReviewPrompt(name: string, scan: { findings: Array<{ message: string }> }): string {
-  const lines = [...new Set(scan.findings.map((finding) => finding.message))].map((message) => `- ${message}`).join("\n");
-  return `\u201c${name}\u201d needs a look before it is switched on.\n\n${lines}\n\nUse it anyway?`;
+/** Each Skill Guard finding once, in plain words. */
+export function skillFindingLines(scan: { findings: Array<{ message: string }> }): string[] {
+  return [...new Set(scan.findings.map((finding) => finding.message))];
 }
 
 type SkillRefusal = { status?: number; body?: { code?: string; scan?: { contentHash?: string; findings?: Array<{ message: string }> } } };
+/** A skill Skill Guard says needs a look: what to show, and the content the
+ *  owner's yes will cover. */
+export type NeedsLook = { lines: string[]; contentHash: string };
 
 export async function toggleSkillEnabled({
   botId,
@@ -103,37 +107,25 @@ export async function toggleSkillEnabled({
   enabled,
   apply,
   request,
-  confirm = (text) => window.confirm(text),
+  acknowledged,
 }: {
   botId: string;
   name: string;
   enabled: boolean;
   apply: (update: (current: BotSkill[]) => BotSkill[]) => void;
   request: (path: string, init: RequestInit) => Promise<unknown>;
-  /** Asked before a skill that needs a look is switched on. */
-  confirm?: (text: string) => boolean;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+  /** The content hash of findings the owner was shown and accepted. */
+  acknowledged?: string;
+}): Promise<{ ok: true } | { ok: false; error: string } | { ok: false; needsLook: NeedsLook }> {
   // Optimistic, and rolled back by the inverse edit rather than by restoring a
   // captured snapshot — a second toggle on another row must survive this one
   // failing.
   apply((current) => applySkillEnabled(current, name, enabled));
-  const path = `/api/bots/${botId}/skills/${encodeURIComponent(name)}`;
   try {
-    let result: { skill?: BotSkill };
-    try {
-      result = (await request(path, { method: "PATCH", body: JSON.stringify({ enabled }) })) as { skill?: BotSkill };
-    } catch (cause) {
-      // Skill Guard: a skill that needs a look is switched on only once the
-      // owner has read its findings and said yes to exactly that content.
-      const refusal = (cause as SkillRefusal)?.body;
-      const hash = refusal?.scan?.contentHash;
-      if (!enabled || (cause as SkillRefusal)?.status !== 409 || refusal?.code !== "needs-review" || !hash) throw cause;
-      if (!confirm(skillReviewPrompt(name, { findings: refusal.scan?.findings ?? [] }))) {
-        apply((current) => applySkillEnabled(current, name, !enabled));
-        return { ok: true };
-      }
-      result = (await request(path, { method: "PATCH", body: JSON.stringify({ enabled, acknowledged: hash }) })) as { skill?: BotSkill };
-    }
+    const result = (await request(`/api/bots/${botId}/skills/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: JSON.stringify(acknowledged ? { enabled, acknowledged } : { enabled }),
+    })) as { skill?: BotSkill };
     // The server answers with the authoritative listing. An enable it declined
     // to honour (stored SKILL.md changed after review) comes back disabled with
     // its warning attached, so the row must follow the answer, not the request.
@@ -141,6 +133,12 @@ export async function toggleSkillEnabled({
     return { ok: true };
   } catch (cause) {
     apply((current) => applySkillEnabled(current, name, !enabled));
+    // Skill Guard: needs a look. Not an error; the panel asks, in place (a
+    // native confirm() is dismissed under automation and reads as "no").
+    const refusal = (cause as SkillRefusal)?.body;
+    if (enabled && (cause as SkillRefusal)?.status === 409 && refusal?.code === "needs-review" && refusal.scan?.contentHash) {
+      return { ok: false, needsLook: { lines: skillFindingLines({ findings: refusal.scan.findings ?? [] }), contentHash: refusal.scan.contentHash } };
+    }
     return { ok: false, error: skillErrorMessage(cause, `Could not ${enabled ? "enable" : "disable"} “${name}”.`) };
   }
 }
@@ -168,6 +166,8 @@ export interface SkillsSnapshot {
   /** Keyed by skill name so one row's failure never speaks for another's. */
   rowErrors: ReadonlyMap<string, string>;
   viewing: SkillView | null;
+  /** A skill that needs a look, waiting on the owner's "Use it anyway". */
+  confirming: ({ name: string } & NeedsLook) | null;
 }
 
 export const INITIAL_SKILLS_SNAPSHOT: SkillsSnapshot = {
@@ -178,6 +178,7 @@ export const INITIAL_SKILLS_SNAPSHOT: SkillsSnapshot = {
   busy: new Set<string>(),
   rowErrors: new Map<string, string>(),
   viewing: null,
+  confirming: null,
 };
 
 export interface SkillsStore {
@@ -186,7 +187,9 @@ export interface SkillsStore {
   load: (options?: { silent?: boolean }) => Promise<void>;
   open: (skill: BotSkill) => Promise<void>;
   back: () => void;
-  toggle: (skill: BotSkill) => Promise<void>;
+  toggle: (skill: BotSkill, acknowledged?: string) => Promise<void>;
+  /** The owner's answer to "Use it anyway?" for a skill that needs a look. */
+  confirm: (yes: boolean) => Promise<void>;
   remove: (skill: BotSkill) => Promise<void>;
 }
 
@@ -273,7 +276,7 @@ export function createSkillsStore({
 
   const back = () => set({ viewing: null });
 
-  const toggle = async (skill: BotSkill) => {
+  const toggle = async (skill: BotSkill, acknowledged?: string) => {
     // Switching a skill ON is the moment its instructions reach the engine, so
     // the SKILL.md is put in front of the person first; the switch in that view
     // does the write. Switching OFF needs no reading.
@@ -282,6 +285,11 @@ export function createSkillsStore({
       return;
     }
     if (snapshot.busy.has(skill.name)) return;
+    // Skill Guard: a skill that needs a look asks first, with its findings.
+    if (!skill.enabled && !acknowledged && skill.scan?.verdict === "review") {
+      set({ confirming: { name: skill.name, lines: skillFindingLines(skill.scan), contentHash: skill.scan.contentHash } });
+      return;
+    }
     setBusy(skill.name, true);
     setRowError(skill.name, "");
     const result = await toggleSkillEnabled({
@@ -290,9 +298,23 @@ export function createSkillsStore({
       enabled: !skill.enabled,
       apply: (update) => set({ skills: update(snapshot.skills) }),
       request,
+      acknowledged,
     });
     setBusy(skill.name, false);
+    if (!result.ok && "needsLook" in result) {
+      set({ confirming: { name: skill.name, ...result.needsLook } });
+      return;
+    }
     setRowError(skill.name, result.ok ? "" : result.error);
+  };
+
+  /** The owner's answer to "Use it anyway?". */
+  const confirm = async (yes: boolean) => {
+    const asked = snapshot.confirming;
+    set({ confirming: null });
+    if (!yes || !asked) return;
+    const skill = snapshot.skills.find((entry) => entry.name === asked.name);
+    if (skill) await toggle(skill, asked.contentHash);
   };
 
   const remove = async (skill: BotSkill) => {
@@ -332,6 +354,7 @@ export function createSkillsStore({
     open,
     back,
     toggle,
+    confirm,
     remove,
   };
 }
@@ -355,6 +378,9 @@ export interface SkillsBodyProps {
   onRetry: () => void;
   onToggle: (skill: BotSkill) => void;
   onRemove: (skill: BotSkill) => void;
+  /** A skill waiting on "Use it anyway", and the answer. */
+  confirming?: ({ name: string } & NeedsLook) | null;
+  onConfirm?: (yes: boolean) => void;
   /** SEAM — "Add a skill" opens the library browser with THIS agent already
    *  chosen. Assignment is one action, `assign(skillId, botId)`; this end
    *  pre-fills the agent, the library's own row action pre-fills the skill.
@@ -444,9 +470,26 @@ export function SkillsBody(props: SkillsBodyProps) {
               // Only ENABLING waits on the text: an already-on skill must stay
               // switchable off even when its SKILL.md will not load, or a
               // failed read would strand it on.
-              disabled={props.busy.has(skill.name) || (!skill.enabled && viewing.text === null)}
+              disabled={props.busy.has(skill.name) || (!skill.enabled && (viewing.text === null || skill.scan?.verdict === "blocked"))}
               onClick={() => props.onToggle(skill)}
             />
+          </div>
+        )}
+        {skill && !skill.enabled && skill.scan?.verdict === "blocked" && (
+          <div role="note" className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">
+            This skill was blocked by the safety check and can't be switched on.
+            <ul className="mt-1 list-disc pl-4">{skillFindingLines(skill.scan).map((line) => <li key={line}>{line}</li>)}</ul>
+          </div>
+        )}
+        {skill && props.confirming?.name === skill.name && (
+          <div role="alertdialog" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
+            <div className="font-medium">Use {skill.name} anyway?</div>
+            <p className="mt-1 text-ink-secondary">The safety check found:</p>
+            <ul className="mt-1 list-disc pl-4 text-ink-secondary">{props.confirming.lines.map((line) => <li key={line}>{line}</li>)}</ul>
+            <div className="mt-3 flex gap-2">
+              <button type="button" onClick={() => props.onConfirm?.(true)} className="rounded-lg bg-warning px-3 py-1.5 text-[12.5px] font-medium text-white">Use it anyway</button>
+              <button type="button" onClick={() => props.onConfirm?.(false)} className="rounded-lg bg-control px-3 py-1.5 text-[12.5px] font-medium text-ink">Cancel</button>
+            </div>
           </div>
         )}
         {skill && skill.warnings.length > 0 && (
@@ -645,8 +688,15 @@ export function SkillsBody(props: SkillsBodyProps) {
  * bot and ask what it can do. A disabled skill opens its SKILL.md before it
  * can be switched on: an import lands off precisely so the bytes get read
  * once (see the policy note above the routes in server/index.ts). */
-export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => void }) {
-  const { state } = useStore();
+export function BotSkillsPanel({ bot }: { bot: Bot }) {
+  const { state, dispatch } = useStore();
+  // "Add a skill" opens the picker right here, inside this window; the
+  // sidebar's "Add a skill" arrives with it already open.
+  const [adding, setAdding] = useState(Boolean(state.botSettingsIntent?.addSkill));
+  useEffect(() => {
+    if (state.botSettingsIntent) dispatch({ type: "clearBotSettingsIntent" });
+    // read once, when the window opens
+  }, []);
   const authoringEnabled = skillRecorderEnabled(state.config);
   const canEditHistory = useDesktopSurface() === true;
   const [query, setQuery] = useState("");
@@ -672,6 +722,17 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
       <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
         What {bot.name} knows how to do. Open one to read its instructions before you switch it on.
       </div>
+      {adding ? (
+        <SkillPicker
+          botId={bot.id}
+          botName={bot.name}
+          onDone={() => {
+            setAdding(false);
+            invalidateSkillCount(bot.id);
+            void store.load({ silent: true });
+          }}
+        />
+      ) : (
       <SkillsBody
         botName={bot.name}
         phase={snapshot.phase}
@@ -679,7 +740,7 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
         staged={snapshot.staged.length}
         loadFailure={snapshot.loadFailure}
         authoringEnabled={authoringEnabled}
-        onBrowse={onBrowse}
+        onBrowse={() => setAdding(true)}
         query={query}
         onQuery={(value) => {
           setQuery(value);
@@ -694,6 +755,8 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
         onBack={() => store.back()}
         onRetry={() => void store.load()}
         onToggle={(skill) => void store.toggle(skill)}
+        confirming={snapshot.confirming}
+        onConfirm={(yes) => void store.confirm(yes)}
         // NO NATIVE CONFIRM DIALOG HERE, and that is the fix, not an
         // oversight — the string is asserted absent in UsagePopover.test.ts.
         //
@@ -713,6 +776,7 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
         // and it arrives switched on" — and the row says so on the control.
         onRemove={(skill) => void store.remove(skill)}
       />
+      )}
       {snapshot.viewing&&<SkillVersionHistory botId={bot.id} name={snapshot.viewing.name} threadId={bot.threadId} canEdit={canEditHistory} onRestored={()=>{
         void store.load({silent:true});
         const selected=snapshot.skills.find(skill=>skill.name===snapshot.viewing?.name);

@@ -1194,8 +1194,11 @@ export function BotContextMenu({
           dispatch({ type: "markUnread", botId: bot.id }),
         ),
         divider("d1"),
+        // Straight to this bot's window, picker open: finding a skill never
+        // means leaving the bot you are adding it to.
         item(<BookOpen size={16} className="text-ink-secondary" />, "Add a skill", () => {
-          dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" });
+          dispatch({ type: "select", id: bot.id });
+          dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } });
         }),
         item(<Pencil size={16} className="text-ink-secondary" />, "Bot settings", () => {
           dispatch({ type: "select", id: bot.id });

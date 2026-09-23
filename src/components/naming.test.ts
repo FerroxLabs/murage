@@ -93,9 +93,14 @@ describe("skills are skills, and 'Add a skill' opens them", () => {
     expect(library).toContain('entry.skills.length === 1 ? "skill" : "skills"');
   });
 
-  it("lands on the Skills tab from both doors into it", () => {
-    expect(read("./Sidebar.tsx")).toContain('showTeamLibrary", botId: bot.id, view: "skills"');
-    expect(read("./SettingsPanel.tsx")).toContain('showTeamLibrary", botId: bot.id, view: "skills"');
+  it("adds a skill inside the bot's own window, from both doors into it", () => {
+    // The sidebar opens that bot's window at Skills with the picker open; the
+    // window's own button opens the same picker in place. Neither sends the
+    // owner to a library behind the window they are in.
+    expect(read("./Sidebar.tsx")).toContain('intent: { section: "skills", addSkill: true }');
+    expect(read("./BotSkillsPanel.tsx")).toContain("onBrowse={() => setAdding(true)}");
+    expect(read("./BotSkillsPanel.tsx")).toContain("<SkillPicker");
+    expect(read("./SettingsPanel.tsx")).not.toContain('showTeamLibrary", botId: bot.id, view: "skills"');
   });
 
   it("titles the dialog by where you came from, and says Close", () => {

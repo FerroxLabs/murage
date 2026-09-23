@@ -79,9 +79,9 @@ describe("the bot row's menu is reachable without a right-click", () => {
 describe("every way into skill assignment", () => {
   it("1. the bot menu offers it", () => {
     expect(sidebar).toContain('"Add a skill"');
-    // 0.1.57: it lands on the Skills tab, not on Teams. Arriving at the wrong
-    // tab is what made "Add a skill" open a page about teams.
-    expect(sidebar).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" })');
+    // It opens THAT bot's own window at Skills with the picker open, so the
+    // skill is chosen where it is added (0.1.57 sent it to a library tab).
+    expect(sidebar).toContain('dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: true } })');
   });
 
   it("2. the agent's own Skills panel offers it, with that agent pre-filled", () => {
@@ -91,13 +91,11 @@ describe("every way into skill assignment", () => {
     // pointed at a menu three levels away; a bot that already has skills had
     // no way to add another from here at all.
     expect(skillsPanel.match(/props\.onBrowse && <AddSkillButton/g)).toHaveLength(2);
-    // Since the settings moved into a dialog (949a66bb) the jump goes through
-    // the dialog's `navigate()` — the same guard as Close, so a half-typed
-    // instruction draft is confirmed, not silently lost, when the library
-    // replaces the dialog. The destination and the pre-filled agent are
-    // unchanged.
-    expect(settings).toContain('onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }))}');
-    expect(settings).toContain("const navigate = useBotSettingsNavigation();");
+    // The picker opens in place, inside the bot window: nothing replaces the
+    // dialog, so no draft is at risk and nothing opens behind it.
+    expect(skillsPanel).toContain("onBrowse={() => setAdding(true)}");
+    expect(skillsPanel).toContain("<SkillPicker");
+    expect(settings).not.toContain('showTeamLibrary", botId: bot.id, view: "skills"');
   });
 
   it("3. the library's own skill rows offer it, naming the agent", () => {

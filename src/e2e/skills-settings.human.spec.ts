@@ -12,13 +12,13 @@ import { ZipFile } from "yazl";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 
-let server: ViteDevServer, origin: string, cache: string, harness: VerificationServer;
+let server: ViteDevServer, origin: string, cache: string, harness: VerificationServer, sable: { id: string; name: string; threadId: string };
 
 test.beforeAll(async () => {
   harness = await launchVerificationServer(process.env);
   const secret = ((await (await fetch(harness.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
   const headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
-  await fetch(harness.info.url + "/api/bots", { method: "POST", headers, body: JSON.stringify({ name: "Sable", modelSelection: { instanceId: "verification", model: "fake" } }) });
+  sable = ((await (await fetch(harness.info.url + "/api/bots", { method: "POST", headers, body: JSON.stringify({ name: "Sable", modelSelection: { instanceId: "verification", model: "fake" } }) })).json()) as { bot: typeof sable }).bot;
 
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-skills-settings-ui-"));
@@ -31,17 +31,19 @@ test.beforeAll(async () => {
     },
     plugins: [tailwindcss(), {
       name: "skills-settings-fixture",
-      resolveId(id) { if (id === "/__skills.js") return "\0skills-settings"; if (id === "/skills-fixture-store") return "\0skills-store"; },
+      resolveId(id) { if (id === "/__skills.js") return "\0skills-settings"; if (id === "/__botskills.js") return "\0bot-skills"; if (id === "/skills-fixture-store") return "\0skills-store"; },
       load(id) {
         // The real api() contract: JSON in and out, and a refusal carries its status and body.
-        if (id === "\0skills-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}";
+        if (id === "\0skills-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(){}};}";
+        if (id === "\0bot-skills") return "import React from 'react';import {createRoot} from 'react-dom/client';import {BotSkillsPanel} from '/src/components/BotSkillsPanel.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';createRoot(document.getElementById('root')).render(React.createElement(BotSkillsPanel,{bot:{id:q.get('id'),name:q.get('name'),threadId:q.get('thread')}}));";
         if (id !== "\0skills-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {SkillsSettings} from '/src/components/skills/SkillsSettings.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(SkillsSettings));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
-        if (req.url !== "/__skills" && !req.url?.startsWith("/__skills?")) return next();
+        const page = req.url === "/__skills" || req.url?.startsWith("/__skills?") ? "/__skills.js" : req.url?.startsWith("/__botskills?") ? "/__botskills.js" : null;
+        if (!page) return next();
         res.setHeader("content-type", "text/html");
-        res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:680px;margin:16px auto"></main><script type="module" src="/__skills.js"></script>');
+        res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:680px;margin:16px auto"></main><script type="module" src="' + page + '"></script>');
       }); },
     }],
   });
@@ -132,4 +134,21 @@ test("a search with no results says so", async ({ page }) => {
   await page.goto(origin + "/__skills");
   await page.getByLabel("Search skills").fill("zzqxv nothing matches this");
   await expect(page.getByText("No skills match “zzqxv nothing matches this”.")).toBeVisible();
+});
+
+test("Add a skill works inside the bot's own window, with nothing to close", async ({ page }, info) => {
+  await page.goto(`${origin}/__botskills?id=${sable.id}&name=${encodeURIComponent(sable.name)}&thread=${sable.threadId}`);
+  await page.getByRole("button", { name: "Add a skill to Sable" }).click();
+  await expect(page.getByRole("heading", { name: "Add a skill to Sable" })).toBeVisible();
+  await page.getByLabel("Search skills to add").fill("invoice creator");
+  // wait for the search, not the list it replaces
+  await page.getByRole("button", { name: /^Invoice Creator/ }).first().click();
+  await expect(page.getByText("What it tells the bot")).toBeVisible();
+  await page.screenshot({ path: info.outputPath("bot-window-picker.png"), fullPage: true });
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Added")).toBeVisible();
+  await page.getByRole("button", { name: "All skills" }).click();
+  await page.getByRole("button", { name: "Sable's skills" }).click();
+  await expect(page.getByRole("button", { name: "Add a skill to Sable" })).toBeVisible();
+  await expect(page.getByRole("switch", { checked: true }).first()).toBeVisible();
 });
