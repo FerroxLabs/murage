@@ -213,7 +213,7 @@ Rules (ported from Wayland Skill Guard, with the `.env` over-match split out, an
 | SG1m | credential-mention | medium | 0.6 | `/~\/\.ssh\/|\bid_rsa\b|\.aws\/credentials|\.env\b/i` (only when SG1 did not match) |
 | SG2 | network-exfiltration | critical | 0.9 | `/\b(curl|wget)\b[^\n]*(?:\bPOST\b|--data|--upload-file|-T\s)/i` |
 | SG3 | shell-execution | critical | 0.9 | `/\brm\s+-rf\s+\/(?!\w)|\b(?:curl|wget)\b[^\n]{0,200}\|\s*(?:ba|z|da)?sh\b|\beval\s*[(`]/i` |
-| SG4 | filesystem-write | medium | 0.7 | `/\b(?:write|tee|>>?)\s+\/etc\/|~\/Library\/(?:Application Support|Preferences)\/|~\/\.config\/[a-z]/i` |
+| SG4 | filesystem-write | medium | 0.7 | `/(?:\b(?:write|tee)|>>?)\s*\/etc\/|~\/Library\/(?:Application Support|Preferences)\/|~\/\.config\/[a-z]/i` |
 | SG5 | instruction-override | medium | 0.8 | `/\bignore (?:previous|prior|all|the above) instructions\b|\bdisregard (?:the |your )?(?:system |previous )?(?:prompt|instructions)\b|\boverride (?:the |your )?system\b/i` |
 | SG6 | obfuscation | medium | 0.75 | a base64 run of 80+ chars AND `/\batob\s*\(|\bbase64\s+-(?:d|-decode)\b|\bopenssl\s+enc\b/i` in the same text; or a base64 run of 120+ chars alone at confidence 0.6 |
 | M1 | hidden-text | medium | 0.8 | zero-width `[\u200B\u200C\u2060-\u2064]`, or `\uFEFF` anywhere but offset 0; `\u200D` only when neither neighbour is an emoji (`\p{Extended_Pictographic}`) |
@@ -338,7 +338,7 @@ export const SKILL_RULES: SkillRule[] = [
   { id: "SG3", category: "shell-execution", severity: "critical", confidence: 0.9, source: "skill-guard",
     test: (t) => first(t, /\brm\s+-rf\s+\/(?!\w)|\b(?:curl|wget)\b[^\n]{0,200}\|\s*(?:ba|z|da)?sh\b|\beval\s*[(`]/i) },
   { id: "SG4", category: "filesystem-write", severity: "medium", confidence: 0.7, source: "skill-guard",
-    test: (t) => first(t, /\b(?:write|tee|>>?)\s+\/etc\/|~\/Library\/(?:Application Support|Preferences)\/|~\/\.config\/[a-z]/i) },
+    test: (t) => first(t, /(?:\b(?:write|tee)|>>?)\s*\/etc\/|~\/Library\/(?:Application Support|Preferences)\/|~\/\.config\/[a-z]/i) },
   { id: "SG5", category: "instruction-override", severity: "medium", confidence: 0.8, source: "skill-guard",
     test: (t) => first(t, /\bignore (?:previous|prior|all|the above) instructions\b|\bdisregard (?:the |your )?(?:system |previous )?(?:prompt|instructions)\b|\boverride (?:the |your )?system\b/i) },
   { id: "SG6", category: "obfuscation", severity: "medium", confidence: 0.75, source: "skill-guard",
