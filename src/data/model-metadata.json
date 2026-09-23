@@ -5,10 +5,10 @@
   "url": "https://models.dev/api.json",
   "repository": "https://github.com/anomalyco/models.dev",
   "license": "MIT",
-  "fetchedAt": "2026-09-18",
-  "etag": "W/\"f4a74b088328114fd0125dc7e86fb1f0\""
+  "fetchedAt": "2026-09-23",
+  "etag": "W/\"4a5e39dac76169586f6edf0360820cd0\""
  },
- "digest": "5dd0ee13652cacbe4959622dde22d24405946694ce5bb156beb1c473c071d720",
+ "digest": "975eab00149c50cee4adb7b7b0a8ce57de9a4e8db8a7ade833efcd97ca08ff63",
  "providers": {
   "302ai": {
    "name": "302.AI",
@@ -2308,6 +2308,15 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-fable-5-1": {
+     "name": "Claude Fable 5.1",
+     "inputPerMillion": 11,
+     "outputPerMillion": 55,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-opus-4-6": {
      "name": "Claude Opus 4.6",
      "inputPerMillion": 5,
@@ -2479,6 +2488,23 @@
      "tools": true,
      "reasoning": true
     },
+    "deepseek-v4-flash-0731-fast": {
+     "name": "DeepSeek V4 Flash 0731 Fast",
+     "inputPerMillion": 0.28,
+     "outputPerMillion": 1.4,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4-flash-vision-exp": {
+     "name": "DeepSeek V4 Flash Vision Exp",
+     "inputPerMillion": 0.155,
+     "outputPerMillion": 0.62,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "deepseek-v4-pro-0813": {
      "name": "DeepSeek V4 Pro 0813",
      "inputPerMillion": 0.6918,
@@ -2559,11 +2585,28 @@
      "tools": true,
      "reasoning": true
     },
+    "gemini-3.1-flash-image": {
+     "name": "Nano Banana 2",
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 3,
+     "contextWindow": 131072,
+     "vision": true,
+     "reasoning": true
+    },
     "gemini-3.1-flash-lite": {
      "name": "Gemini 3.1 Flash Lite",
      "inputPerMillion": 0.25,
      "outputPerMillion": 1.5,
      "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gemini-3.1-flash-lite-image": {
+     "name": "Nano Banana 2 Lite",
+     "inputPerMillion": 0.25,
+     "outputPerMillion": 1.5,
+     "contextWindow": 65536,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -2595,8 +2638,35 @@
      "tools": true,
      "reasoning": true
     },
+    "gemini-3.5-flash-lite": {
+     "name": "Gemini 3.5 Flash Lite",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 2.499999,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gemini-3.6-flash": {
+     "name": "Gemini 3.6 Flash",
+     "inputPerMillion": 1.5,
+     "outputPerMillion": 7.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "gemini-3.7-flash": {
      "name": "Gemini 3.7 Flash",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 3.75,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gemini-3.8-flash": {
+     "name": "Gemini 3.8 Flash",
      "inputPerMillion": 0.75,
      "outputPerMillion": 3.75,
      "contextWindow": 1048576,
@@ -2746,6 +2816,15 @@
      "tools": true,
      "reasoning": true
     },
+    "gpt-6-astra": {
+     "name": "GPT-6 Astra",
+     "inputPerMillion": 10,
+     "outputPerMillion": 50,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "grok-4.3": {
      "name": "Grok 4.3",
      "inputPerMillion": 1.25,
@@ -2782,11 +2861,27 @@
      "tools": true,
      "reasoning": true
     },
+    "hy3": {
+     "name": "Hy3",
+     "inputPerMillion": 0.1562,
+     "outputPerMillion": 0.6248,
+     "contextWindow": 256000,
+     "tools": true,
+     "reasoning": true
+    },
     "hy3-preview": {
      "name": "Hy3 Preview",
      "inputPerMillion": 0.17,
      "outputPerMillion": 0.566661,
      "contextWindow": 256000,
+     "tools": true,
+     "reasoning": true
+    },
+    "hy4-preview": {
+     "name": "Hy4 preview",
+     "inputPerMillion": 0.845,
+     "outputPerMillion": 2.535,
+     "contextWindow": 1024000,
      "tools": true,
      "reasoning": true
     },
@@ -2835,11 +2930,64 @@
      "tools": true,
      "reasoning": true
     },
+    "longcat-2.0": {
+     "name": "LongCat-2.0",
+     "inputPerMillion": 0.7746,
+     "outputPerMillion": 3.0984,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
     "minimax-m2.7": {
      "name": "MiniMax M2.7",
      "inputPerMillion": 0.3,
      "outputPerMillion": 1.2,
      "contextWindow": 204800,
+     "tools": true,
+     "reasoning": true
+    },
+    "minimax-m3": {
+     "name": "MiniMax-M3",
+     "inputPerMillion": 0.288,
+     "outputPerMillion": 1.152,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "muse-spark-1.1": {
+     "name": "Muse Spark 1.1",
+     "inputPerMillion": 1.375,
+     "outputPerMillion": 4.675,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "muse-spark-1.2": {
+     "name": "Muse Spark 1.2",
+     "inputPerMillion": 1.375,
+     "outputPerMillion": 4.675,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "muse-spark-1.3": {
+     "name": "Muse Spark 1.3",
+     "inputPerMillion": 1.375,
+     "outputPerMillion": 4.675,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "ox-alpha": {
+     "name": "Ox Alpha",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -2902,11 +3050,38 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen3.8-flash": {
+     "name": "Qwen3.8 Flash",
+     "inputPerMillion": 0.1126,
+     "outputPerMillion": 0.380025,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "qwen3.8-max": {
      "name": "Qwen3.8 Max",
      "inputPerMillion": 1.69,
      "outputPerMillion": 5.07,
      "contextWindow": 991000,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen3.8-omni-flash": {
+     "name": "Qwen3.8 Omni Flash",
+     "inputPerMillion": 0.1126,
+     "outputPerMillion": 0.380025,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "step-3.7-flash": {
+     "name": "Step 3.7 Flash",
+     "inputPerMillion": 0.22,
+     "outputPerMillion": 1.32,
+     "contextWindow": 256000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -3617,6 +3792,15 @@
      "tools": true,
      "reasoning": true
     },
+    "deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.29754,
+     "outputPerMillion": 1.19015,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "glm-5": {
      "name": "GLM-5",
      "inputPerMillion": 0.573,
@@ -3981,10 +4165,11 @@
     },
     "qwen3-max": {
      "name": "Qwen3 Max",
-     "inputPerMillion": 1.291,
-     "outputPerMillion": 7.749,
+     "inputPerMillion": 0.359,
+     "outputPerMillion": 1.434,
      "contextWindow": 262144,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "qwen3-next-80b-a3b-instruct": {
      "name": "Qwen3-Next 80B-A3B Instruct",
@@ -4056,8 +4241,8 @@
     },
     "qwen3.5-flash": {
      "name": "Qwen3.5 Flash",
-     "inputPerMillion": 0.172,
-     "outputPerMillion": 1.033,
+     "inputPerMillion": 0.029,
+     "outputPerMillion": 0.287,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -4065,8 +4250,8 @@
     },
     "qwen3.5-plus": {
      "name": "Qwen3.5 Plus",
-     "inputPerMillion": 0.287,
-     "outputPerMillion": 1.722,
+     "inputPerMillion": 0.115,
+     "outputPerMillion": 0.688,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -4967,6 +5152,15 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic.claude-sonnet-4-5-20250929-v1:0": {
      "name": "Claude Sonnet 4.5",
      "inputPerMillion": 3,
@@ -5066,6 +5260,15 @@
      "name": "Claude Opus 5 (AU)",
      "inputPerMillion": 5.5,
      "outputPerMillion": 27.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "au.anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (AU)",
+     "inputPerMillion": 4.4,
+     "outputPerMillion": 22,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -5224,6 +5427,15 @@
      "tools": true,
      "reasoning": true
     },
+    "eu.anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (EU)",
+     "inputPerMillion": 4.4,
+     "outputPerMillion": 22,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "eu.anthropic.claude-sonnet-4-20250514-v1:0": {
      "name": "Claude Sonnet 4 (EU)",
      "inputPerMillion": 3,
@@ -5344,6 +5556,15 @@
      "name": "Claude Opus 5 (Global)",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "global.anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (Global)",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -5536,6 +5757,15 @@
      "name": "Claude Opus 5 (JP)",
      "inputPerMillion": 5.5,
      "outputPerMillion": 27.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "jp.anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (JP)",
+     "inputPerMillion": 4.4,
+     "outputPerMillion": 22,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -6037,6 +6267,15 @@
      "tools": true,
      "reasoning": true
     },
+    "us.anthropic.claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (US)",
+     "inputPerMillion": 4.4,
+     "outputPerMillion": 22,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "us.anthropic.claude-sonnet-4-20250514-v1:0": {
      "name": "Claude Sonnet 4 (US)",
      "inputPerMillion": 3,
@@ -6479,6 +6718,15 @@
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -7050,6 +7298,15 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-sonnet-4-5": {
      "name": "Claude Sonnet 4.5",
      "inputPerMillion": 3,
@@ -7418,6 +7675,24 @@
      "tools": true,
      "reasoning": true
     },
+    "gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "gpt-chat-latest": {
      "name": "GPT Chat Latest",
      "inputPerMillion": 5,
@@ -7762,6 +8037,15 @@
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -9441,12 +9725,6 @@
      "tools": true,
      "reasoning": true
     },
-    "typesafe/jev": {
-     "name": "Jev",
-     "inputPerMillion": 0.042,
-     "outputPerMillion": 0,
-     "contextWindow": 32000
-    },
     "unbiased/pareto": {
      "name": "Pareto",
      "inputPerMillion": 2.5,
@@ -9492,6 +9770,15 @@
     },
     "xai/grok-4.6": {
      "name": "Grok 4.6",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xai/grok-4.7": {
+     "name": "Grok 4.7",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
      "contextWindow": 500000,
@@ -9809,6 +10096,14 @@
   "coralbricks": {
    "name": "CoralBricks",
    "models": {
+    "deepseek-v4.1-flash-fast-fp4": {
+     "name": "DeepSeek V4.1 Flash FP4",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
     "glm-5.3-flash-fp4": {
      "name": "GLM 5.3 Flash FP4",
      "inputPerMillion": 0.15,
@@ -9831,15 +10126,6 @@
      "inputPerMillion": 0.12,
      "outputPerMillion": 0.6,
      "contextWindow": 131072,
-     "tools": true,
-     "reasoning": true
-    },
-    "kimi-k3": {
-     "name": "Kimi K3",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
-     "contextWindow": 1048576,
-     "vision": true,
      "tools": true,
      "reasoning": true
     }
@@ -10612,9 +10898,9 @@
     },
     "qwen3-32b": {
      "name": "Qwen3 32B",
-     "inputPerMillion": 0.089,
-     "outputPerMillion": 0.312,
-     "contextWindow": 32000,
+     "inputPerMillion": 0.179,
+     "outputPerMillion": 0.697,
+     "contextWindow": 16384,
      "tools": true,
      "reasoning": true
     },
@@ -11325,6 +11611,15 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen/qwen3.8-omni-flash": {
+     "name": "Qwen3.8 Omni Flash",
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.43,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "tencent/hy3": {
      "name": "Hy3",
      "inputPerMillion": 0.16,
@@ -11368,6 +11663,15 @@
      "tools": true,
      "reasoning": true
     },
+    "x-ai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "x-ai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -11391,6 +11695,24 @@
      "inputPerMillion": 0.47,
      "outputPerMillion": 0.94,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.16,
+     "outputPerMillion": 0.32,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.47,
+     "outputPerMillion": 0.94,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -12380,8 +12702,8 @@
     },
     "tencent/Hy3": {
      "name": "Hy3",
-     "inputPerMillion": 0.14,
-     "outputPerMillion": 0.58,
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.53,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -12716,16 +13038,16 @@
     },
     "deepseek-3.2": {
      "name": "Deepseek 3.2",
-     "inputPerMillion": 0.25,
-     "outputPerMillion": 0.8,
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 1.6,
      "contextWindow": 163840,
      "tools": true,
      "reasoning": true
     },
     "deepseek-4-flash": {
      "name": "Deepseek V4 Flash",
-     "inputPerMillion": 0.0679,
-     "outputPerMillion": 0.168,
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
      "contextWindow": 1048576,
      "tools": true
     },
@@ -12744,16 +13066,16 @@
     },
     "deepseek-v4-flash-0731": {
      "name": "DeepSeek V4 Flash 0731",
-     "inputPerMillion": 0.08,
-     "outputPerMillion": 0.252,
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
     "deepseek-v4-pro": {
      "name": "Deepseek V4 Pro",
-     "inputPerMillion": 0.87,
-     "outputPerMillion": 1.74,
+     "inputPerMillion": 1.74,
+     "outputPerMillion": 3.48,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -12819,16 +13141,16 @@
     },
     "glm-5.2": {
      "name": "GLM-5.2",
-     "inputPerMillion": 0.7,
-     "outputPerMillion": 2.2,
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.4,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
     },
     "glm-5.3": {
      "name": "GLM5.3",
-     "inputPerMillion": 0.95,
-     "outputPerMillion": 3.4,
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.4,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -12868,8 +13190,8 @@
     },
     "kimi-k3": {
      "name": "Kimi K3",
-     "inputPerMillion": 2.55,
-     "outputPerMillion": 12.95,
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -12899,8 +13221,8 @@
     },
     "mimo-v2.5-pro": {
      "name": "MiMo V2.5 Pro",
-     "inputPerMillion": 0.4,
-     "outputPerMillion": 1.5,
+     "inputPerMillion": 0.8,
+     "outputPerMillion": 3,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -13173,8 +13495,8 @@
     },
     "openai-gpt-oss-120b": {
      "name": "OpenAI GPT-oss-120b",
-     "inputPerMillion": 0.055,
-     "outputPerMillion": 0.385,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.7,
      "contextWindow": 128000,
      "tools": true,
      "reasoning": true
@@ -13452,42 +13774,48 @@
      "inputPerMillion": 0.09,
      "outputPerMillion": 0.29,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/google.gemma-3-12b-it@us": {
      "name": "Gemma 3 12B IT (Amazon Bedrock, US)",
      "inputPerMillion": 0.09,
      "outputPerMillion": 0.29,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/google.gemma-3-27b-it": {
      "name": "Gemma 3 27B IT (Amazon Bedrock)",
      "inputPerMillion": 0.23,
      "outputPerMillion": 0.38,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/google.gemma-3-27b-it@us": {
      "name": "Gemma 3 27B IT (Amazon Bedrock, US)",
      "inputPerMillion": 0.23,
      "outputPerMillion": 0.38,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/google.gemma-3-4b-it": {
      "name": "Gemma 3 4B IT (Amazon Bedrock)",
      "inputPerMillion": 0.04,
      "outputPerMillion": 0.08,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/google.gemma-3-4b-it@us": {
      "name": "Gemma 3 4B IT (Amazon Bedrock, US)",
      "inputPerMillion": 0.04,
      "outputPerMillion": 0.08,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "amazon/mistral.pixtral-large-2502-v1:0": {
      "name": "Pixtral Large (25.02) (Amazon Bedrock)",
@@ -13531,7 +13859,8 @@
      "name": "Kimi K2 Thinking (Amazon Bedrock)",
      "inputPerMillion": 0.6,
      "outputPerMillion": 2.5,
-     "contextWindow": 128000,
+     "contextWindow": 256000,
+     "tools": true,
      "reasoning": true
     },
     "amazon/moonshotai.kimi-k2.5": {
@@ -13548,6 +13877,7 @@
      "inputPerMillion": 0.07,
      "outputPerMillion": 0.2,
      "contextWindow": 128000,
+     "tools": true,
      "reasoning": true
     },
     "amazon/openai.gpt-oss-safeguard-20b@us": {
@@ -13555,13 +13885,14 @@
      "inputPerMillion": 0.07,
      "outputPerMillion": 0.2,
      "contextWindow": 128000,
+     "tools": true,
      "reasoning": true
     },
     "amazon/zai.glm-4.7-flash": {
      "name": "GLM-4.7-Flash (Amazon Bedrock)",
      "inputPerMillion": 0.07,
      "outputPerMillion": 0.4,
-     "contextWindow": 200000,
+     "contextWindow": 203000,
      "tools": true,
      "reasoning": true
     },
@@ -13569,7 +13900,7 @@
      "name": "GLM-4.7-Flash (Amazon Bedrock, US)",
      "inputPerMillion": 0.07,
      "outputPerMillion": 0.4,
-     "contextWindow": 200000,
+     "contextWindow": 203000,
      "tools": true,
      "reasoning": true
     },
@@ -14062,8 +14393,8 @@
     },
     "deepinfra/tencent/Hy3": {
      "name": "Hy3 (Deep Infra)",
-     "inputPerMillion": 0.14,
-     "outputPerMillion": 0.58,
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.53,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -14173,7 +14504,7 @@
      "name": "DeepSeek V4 Flash 0731 (FlexAI)",
      "inputPerMillion": 0.065,
      "outputPerMillion": 0.18,
-     "contextWindow": 786432,
+     "contextWindow": 1048576,
      "reasoning": true
     },
     "flexai/Muse-Glimmer-30B": {
@@ -14388,20 +14719,20 @@
     },
     "infomaniak/mistralai/Ministral-3-14B-Instruct-2512": {
      "name": "Ministral 3 14B (Infomaniak)",
-     "inputPerMillion": 0.34443,
-     "outputPerMillion": 0.45924,
+     "inputPerMillion": 0.34389,
+     "outputPerMillion": 0.45852,
      "contextWindow": 100000
     },
     "ionos/meta-llama/Llama-3.3-70B-Instruct": {
      "name": "Llama-3.3-70B-Instruct (IONOS)",
-     "inputPerMillion": 0.746265,
-     "outputPerMillion": 0.746265,
+     "inputPerMillion": 0.745095,
+     "outputPerMillion": 0.745095,
      "contextWindow": 128000
     },
     "ionos/openai/gpt-oss-120b": {
      "name": "GPT OSS 120B (IONOS)",
-     "inputPerMillion": 0.172215,
-     "outputPerMillion": 0.746265,
+     "inputPerMillion": 0.171945,
+     "outputPerMillion": 0.745095,
      "contextWindow": 131072,
      "reasoning": true
     },
@@ -14478,8 +14809,8 @@
     },
     "mistral/mistral-large-2512": {
      "name": "Mistral Large 3",
-     "inputPerMillion": 0.55,
-     "outputPerMillion": 1.65,
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 1.5,
      "contextWindow": 262144,
      "vision": true,
      "tools": true
@@ -15187,8 +15518,8 @@
     },
     "scaleway/deepseek-v4-flash-0731": {
      "name": "DeepSeek V4 Flash 0731 (Scaleway)",
-     "inputPerMillion": 0.45924,
-     "outputPerMillion": 0.91848,
+     "inputPerMillion": 0.45852,
+     "outputPerMillion": 0.91704,
      "contextWindow": 256000,
      "tools": true,
      "reasoning": true
@@ -15202,16 +15533,16 @@
     },
     "scaleway/gpt-oss-120b": {
      "name": "GPT OSS 120B (Scaleway)",
-     "inputPerMillion": 0.172215,
-     "outputPerMillion": 0.68886,
+     "inputPerMillion": 0.171945,
+     "outputPerMillion": 0.68778,
      "contextWindow": 128000,
      "tools": true,
      "reasoning": true
     },
     "scaleway/llama-3.3-70b-instruct": {
      "name": "Llama-3.3-70B-Instruct (Scaleway)",
-     "inputPerMillion": 1.03329,
-     "outputPerMillion": 1.03329,
+     "inputPerMillion": 1.03167,
+     "outputPerMillion": 1.03167,
      "contextWindow": 128000,
      "tools": true
     },
@@ -15574,6 +15905,15 @@
      "tools": true,
      "reasoning": true
     },
+    "xai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "xai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -15880,6 +16220,33 @@
      "inputPerMillion": 2.175,
      "outputPerMillion": 4.35,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2-6-flash": {
+     "name": "MiMo V2.6 Flash",
+     "inputPerMillion": 0.7,
+     "outputPerMillion": 1.4,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2-6-pro": {
+     "name": "MiMo V2.6 Pro",
+     "inputPerMillion": 2.175,
+     "outputPerMillion": 4.35,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2-6-pro-ultraspeed": {
+     "name": "MiMo V2.6 Pro UltraSpeed",
+     "inputPerMillion": 21.75,
+     "outputPerMillion": 43.5,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -16212,6 +16579,15 @@
      "inputPerMillion": 0.2,
      "outputPerMillion": 1.15,
      "contextWindow": 256000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "step-5-preview": {
+     "name": "Step 5 Preview",
+     "inputPerMillion": 1,
+     "outputPerMillion": 2.7,
+     "contextWindow": 1024000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -17596,6 +17972,15 @@
      "tools": true,
      "reasoning": true
     },
+    "grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "kimi-k2.7-code": {
      "name": "Kimi K2.7 Code",
      "inputPerMillion": 0.95,
@@ -18389,6 +18774,15 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5-5@default": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-opus-5@default": {
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
@@ -18831,6 +19225,15 @@
      "inputPerMillion": 15,
      "outputPerMillion": 75,
      "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-opus-5-5@default": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -20612,6 +21015,14 @@
      "tools": true,
      "reasoning": true
     },
+    "tencent/Hy4-preview": {
+     "name": "Hy4 preview",
+     "inputPerMillion": 0.834,
+     "outputPerMillion": 2.501,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
     "thinkingmachines/Inkling": {
      "name": "Inkling",
      "inputPerMillion": 1,
@@ -20770,7 +21181,7 @@
      "name": "DeepSeek V4.1 Flash",
      "inputPerMillion": 0.3,
      "outputPerMillion": 1.2,
-     "contextWindow": 1000000,
+     "contextWindow": 1048576,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -23597,15 +24008,6 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4": {
-     "name": "Anthropic: Claude Opus 4 ($$$$)",
-     "inputPerMillion": 15,
-     "outputPerMillion": 75,
-     "contextWindow": 200000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
     "anthropic/claude-opus-4.1": {
      "name": "Claude Opus 4.1 (latest)",
      "inputPerMillion": 15,
@@ -23660,6 +24062,15 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic/claude-opus-5.5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic/claude-sonnet-4": {
      "name": "Anthropic: Claude Sonnet 4",
      "inputPerMillion": 3,
@@ -23705,7 +24116,7 @@
      "reasoning": true
     },
     "baidu/ernie-4.5-vl-424b-a47b": {
-     "name": "Baidu: ERNIE 4.5 VL 424B A47B",
+     "name": "Baidu: ERNIE 4.5 VL 424B A47B  (retires Oct 8)",
      "inputPerMillion": 0.42,
      "outputPerMillion": 1.25,
      "contextWindow": 123000,
@@ -23785,6 +24196,15 @@
      "outputPerMillion": 10,
      "contextWindow": 256000
     },
+    "cohere/command-a-plus": {
+     "name": "Cohere: Command A+",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.5,
+     "contextWindow": 192000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "cohere/command-r-08-2024": {
      "name": "Command R",
      "inputPerMillion": 0.15,
@@ -23852,14 +24272,14 @@
      "reasoning": true
     },
     "deepseek/deepseek-r1-distill-llama-70b": {
-     "name": "DeepSeek: R1 Distill Llama 70B",
+     "name": "DeepSeek: R1 Distill Llama 70B (retires Sep 28)",
      "inputPerMillion": 0.8,
      "outputPerMillion": 0.8,
      "contextWindow": 8192,
      "reasoning": true
     },
     "deepseek/deepseek-v3.1-terminus": {
-     "name": "DeepSeek: DeepSeek V3.1 Terminus",
+     "name": "DeepSeek: DeepSeek V3.1 Terminus (retires Sep 28)",
      "inputPerMillion": 0.27,
      "outputPerMillion": 1,
      "contextWindow": 131072,
@@ -23875,7 +24295,7 @@
      "reasoning": true
     },
     "deepseek/deepseek-v3.2-exp": {
-     "name": "DeepSeek: DeepSeek V3.2 Exp",
+     "name": "DeepSeek: DeepSeek V3.2 Exp (retires Sep 28)",
      "inputPerMillion": 0.27,
      "outputPerMillion": 0.41,
      "contextWindow": 163840,
@@ -23898,14 +24318,6 @@
      "tools": true,
      "reasoning": true
     },
-    "deepseek/deepseek-v4-flash-0731:free": {
-     "name": "DeepSeek: DeepSeek V4 Flash 0731 (free)",
-     "inputPerMillion": 0,
-     "outputPerMillion": 0,
-     "contextWindow": 1048576,
-     "tools": true,
-     "reasoning": true
-    },
     "deepseek/deepseek-v4-flash-vision-exp": {
      "name": "DeepSeek V4 Flash Vision Exp",
      "inputPerMillion": 0.44,
@@ -23919,7 +24331,7 @@
      "name": "DeepSeek V4 Pro",
      "inputPerMillion": 1.6,
      "outputPerMillion": 3.2,
-     "contextWindow": 1048576,
+     "contextWindow": 1024000,
      "tools": true,
      "reasoning": true
     },
@@ -24326,13 +24738,6 @@
      "tools": true,
      "reasoning": true
     },
-    "kwaipilot/kat-coder-pro-v2": {
-     "name": "Kwaipilot: KAT-Coder-Pro V2",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 1.2,
-     "contextWindow": 262144,
-     "tools": true
-    },
     "kwaipilot/kat-coder-pro-v2.5": {
      "name": "Kwaipilot: KAT-Coder-Pro V2.5",
      "inputPerMillion": 0.74,
@@ -24657,7 +25062,8 @@
      "inputPerMillion": 0.351,
      "outputPerMillion": 0.555,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "mistralai/mistral-small-3.2-24b-instruct": {
      "name": "Mistral: Mistral Small 3.2 24B",
@@ -24732,8 +25138,8 @@
     },
     "moonshotai/kimi-k3": {
      "name": "Kimi K3",
-     "inputPerMillion": 2.1,
-     "outputPerMillion": 10.95,
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -24751,10 +25157,27 @@
      "outputPerMillion": 1.9,
      "contextWindow": 262144
     },
+    "nex-agi/nex-n2.5-mini": {
+     "name": "Nex AGI: Nex-N2.5-Mini",
+     "inputPerMillion": 0.025,
+     "outputPerMillion": 0.1,
+     "contextWindow": 262144,
+     "vision": true,
+     "reasoning": true
+    },
     "nex-agi/nex-n2.5-mini:free": {
      "name": "Nex AGI: Nex-N2.5-Mini (free)",
      "inputPerMillion": 0,
      "outputPerMillion": 0,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "nex-agi/nex-n2.5-pro": {
+     "name": "Nex AGI: Nex-N2.5-Pro",
+     "inputPerMillion": 0.075,
+     "outputPerMillion": 0.25,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -24825,7 +25248,7 @@
      "name": "Nemotron 3 Ultra 550B A55B",
      "inputPerMillion": 0.5,
      "outputPerMillion": 2.2,
-     "contextWindow": 256000,
+     "contextWindow": 202800,
      "tools": true,
      "reasoning": true
     },
@@ -25204,15 +25627,6 @@
      "tools": true,
      "reasoning": true
     },
-    "openai/gpt-5.6-sol-discounted": {
-     "name": "OpenAI: GPT-5.6 Sol (50% off)",
-     "inputPerMillion": 2,
-     "outputPerMillion": 10,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
     "openai/gpt-5.6-sol-pro": {
      "name": "GPT-5.6 Sol",
      "inputPerMillion": 4,
@@ -25258,6 +25672,42 @@
      "tools": true,
      "reasoning": true
     },
+    "openai/gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna-pro": {
+     "name": "OpenAI: GPT-6 Luna Pro",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol-pro": {
+     "name": "OpenAI: GPT-6 Sol Pro",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "openai/gpt-audio": {
      "name": "OpenAI: GPT Audio",
      "inputPerMillion": 2.5,
@@ -25290,8 +25740,8 @@
     },
     "openai/gpt-oss-20b": {
      "name": "GPT OSS 20B",
-     "inputPerMillion": 0.02,
-     "outputPerMillion": 0.1,
+     "inputPerMillion": 0.018,
+     "outputPerMillion": 0.09,
      "contextWindow": 131072,
      "tools": true,
      "reasoning": true
@@ -25480,6 +25930,15 @@
      "tools": true,
      "reasoning": true
     },
+    "prism-ml/ternary-bonsai-2-27b": {
+     "name": "PrismML: Ternary Bonsai 2 27B",
+     "inputPerMillion": 0.075,
+     "outputPerMillion": 0.5,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "qwen/qwen-2.5-72b-instruct": {
      "name": "Qwen2.5 72B Instruct",
      "inputPerMillion": 0.36,
@@ -25652,7 +26111,7 @@
      "name": "Qwen3-Next 80B-A3B (Thinking)",
      "inputPerMillion": 0.15,
      "outputPerMillion": 1.2,
-     "contextWindow": 131072,
+     "contextWindow": 262144,
      "tools": true,
      "reasoning": true
     },
@@ -25737,7 +26196,7 @@
      "name": "Qwen3.5 35B-A3B",
      "inputPerMillion": 0.1625,
      "outputPerMillion": 1.3,
-     "contextWindow": 262144,
+     "contextWindow": 256000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -25755,7 +26214,7 @@
      "name": "Qwen3.5 9B",
      "inputPerMillion": 0.1,
      "outputPerMillion": 0.15,
-     "contextWindow": 262144,
+     "contextWindow": 256000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -25798,8 +26257,8 @@
     },
     "qwen/qwen3.6-35b-a3b": {
      "name": "Qwen3.6 35B-A3B",
-     "inputPerMillion": 0.1,
-     "outputPerMillion": 0.9,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 1,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -25869,7 +26328,7 @@
      "name": "Qwen3.8 27B",
      "inputPerMillion": 0.425,
      "outputPerMillion": 2.55,
-     "contextWindow": 262144,
+     "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -25896,6 +26355,15 @@
      "name": "Qwen3.8 Max 0902",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen/qwen3.8-omni-flash": {
+     "name": "Qwen3.8 Omni Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.47,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -26082,8 +26550,8 @@
     },
     "tencent/hy3": {
      "name": "Hy3",
-     "inputPerMillion": 0.14,
-     "outputPerMillion": 0.58,
+     "inputPerMillion": 0.0825,
+     "outputPerMillion": 0.33,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -26229,6 +26697,15 @@
      "tools": true,
      "reasoning": true
     },
+    "x-ai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 1.6,
+     "outputPerMillion": 4.8,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "x-ai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -26252,6 +26729,33 @@
      "inputPerMillion": 0.435,
      "outputPerMillion": 0.87,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+     "name": "MiMo-V2.6-Pro-UltraSpeed",
+     "inputPerMillion": 4.35,
+     "outputPerMillion": 8.7,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -26356,7 +26860,7 @@
      "name": "GLM-5.3",
      "inputPerMillion": 1.4,
      "outputPerMillion": 4.4,
-     "contextWindow": 1048575,
+     "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
@@ -26364,6 +26868,15 @@
      "name": "GLM-5.3-Flash",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flashx": {
+     "name": "Z.ai: GLM 5.3 FlashX",
+     "inputPerMillion": 0.37,
+     "outputPerMillion": 1.25,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -26398,8 +26911,8 @@
     },
     "~anthropic/claude-opus-latest": {
      "name": "Anthropic: Claude Opus Latest",
-     "inputPerMillion": 5,
-     "outputPerMillion": 25,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -26416,8 +26929,8 @@
     },
     "~deepseek/deepseek-flash-latest": {
      "name": "DeepSeek: DeepSeek Flash Latest",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.6,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -26425,16 +26938,16 @@
     },
     "~deepseek/deepseek-pro-latest": {
      "name": "DeepSeek: DeepSeek Pro Latest",
-     "inputPerMillion": 0.66,
-     "outputPerMillion": 1.98,
+     "inputPerMillion": 0.39996,
+     "outputPerMillion": 1.19988,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
     "~deepseek/deepseek-v4-flash-latest": {
      "name": "DeepSeek: DeepSeek V4 Flash Latest",
-     "inputPerMillion": 0.0558,
-     "outputPerMillion": 0.1767,
+     "inputPerMillion": 0.03,
+     "outputPerMillion": 0.8,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -26459,8 +26972,8 @@
     },
     "~moonshotai/kimi-latest": {
      "name": "MoonshotAI: Kimi Latest",
-     "inputPerMillion": 2.1,
-     "outputPerMillion": 10.95,
+     "inputPerMillion": 1.35,
+     "outputPerMillion": 14.33,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -26477,8 +26990,8 @@
     },
     "~openai/gpt-luna-latest": {
      "name": "OpenAI: GPT Luna Latest",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 1.2,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -26513,8 +27026,8 @@
     },
     "~x-ai/grok-latest": {
      "name": "xAI: Grok Latest",
-     "inputPerMillion": 2,
-     "outputPerMillion": 6,
+     "inputPerMillion": 1.6,
+     "outputPerMillion": 4.8,
      "contextWindow": 500000,
      "vision": true,
      "tools": true,
@@ -26531,16 +27044,57 @@
     },
     "~z-ai/glm-latest": {
      "name": "Z.ai: GLM Latest",
-     "inputPerMillion": 0.8775,
-     "outputPerMillion": 2.97,
-     "contextWindow": 262144,
+     "inputPerMillion": 0.5614,
+     "outputPerMillion": 1.7644,
+     "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     }
    }
   },
-  "kimi-for-coding": {
-   "name": "Kimi For Coding",
+  "kimi-code-plan-cn": {
+   "name": "Kimi For Coding (kimi.com)",
+   "models": {
+    "k3": {
+     "name": "Kimi K3",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "k3-256k": {
+     "name": "Kimi K3-256K",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "kimi-for-coding": {
+     "name": "kimi-for-coding",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "kimi-for-coding-highspeed": {
+     "name": "Kimi For Coding HighSpeed",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    }
+   }
+  },
+  "kimi-code-plan-global": {
+   "name": "Kimi For Coding (kimi.ai)",
    "models": {
     "k3": {
      "name": "Kimi K3",
@@ -26841,6 +27395,15 @@
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -27244,8 +27807,8 @@
     },
     "glm-5.3-flash": {
      "name": "GLM-5.3-Flash",
-     "inputPerMillion": 0.088,
-     "outputPerMillion": 0.25,
+     "inputPerMillion": 0.07,
+     "outputPerMillion": 0.19,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -27499,8 +28062,8 @@
     },
     "gpt-5.6-sol": {
      "name": "GPT-5.6 Sol",
-     "inputPerMillion": 5,
-     "outputPerMillion": 30,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -27519,6 +28082,24 @@
      "name": "GPT-6 Astra",
      "inputPerMillion": 10,
      "outputPerMillion": 50,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -27626,6 +28207,15 @@
      "tools": true,
      "reasoning": true
     },
+    "grok-4-7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "grok-build-0-1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -27655,6 +28245,24 @@
      "inputPerMillion": 0.834,
      "outputPerMillion": 2.501,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "inkling": {
+     "name": "Inkling",
+     "inputPerMillion": 0.95,
+     "outputPerMillion": 4.05,
+     "contextWindow": 524288,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "inkling-small": {
+     "name": "Inkling Small",
+     "inputPerMillion": 0.45,
+     "outputPerMillion": 1.2,
+     "contextWindow": 524288,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -27797,6 +28405,24 @@
      "tools": true,
      "reasoning": true
     },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "minimax-m2": {
      "name": "MiniMax-M2",
      "inputPerMillion": 0.2,
@@ -27913,6 +28539,15 @@
      "vision": true,
      "tools": true
     },
+    "muse-glimmer-30b": {
+     "name": "Muse Glimmer 30B",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 131072,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "muse-spark-1.1": {
      "name": "Muse Spark 1.1",
      "inputPerMillion": 1.25,
@@ -27963,6 +28598,14 @@
      "inputPerMillion": 0.5,
      "outputPerMillion": 2.2,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "nemotron-3.5-lightning": {
+     "name": "Nemotron 3.5 Lightning 30B A3B",
+     "inputPerMillion": 0.08,
+     "outputPerMillion": 0.2,
+     "contextWindow": 262144,
      "tools": true,
      "reasoning": true
     },
@@ -28248,6 +28891,14 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 1010000,
+     "tools": true,
+     "reasoning": true
+    },
     "qwen3.8-flash": {
      "name": "Qwen3.8 Flash",
      "inputPerMillion": 0.15,
@@ -28330,6 +28981,15 @@
      "outputPerMillion": 8,
      "contextWindow": 128000,
      "vision": true,
+     "reasoning": true
+    },
+    "step-3.7-flash": {
+     "name": "Step 3.7 Flash",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1.15,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
      "reasoning": true
     }
    }
@@ -28652,6 +29312,15 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic/claude-opus-5-5": {
+     "name": "Claude Opus 5.5 (Anthropic)",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic/claude-sonnet-4-5": {
      "name": "Claude Sonnet 4.5 (Anthropic)",
      "inputPerMillion": 3,
@@ -28864,16 +29533,16 @@
      "name": "GPT-5.6 Luna (AWS Mantle)",
      "inputPerMillion": 0.22,
      "outputPerMillion": 1.32,
-     "contextWindow": 278528,
+     "contextWindow": 921600,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
     "aws-mantle/gpt-5.6-sol": {
      "name": "GPT-5.6 Sol (AWS Mantle)",
-     "inputPerMillion": 5.5,
-     "outputPerMillion": 33,
-     "contextWindow": 278528,
+     "inputPerMillion": 4.4,
+     "outputPerMillion": 22,
+     "contextWindow": 921600,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -28882,7 +29551,7 @@
      "name": "GPT-5.6 Terra (AWS Mantle)",
      "inputPerMillion": 2.2,
      "outputPerMillion": 13.2,
-     "contextWindow": 278528,
+     "contextWindow": 921600,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -29174,8 +29843,8 @@
     },
     "azure/gpt-5.6-sol": {
      "name": "GPT-5.6 Sol (Azure)",
-     "inputPerMillion": 5,
-     "outputPerMillion": 30,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -29250,6 +29919,15 @@
      "inputPerMillion": 1.32,
      "outputPerMillion": 3.96,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "baidu/deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash (Baidu)",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -29566,11 +30244,36 @@
      "tools": true,
      "reasoning": true
     },
+    "deepinfra/glm-5.3": {
+     "name": "GLM-5.3 (DeepInfra)",
+     "inputPerMillion": 1.2,
+     "outputPerMillion": 4,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
     "deepinfra/hy3": {
      "name": "Hy3 (DeepInfra)",
      "inputPerMillion": 0.14,
      "outputPerMillion": 0.58,
      "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepinfra/inkling": {
+     "name": "Inkling (DeepInfra)",
+     "inputPerMillion": 0.95,
+     "outputPerMillion": 4.05,
+     "contextWindow": 524288,
+     "vision": true,
+     "reasoning": true
+    },
+    "deepinfra/inkling-small": {
+     "name": "Inkling Small (DeepInfra)",
+     "inputPerMillion": 0.45,
+     "outputPerMillion": 1.2,
+     "contextWindow": 524288,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -29598,6 +30301,15 @@
      "contextWindow": 1048576,
      "reasoning": true
     },
+    "deepinfra/muse-glimmer-30b": {
+     "name": "Muse Glimmer 30B (DeepInfra)",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 131072,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "deepinfra/nemotron-3-ultra-550b": {
      "name": "Nemotron 3 Ultra 550B (DeepInfra)",
      "inputPerMillion": 0.5,
@@ -29605,6 +30317,14 @@
      "contextWindow": 262144,
      "vision": true,
      "tools": true
+    },
+    "deepinfra/nemotron-3.5-lightning": {
+     "name": "Nemotron 3.5 Lightning (DeepInfra)",
+     "inputPerMillion": 0.08,
+     "outputPerMillion": 0.2,
+     "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
     },
     "deepinfra/qwen3-vl-235b-a22b-instruct": {
      "name": "Qwen3 VL 235B A22B Instruct (DeepInfra)",
@@ -29627,6 +30347,32 @@
      "inputPerMillion": 0.1,
      "outputPerMillion": 0.15,
      "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepinfra/qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B (DeepInfra)",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepinfra/qwen3.8-27b": {
+     "name": "Qwen3.8 27B (DeepInfra)",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 2.5,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepinfra/step-3.7-flash": {
+     "name": "Step 3.7 Flash (DeepInfra)",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1.15,
+     "contextWindow": 262144,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -29762,6 +30508,14 @@
      "inputPerMillion": 0.051,
      "outputPerMillion": 0.104,
      "contextWindow": 390000,
+     "tools": true,
+     "reasoning": true
+    },
+    "gonka24/glm-5.3-flash": {
+     "name": "GLM-5.3 Flash (Gonka24)",
+     "inputPerMillion": 0.07,
+     "outputPerMillion": 0.19,
+     "contextWindow": 200000,
      "tools": true,
      "reasoning": true
     },
@@ -30551,6 +31305,14 @@
      "tools": true,
      "reasoning": true
     },
+    "novita/qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B (NovitaAI)",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
     "novita/qwen3.8-27b": {
      "name": "Qwen3.8 27B (NovitaAI)",
      "inputPerMillion": 0.42,
@@ -30580,6 +31342,15 @@
      "name": "Qwen3.5 397B A17B (NovitaAI)",
      "inputPerMillion": 0.6,
      "outputPerMillion": 3.6,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "novita/step-3.7-flash": {
+     "name": "Step 3.7 Flash (NovitaAI)",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1.15,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -30795,8 +31566,8 @@
     },
     "openai/gpt-5.6-sol": {
      "name": "GPT-5.6 Sol (OpenAI)",
-     "inputPerMillion": 5,
-     "outputPerMillion": 30,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -30815,6 +31586,24 @@
      "name": "GPT-6 Astra (OpenAI)",
      "inputPerMillion": 10,
      "outputPerMillion": 50,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna": {
+     "name": "GPT-6 Luna (OpenAI)",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT-6 Sol (OpenAI)",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -31005,6 +31794,12 @@
      "vision": true,
      "tools": true,
      "reasoning": true
+    },
+    "scx-ai-gp/deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash (SCX.ai)",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.6,
+     "contextWindow": 1000000
     },
     "scx-ai-gp/glm-5.2": {
      "name": "GLM-5.2 (SCX.ai)",
@@ -31276,11 +32071,37 @@
      "contextWindow": 202752,
      "reasoning": true
     },
+    "together-ai/glm-5.3": {
+     "name": "GLM-5.3 (Together AI)",
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.4,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "together-ai/glm-5.3-flash": {
+     "name": "GLM-5.3 Flash (Together AI)",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "together-ai/gpt-oss-120b": {
      "name": "GPT OSS 120B (Together AI)",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.6,
      "contextWindow": 131072,
+     "tools": true,
+     "reasoning": true
+    },
+    "together-ai/inkling": {
+     "name": "Inkling (Together AI)",
+     "inputPerMillion": 1,
+     "outputPerMillion": 4.05,
+     "contextWindow": 524288,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -31298,6 +32119,23 @@
      "inputPerMillion": 0.3,
      "outputPerMillion": 1.2,
      "contextWindow": 524288,
+     "reasoning": true
+    },
+    "together-ai/muse-glimmer-30b": {
+     "name": "Muse Glimmer 30B (Together AI)",
+     "inputPerMillion": 0.35,
+     "outputPerMillion": 1.5,
+     "contextWindow": 131072,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "together-ai/qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B (Together AI)",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 1010000,
+     "tools": true,
      "reasoning": true
     },
     "vertex-anthropic/claude-haiku-4-5": {
@@ -31449,22 +32287,6 @@
      "tools": true,
      "reasoning": true
     },
-    "vichar-ai/glm-5.3": {
-     "name": "GLM-5.3 (vichar-ai)",
-     "inputPerMillion": 1.4,
-     "outputPerMillion": 4.4,
-     "contextWindow": 1048000,
-     "tools": true,
-     "reasoning": true
-    },
-    "vichar-ai/glm-5.3-flash": {
-     "name": "GLM-5.3 Flash (vichar-ai)",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.5,
-     "contextWindow": 1048000,
-     "tools": true,
-     "reasoning": true
-    },
     "xai/grok-4": {
      "name": "Grok 4 (xAI)",
      "inputPerMillion": 3,
@@ -31518,6 +32340,15 @@
      "tools": true,
      "reasoning": true
     },
+    "xai/grok-4-7": {
+     "name": "Grok 4.7 (xAI)",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "xai/grok-build-0-1": {
      "name": "Grok Build 0.1 (xAI)",
      "inputPerMillion": 1,
@@ -31541,6 +32372,24 @@
      "inputPerMillion": 0.435,
      "outputPerMillion": 0.87,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo V2.6 Flash (Xiaomi)",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo V2.6 Pro (Xiaomi)",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -31678,7 +32527,7 @@
   "llmtech": {
    "name": "LLM Tech",
    "models": {
-    "unsloth/Qwen3.8-27B-NVFP4": {
+    "nvidia/Qwen3.8-27B-NVFP4": {
      "name": "Qwen3.8 27B",
      "inputPerMillion": 0.25,
      "outputPerMillion": 2.09,
@@ -32424,6 +33273,15 @@
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -33330,6 +34188,24 @@
      "tools": true,
      "reasoning": true
     },
+    "openai/gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "openai/gpt-oss-120b": {
      "name": "GPT-OSS 120B",
      "inputPerMillion": 0.09,
@@ -33525,8 +34401,7 @@
      "name": "Qwen3.5 27B",
      "inputPerMillion": 0.086,
      "outputPerMillion": 0.688,
-     "contextWindow": 256000,
-     "vision": true,
+     "contextWindow": 131072,
      "tools": true,
      "reasoning": true
     },
@@ -33542,8 +34417,7 @@
      "name": "Qwen3.5 397B A17B",
      "inputPerMillion": 0.172,
      "outputPerMillion": 1.032,
-     "contextWindow": 256000,
-     "vision": true,
+     "contextWindow": 131072,
      "tools": true,
      "reasoning": true
     },
@@ -33722,6 +34596,15 @@
     },
     "xai/grok-4.6": {
      "name": "Grok 4.6",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xai/grok-4.7": {
+     "name": "Grok 4.7",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
      "contextWindow": 500000,
@@ -33959,7 +34842,7 @@
    }
   },
   "minimax-cn": {
-   "name": "MiniMax (minimaxi.com)",
+   "name": "MiniMax (minimax.cn)",
    "models": {
     "MiniMax-M2": {
      "name": "MiniMax-M2",
@@ -34021,7 +34904,7 @@
    }
   },
   "minimax-cn-coding-plan": {
-   "name": "MiniMax Token Plan (minimaxi.com)",
+   "name": "MiniMax Token Plan (minimax.cn)",
    "models": {
     "MiniMax-M2": {
      "name": "MiniMax-M2",
@@ -35221,14 +36104,6 @@
      "outputPerMillion": 1,
      "contextWindow": 164000
     },
-    "TEE/deepseek-v4-flash": {
-     "name": "DeepSeek V4 Flash TEE",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 0.4,
-     "contextWindow": 1048576,
-     "tools": true,
-     "reasoning": true
-    },
     "TEE/deepseek-v4.1-flash": {
      "name": "DeepSeek V4.1 Flash TEE",
      "inputPerMillion": 0.65,
@@ -35519,7 +36394,7 @@
     },
     "abliteration-ai/abliterated-model": {
      "name": "Abliterated Model",
-     "inputPerMillion": 3,
+     "inputPerMillion": 1,
      "outputPerMillion": 3,
      "contextWindow": 262144,
      "vision": true,
@@ -35527,7 +36402,7 @@
     },
     "abliteration-ai/abliterated-model-large": {
      "name": "Abliterated Model Large",
-     "inputPerMillion": 5,
+     "inputPerMillion": 3,
      "outputPerMillion": 5,
      "contextWindow": 1000000,
      "tools": true,
@@ -35535,7 +36410,7 @@
     },
     "abliteration-ai/abliterated-model-large-v2": {
      "name": "Abliterated Model Large V2",
-     "inputPerMillion": 5,
+     "inputPerMillion": 3,
      "outputPerMillion": 5,
      "contextWindow": 1000000,
      "tools": true,
@@ -35854,6 +36729,15 @@
      "name": "Claude Opus 5",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-5.5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -36271,7 +37155,7 @@
      "name": "DeepSeek V4 Flash Latest",
      "inputPerMillion": 0.05,
      "outputPerMillion": 0.16,
-     "contextWindow": 1048576,
+     "contextWindow": 1000000,
      "tools": true,
      "reasoning": true
     },
@@ -36326,8 +37210,8 @@
     },
     "deepseek/deepseek-v4.1-flash": {
      "name": "DeepSeek V4.1 Flash",
-     "inputPerMillion": 0.1,
-     "outputPerMillion": 0.4,
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.52,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -36335,8 +37219,8 @@
     },
     "deepseek/deepseek-v4.1-flash:thinking": {
      "name": "DeepSeek V4.1 Flash Thinking",
-     "inputPerMillion": 0.1,
-     "outputPerMillion": 0.4,
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.52,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -36800,6 +37684,13 @@
      "contextWindow": 32000,
      "tools": true
     },
+    "google/diffusiongemma": {
+     "name": "DiffusionGemma",
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0.15,
+     "contextWindow": 262144,
+     "reasoning": true
+    },
     "google/gemini-3-flash-preview": {
      "name": "Gemini 3 Flash (Preview)",
      "inputPerMillion": 0.5,
@@ -36951,6 +37842,15 @@
      "tools": true,
      "reasoning": true
     },
+    "google/gemma-4-26b-a4b-it-cybersecurity": {
+     "name": "Gemma 4 26B A4B Cybersecurity",
+     "inputPerMillion": 0.1056,
+     "outputPerMillion": 0.3344,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "google/gemma-4-26b-a4b-it:thinking": {
      "name": "Gemma 4 26B A4B Thinking",
      "inputPerMillion": 0.13,
@@ -36977,6 +37877,13 @@
      "vision": true,
      "tools": true,
      "reasoning": true
+    },
+    "google/gemma4-31b-splituntied": {
+     "name": "Gemma 4 31B Split-Untied",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.3,
+     "contextWindow": 262144,
+     "tools": true
     },
     "hermes-high": {
      "name": "Hermes High",
@@ -37408,13 +38315,6 @@
      "outputPerMillion": 6.001,
      "contextWindow": 128000
     },
-    "mistralai/mistral-large-3-675b-instruct-2512": {
-     "name": "Mistral Large 3 675B",
-     "inputPerMillion": 1,
-     "outputPerMillion": 3,
-     "contextWindow": 262144,
-     "vision": true
-    },
     "mistralai/mistral-medium-3": {
      "name": "Mistral Medium 3",
      "inputPerMillion": 0.4,
@@ -37613,6 +38513,14 @@
      "outputPerMillion": 0,
      "contextWindow": 6000
     },
+    "nano/lumen-stealth": {
+     "name": "Lumen Stealth",
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0,
+     "contextWindow": 200000,
+     "vision": true,
+     "reasoning": true
+    },
     "nanogpt/coding-router": {
      "name": "Coding Router",
      "inputPerMillion": 1.1,
@@ -37705,6 +38613,13 @@
      "outputPerMillion": 2.5,
      "contextWindow": 1000000,
      "tools": true,
+     "reasoning": true
+    },
+    "nvidia/nemotron-3.5-content-safety": {
+     "name": "Nemotron 3.5 Content Safety",
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0.15,
+     "contextWindow": 131072,
      "reasoning": true
     },
     "nvidia/nemotron-3.5-lightning": {
@@ -37999,6 +38914,42 @@
      "tools": true,
      "reasoning": true
     },
+    "openai/gpt-6-luna": {
+     "name": "GPT 6 Luna",
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0.25,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna-pro": {
+     "name": "GPT 6 Luna Pro",
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0.25,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT 6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol-pro": {
+     "name": "GPT 6 Sol Pro",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "openai/gpt-astra-latest": {
      "name": "GPT Astra Latest",
      "inputPerMillion": 10,
@@ -38214,6 +39165,15 @@
      "tools": true,
      "reasoning": true
     },
+    "prism-ml/ternary-bonsai-2-27b": {
+     "name": "Ternary Bonsai 2 27B",
+     "inputPerMillion": 0.075,
+     "outputPerMillion": 0.5,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "qvq-max": {
      "name": "Qwen: QvQ Max",
      "inputPerMillion": 1.2,
@@ -38263,7 +39223,8 @@
      "name": "Qwen 3 14b",
      "inputPerMillion": 0.08,
      "outputPerMillion": 0.24,
-     "contextWindow": 41000
+     "contextWindow": 41000,
+     "tools": true
     },
     "qwen/qwen3-235b-a22b": {
      "name": "Qwen 3 235b A22B",
@@ -38302,7 +39263,8 @@
      "name": "Qwen 3 8B",
      "inputPerMillion": 0.47,
      "outputPerMillion": 0.47,
-     "contextWindow": 41000
+     "contextWindow": 41000,
+     "tools": true
     },
     "qwen/qwen3-coder": {
      "name": "Qwen 3 Coder 480B",
@@ -38365,7 +39327,7 @@
     "qwen/qwen3-vl-235b-a22b-instruct": {
      "name": "Qwen3 VL 235B A22B Instruct",
      "inputPerMillion": 0.3,
-     "outputPerMillion": 1.2,
+     "outputPerMillion": 1.9,
      "contextWindow": 131072,
      "vision": true
     },
@@ -38608,11 +39570,29 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen/qwen3.8-27b-cybersecurity": {
+     "name": "Qwen 3.8 27B Cybersecurity",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.6,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "qwen/qwen3.8-27b-fable": {
      "name": "Qwen 3.8 27B Fable",
      "inputPerMillion": 0.25,
      "outputPerMillion": 1.5,
      "contextWindow": 524288,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen/qwen3.8-27b-hemmingway": {
+     "name": "Qwen 3.8 27B Hemingway",
+     "inputPerMillion": 0.25,
+     "outputPerMillion": 1.5,
+     "contextWindow": 262144,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -38646,8 +39626,8 @@
     },
     "qwen/qwen3.8-27b-uncensored": {
      "name": "Qwen 3.8 27B Uncensored",
-     "inputPerMillion": 0.25,
-     "outputPerMillion": 1.5,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 1.2,
      "contextWindow": 524288,
      "vision": true,
      "tools": true,
@@ -38655,8 +39635,8 @@
     },
     "qwen/qwen3.8-27b-uncensored:thinking": {
      "name": "Qwen 3.8 27B Uncensored Thinking",
-     "inputPerMillion": 0.25,
-     "outputPerMillion": 1.5,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 1.2,
      "contextWindow": 524288,
      "vision": true,
      "tools": true,
@@ -38717,8 +39697,8 @@
     },
     "qwen3-vl-235b-a22b-instruct-original": {
      "name": "Qwen3 VL 235B A22B Instruct Original",
-     "inputPerMillion": 0.5,
-     "outputPerMillion": 1.2,
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.9,
      "contextWindow": 32768,
      "vision": true
     },
@@ -38769,13 +39749,6 @@
      "outputPerMillion": 0.5,
      "contextWindow": 32768
     },
-    "slowburn/gemma4-31b-splituntied": {
-     "name": "Gemma 4 31B Split-Untied",
-     "inputPerMillion": 0.1,
-     "outputPerMillion": 0.3,
-     "contextWindow": 262144,
-     "tools": true
-    },
     "soob3123/GrayLine-Qwen3-8B": {
      "name": "Grayline Qwen3 8B",
      "inputPerMillion": 0.3,
@@ -38813,6 +39786,15 @@
      "inputPerMillion": 0.2,
      "outputPerMillion": 1.15,
      "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "stepfun/step-5-preview": {
+     "name": "Step 5 Preview",
+     "inputPerMillion": 1,
+     "outputPerMillion": 2.7,
+     "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -38866,6 +39848,14 @@
      "vision": true,
      "tools": true,
      "reasoning": true
+    },
+    "unbiased/pareto": {
+     "name": "Pareto",
+     "inputPerMillion": 2.5,
+     "outputPerMillion": 7.5,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true
     },
     "undi95/remm-slerp-l2-13b": {
      "name": "ReMM SLERP 13B",
@@ -38969,6 +39959,15 @@
      "tools": true,
      "reasoning": true
     },
+    "x-ai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 1.6,
+     "outputPerMillion": 4.8,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "x-ai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -39016,6 +40015,33 @@
      "name": "MiMo V2.5 Thinking",
      "inputPerMillion": 0.14,
      "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo V2.6 Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo V2.6 Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+     "name": "MiMo V2.6 Pro UltraSpeed",
+     "inputPerMillion": 4.35,
+     "outputPerMillion": 8.7,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -39132,22 +40158,6 @@
      "tools": true,
      "reasoning": true
     },
-    "z-ai/glm-4.7-flash-original": {
-     "name": "GLM 4.7 Flash Original",
-     "inputPerMillion": 0.07,
-     "outputPerMillion": 0.4,
-     "contextWindow": 200000,
-     "tools": true,
-     "reasoning": true
-    },
-    "z-ai/glm-4.7-flash-original:thinking": {
-     "name": "GLM 4.7 Flash Original Thinking",
-     "inputPerMillion": 0.07,
-     "outputPerMillion": 0.4,
-     "contextWindow": 200000,
-     "tools": true,
-     "reasoning": true
-    },
     "z-ai/glm-4.7-flash:thinking": {
      "name": "GLM 4.7 Flash Thinking",
      "inputPerMillion": 0.07,
@@ -39255,6 +40265,15 @@
      "name": "GLM 5.3 Flash",
      "inputPerMillion": 0.075,
      "outputPerMillion": 0.25,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flash-cybersecurity": {
+     "name": "GLM 5.3 Flash Cybersecurity",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -39649,6 +40668,23 @@
      "tools": true,
      "reasoning": true
     },
+    "deepseek-ai/DeepSeek-V4-Pro-0813": {
+     "name": "DeepSeek V4 Pro 0813",
+     "inputPerMillion": 1.32,
+     "outputPerMillion": 3.96,
+     "contextWindow": 979000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1048000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "google/gemma-3-27b-it": {
      "name": "Gemma-3-27b-it",
      "inputPerMillion": 0.1,
@@ -39710,6 +40746,14 @@
      "inputPerMillion": 1.4,
      "outputPerMillion": 4.4,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "zai-org/GLM-5.3": {
+     "name": "GLM-5.3",
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.4,
+     "contextWindow": 1024000,
      "tools": true,
      "reasoning": true
     },
@@ -40190,11 +41234,37 @@
      "tools": true,
      "reasoning": true
     },
+    "deepseek-v4-flash-speed": {
+     "name": "DeepSeek V4 Flash (Speed)",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048560,
+     "tools": true,
+     "reasoning": true
+    },
     "deepseek-v4-pro": {
      "name": "DeepSeek V4 Pro",
      "inputPerMillion": 1,
      "outputPerMillion": 3,
      "contextWindow": 1048560,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.6,
+     "contextWindow": 1048560,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4.1-flash-flex": {
+     "name": "DeepSeek V4.1 Flash Flex",
+     "inputPerMillion": 0.0975,
+     "outputPerMillion": 0.39,
+     "contextWindow": 1048560,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -40271,6 +41341,32 @@
      "tools": true,
      "reasoning": true
     },
+    "glm-5.3-flash": {
+     "name": "GLM-5.3 Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1048560,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3-flash-flex": {
+     "name": "GLM-5.3 Flash Flex",
+     "inputPerMillion": 0.0975,
+     "outputPerMillion": 0.325,
+     "contextWindow": 1048560,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3-flex": {
+     "name": "GLM 5.3 Flex",
+     "inputPerMillion": 0.9425,
+     "outputPerMillion": 2.925,
+     "contextWindow": 1048560,
+     "tools": true,
+     "reasoning": true
+    },
     "kimi-k2.7-code": {
      "name": "Kimi K2.7 Code",
      "inputPerMillion": 0.95,
@@ -40333,6 +41429,15 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen-3.8-27b-flex": {
+     "name": "Qwen3.8 27B Flex",
+     "inputPerMillion": 0.2925,
+     "outputPerMillion": 2.08,
+     "contextWindow": 262128,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "qwen3.6-35b": {
      "name": "Qwen3.6 35B",
      "inputPerMillion": 0.29,
@@ -40349,6 +41454,15 @@
      "contextWindow": 131056,
      "vision": true,
      "tools": true
+    },
+    "qwen3.6-35b-flex": {
+     "name": "Qwen3.6 35B Flex",
+     "inputPerMillion": 0.1885,
+     "outputPerMillion": 0.7475,
+     "contextWindow": 131056,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
     }
    }
   },
@@ -42100,6 +43214,15 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic/claude-opus-5.5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic/claude-sonnet-4.5": {
      "name": "Claude Sonnet 4.5 (latest)",
      "inputPerMillion": 3,
@@ -43751,6 +44874,24 @@
      "tools": true,
      "reasoning": true
     },
+    "gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "gpt-image-1": {
      "name": "gpt-image-1",
      "vision": true
@@ -43951,6 +45092,15 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-sonnet-4": {
      "name": "Claude Sonnet 4",
      "inputPerMillion": 3,
@@ -44017,6 +45167,15 @@
      "inputPerMillion": 1.74,
      "outputPerMillion": 3.84,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -44327,9 +45486,9 @@
      "reasoning": true
     },
     "gpt-5.6-sol": {
-     "name": "GPT-5.6 Sol (50% Off)",
-     "inputPerMillion": 2,
-     "outputPerMillion": 10,
+     "name": "GPT-5.6 Sol",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -44353,6 +45512,24 @@
      "tools": true,
      "reasoning": true
     },
+    "gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "grok-4.5": {
      "name": "Grok 4.5",
      "inputPerMillion": 2,
@@ -44366,6 +45543,15 @@
      "name": "Grok 4.6",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "grok-4.7": {
+     "name": "Grok 4.7 (30% Off)",
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.2,
      "contextWindow": 500000,
      "vision": true,
      "tools": true,
@@ -44403,12 +45589,6 @@
      "contextWindow": 256000,
      "tools": true,
      "reasoning": true
-    },
-    "jev-latest": {
-     "name": "Jev",
-     "inputPerMillion": 0.042,
-     "outputPerMillion": 0,
-     "contextWindow": 64000
     },
     "kimi-k2": {
      "name": "Kimi K2",
@@ -44544,6 +45724,15 @@
     },
     "mimo-v2.5-free": {
      "name": "MiMo V2.5 Free",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-flash-free": {
+     "name": "MiMo-V2.6-Flash Free",
      "inputPerMillion": 0,
      "outputPerMillion": 0,
      "contextWindow": 200000,
@@ -44711,6 +45900,15 @@
      "tools": true,
      "reasoning": true
     },
+    "qwen3.8-flash": {
+     "name": "Qwen3.8 Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.47,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "ring-2.6-1t-free": {
      "name": "Ring 2.6 1T Free",
      "inputPerMillion": 0,
@@ -44842,6 +46040,15 @@
      "tools": true,
      "reasoning": true
     },
+    "grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "hy3": {
      "name": "Hy3",
      "inputPerMillion": 0.14,
@@ -44933,6 +46140,24 @@
      "inputPerMillion": 0.435,
      "outputPerMillion": 0.87,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -45196,15 +46421,6 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4": {
-     "name": "Claude Opus 4",
-     "inputPerMillion": 15,
-     "outputPerMillion": 75,
-     "contextWindow": 200000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
     "anthropic/claude-opus-4.1": {
      "name": "Claude Opus 4.1 (latest)",
      "inputPerMillion": 15,
@@ -45259,11 +46475,20 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic/claude-opus-5.5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic/claude-sonnet-4": {
      "name": "Claude Sonnet 4",
      "inputPerMillion": 3,
      "outputPerMillion": 15,
-     "contextWindow": 1000000,
+     "contextWindow": 200000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -45384,6 +46609,15 @@
      "outputPerMillion": 10,
      "contextWindow": 256000
     },
+    "cohere/command-a-plus": {
+     "name": "Command A+",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.5,
+     "contextWindow": 192000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "cohere/command-r-08-2024": {
      "name": "Command R",
      "inputPerMillion": 0.15,
@@ -45483,32 +46717,24 @@
     },
     "deepseek/deepseek-v4-flash": {
      "name": "DeepSeek V4 Flash",
-     "inputPerMillion": 0.088606,
-     "outputPerMillion": 0.177212,
+     "inputPerMillion": 0.049,
+     "outputPerMillion": 0.098,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
     "deepseek/deepseek-v4-flash-0731": {
      "name": "DeepSeek V4 Flash 0731",
-     "inputPerMillion": 0.06,
-     "outputPerMillion": 0.12,
+     "inputPerMillion": 0.04,
+     "outputPerMillion": 0.64,
      "contextWindow": 1310720,
-     "tools": true,
-     "reasoning": true
-    },
-    "deepseek/deepseek-v4-flash-0731:free": {
-     "name": "DeepSeek V4 Flash 0731 (free)",
-     "inputPerMillion": 0,
-     "outputPerMillion": 0,
-     "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
     "deepseek/deepseek-v4-flash-vision-exp": {
      "name": "DeepSeek V4 Flash Vision Exp",
-     "inputPerMillion": 0.2156,
-     "outputPerMillion": 0.6468,
+     "inputPerMillion": 0.22,
+     "outputPerMillion": 0.66,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -45516,8 +46742,8 @@
     },
     "deepseek/deepseek-v4-pro": {
      "name": "DeepSeek V4 Pro",
-     "inputPerMillion": 0.94336,
-     "outputPerMillion": 1.88672,
+     "inputPerMillion": 0.856776,
+     "outputPerMillion": 1.713552,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -45532,8 +46758,8 @@
     },
     "deepseek/deepseek-v4.1-flash": {
      "name": "DeepSeek V4.1 Flash",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.6,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -45899,13 +47125,6 @@
      "outputPerMillion": 0.15,
      "contextWindow": 128000
     },
-    "kwaipilot/kat-coder-pro-v2": {
-     "name": "KAT-Coder-Pro V2",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 1.2,
-     "contextWindow": 262144,
-     "tools": true
-    },
     "kwaipilot/kat-coder-pro-v2.5": {
      "name": "KAT-Coder-Pro V2.5",
      "inputPerMillion": 0.74,
@@ -45994,7 +47213,7 @@
     "meta/muse-glimmer-30b": {
      "name": "Muse Glimmer 30B",
      "inputPerMillion": 0.3,
-     "outputPerMillion": 1.1,
+     "outputPerMillion": 1.2,
      "contextWindow": 131072,
      "vision": true,
      "tools": true,
@@ -46230,7 +47449,8 @@
      "inputPerMillion": 0.351,
      "outputPerMillion": 0.555,
      "contextWindow": 128000,
-     "vision": true
+     "vision": true,
+     "tools": true
     },
     "mistralai/mistral-small-3.2-24b-instruct": {
      "name": "Mistral Small 3.2 24B",
@@ -46297,7 +47517,7 @@
     "moonshotai/kimi-k2.7-code": {
      "name": "Kimi K2.7 Code",
      "inputPerMillion": 0.7062,
-     "outputPerMillion": 3.21,
+     "outputPerMillion": 3.3,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -46305,8 +47525,8 @@
     },
     "moonshotai/kimi-k3": {
      "name": "Kimi K3",
-     "inputPerMillion": 2.1,
-     "outputPerMillion": 10.95,
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -46324,10 +47544,27 @@
      "outputPerMillion": 1.9,
      "contextWindow": 262144
     },
+    "nex-agi/nex-n2.5-mini": {
+     "name": "Nex-N2.5-Mini",
+     "inputPerMillion": 0.025,
+     "outputPerMillion": 0.1,
+     "contextWindow": 262144,
+     "vision": true,
+     "reasoning": true
+    },
     "nex-agi/nex-n2.5-mini:free": {
      "name": "Nex-N2.5-Mini (free)",
      "inputPerMillion": 0,
      "outputPerMillion": 0,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "nex-agi/nex-n2.5-pro": {
+     "name": "Nex-N2.5-Pro",
+     "inputPerMillion": 0.075,
+     "outputPerMillion": 0.25,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -46363,8 +47600,8 @@
     },
     "nvidia/nemotron-3-nano-30b-a3b": {
      "name": "Nemotron 3 Nano 30B A3B",
-     "inputPerMillion": 0.06,
-     "outputPerMillion": 0.24,
+     "inputPerMillion": 0.05,
+     "outputPerMillion": 0.2,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -46396,8 +47633,8 @@
     },
     "nvidia/nemotron-3-ultra-550b-a55b": {
      "name": "Nemotron 3 Ultra 550B A55B",
-     "inputPerMillion": 0.625,
-     "outputPerMillion": 3.125,
+     "inputPerMillion": 0.6,
+     "outputPerMillion": 2.4,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -46428,7 +47665,7 @@
     },
     "nvidia/nemotron-3.5-lightning": {
      "name": "Nemotron 3.5 Lightning 30B A3B",
-     "inputPerMillion": 0.08,
+     "inputPerMillion": 0.07,
      "outputPerMillion": 0.2,
      "contextWindow": 262144,
      "tools": true,
@@ -46822,6 +48059,42 @@
      "tools": true,
      "reasoning": true
     },
+    "openai/gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna-pro": {
+     "name": "GPT-6 Luna Pro",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol-pro": {
+     "name": "GPT-6 Sol Pro",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "openai/gpt-audio": {
      "name": "GPT Audio",
      "inputPerMillion": 2.5,
@@ -46854,8 +48127,8 @@
     },
     "openai/gpt-oss-20b": {
      "name": "GPT OSS 20B",
-     "inputPerMillion": 0.03,
-     "outputPerMillion": 0.13,
+     "inputPerMillion": 0.018,
+     "outputPerMillion": 0.09,
      "contextWindow": 131072,
      "tools": true,
      "reasoning": true
@@ -47039,6 +48312,15 @@
      "inputPerMillion": 0,
      "outputPerMillion": 0,
      "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "prism-ml/ternary-bonsai-2-27b": {
+     "name": "Ternary Bonsai 2 27B",
+     "inputPerMillion": 0.075,
+     "outputPerMillion": 0.5,
+     "contextWindow": 262144,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -47297,8 +48579,8 @@
     },
     "qwen/qwen3.5-35b-a3b": {
      "name": "Qwen3.5 35B-A3B",
-     "inputPerMillion": 0.1625,
-     "outputPerMillion": 1.3,
+     "inputPerMillion": 0.3125,
+     "outputPerMillion": 1.25,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -47351,8 +48633,8 @@
     },
     "qwen/qwen3.6-27b": {
      "name": "Qwen3.6 27B",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 2,
+     "inputPerMillion": 0.32,
+     "outputPerMillion": 2.7,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -47360,8 +48642,8 @@
     },
     "qwen/qwen3.6-35b-a3b": {
      "name": "Qwen3.6 35B-A3B",
-     "inputPerMillion": 0.1,
-     "outputPerMillion": 0.9,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 1,
      "contextWindow": 262144,
      "vision": true,
      "tools": true,
@@ -47429,8 +48711,8 @@
     },
     "qwen/qwen3.8-27b": {
      "name": "Qwen3.8 27B",
-     "inputPerMillion": 0.214,
-     "outputPerMillion": 2.55,
+     "inputPerMillion": 0.42,
+     "outputPerMillion": 3,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -47458,6 +48740,15 @@
      "name": "Qwen3.8 Max 0902",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen/qwen3.8-omni-flash": {
+     "name": "Qwen3.8 Omni Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.47,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -47590,8 +48881,8 @@
     },
     "tencent/hy3": {
      "name": "Hy3",
-     "inputPerMillion": 0.132,
-     "outputPerMillion": 0.528,
+     "inputPerMillion": 0.0825,
+     "outputPerMillion": 0.33,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -47746,6 +49037,15 @@
      "tools": true,
      "reasoning": true
     },
+    "x-ai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 1.6,
+     "outputPerMillion": 4.8,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "x-ai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -47769,6 +49069,33 @@
      "inputPerMillion": 0.435,
      "outputPerMillion": 0.87,
      "contextWindow": 1050000,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+     "name": "MiMo-V2.6-Pro-UltraSpeed",
+     "inputPerMillion": 4.35,
+     "outputPerMillion": 8.7,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -47856,8 +49183,8 @@
     },
     "z-ai/glm-5.2": {
      "name": "GLM-5.2",
-     "inputPerMillion": 0.4875,
-     "outputPerMillion": 1.56,
+     "inputPerMillion": 0.6496,
+     "outputPerMillion": 2.0416,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -47871,17 +49198,26 @@
     },
     "z-ai/glm-5.3": {
      "name": "GLM-5.3",
-     "inputPerMillion": 1.4,
-     "outputPerMillion": 4.4,
+     "inputPerMillion": 0.5614,
+     "outputPerMillion": 1.7644,
      "contextWindow": 1310720,
      "tools": true,
      "reasoning": true
     },
     "z-ai/glm-5.3-flash": {
      "name": "GLM-5.3-Flash",
-     "inputPerMillion": 0.09,
-     "outputPerMillion": 0.3,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
      "contextWindow": 1310720,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flashx": {
+     "name": "GLM 5.3 FlashX",
+     "inputPerMillion": 0.37,
+     "outputPerMillion": 1.25,
+     "contextWindow": 1048576,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -47915,8 +49251,8 @@
     },
     "~anthropic/claude-opus-latest": {
      "name": "Claude Opus Latest",
-     "inputPerMillion": 5,
-     "outputPerMillion": 25,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -47933,8 +49269,8 @@
     },
     "~deepseek/deepseek-flash-latest": {
      "name": "DeepSeek Flash Latest",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.6,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -47942,16 +49278,16 @@
     },
     "~deepseek/deepseek-pro-latest": {
      "name": "DeepSeek Pro Latest",
-     "inputPerMillion": 0.66,
-     "outputPerMillion": 1.98,
+     "inputPerMillion": 0.39996,
+     "outputPerMillion": 1.19988,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
     },
     "~deepseek/deepseek-v4-flash-latest": {
      "name": "DeepSeek V4 Flash Latest",
-     "inputPerMillion": 0.0558,
-     "outputPerMillion": 0.1767,
+     "inputPerMillion": 0.03,
+     "outputPerMillion": 0.8,
      "contextWindow": 1310720,
      "tools": true,
      "reasoning": true
@@ -47976,8 +49312,8 @@
     },
     "~moonshotai/kimi-latest": {
      "name": "Kimi Latest",
-     "inputPerMillion": 2.1,
-     "outputPerMillion": 10.95,
+     "inputPerMillion": 1.35,
+     "outputPerMillion": 14.33,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
@@ -47994,8 +49330,8 @@
     },
     "~openai/gpt-luna-latest": {
      "name": "GPT Luna Latest",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 1.2,
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -48030,8 +49366,8 @@
     },
     "~x-ai/grok-latest": {
      "name": "Grok Latest",
-     "inputPerMillion": 2,
-     "outputPerMillion": 6,
+     "inputPerMillion": 1.6,
+     "outputPerMillion": 4.8,
      "contextWindow": 500000,
      "vision": true,
      "tools": true,
@@ -48048,8 +49384,8 @@
     },
     "~z-ai/glm-latest": {
      "name": "GLM Latest",
-     "inputPerMillion": 0.8775,
-     "outputPerMillion": 2.97,
+     "inputPerMillion": 0.5614,
+     "outputPerMillion": 1.7644,
      "contextWindow": 1310720,
      "tools": true,
      "reasoning": true
@@ -48059,7 +49395,7 @@
   "opper": {
    "name": "Opper",
    "models": {
-    "anthropic/claude-fable-5": {
+    "claude-fable-5": {
      "name": "Claude Fable 5",
      "inputPerMillion": 10,
      "outputPerMillion": 50,
@@ -48068,16 +49404,25 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-haiku-4-5": {
+    "claude-fable-5-1": {
+     "name": "Claude Fable 5.1",
+     "inputPerMillion": 10,
+     "outputPerMillion": 50,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-haiku-4-5": {
      "name": "Claude Haiku 4.5 (latest)",
-     "inputPerMillion": 1,
-     "outputPerMillion": 5,
+     "inputPerMillion": 1.1,
+     "outputPerMillion": 5.5,
      "contextWindow": 200000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4-5": {
+    "claude-opus-4-5": {
      "name": "Claude Opus 4.5 (latest)",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
@@ -48086,7 +49431,7 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4-6": {
+    "claude-opus-4-6": {
      "name": "Claude Opus 4.6",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
@@ -48095,16 +49440,16 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4-7": {
+    "claude-opus-4-7": {
      "name": "Claude Opus 4.7",
-     "inputPerMillion": 5,
-     "outputPerMillion": 25,
+     "inputPerMillion": 5.5,
+     "outputPerMillion": 27.5,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-4-8": {
+    "claude-opus-4-8": {
      "name": "Claude Opus 4.8",
      "inputPerMillion": 5,
      "outputPerMillion": 25,
@@ -48113,43 +49458,66 @@
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-opus-5": {
+    "claude-opus-5": {
      "name": "Claude Opus 5",
-     "inputPerMillion": 5,
-     "outputPerMillion": 25,
+     "inputPerMillion": 5.5,
+     "outputPerMillion": 27.5,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-sonnet-4-5": {
+    "claude-sonnet-4-5": {
      "name": "Claude Sonnet 4.5 (latest)",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
+     "inputPerMillion": 3.3,
+     "outputPerMillion": 16.5,
      "contextWindow": 200000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-sonnet-4-6": {
+    "claude-sonnet-4-6": {
      "name": "Claude Sonnet 4.6",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
+     "inputPerMillion": 3.3,
+     "outputPerMillion": 16.5,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "anthropic/claude-sonnet-5": {
+    "claude-sonnet-5": {
      "name": "Claude Sonnet 5",
-     "inputPerMillion": 2,
-     "outputPerMillion": 10,
+     "inputPerMillion": 2.2,
+     "outputPerMillion": 11,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "gemini/gemini-3-flash-preview": {
+    "deepseek-v4-flash": {
+     "name": "DeepSeek V4 Flash",
+     "inputPerMillion": 0.25,
+     "outputPerMillion": 0.66,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4-pro": {
+     "name": "DeepSeek V4 Pro",
+     "inputPerMillion": 1.78812,
+     "outputPerMillion": 3.57624,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "devstral-2512": {
+     "name": "Devstral 2",
+     "inputPerMillion": 0.4,
+     "outputPerMillion": 2,
+     "contextWindow": 256000,
+     "tools": true
+    },
+    "gemini-3-flash-preview": {
      "name": "Gemini 3 Flash Preview",
      "inputPerMillion": 0.5,
      "outputPerMillion": 3,
@@ -48158,7 +49526,7 @@
      "tools": true,
      "reasoning": true
     },
-    "gemini/gemini-3.1-pro-preview": {
+    "gemini-3.1-pro-preview": {
      "name": "Gemini 3.1 Pro Preview",
      "inputPerMillion": 2,
      "outputPerMillion": 12,
@@ -48167,7 +49535,7 @@
      "tools": true,
      "reasoning": true
     },
-    "gemini/gemini-3.5-flash": {
+    "gemini-3.5-flash": {
      "name": "Gemini 3.5 Flash",
      "inputPerMillion": 1.5,
      "outputPerMillion": 9,
@@ -48176,7 +49544,7 @@
      "tools": true,
      "reasoning": true
     },
-    "gemini/gemini-3.5-flash-lite": {
+    "gemini-3.5-flash-lite": {
      "name": "Gemini 3.5 Flash Lite",
      "inputPerMillion": 0.3,
      "outputPerMillion": 2.5,
@@ -48185,177 +49553,7 @@
      "tools": true,
      "reasoning": true
     },
-    "meta/muse-spark-1.2": {
-     "name": "Muse Spark 1.2",
-     "inputPerMillion": 1.25,
-     "outputPerMillion": 4.25,
-     "contextWindow": 1048576,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "minimax/m3": {
-     "name": "MiniMax-M3",
-     "inputPerMillion": 0.6,
-     "outputPerMillion": 2.4,
-     "contextWindow": 1048576,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "mistral/devstral-2512": {
-     "name": "Devstral 2",
-     "inputPerMillion": 0.4,
-     "outputPerMillion": 2,
-     "contextWindow": 262144,
-     "tools": true
-    },
-    "mistral/mistral-large-2512": {
-     "name": "Mistral Large 3",
-     "inputPerMillion": 0.5,
-     "outputPerMillion": 1.5,
-     "contextWindow": 262144,
-     "vision": true,
-     "tools": true
-    },
-    "mistral/mistral-small-2603": {
-     "name": "Mistral Small 4",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.6,
-     "contextWindow": 256000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "moonshot/kimi-k3": {
-     "name": "Kimi K3",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
-     "contextWindow": 1048576,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.3-chat-latest": {
-     "name": "GPT-5.3 Chat (latest)",
-     "inputPerMillion": 1.75,
-     "outputPerMillion": 14,
-     "contextWindow": 128000,
-     "vision": true,
-     "tools": true
-    },
-    "openai/gpt-5.3-codex": {
-     "name": "GPT-5.3 Codex",
-     "inputPerMillion": 1.75,
-     "outputPerMillion": 14,
-     "contextWindow": 400000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.4": {
-     "name": "GPT-5.4",
-     "inputPerMillion": 2.5,
-     "outputPerMillion": 15,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.4-mini": {
-     "name": "GPT-5.4 mini",
-     "inputPerMillion": 0.75,
-     "outputPerMillion": 4.5,
-     "contextWindow": 400000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.4-nano": {
-     "name": "GPT-5.4 nano",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 1.25,
-     "contextWindow": 400000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.4-pro": {
-     "name": "GPT-5.4 Pro",
-     "inputPerMillion": 30,
-     "outputPerMillion": 180,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.5": {
-     "name": "GPT-5.5",
-     "inputPerMillion": 5,
-     "outputPerMillion": 30,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.5-pro": {
-     "name": "GPT-5.5 Pro",
-     "inputPerMillion": 30,
-     "outputPerMillion": 180,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.6-luna": {
-     "name": "GPT-5.6 Luna",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 1.2,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.6-sol": {
-     "name": "GPT-5.6 Sol",
-     "inputPerMillion": 5,
-     "outputPerMillion": 30,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-5.6-terra": {
-     "name": "GPT-5.6 Terra",
-     "inputPerMillion": 2,
-     "outputPerMillion": 12,
-     "contextWindow": 1050000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "perplexity/sonar": {
-     "name": "Sonar",
-     "inputPerMillion": 1,
-     "outputPerMillion": 1,
-     "contextWindow": 128000
-    },
-    "perplexity/sonar-pro": {
-     "name": "Sonar Pro",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
-     "contextWindow": 200000,
-     "vision": true
-    },
-    "perplexity/sonar-reasoning-pro": {
-     "name": "Sonar Reasoning Pro",
-     "inputPerMillion": 2,
-     "outputPerMillion": 8,
-     "contextWindow": 128000,
-     "vision": true,
-     "reasoning": true
-    },
-    "vertexai/gemini-3.7-flash": {
+    "gemini-3.7-flash": {
      "name": "Gemini 3.7 Flash",
      "inputPerMillion": 0.75,
      "outputPerMillion": 3.75,
@@ -48364,16 +49562,171 @@
      "tools": true,
      "reasoning": true
     },
-    "vertexai/gemini-3.7-flash-eu": {
-     "name": "Gemini 3.7 Flash (EU)",
-     "inputPerMillion": 0.75,
-     "outputPerMillion": 3.75,
+    "gemini-3.8-flash": {
+     "name": "Gemini 3.8 Flash",
+     "inputPerMillion": 0.825,
+     "outputPerMillion": 4.125,
      "contextWindow": 1048576,
      "vision": true,
      "tools": true,
      "reasoning": true
     },
-    "xai/grok-4.3": {
+    "gemma-4-31b-it": {
+     "name": "Gemma 4 31B IT",
+     "inputPerMillion": 0.46488,
+     "outputPerMillion": 2.44062,
+     "contextWindow": 256000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.2": {
+     "name": "GLM-5.2",
+     "inputPerMillion": 1.62708,
+     "outputPerMillion": 5.811,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3": {
+     "name": "GLM-5.3",
+     "inputPerMillion": 1.75,
+     "outputPerMillion": 4.6488,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3-flash": {
+     "name": "GLM-5.3-Flash",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.3-chat-latest": {
+     "name": "GPT-5.3 Chat (latest)",
+     "inputPerMillion": 1.75,
+     "outputPerMillion": 14,
+     "contextWindow": 128000,
+     "vision": true,
+     "tools": true
+    },
+    "gpt-5.3-codex": {
+     "name": "GPT-5.3 Codex",
+     "inputPerMillion": 1.75,
+     "outputPerMillion": 14,
+     "contextWindow": 400000,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.4": {
+     "name": "GPT-5.4",
+     "inputPerMillion": 2.5,
+     "outputPerMillion": 15,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.4-mini": {
+     "name": "GPT-5.4 mini",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 4.5,
+     "contextWindow": 400000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.4-nano": {
+     "name": "GPT-5.4 nano",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1.25,
+     "contextWindow": 400000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.4-pro": {
+     "name": "GPT-5.4 Pro",
+     "inputPerMillion": 30,
+     "outputPerMillion": 180,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.5": {
+     "name": "GPT-5.5",
+     "inputPerMillion": 5,
+     "outputPerMillion": 30,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.5-pro": {
+     "name": "GPT-5.5 Pro",
+     "inputPerMillion": 30,
+     "outputPerMillion": 180,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.6-luna": {
+     "name": "GPT-5.6 Luna",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.6-sol": {
+     "name": "GPT-5.6 Sol",
+     "inputPerMillion": 5,
+     "outputPerMillion": 30,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-5.6-terra": {
+     "name": "GPT-5.6 Terra",
+     "inputPerMillion": 2,
+     "outputPerMillion": 12,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6-astra": {
+     "name": "GPT-6 Astra",
+     "inputPerMillion": 10,
+     "outputPerMillion": 50,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-oss-120b": {
+     "name": "GPT OSS 120B",
+     "inputPerMillion": 1.1622,
+     "outputPerMillion": 4.88124,
+     "contextWindow": 128000,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-oss-20b": {
+     "name": "GPT OSS 20B",
+     "inputPerMillion": 0.11622,
+     "outputPerMillion": 0.488124,
+     "contextWindow": 128000,
+     "tools": true,
+     "reasoning": true
+    },
+    "grok-4.3": {
      "name": "Grok 4.3",
      "inputPerMillion": 1.25,
      "outputPerMillion": 2.5,
@@ -48382,7 +49735,7 @@
      "tools": true,
      "reasoning": true
     },
-    "xai/grok-4.5": {
+    "grok-4.5": {
      "name": "Grok 4.5",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
@@ -48391,7 +49744,7 @@
      "tools": true,
      "reasoning": true
     },
-    "xai/grok-4.6": {
+    "grok-4.6": {
      "name": "Grok 4.6",
      "inputPerMillion": 2,
      "outputPerMillion": 6,
@@ -48400,13 +49753,133 @@
      "tools": true,
      "reasoning": true
     },
-    "xai/grok-build-0.1": {
+    "grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
      "outputPerMillion": 2,
      "contextWindow": 256000,
      "vision": true,
      "tools": true,
+     "reasoning": true
+    },
+    "kimi-k3": {
+     "name": "Kimi K3",
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "minimax-m2.7": {
+     "name": "MiniMax-M2.7",
+     "inputPerMillion": 0.69732,
+     "outputPerMillion": 2.78928,
+     "contextWindow": 196608,
+     "tools": true,
+     "reasoning": true
+    },
+    "minimax-m3": {
+     "name": "MiniMax-M3",
+     "inputPerMillion": 0.6,
+     "outputPerMillion": 2.4,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mistral-large-2512": {
+     "name": "Mistral Large 3",
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 1.5,
+     "contextWindow": 256000,
+     "vision": true,
+     "tools": true
+    },
+    "mistral-small-2603": {
+     "name": "Mistral Small 4",
+     "inputPerMillion": 0.5811,
+     "outputPerMillion": 2.44062,
+     "contextWindow": 256000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "muse-spark-1.2": {
+     "name": "Muse Spark 1.2",
+     "inputPerMillion": 1.25,
+     "outputPerMillion": 4.25,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "muse-spark-1.3": {
+     "name": "Muse Spark 1.3",
+     "inputPerMillion": 1.25,
+     "outputPerMillion": 4.25,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen3-coder-next": {
+     "name": "Qwen3 Coder Next",
+     "inputPerMillion": 0.5811,
+     "outputPerMillion": 2.3244,
+     "contextWindow": 262144,
+     "tools": true
+    },
+    "qwen3.6-35b-a3b": {
+     "name": "Qwen3.6 35B-A3B",
+     "inputPerMillion": 0.248,
+     "outputPerMillion": 1.485,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B",
+     "inputPerMillion": 2.5,
+     "outputPerMillion": 6,
+     "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen3.8-27b": {
+     "name": "Qwen3.8 27B",
+     "inputPerMillion": 0.5811,
+     "outputPerMillion": 3,
+     "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen3.8-max": {
+     "name": "Qwen3.8 Max",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 983616,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "sonar": {
+     "name": "Sonar",
+     "inputPerMillion": 1,
+     "outputPerMillion": 1,
+     "contextWindow": 128000
+    },
+    "sonar-pro": {
+     "name": "Sonar Pro",
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
+     "contextWindow": 200000
+    },
+    "sonar-reasoning-pro": {
+     "name": "Sonar Reasoning Pro",
+     "inputPerMillion": 2,
+     "outputPerMillion": 8,
+     "contextWindow": 128000,
      "reasoning": true
     }
    }
@@ -49473,14 +50946,6 @@
      "contextWindow": 32768,
      "vision": true
     },
-    "qwen3-32b": {
-     "name": "Qwen3-32B",
-     "inputPerMillion": 0.09,
-     "outputPerMillion": 0.25,
-     "contextWindow": 32768,
-     "tools": true,
-     "reasoning": true
-    },
     "qwen3-coder-30b-a3b-instruct": {
      "name": "Qwen3-Coder-30B-A3B-Instruct",
      "inputPerMillion": 0.07,
@@ -50121,42 +51586,48 @@
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "fastino/gliner2-base-v1": {
      "name": "GLiNER2 Base",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "fastino/gliner2-large-v1": {
      "name": "GLiNER2 Large",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "fastino/gliner2-multi-large-v1": {
      "name": "GLiNER2 Multi Large",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "fastino/gliner2-multi-v1": {
      "name": "GLiNER2 Multi",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "fastino/gliner2-privacy-filter-PII-multi": {
      "name": "GLiNER2 Privacy Filter PII (Multi)",
      "inputPerMillion": 0.15,
      "outputPerMillion": 0.15,
      "contextWindow": 8192,
-     "tools": true
+     "tools": true,
+     "reasoning": true
     },
     "gemini-3-flash": {
      "name": "Gemini 3 Flash Preview",
@@ -52898,6 +54369,24 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-opus-5-5@eu": {
+     "name": "Claude Opus 5.5 (EU)",
+     "inputPerMillion": 5.5,
+     "outputPerMillion": 27.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-opus-5@eu": {
      "name": "Claude Opus 5 (EU)",
      "inputPerMillion": 5.5,
@@ -55127,6 +56616,15 @@
      "contextWindow": 197000,
      "tools": true
     },
+    "MiniMaxAI/MiniMax-M3": {
+     "name": "MiniMax-M3",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 1.2,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "Qwen/Qwen2.5-72B-Instruct": {
      "name": "Qwen/Qwen2.5-72B-Instruct",
      "inputPerMillion": 0.59,
@@ -55146,14 +56644,6 @@
      "inputPerMillion": 0.07,
      "outputPerMillion": 0.28,
      "contextWindow": 131000,
-     "tools": true,
-     "reasoning": true
-    },
-    "Qwen/Qwen3-235B-A22B-Thinking-2507": {
-     "name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
-     "inputPerMillion": 0.13,
-     "outputPerMillion": 0.6,
-     "contextWindow": 262000,
      "tools": true,
      "reasoning": true
     },
@@ -55193,23 +56683,6 @@
      "outputPerMillion": 1,
      "contextWindow": 262000,
      "tools": true
-    },
-    "Qwen/Qwen3-VL-235B-A22B-Instruct": {
-     "name": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 1.5,
-     "contextWindow": 262000,
-     "vision": true,
-     "tools": true
-    },
-    "Qwen/Qwen3-VL-235B-A22B-Thinking": {
-     "name": "Qwen/Qwen3-VL-235B-A22B-Thinking",
-     "inputPerMillion": 0.45,
-     "outputPerMillion": 3.5,
-     "contextWindow": 262000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
     },
     "Qwen/Qwen3-VL-30B-A3B-Instruct": {
      "name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -55302,12 +56775,13 @@
      "contextWindow": 262144,
      "tools": true
     },
-    "baidu/ERNIE-4.5-300B-A47B": {
-     "name": "baidu/ERNIE-4.5-300B-A47B",
-     "inputPerMillion": 0.28,
-     "outputPerMillion": 1.1,
-     "contextWindow": 131000,
-     "tools": true
+    "Qwen/Qwen3.8-2.4T-A95B": {
+     "name": "Qwen3.8 2.4T A95B",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 1049000,
+     "tools": true,
+     "reasoning": true
     },
     "deepseek-ai/DeepSeek-R1": {
      "name": "deepseek-ai/DeepSeek-R1",
@@ -55358,19 +56832,51 @@
     },
     "deepseek-ai/DeepSeek-V4-Flash": {
      "name": "DeepSeek V4 Flash",
-     "inputPerMillion": 0.14,
+     "inputPerMillion": 0.13,
      "outputPerMillion": 0.28,
      "contextWindow": 1000000,
      "tools": true,
      "reasoning": true
     },
-    "deepseek-ai/DeepSeek-V4-Pro": {
-     "name": "DeepSeek V4 Pro",
-     "inputPerMillion": 1.74,
-     "outputPerMillion": 3.48,
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+     "name": "DeepSeek V4 Flash 0731",
+     "inputPerMillion": 0.22,
+     "outputPerMillion": 0.66,
      "contextWindow": 1000000,
      "tools": true,
      "reasoning": true
+    },
+    "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": {
+     "name": "DeepSeek V4 Flash Vision Exp",
+     "inputPerMillion": 0.44,
+     "outputPerMillion": 1.32,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-ai/DeepSeek-V4-Pro": {
+     "name": "DeepSeek V4 Pro",
+     "inputPerMillion": 1.50162,
+     "outputPerMillion": 3.135,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-ai/DeepSeek-V4-Pro-0813": {
+     "name": "DeepSeek V4 Pro 0813",
+     "inputPerMillion": 1.32,
+     "outputPerMillion": 3.96,
+     "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemma-4-12B-it": {
+     "name": "Gemma 4 12B IT",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.3,
+     "contextWindow": 262144,
+     "tools": true
     },
     "google/gemma-4-26B-A4B-it": {
      "name": "Gemma 4 26B A4B IT",
@@ -55393,6 +56899,14 @@
      "contextWindow": 131000,
      "tools": true
     },
+    "meituan-longcat/LongCat-2.0": {
+     "name": "LongCat-2.0",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 2.95,
+     "contextWindow": 1049000,
+     "tools": true,
+     "reasoning": true
+    },
     "moonshotai/Kimi-K2.5": {
      "name": "moonshotai/Kimi-K2.5",
      "inputPerMillion": 0.45,
@@ -55405,8 +56919,35 @@
     "moonshotai/Kimi-K2.6": {
      "name": "moonshotai/Kimi-K2.6",
      "inputPerMillion": 0.77,
-     "outputPerMillion": 4,
+     "outputPerMillion": 3.4,
      "contextWindow": 262000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "moonshotai/Kimi-K2.7-Code": {
+     "name": "Kimi K2.7 Code",
+     "inputPerMillion": 0.85916,
+     "outputPerMillion": 3.8,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "moonshotai/Kimi-K3": {
+     "name": "Kimi K3",
+     "inputPerMillion": 2.7,
+     "outputPerMillion": 13.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "nex-agi/Nex-N2-Pro": {
+     "name": "Nex-N2-Pro",
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 2.5,
+     "contextWindow": 262144,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -55442,10 +56983,10 @@
      "tools": true,
      "reasoning": true
     },
-    "tencent/Hy3-preview": {
-     "name": "Hy3 preview",
-     "inputPerMillion": 0.066,
-     "outputPerMillion": 0.26,
+    "tencent/Hy3": {
+     "name": "Hy3",
+     "inputPerMillion": 0.132,
+     "outputPerMillion": 0.528,
      "contextWindow": 262144,
      "tools": true,
      "reasoning": true
@@ -55467,17 +57008,34 @@
     },
     "zai-org/GLM-5.1": {
      "name": "zai-org/GLM-5.1",
-     "inputPerMillion": 1.4,
-     "outputPerMillion": 4.4,
+     "inputPerMillion": 1.19,
+     "outputPerMillion": 3.74,
      "contextWindow": 205000,
      "tools": true,
      "reasoning": true
     },
     "zai-org/GLM-5.2": {
      "name": "GLM-5.2",
+     "inputPerMillion": 1.302,
+     "outputPerMillion": 4.092,
+     "contextWindow": 1049000,
+     "tools": true,
+     "reasoning": true
+    },
+    "zai-org/GLM-5.3": {
+     "name": "GLM-5.3",
      "inputPerMillion": 1.4,
      "outputPerMillion": 4.4,
      "contextWindow": 1049000,
+     "tools": true,
+     "reasoning": true
+    },
+    "zai-org/GLM-5.3-Flash": {
+     "name": "GLM-5.3-Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1049000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -55648,23 +57206,6 @@
      "contextWindow": 262000,
      "tools": true
     },
-    "Qwen/Qwen3-VL-235B-A22B-Instruct": {
-     "name": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 1.5,
-     "contextWindow": 262000,
-     "vision": true,
-     "tools": true
-    },
-    "Qwen/Qwen3-VL-235B-A22B-Thinking": {
-     "name": "Qwen/Qwen3-VL-235B-A22B-Thinking",
-     "inputPerMillion": 0.45,
-     "outputPerMillion": 3.5,
-     "contextWindow": 262000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
     "Qwen/Qwen3-VL-30B-A3B-Instruct": {
      "name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
      "inputPerMillion": 0.29,
@@ -55767,13 +57308,6 @@
      "outputPerMillion": 1.86,
      "contextWindow": 262144,
      "vision": true,
-     "tools": true
-    },
-    "baidu/ERNIE-4.5-300B-A47B": {
-     "name": "baidu/ERNIE-4.5-300B-A47B",
-     "inputPerMillion": 0.28,
-     "outputPerMillion": 1.1,
-     "contextWindow": 131000,
      "tools": true
     },
     "deepseek-ai/DeepSeek-OCR": {
@@ -56217,6 +57751,15 @@
      "tools": true,
      "reasoning": true
     },
+    "step-5-preview": {
+     "name": "Step 5 Preview",
+     "inputPerMillion": 1,
+     "outputPerMillion": 2.7,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "step-tts-2": {
      "name": "Step TTS 2"
     },
@@ -56270,6 +57813,13 @@
     "step-3.7-flash": {
      "name": "Step 3.7 Flash",
      "contextWindow": 256000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "step-5-preview": {
+     "name": "Step 5 Preview",
+     "contextWindow": 1000000,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -56466,6 +58016,262 @@
     }
    }
   },
+  "tempr": {
+   "name": "Tempr",
+   "models": {
+    "anthropic/claude-fable-5": {
+     "name": "Claude Fable 5",
+     "inputPerMillion": 10,
+     "outputPerMillion": 50,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-fable-5-1": {
+     "name": "Claude Fable 5.1",
+     "inputPerMillion": 10,
+     "outputPerMillion": 50,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-haiku-4-5": {
+     "name": "Claude Haiku 4.5 (latest)",
+     "inputPerMillion": 1,
+     "outputPerMillion": 5,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-haiku-4-5-20251001": {
+     "name": "Claude Haiku 4.5",
+     "inputPerMillion": 1,
+     "outputPerMillion": 5,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-4-5": {
+     "name": "Claude Opus 4.5 (latest)",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-4-5-20251101": {
+     "name": "Claude Opus 4.5",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-4-6": {
+     "name": "Claude Opus 4.6",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-4-7": {
+     "name": "Claude Opus 4.7",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-4-8": {
+     "name": "Claude Opus 4.8",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-5": {
+     "name": "Claude Opus 5",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-sonnet-4-5": {
+     "name": "Claude Sonnet 4.5 (latest)",
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-sonnet-4-5-20250929": {
+     "name": "Claude Sonnet 4.5",
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
+     "contextWindow": 200000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-sonnet-4-6": {
+     "name": "Claude Sonnet 4.6",
+     "inputPerMillion": 3,
+     "outputPerMillion": 15,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-sonnet-5": {
+     "name": "Claude Sonnet 5",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3-flash-preview": {
+     "name": "Gemini 3 Flash Preview",
+     "inputPerMillion": 0.5,
+     "outputPerMillion": 3,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.1-flash-lite": {
+     "name": "Gemini 3.1 Flash Lite",
+     "inputPerMillion": 0.25,
+     "outputPerMillion": 1.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.1-pro-preview": {
+     "name": "Gemini 3.1 Pro Preview",
+     "inputPerMillion": 2,
+     "outputPerMillion": 12,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.1-pro-preview-customtools": {
+     "name": "Gemini 3.1 Pro Preview Custom Tools",
+     "inputPerMillion": 2,
+     "outputPerMillion": 12,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.5-flash": {
+     "name": "Gemini 3.5 Flash",
+     "inputPerMillion": 1.5,
+     "outputPerMillion": 9,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.5-flash-lite": {
+     "name": "Gemini 3.5 Flash Lite",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 2.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.6-flash": {
+     "name": "Gemini 3.6 Flash",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 3.75,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.7-flash": {
+     "name": "Gemini 3.7 Flash",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 3.75,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-3.8-flash": {
+     "name": "Gemini 3.8 Flash",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 3.75,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-embedding-001": {
+     "name": "Gemini Embedding 001",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0,
+     "contextWindow": 2048
+    },
+    "google/gemini-embedding-2": {
+     "name": "Gemini Embedding 2",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 0,
+     "contextWindow": 8192
+    },
+    "google/gemini-flash-latest": {
+     "name": "Gemini Flash Latest",
+     "inputPerMillion": 0.75,
+     "outputPerMillion": 3.75,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemini-flash-lite-latest": {
+     "name": "Gemini Flash-Lite Latest",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 2.5,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemma-4-26b-a4b-it": {
+     "name": "Gemma 4 26B A4B IT",
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemma-4-31b-it": {
+     "name": "Gemma 4 31B IT",
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    }
+   }
+  },
   "tencent-coding-plan": {
    "name": "Tencent Coding Plan (China)",
    "models": {
@@ -56586,14 +58392,6 @@
   "tensorx": {
    "name": "TensorX",
    "models": {
-    "deepseek/deepseek-chat-v3.1": {
-     "name": "DeepSeek Chat V3.1",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 0.8,
-     "contextWindow": 164000,
-     "tools": true,
-     "reasoning": true
-    },
     "deepseek/deepseek-r1-0528": {
      "name": "DeepSeek R1-0528",
      "inputPerMillion": 0.66,
@@ -56610,14 +58408,6 @@
      "tools": true,
      "reasoning": true
     },
-    "deepseek/deepseek-v4-flash": {
-     "name": "DeepSeek V4 Flash",
-     "inputPerMillion": 0.15,
-     "outputPerMillion": 0.3,
-     "contextWindow": 1048576,
-     "tools": true,
-     "reasoning": true
-    },
     "deepseek/deepseek-v4-flash-0731": {
      "name": "DeepSeek V4 Flash 0731",
      "inputPerMillion": 0.25,
@@ -56630,6 +58420,14 @@
      "name": "DeepSeek V4 Pro",
      "inputPerMillion": 1.75,
      "outputPerMillion": 3.5,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek/deepseek-v4-pro-0813": {
+     "name": "DeepSeek V4 Pro 0813",
+     "inputPerMillion": 2,
+     "outputPerMillion": 4,
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
@@ -56696,42 +58494,11 @@
      "tools": true,
      "reasoning": true
     },
-    "nvidia/nemotron-3-super-120b-a12b": {
-     "name": "Nemotron 3 Super 120B A12B",
-     "inputPerMillion": 0.3,
-     "outputPerMillion": 0.9,
-     "contextWindow": 262144,
-     "tools": true,
-     "reasoning": true
-    },
-    "openai/gpt-oss-120b": {
-     "name": "GPT OSS 120B",
-     "inputPerMillion": 0.04,
-     "outputPerMillion": 0.2,
-     "contextWindow": 131072,
-     "tools": true,
-     "reasoning": true
-    },
     "qwen/qwen3-235b-a22b-2507": {
      "name": "Qwen3 235B-A22B-2507",
      "inputPerMillion": 0.072,
      "outputPerMillion": 0.464,
      "contextWindow": 131000,
-     "tools": true
-    },
-    "qwen/qwen3-coder-30b-a3b-instruct": {
-     "name": "Qwen3-Coder 30B-A3B Instruct",
-     "inputPerMillion": 0.06,
-     "outputPerMillion": 0.25,
-     "contextWindow": 262000,
-     "tools": true
-    },
-    "qwen/qwen3-vl-235b-a22b-instruct": {
-     "name": "Qwen3 VL 235B-A22B Instruct",
-     "inputPerMillion": 0.21,
-     "outputPerMillion": 1.9,
-     "contextWindow": 131000,
-     "vision": true,
      "tools": true
     },
     "qwen/qwen3.5-122b-a10b": {
@@ -56752,11 +58519,28 @@
      "tools": true,
      "reasoning": true
     },
-    "z-ai/glm-4.7": {
-     "name": "GLM-4.7",
-     "inputPerMillion": 0.6,
-     "outputPerMillion": 2.2,
-     "contextWindow": 200000,
+    "qwen/qwen3.8-2.4t-a95b": {
+     "name": "Qwen3.8 2.4T A95B",
+     "inputPerMillion": 2.5,
+     "outputPerMillion": 6,
+     "contextWindow": 262144,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen/qwen3.8-27b": {
+     "name": "Qwen3.8 27B",
+     "inputPerMillion": 0.4,
+     "outputPerMillion": 2.4,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "qwen/qwen3.8-flash-next": {
+     "name": "Qwen3.8 Flash Next",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 0.5,
+     "contextWindow": 262144,
      "vision": true,
      "tools": true,
      "reasoning": true
@@ -56790,6 +58574,23 @@
      "inputPerMillion": 1.5,
      "outputPerMillion": 4.5,
      "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3": {
+     "name": "GLM-5.3",
+     "inputPerMillion": 1.75,
+     "outputPerMillion": 4.5,
+     "contextWindow": 1048576,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flash": {
+     "name": "GLM-5.3-Flash",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -58015,6 +59816,15 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5-5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4.8,
+     "outputPerMillion": 24,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "claude-opus-5-fast": {
      "name": "Claude Opus 5 Fast",
      "inputPerMillion": 12,
@@ -58242,6 +60052,15 @@
     },
     "grok-4-6": {
      "name": "Grok 4.6",
+     "inputPerMillion": 2.27,
+     "outputPerMillion": 6.8,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "grok-4-7": {
+     "name": "Grok 4.7",
      "inputPerMillion": 2.27,
      "outputPerMillion": 6.8,
      "contextWindow": 500000,
@@ -58502,8 +60321,8 @@
     },
     "openai-gpt-56-sol": {
      "name": "GPT-5.6 Sol",
-     "inputPerMillion": 2.5,
-     "outputPerMillion": 12.5,
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -58511,8 +60330,8 @@
     },
     "openai-gpt-56-sol-pro": {
      "name": "GPT-5.6 Sol Pro",
-     "inputPerMillion": 2.5,
-     "outputPerMillion": 12.5,
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -58549,6 +60368,24 @@
      "name": "GPT-6 Astra Pro",
      "inputPerMillion": 12.5,
      "outputPerMillion": 62.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai-gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.125,
+     "outputPerMillion": 0.625,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai-gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2.5,
+     "outputPerMillion": 12.5,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -59270,6 +61107,24 @@
      "tools": true,
      "reasoning": true
     },
+    "anthropic/claude-opus-5.5": {
+     "name": "Claude Opus 5.5",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "anthropic/claude-opus-5.5-fast": {
+     "name": "Claude Opus 5.5 (Fast)",
+     "inputPerMillion": 8,
+     "outputPerMillion": 40,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "anthropic/claude-sonnet-4": {
      "name": "Claude Sonnet 4",
      "inputPerMillion": 3,
@@ -59530,26 +61385,14 @@
     "fish-audio/s1": {
      "name": "S1"
     },
-    "fish-audio/s1-free": {
-     "name": "S1 (Free)"
-    },
     "fish-audio/s2-pro": {
      "name": "S2 Pro"
-    },
-    "fish-audio/s2-pro-free": {
-     "name": "S2 Pro (Free)"
     },
     "fish-audio/s2.1-pro": {
      "name": "S2.1 Pro"
     },
-    "fish-audio/s2.1-pro-free": {
-     "name": "S2.1 Pro (Free)"
-    },
     "fish-audio/transcribe-1": {
      "name": "Transcribe-1"
-    },
-    "fish-audio/transcribe-1-free": {
-     "name": "Transcribe-1 (Free)"
     },
     "google/gemini-2.5-flash": {
      "name": "Gemini 2.5 Flash",
@@ -60121,6 +61964,13 @@
      "vision": true,
      "tools": true
     },
+    "mixedbread/toast-1": {
+     "name": "Toast 1",
+     "inputPerMillion": 0.3,
+     "outputPerMillion": 0.72,
+     "contextWindow": 131000,
+     "tools": true
+    },
     "moonshotai/kimi-k2": {
      "name": "Kimi K2 Instruct",
      "inputPerMillion": 0.57,
@@ -60616,8 +62466,8 @@
     },
     "openai/gpt-5.6-sol": {
      "name": "GPT 5.6 Sol",
-     "inputPerMillion": 2,
-     "outputPerMillion": 10,
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -60625,8 +62475,8 @@
     },
     "openai/gpt-5.6-sol-fast": {
      "name": "GPT 5.6 Sol (Fast)",
-     "inputPerMillion": 4,
-     "outputPerMillion": 20,
+     "inputPerMillion": 8,
+     "outputPerMillion": 40,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -60663,6 +62513,42 @@
      "name": "GPT-6 Astra (Fast)",
      "inputPerMillion": 20,
      "outputPerMillion": 100,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna": {
+     "name": "GPT-6 Luna",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-luna-fast": {
+     "name": "GPT-6 Luna (Fast)",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 1,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol": {
+     "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "openai/gpt-6-sol-fast": {
+     "name": "GPT-6 Sol (Fast)",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
      "contextWindow": 1050000,
      "vision": true,
      "tools": true,
@@ -60891,6 +62777,24 @@
      "name": "Arrow 1.1",
      "contextWindow": 131072
     },
+    "quiverai/arrow-2": {
+     "name": "Arrow 2",
+     "inputPerMillion": 4,
+     "outputPerMillion": 20,
+     "contextWindow": 131072,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "quiverai/arrow-2-telos": {
+     "name": "Arrow 2 Telos",
+     "inputPerMillion": 6,
+     "outputPerMillion": 30,
+     "contextWindow": 131072,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "recraft/recraft-v2": {
      "name": "Recraft V2",
      "contextWindow": 512
@@ -61049,6 +62953,15 @@
      "tools": true,
      "reasoning": true
     },
+    "spacexai/grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 1.2,
+     "outputPerMillion": 3.6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "spacexai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -61099,6 +63012,13 @@
      "vision": true,
      "tools": true,
      "reasoning": true
+    },
+    "stepfun/step-5-preview": {
+     "name": "Step 5 Preview",
+     "inputPerMillion": 1,
+     "outputPerMillion": 2.7,
+     "contextWindow": 1000000,
+     "vision": true
     },
     "tencent/hy-mt2-lite": {
      "name": "Tencent Hy-MT2-Lite",
@@ -61151,12 +63071,6 @@
      "vision": true,
      "tools": true,
      "reasoning": true
-    },
-    "typesafe-ai/jev": {
-     "name": "Jev",
-     "inputPerMillion": 0.042,
-     "outputPerMillion": 0,
-     "contextWindow": 64000
     },
     "voyage/rerank-2.5": {
      "name": "Voyage Rerank 2.5",
@@ -61220,6 +63134,33 @@
      "inputPerMillion": 0.435,
      "outputPerMillion": 0.87,
      "contextWindow": 1050000,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-flash": {
+     "name": "MiMo V2.6 Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro": {
+     "name": "MiMo V2.6 Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+     "name": "MiMo V2.6 Pro UltraSpeed",
+     "inputPerMillion": 4.35,
+     "outputPerMillion": 8.7,
+     "contextWindow": 1048576,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -61345,6 +63286,15 @@
      "tools": true,
      "reasoning": true
     },
+    "zai/glm-5.3-flashx": {
+     "name": "GLM 5.3 FlashX",
+     "inputPerMillion": 0.37,
+     "outputPerMillion": 1.25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "zai/glm-5v-turbo": {
      "name": "GLM 5V Turbo",
      "inputPerMillion": 1.2,
@@ -61409,6 +63359,24 @@
      "tools": true,
      "reasoning": true
     },
+    "claude-opus-5": {
+     "name": "Claude Opus 5",
+     "inputPerMillion": 5,
+     "outputPerMillion": 25,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-sonnet-5": {
+     "name": "Claude Sonnet 5",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "deepseek-v3.2": {
      "name": "DeepSeek-V3.2",
      "inputPerMillion": 0.28,
@@ -61438,6 +63406,15 @@
      "inputPerMillion": 1.35,
      "outputPerMillion": 3,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "deepseek-v4.1-flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.31,
+     "outputPerMillion": 1.23,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -61623,6 +63600,15 @@
      "name": "Kimi K3",
      "inputPerMillion": 3,
      "outputPerMillion": 15,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "viv-fast": {
+     "name": "Viv Fast",
+     "inputPerMillion": 0.13,
+     "outputPerMillion": 0.4,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -62123,6 +64109,24 @@
      "tools": true,
      "reasoning": true
     },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+     "name": "DeepSeek V4.1 Flash",
+     "inputPerMillion": 0.2,
+     "outputPerMillion": 0.65,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "google/gemma-4-26B-A4B-it": {
+     "name": "Gemma 4 26B A4B",
+     "inputPerMillion": 0.1,
+     "outputPerMillion": 0.3,
+     "contextWindow": 262144,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "google/gemma-4-31B-it": {
      "name": "Gemma 4 31B",
      "inputPerMillion": 0.1,
@@ -62335,6 +64339,15 @@
      "tools": true,
      "reasoning": true
     },
+    "grok-4.7": {
+     "name": "Grok 4.7",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
@@ -62346,6 +64359,11 @@
     },
     "grok-imagine-image": {
      "name": "Grok Imagine Image",
+     "contextWindow": 16000,
+     "vision": true
+    },
+    "grok-imagine-image-quality": {
+     "name": "Grok Imagine Image Quality",
      "contextWindow": 16000,
      "vision": true
     },
@@ -62413,6 +64431,33 @@
      "contextWindow": 1048576,
      "tools": true,
      "reasoning": true
+    },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0.14,
+     "outputPerMillion": 0.28,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0.435,
+     "outputPerMillion": 0.87,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro-ultraspeed": {
+     "name": "MiMo-V2.6-Pro-UltraSpeed",
+     "inputPerMillion": 4.35,
+     "outputPerMillion": 8.7,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
     }
    }
   },
@@ -62467,6 +64512,24 @@
      "inputPerMillion": 0,
      "outputPerMillion": 0,
      "contextWindow": 8192
+    },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
     }
    }
   },
@@ -62521,6 +64584,24 @@
      "inputPerMillion": 0,
      "outputPerMillion": 0,
      "contextWindow": 8192
+    },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
     }
    }
   },
@@ -62575,6 +64656,24 @@
      "inputPerMillion": 0,
      "outputPerMillion": 0,
      "contextWindow": 8192
+    },
+    "mimo-v2.6-flash": {
+     "name": "MiMo-V2.6-Flash",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "mimo-v2.6-pro": {
+     "name": "MiMo-V2.6-Pro",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 1048576,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
     }
    }
   },
@@ -62753,6 +64852,15 @@
      "tools": true,
      "reasoning": true
     },
+    "glm-4.6v-flash": {
+     "name": "GLM-4.6V-Flash",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
+     "contextWindow": 128000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "glm-4.7": {
      "name": "GLM-4.7",
      "inputPerMillion": 0.6,
@@ -62819,8 +64927,17 @@
     },
     "glm-5.3-flash": {
      "name": "GLM-5.3-Flash",
-     "inputPerMillion": 0.075,
-     "outputPerMillion": 0.25,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3-flashx": {
+     "name": "GLM-5.3-FlashX",
+     "inputPerMillion": 0.37,
+     "outputPerMillion": 1.25,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,
@@ -63692,54 +65809,18 @@
      "tools": true,
      "reasoning": true
     },
-    "x-ai/grok-4": {
-     "name": "Grok 4",
-     "inputPerMillion": 3,
-     "outputPerMillion": 15,
-     "contextWindow": 256000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "x-ai/grok-4-fast": {
-     "name": "Grok 4 Fast",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 0.5,
-     "contextWindow": 2000000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "x-ai/grok-4.1-fast": {
-     "name": "Grok 4.1 Fast",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 0.5,
-     "contextWindow": 2000000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
-    "x-ai/grok-4.1-fast-non-reasoning": {
-     "name": "Grok 4.1 Fast Non Reasoning",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 0.5,
+    "x-ai/grok-4.2-fast": {
+     "name": "Grok 4.2 Fast",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
      "contextWindow": 2000000,
      "vision": true,
      "tools": true
     },
-    "x-ai/grok-4.2-fast": {
-     "name": "Grok 4.2 Fast",
-     "inputPerMillion": 3,
-     "outputPerMillion": 9,
-     "contextWindow": 2000000,
-     "vision": true,
-     "tools": true,
-     "reasoning": true
-    },
     "x-ai/grok-4.2-fast-non-reasoning": {
      "name": "Grok 4.2 Fast Non Reasoning",
-     "inputPerMillion": 3,
-     "outputPerMillion": 9,
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
      "contextWindow": 2000000,
      "vision": true,
      "tools": true
@@ -63762,22 +65843,35 @@
      "tools": true,
      "reasoning": true
     },
+    "x-ai/grok-4.6": {
+     "name": "Grok 4.6",
+     "inputPerMillion": 2,
+     "outputPerMillion": 6,
+     "contextWindow": 500000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
     "x-ai/grok-build-0.1": {
      "name": "Grok Build 0.1",
      "inputPerMillion": 1,
      "outputPerMillion": 2,
      "contextWindow": 256000,
      "vision": true,
-     "tools": true,
-     "reasoning": true
+     "tools": true
     },
-    "x-ai/grok-code-fast-1": {
-     "name": "Grok Code Fast 1",
-     "inputPerMillion": 0.2,
-     "outputPerMillion": 1.5,
-     "contextWindow": 256000,
-     "tools": true,
-     "reasoning": true
+    "x-ai/grok-imagine-image-2.0": {
+     "name": "Grok Imagine Image 2.0",
+     "contextWindow": 66000,
+     "vision": true
+    },
+    "x-ai/grok-voice-stt-1.0": {
+     "name": "Grok Voice STT 1.0",
+     "contextWindow": 15000
+    },
+    "x-ai/grok-voice-tts-1.0": {
+     "name": "Grok Voice TTS 1.0",
+     "contextWindow": 15000
     },
     "xiaomi/mimo-v2-flash": {
      "name": "MiMo-V2-Flash",
@@ -63823,32 +65917,32 @@
     },
     "z-ai/glm-4.5": {
      "name": "GLM 4.5",
-     "inputPerMillion": 0.35,
-     "outputPerMillion": 1.54,
+     "inputPerMillion": 0.2911,
+     "outputPerMillion": 1.1645,
      "contextWindow": 128000,
      "tools": true,
      "reasoning": true
     },
     "z-ai/glm-4.5-air": {
      "name": "GLM 4.5 Air",
-     "inputPerMillion": 0.11,
-     "outputPerMillion": 0.56,
+     "inputPerMillion": 0.1165,
+     "outputPerMillion": 0.2911,
      "contextWindow": 128000,
      "tools": true,
      "reasoning": true
     },
     "z-ai/glm-4.6": {
      "name": "GLM 4.6",
-     "inputPerMillion": 0.35,
-     "outputPerMillion": 1.54,
+     "inputPerMillion": 0.2911,
+     "outputPerMillion": 1.1645,
      "contextWindow": 200000,
      "tools": true,
      "reasoning": true
     },
     "z-ai/glm-4.6v": {
      "name": "GLM 4.6V",
-     "inputPerMillion": 0.14,
-     "outputPerMillion": 0.42,
+     "inputPerMillion": 0.1456,
+     "outputPerMillion": 0.4367,
      "contextWindow": 200000,
      "vision": true,
      "tools": true,
@@ -63856,8 +65950,8 @@
     },
     "z-ai/glm-4.6v-flash": {
      "name": "GLM 4.6V FlashX",
-     "inputPerMillion": 0.02,
-     "outputPerMillion": 0.21,
+     "inputPerMillion": 0.0218,
+     "outputPerMillion": 0.2184,
      "contextWindow": 200000,
      "vision": true,
      "tools": true,
@@ -63874,8 +65968,8 @@
     },
     "z-ai/glm-4.7": {
      "name": "GLM 4.7",
-     "inputPerMillion": 0.28,
-     "outputPerMillion": 1.14,
+     "inputPerMillion": 0.2911,
+     "outputPerMillion": 1.1645,
      "contextWindow": 200000,
      "tools": true,
      "reasoning": true
@@ -63890,8 +65984,8 @@
     },
     "z-ai/glm-4.7-flashx": {
      "name": "GLM 4.7 FlashX",
-     "inputPerMillion": 0.07,
-     "outputPerMillion": 0.42,
+     "inputPerMillion": 0.0728,
+     "outputPerMillion": 0.4367,
      "contextWindow": 200000,
      "tools": true,
      "reasoning": true
@@ -63906,14 +66000,14 @@
     },
     "z-ai/glm-5-turbo": {
      "name": "GLM 5 Turbo",
-     "inputPerMillion": 0.88,
-     "outputPerMillion": 3.48,
+     "inputPerMillion": 0.73,
+     "outputPerMillion": 3.19,
      "contextWindow": 200000,
      "tools": true,
      "reasoning": true
     },
     "z-ai/glm-5.1": {
-     "name": "GLM-5.1",
+     "name": "GLM 5.1",
      "inputPerMillion": 0.8781,
      "outputPerMillion": 3.5126,
      "contextWindow": 200000,
@@ -63922,17 +66016,35 @@
     },
     "z-ai/glm-5.2": {
      "name": "GLM 5.2",
-     "inputPerMillion": 1.4,
-     "outputPerMillion": 4.5,
+     "inputPerMillion": 0.98,
+     "outputPerMillion": 3.08,
      "contextWindow": 1000000,
      "tools": true,
      "reasoning": true
     },
-    "z-ai/glm-5.2-free": {
-     "name": "GLM 5.2 (Free)",
-     "inputPerMillion": 0,
-     "outputPerMillion": 0,
+    "z-ai/glm-5.3": {
+     "name": "GLM 5.3",
+     "inputPerMillion": 1.4,
+     "outputPerMillion": 4.4,
      "contextWindow": 1000000,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flash": {
+     "name": "GLM 5.3 Flash",
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "z-ai/glm-5.3-flashx": {
+     "name": "GLM 5.3 FlashX",
+     "inputPerMillion": 0.375,
+     "outputPerMillion": 1.25,
+     "contextWindow": 1000000,
+     "vision": true,
      "tools": true,
      "reasoning": true
     },
@@ -63944,6 +66056,10 @@
      "vision": true,
      "tools": true,
      "reasoning": true
+    },
+    "z-ai/glm-image": {
+     "name": "GLM-Image",
+     "contextWindow": 10240
     }
    }
   },
@@ -63995,6 +66111,15 @@
      "name": "GLM-4.6V",
      "inputPerMillion": 0.3,
      "outputPerMillion": 0.9,
+     "contextWindow": 128000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-4.6v-flash": {
+     "name": "GLM-4.6V-Flash",
+     "inputPerMillion": 0,
+     "outputPerMillion": 0,
      "contextWindow": 128000,
      "vision": true,
      "tools": true,
@@ -64058,8 +66183,17 @@
     },
     "glm-5.3-flash": {
      "name": "GLM-5.3-Flash",
-     "inputPerMillion": 0.075,
-     "outputPerMillion": 0.25,
+     "inputPerMillion": 0.15,
+     "outputPerMillion": 0.5,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "glm-5.3-flashx": {
+     "name": "GLM-5.3-FlashX",
+     "inputPerMillion": 0.37,
+     "outputPerMillion": 1.25,
      "contextWindow": 1000000,
      "vision": true,
      "tools": true,

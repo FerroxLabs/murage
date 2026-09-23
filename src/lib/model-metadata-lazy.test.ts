@@ -3,6 +3,7 @@
 // module instance. Sharing a file with any other lookup would make that
 // assertion depend on test ordering, which is how a laziness test quietly
 // stops testing laziness.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { lookupModelMetadata, modelMetadataLoads, modelMetadataUpdatedAt } from "./model-metadata.ts";
@@ -46,7 +47,12 @@ describe("the snapshot is parsed once per session, on first use", () => {
 
   it("does not reparse for the dated note either", () => {
     expect(priceBandNote()).toBe("Bands are approximate, from published rates, September 2026");
-    expect(new Date(modelMetadataUpdatedAt()).toISOString().slice(0, 10)).toBe("2026-09-18");
+    // The date the snapshot itself records, read from disk rather than through
+    // the module under test so this read cannot count as a parse. It used to be
+    // the literal "2026-09-18", which made every `pnpm models:build` refresh
+    // fail a test whose point is laziness, not the calendar.
+    const fetchedAt = (JSON.parse(readFileSync(new URL("../data/model-metadata.json", import.meta.url), "utf8")) as { source: { fetchedAt: string } }).source.fetchedAt;
+    expect(new Date(modelMetadataUpdatedAt()).toISOString().slice(0, 10)).toBe(fetchedAt);
     expect(modelMetadataLoads()).toBe(1);
   });
 });
