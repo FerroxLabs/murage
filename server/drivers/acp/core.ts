@@ -838,9 +838,11 @@ const poolIdleMs = (): number => envOr("MURAGE_ACP_POOL_IDLE_MS", 10 * 60_000);
  * runs, a room — would otherwise hold one each for the full idle window. The
  * longest-idle process is closed first. */
 const poolMaxIdle = (): number => Math.max(1, Math.floor(envOr("MURAGE_ACP_POOL_MAX", 4)));
-/** `MURAGE_ACP_POOL=0` turns the pool off for every harness: each turn spawns
- * and closes its own process, as before #1575. */
-const poolingEnabled = (): boolean => process.env.MURAGE_ACP_POOL !== "0";
+/** Off unless `MURAGE_ACP_POOL=1`: each turn spawns and closes its own
+ * process, as before #1575. Held back until measured with real Fuigo: a kept
+ * process can let Fuigo's own background work outlive the turn (and the
+ * folder lease) for up to the idle window, which the per-turn kill stopped. */
+const poolingEnabled = (): boolean => process.env.MURAGE_ACP_POOL === "1";
 /** A stable digest, so neither the spawn environment's secrets nor the
  * per-turn capability tokens in `mcpServers` are ever held as a key. */
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");

@@ -29,7 +29,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
@@ -815,6 +815,9 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
 
 describe("Fuigo keeps one engine process per thread (upstream #1575)", () => {
   it("a second turn on the thread reuses the process and hands it the new turn's tokens", async () => {
+    // the pool ships off (MURAGE_ACP_POOL=1 turns it on)
+    process.env.MURAGE_ACP_POOL = "1";
+    onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
     instance = await FuigoAgentDriver.create({
       instanceId: "fuigo-pool",
       displayName: "Fuigo",

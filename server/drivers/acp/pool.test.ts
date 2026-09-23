@@ -101,6 +101,8 @@ describe("ACP process pool (fake CLI)", () => {
     process.env.FAKE_ACP_SPAWN_LOG = spawnLog;
     process.env.FAKE_ACP_RPC_LOG = rpcLog;
     process.env.FAKE_ACP_MCP_READY = "1";
+    // the pool ships off; every case here turns it on unless it says otherwise
+    process.env.MURAGE_ACP_POOL = "1";
   });
 
   afterEach(async () => {
@@ -368,6 +370,14 @@ describe("ACP process pool (fake CLI)", () => {
     // nobody was asked: the late request never became a card
     expect(recorder.events.filter((event) => event.type === "request.opened")).toHaveLength(0);
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", turnId });
+    await turn({ text: "two", resumeCursor: SESSION });
+    expect(spawns()).toHaveLength(2);
+  });
+
+  it("the pool is off by default: each turn spawns its own process, as before #1575", async () => {
+    delete process.env.MURAGE_ACP_POOL;
+    await create();
+    await turn({ text: "one" });
     await turn({ text: "two", resumeCursor: SESSION });
     expect(spawns()).toHaveLength(2);
   });
