@@ -38,10 +38,11 @@ import { speaker } from "@/lib/tts";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
+import { approvalAnswer } from "@/lib/call-answers";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -49,8 +50,6 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 /** Spoken answers to a permission card. Anything else is read as a reply
  * to the bot, not as consent — an approval must never be granted by a
  * sentence that merely contained the word "sure". */
-const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
-const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 /** Less than this share of the last 1.5 s being speech is not the owner
  *  talking (music, a TV). Tuned from the call-diag log lines. */
 const MIN_SPEECH_SHARE = 0.35;
@@ -60,14 +59,6 @@ const STOP_NOW = /^(?:(?:ok(?:ay)?|please|hey|no|just)[,.!\s]*)*(?:(?:stop(?: ta
 const STOP_ONLY = /^(?:(?:ok(?:ay)?|please|hey|no|just|all right|alright)[,.!\s]*)*(?:(?:stop(?: talking| it| that)?|shut up|be quiet|quiet|hush|enough|that'?s enough|pause|hold on|wait)[,.!\s]*)+$/i;
 /** Listening noises while the bot talks: "uh-huh", "yeah", "mm", "right". */
 const BACKCHANNEL = /^(u+h+[- ]?h+u+h+|m+h?m+|mm+[- ]?h+m+|yeah|yep|yes|right|okay|ok|sure|got it|i see|oh|ah|wow|nice|cool|uh|um)[.!?]*$/i;
-/** A yes that covers this kind of request until the call ends. */
-const YES_FOR_CALL = /\b(for (the rest of |)(the|this) call|yes to (all|everything)|until (i|we) hang up|(for )?the rest of (the|this) call|don'?t (ask|keep asking)( me)?( again)?)\b/i;
-
-/** The kind of request a call-long yes covers: the harness's own narrow
- *  allow key when it gives one, otherwise the tool and what it does. */
-function grantKey(pending: Pending): string {
-  return pending.allowKey || `${pending.tool}|${spokenToolAction(pending.tool, pending.detail)}`;
-}
 
 type Phase = "listening" | "sending" | "working" | "speaking";
 const CALL_ENDPOINT_MS = 850;
@@ -324,7 +315,12 @@ function Call({ bot }: { bot: Bot }) {
   /** Kinds of request the owner said yes to for the rest of this call. Held
    *  only here: never saved, gone when the call ends. Not the permanent
    *  "Always allow" the trust design rules out. */
-  const callGrants = useRef(new Set<string>());
+  /** "Yes for the rest of the call": every ordinary approval until hang-up.
+   *  It used to cover only the same kind of request, so a yes to a tool
+   *  search was asked again for the script and again for the connected
+   *  apps (heard live, 2026-09-23). Routines, skills and using this
+   *  computer are still always asked. */
+  const allowedForCall = useRef(false);
   /** When the owner last cut the bot off. */
   const interruptedAt = useRef(0);
   /** When the owner began the utterance now being heard over the bot. */
@@ -882,8 +878,9 @@ function Call({ bot }: { bot: Bot }) {
           hush();
           return;
         }
-        if (YES.test(said) || NO.test(said)) {
-          const allow = YES.test(said);
+        const answer = approvalAnswer(said);
+        if (answer) {
+          const allow = answer !== "deny";
           if (allow && open.skill) {
             setHeard("");
             void sayThenListen("Open this chat to review the complete skill before enabling it. You can say no now to deny it.");
@@ -895,10 +892,10 @@ function Call({ bot }: { bot: Bot }) {
           open.submitted = true;
           callLog.current.push({ said, outcome: "decision" });
           const pending = approvalRef.current;
-          const forCall = allow && pending && YES_FOR_CALL.test(said) && !open.routine && !open.skill && !isHostConsentApproval(pending);
+          const forCall = answer === "allow-for-call" && pending && !open.routine && !open.skill && !isHostConsentApproval(pending);
           if (forCall) {
-            callGrants.current.add(grantKey(pending));
-            void sayThenListen(`Okay. I'll ${spokenToolAction(pending.tool, pending.detail)} without asking until you hang up.`);
+            allowedForCall.current = true;
+            void sayThenListen("Okay. I won't ask again until you hang up.");
           }
           move("working");
           hush();
@@ -1091,13 +1088,28 @@ function Call({ bot }: { bot: Bot }) {
       !isRoutineApproval(approval) &&
       !isSkillApproval(approval) &&
       !isHostConsentApproval(approval) &&
-      callGrants.current.has(grantKey(approval))
+      allowedForCall.current
     ) {
       // allowed for the rest of this call: answered without asking again
       askedApproval.current = { requestId: approval.requestId, routine: false, skill: false, submitted: true };
       spokenIds.current.add(approval.message.id);
       callLog.current.push({ said: `(${spokenToolAction(approval.tool, approval.detail)}, allowed for this call)`, outcome: "decision" });
-      dispatch({ type: "decideRequest", threadId: bot.threadId, requestId: approval.requestId, behavior: "allow" });
+      const requestId = approval.requestId;
+      const asked = spokenApprovalPrompt(approval, bot.name, true);
+      dispatch({
+        type: "decideRequest",
+        threadId: bot.threadId,
+        requestId,
+        behavior: "allow",
+        // not saved: ask aloud rather than leave the work waiting on a card
+        // nobody mentions
+        onError: () => {
+          const pending = askedApproval.current;
+          if (!alive.current || currentCall() !== bot.id || pending?.requestId !== requestId) return;
+          pending.submitted = false;
+          void sayThenListen(`I couldn't allow that on my own. ${asked}`);
+        },
+      });
       return;
     }
     if (approval && askedApproval.current?.requestId !== approval.requestId && phase !== "speaking") {
