@@ -2,7 +2,7 @@
 /**
  * @license
  * Copyright 2026 Ferrox Labs
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * `murage` — deploy Murage's headless server to a cloud box so that it is
  * reachable ONLY over your Tailscale tailnet, and never from the internet.

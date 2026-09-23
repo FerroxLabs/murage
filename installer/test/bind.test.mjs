@@ -1,7 +1,7 @@
 /**
  * @license
  * Copyright 2026 Ferrox Labs
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The inverted default. Wayland ships `ALLOW_REMOTE=true` -> `0.0.0.0`; these
  * tests exist so that no future edit can make Murage do the same by accident.

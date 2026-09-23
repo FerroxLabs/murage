@@ -65,9 +65,13 @@ asar: true
 extraResources:
   - from: electron/resources/murage-approval.wav
     to: murage-approval.wav
-  # Ship the app's own license terms in every desktop distribution.
+  # Ship the app's own license terms in every desktop distribution: Murage is
+  # AGPL-3.0-or-later; the OpenMausBot portions it builds on stay Apache-2.0
+  # (see NOTICE), so that text travels too.
   - from: LICENSE
     to: licenses/Murage-LICENSE.txt
+  - from: LICENSES/Apache-2.0.txt
+    to: licenses/Apache-2.0.txt
   - from: NOTICE
     to: licenses/Murage-NOTICE.txt
   - from: third_party/installation-archive
@@ -81,18 +85,17 @@ extraResources:
   # licence and copyright notice travel with the distribution, so they do.
   - from: third_party/models-dev
     to: licenses/models-dev
-  # cloudflared is distributed under Apache-2.0 as a separate executable.
-  # Murage itself uses the same full license text; ship another named
-  # copy so the third-party executable's terms remain unambiguous.
-  - from: LICENSE
+  # cloudflared is distributed under Apache-2.0 as a separate executable;
+  # ship a named copy of that text so its terms remain unambiguous.
+  - from: LICENSES/Apache-2.0.txt
     to: licenses/cloudflared-LICENSE.txt
   - from: third_party/cloudflared/README.md
     to: licenses/cloudflared-README.md
   # fuigo is Ferrox Labs' own engine, derived from the Apache-2.0 licensed
-  # xai-org/grok-build. Murage itself uses the same full license text; ship
-  # another named copy so the bundled executable's terms remain unambiguous,
-  # plus the upstream third-party notices its release build embeds.
-  - from: LICENSE
+  # xai-org/grok-build, and stays Apache-2.0 as a separate executable; ship a
+  # named copy of that text so its terms remain unambiguous, plus the
+  # upstream third-party notices its release build embeds.
+  - from: LICENSES/Apache-2.0.txt
     to: licenses/fuigo-LICENSE.txt
   - from: third_party/fuigo/README.md
     to: licenses/fuigo-README.md

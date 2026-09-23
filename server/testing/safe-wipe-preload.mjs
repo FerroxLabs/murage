@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // `node --import ./server/testing/safe-wipe-preload.mjs --test ...`
 //
 // node --test files and ad-hoc scripts get no vitest setup file, so nothing

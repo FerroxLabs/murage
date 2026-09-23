@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The one recursive delete tests, human specs, fixtures and scripts may use.
 //
 // Written after the 2026-09-11 21:05 incident: the contents of the developer's

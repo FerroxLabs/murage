@@ -12,7 +12,7 @@
     "name": "Ferrox Labs",
     "email": "sean@ferroxlabs.com"
   },
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-or-later",
   "desktopName": "com.murage.app.desktop",
   "type": "module",
   "main": "electron/main.mjs",

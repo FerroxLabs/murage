@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Types for safe-wipe.mjs, the only recursive delete tests and scripts may use.
 export interface SafeWipeOptions {
   /** Admit a target strictly inside this root (build outputs under the

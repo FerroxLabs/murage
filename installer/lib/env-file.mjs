@@ -1,7 +1,7 @@
 /**
  * @license
  * Copyright 2026 Ferrox Labs
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The 0600 env file `murage setup` writes and `murage start` reads.
  *

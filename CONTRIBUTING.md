@@ -244,4 +244,4 @@ responses or events, no baking them into argv where another local process could 
 - [ ] UI changes include before/after screenshots
 
 By contributing you agree your contributions are licensed under the
-[Apache License, Version 2.0](LICENSE).
+[GNU Affero General Public License v3.0 or later](LICENSE).

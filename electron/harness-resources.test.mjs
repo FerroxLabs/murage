@@ -194,9 +194,10 @@ describe("bundled fuigo engine contract", () => {
       "licenses/fuigo-README.md",
       "licenses/fuigo-THIRD_PARTY_NOTICES.md",
     ]);
-    // Fuigo is Ferrox Labs' own Apache-2.0 work; the same full text ships
-    // under its own name so the executable's terms are unambiguous.
-    expect(licenses.find((row) => String(row.to) === "licenses/fuigo-LICENSE.txt").from).toBe("LICENSE");
+    // Fuigo is Ferrox Labs' own Apache-2.0 work; that text ships under its
+    // own name so the executable's terms are unambiguous (Murage's own
+    // LICENSE is AGPL-3.0 and must not be what Fuigo points at).
+    expect(licenses.find((row) => String(row.to) === "licenses/fuigo-LICENSE.txt").from).toBe("LICENSES/Apache-2.0.txt");
   });
 });
 
