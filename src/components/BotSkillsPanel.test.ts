@@ -380,6 +380,46 @@ describe("switching a skill on and off", () => {
 
     expect(list.current.map((entry) => entry.enabled)).toEqual([false, true]);
   });
+
+  const refusal = (code: "needs-review" | "blocked") =>
+    Object.assign(new Error(code === "blocked" ? "This skill was blocked by the safety check and can't be switched on." : "This skill needs a look before it can be switched on."), {
+      status: 409,
+      body: { code, scan: { contentHash: "c".repeat(64), findings: [{ message: "Sends data to an outside website" }, { message: "Sends data to an outside website" }, { message: "Contains text you cannot see" }] } },
+    });
+
+  it("asks before switching on a skill that needs a look, and sends the owner's yes with what they saw", async () => {
+    const list = track([skill({ enabled: false })]);
+    const calls: unknown[] = [];
+    const request = vi.fn(async (_path: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      if (calls.length === 1) throw refusal("needs-review");
+      return { skill: skill({ enabled: true }) };
+    });
+    const confirm = vi.fn(() => true);
+    const result = await toggleSkillEnabled({ botId: "bot-1", name: "chart-analysis", enabled: true, apply: list.apply, request, confirm });
+    expect(result).toEqual({ ok: true });
+    expect(confirm).toHaveBeenCalledWith("\u201cchart-analysis\u201d needs a look before it is switched on.\n\n- Sends data to an outside website\n- Contains text you cannot see\n\nUse it anyway?");
+    expect(calls).toEqual([{ enabled: true }, { enabled: true, acknowledged: "c".repeat(64) }]);
+    expect(list.current[0]!.enabled).toBe(true);
+  });
+
+  it("leaves it off, with no error, when the owner says no", async () => {
+    const list = track([skill({ enabled: false })]);
+    const request = vi.fn(async () => { throw refusal("needs-review"); });
+    const result = await toggleSkillEnabled({ botId: "bot-1", name: "chart-analysis", enabled: true, apply: list.apply, request, confirm: () => false });
+    expect(result).toEqual({ ok: true });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(list.current[0]!.enabled).toBe(false);
+  });
+
+  it("never asks about a Blocked skill: it stays off and says why", async () => {
+    const list = track([skill({ enabled: false })]);
+    const confirm = vi.fn(() => true);
+    const result = await toggleSkillEnabled({ botId: "bot-1", name: "chart-analysis", enabled: true, apply: list.apply, request: async () => { throw refusal("blocked"); }, confirm });
+    expect(result).toEqual({ ok: false, error: "Could not enable \u201cchart-analysis\u201d. This skill was blocked by the safety check and can't be switched on." });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(list.current[0]!.enabled).toBe(false);
+  });
 });
 
 describe("the panel's data layer", () => {

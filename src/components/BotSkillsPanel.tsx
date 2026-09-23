@@ -88,28 +88,52 @@ export function skillDescriptionLine(skill: BotSkill): string {
   return source || "No description";
 }
 
+/** What the owner reads before switching on a skill Skill Guard says needs a
+ *  look: each finding once, in plain words. */
+export function skillReviewPrompt(name: string, scan: { findings: Array<{ message: string }> }): string {
+  const lines = [...new Set(scan.findings.map((finding) => finding.message))].map((message) => `- ${message}`).join("\n");
+  return `\u201c${name}\u201d needs a look before it is switched on.\n\n${lines}\n\nUse it anyway?`;
+}
+
+type SkillRefusal = { status?: number; body?: { code?: string; scan?: { contentHash?: string; findings?: Array<{ message: string }> } } };
+
 export async function toggleSkillEnabled({
   botId,
   name,
   enabled,
   apply,
   request,
+  confirm = (text) => window.confirm(text),
 }: {
   botId: string;
   name: string;
   enabled: boolean;
   apply: (update: (current: BotSkill[]) => BotSkill[]) => void;
   request: (path: string, init: RequestInit) => Promise<unknown>;
+  /** Asked before a skill that needs a look is switched on. */
+  confirm?: (text: string) => boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   // Optimistic, and rolled back by the inverse edit rather than by restoring a
   // captured snapshot — a second toggle on another row must survive this one
   // failing.
   apply((current) => applySkillEnabled(current, name, enabled));
+  const path = `/api/bots/${botId}/skills/${encodeURIComponent(name)}`;
   try {
-    const result = (await request(`/api/bots/${botId}/skills/${encodeURIComponent(name)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ enabled }),
-    })) as { skill?: BotSkill };
+    let result: { skill?: BotSkill };
+    try {
+      result = (await request(path, { method: "PATCH", body: JSON.stringify({ enabled }) })) as { skill?: BotSkill };
+    } catch (cause) {
+      // Skill Guard: a skill that needs a look is switched on only once the
+      // owner has read its findings and said yes to exactly that content.
+      const refusal = (cause as SkillRefusal)?.body;
+      const hash = refusal?.scan?.contentHash;
+      if (!enabled || (cause as SkillRefusal)?.status !== 409 || refusal?.code !== "needs-review" || !hash) throw cause;
+      if (!confirm(skillReviewPrompt(name, { findings: refusal.scan?.findings ?? [] }))) {
+        apply((current) => applySkillEnabled(current, name, !enabled));
+        return { ok: true };
+      }
+      result = (await request(path, { method: "PATCH", body: JSON.stringify({ enabled, acknowledged: hash }) })) as { skill?: BotSkill };
+    }
     // The server answers with the authoritative listing. An enable it declined
     // to honour (stored SKILL.md changed after review) comes back disabled with
     // its warning attached, so the row must follow the answer, not the request.

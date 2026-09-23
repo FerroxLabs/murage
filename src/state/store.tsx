@@ -1881,7 +1881,9 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
   // retry loop cannot tell "the harness hiccuped" from "this surface is never
   // going to be allowed" — so it retried a deliberate 403 every 30 seconds
   // for as long as the phone had the tab open.
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status });
+  // The body rides along too, for refusals that carry more than a sentence
+  // (Skill Guard's 409 names its findings and the content they cover).
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status, body });
   return body;
 }
 
