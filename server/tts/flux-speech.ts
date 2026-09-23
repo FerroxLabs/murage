@@ -15,7 +15,7 @@
 // same sound, billed to their OpenAI account instead.
 //
 // Runs on the HARNESS only: the key must not leave the server.
-import type { Audio, Voice } from "./elevenlabs.ts";
+import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 import { VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 
 /** A test seam for the Flux base only; production uses the resolved route. */
@@ -62,6 +62,12 @@ async function said(res: Response): Promise<string> {
 }
 
 export async function synthesize(text: string, voice: string, endpoint: VoiceEndpoint | null, call: typeof fetch = fetch): Promise<Audio> {
+  return (await synthesizeClip(text, voice, endpoint, false, call)) as Audio;
+}
+
+/** `streamed`: hand the audio on as it arrives (both Flux and OpenAI send
+ *  it as it is made). */
+export async function synthesizeClip(text: string, voice: string, endpoint: VoiceEndpoint | null, streamed: boolean, call: typeof fetch = fetch): Promise<Clip> {
   if (!endpoint) throw new Error("Add a Flux key, or an OpenAI key, in Settings on the computer to turn on voice.");
   const provider = endpoint.via === "flux" ? "Flux" : "OpenAI";
   // An agent that still carries a voice from another engine gets Flux's
@@ -86,5 +92,5 @@ export async function synthesize(text: string, voice: string, endpoint: VoiceEnd
     const theirs = await said(res);
     throw new Error(theirs ? `Speaking failed: ${theirs}` : `Speaking failed (${res.status})`);
   }
-  return { bytes: new Uint8Array(await res.arrayBuffer()), mime: "audio/mpeg" };
+  return clipFrom(res, "audio/mpeg", streamed);
 }

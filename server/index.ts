@@ -15923,13 +15923,35 @@ const server = createServer(async (req, res) => {
       // voice account into an unbounded, billable synthesis job.
       if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
       try {
-        const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined, undefined, botVoiceProvider(body.botId));
-        res.writeHead(200, {
-          "content-type": audio.mime,
-          "content-length": String(audio.bytes.byteLength),
-          "cache-control": "no-store",
-        });
-        return res.end(Buffer.from(audio.bytes));
+        const audio = await tts.speakStreamed(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined, botVoiceProvider(body.botId));
+        if ("bytes" in audio) {
+          res.writeHead(200, {
+            "content-type": audio.mime,
+            "content-length": String(audio.bytes.byteLength),
+            "cache-control": "no-store",
+          });
+          return res.end(Buffer.from(audio.bytes));
+        }
+        // Passed on as the service makes it: the call screen starts playing
+        // on the first bytes instead of after the whole sentence (OpenAI's
+        // first audio comes at about a third of the full clip's time).
+        res.writeHead(200, { "content-type": audio.mime, "cache-control": "no-store" });
+        const reader = audio.stream.getReader();
+        // an interrupted sentence: stop downloading the rest
+        res.once("close", () => void reader.cancel().catch(() => {}));
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!res.write(value)) await new Promise<void>((resolve) => { res.once("drain", resolve); res.once("close", resolve); });
+            if (res.destroyed) break;
+          }
+          return res.end();
+        } catch {
+          // the service dropped mid-sentence: end what was sent so the
+          // player keeps what it has rather than hanging
+          return res.destroyed ? undefined : res.end();
+        }
       } catch (e) {
         // "you haven't set this up yet" is not a provider failure — 409 so
         // the client can point at App Settings instead of showing a 502

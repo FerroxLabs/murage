@@ -38,12 +38,12 @@ const hostedSpeech = () => speechRoutes().length > 0;
 /** Hosted speech, one source after another. When every source refuses as
  *  not switched on, the computer's own voice speaks rather than nothing:
  *  a call that goes silent looks broken, and a plainer voice does not. */
-async function speakHosted(text: string, voice: string, run?: systemVoices.Runner) {
+async function speakHosted(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   let refused: Error | null = null;
   for (const route of speechRoutes()) {
     if (isUnavailable(route)) continue;
     try {
-      return await fluxSpeech.synthesize(text, voice, route);
+      return await fluxSpeech.synthesizeClip(text, voice, route, streamed);
     } catch (error) {
       if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
       markUnavailable(route);
@@ -171,13 +171,24 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?
 
 /** Synthesize one utterance. Throws NoVoiceConfigured when there is nothing
  * to speak with, which the route turns into a 409 the client can explain. */
-export function speak(cfg: AppConfig, written: string, voiceId?: string, run?: systemVoices.Runner, own?: VoiceProvider) {
+export function speak(cfg: AppConfig, written: string, voiceId?: string, run?: systemVoices.Runner, own?: VoiceProvider): Promise<elevenlabs.Audio> {
+  return speakClip(cfg, written, voiceId, run, own, false) as Promise<elevenlabs.Audio>;
+}
+
+/** speak(), with the audio handed on as it arrives where the service sends
+ *  it that way (Flux, OpenAI, xAI, ElevenLabs); the built-in voices still
+ *  come as one clip. The call screen starts playing on the first bytes. */
+export function speakStreamed(cfg: AppConfig, written: string, voiceId?: string, own?: VoiceProvider): Promise<elevenlabs.Clip> {
+  return speakClip(cfg, written, voiceId, undefined, own, true);
+}
+
+function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined, run: systemVoices.Runner | undefined, own: VoiceProvider | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   const text = pronounceable(written);
   const provider = effectiveProvider(cfg, own);
-  if (provider === "xai") return xaiSpeech.synthesize(text, voiceId, xaiRoute());
+  if (provider === "xai") return xaiSpeech.synthesizeClip(text, voiceId, xaiRoute(), streamed);
   if (provider === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
-    return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run);
+    return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run, streamed);
   }
   if (provider === "system") {
     const voice = voiceId || cfg.tts?.voice;
@@ -193,7 +204,7 @@ export function speak(cfg: AppConfig, written: string, voiceId?: string, run?: s
   if (!key) throw new NoVoiceConfigured("key");
   const voice = voiceId || cfg.tts?.voice;
   if (!voice) throw new NoVoiceConfigured("voice");
-  return elevenlabs.synthesize(text, voice, key);
+  return elevenlabs.synthesizeClip(text, voice, key, streamed);
 }
 
-export type { Voice } from "./elevenlabs.ts";
+export type { Voice, Audio, Clip, StreamedAudio } from "./elevenlabs.ts";

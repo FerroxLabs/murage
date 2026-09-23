@@ -37,6 +37,64 @@ type TtsErrorBody = { error?: string };
 
 const IDLE: SpeechSnapshot = { status: "idle" };
 
+/**
+ * One sentence's audio, filling in as it downloads. Playing starts on the
+ * first bytes rather than after the whole clip: measured 2026-09-23, OpenAI's
+ * first audio comes in 0.5-1.2 s and the whole sentence in 1.4-3.3 s, xAI's
+ * in 0.3 s and 1.1 s. Everything in between used to be silence.
+ */
+class Incoming {
+  readonly chunks: Uint8Array[] = [];
+  done = false;
+  failed = false;
+  private waiters: Array<() => void> = [];
+
+  constructor(readonly mime: string) {}
+
+  static read(body: ReadableStream<Uint8Array>, mime: string): Incoming {
+    const incoming = new Incoming(mime);
+    const reader = body.getReader();
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value?.byteLength) incoming.chunks.push(value);
+          incoming.wake();
+        }
+      } catch {
+        // aborted by stop(), or the connection dropped: keep what arrived
+        incoming.failed = true;
+      }
+      incoming.done = true;
+      incoming.wake();
+    })();
+    return incoming;
+  }
+
+  /** Resolves when more audio arrives or the download ends. */
+  more(): Promise<void> {
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  private wake() {
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const resolve of waiters) resolve();
+  }
+}
+
+type Audible = Blob | Incoming;
+
+/** Whether this window can play `mime` while it downloads. */
+function streamable(mime: string): boolean {
+  try {
+    return typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(mime);
+  } catch {
+    return false;
+  }
+}
+
 export class Speaker {
   private snapshot: SpeechSnapshot = IDLE;
   private watchers = new Set<(s: SpeechSnapshot) => void>();
@@ -153,7 +211,7 @@ export class Speaker {
     // Prefetch: request utterance n+1 while n is audible. This is what buys
     // responsiveness without holding a streaming socket open for the whole
     // turn — the only gap the listener hears is the first.
-    type Rendered = { blob: Blob; error?: never } | { blob?: never; error: unknown };
+    type Rendered = { blob: Audible; error?: never } | { blob?: never; error: unknown };
     const render = (utterance: string): Promise<Rendered> =>
       this.render(utterance, opts.voiceId, controller.signal, opts.botId).then(
         (blob) => ({ blob }),
@@ -224,7 +282,7 @@ export class Speaker {
     controller.signal.addEventListener("abort", poke, { once: true });
     this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
 
-    type Rendered = { text: string; blob?: Blob; error?: unknown };
+    type Rendered = { text: string; blob?: Audible; error?: unknown };
     const render = (text: string): Promise<Rendered> =>
       this.render(text, opts.voiceId, controller.signal, opts.botId).then(
         (blob) => ({ text, blob }),
@@ -297,7 +355,8 @@ export class Speaker {
     return body.utterances ?? [];
   }
 
-  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId?: string): Promise<Blob> {
+  /** Resolves as soon as the audio starts arriving; see Incoming. */
+  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId?: string): Promise<Audible> {
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -308,15 +367,18 @@ export class Speaker {
       const body: TtsErrorBody = await res.json().catch(() => ({}));
       throw new Error(body.error ?? `the voice service returned ${res.status}`);
     }
+    const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+    if (res.body && streamable(mime)) return Incoming.read(res.body, mime);
     return res.blob();
   }
 
   /** Resolves true when the clip finished, false when it was interrupted. */
-  private play(blob: Blob, live: () => boolean): Promise<boolean> {
+  private play(clip: Audible, live: () => boolean): Promise<boolean> {
     return new Promise((resolve) => {
       if (!live()) return resolve(false);
       this.teardownAudio();
-      const url = URL.createObjectURL(blob);
+      const source = clip instanceof Incoming ? new MediaSource() : null;
+      const url = URL.createObjectURL(source ?? (clip as Blob));
       const audio = new Audio(url);
       this.audio = audio;
       this.objectUrl = url;
@@ -334,9 +396,45 @@ export class Speaker {
       audio.onended = () => done(true);
       // a clip that cannot decode should not strand the whole message
       audio.onerror = () => done(false);
+      if (source && clip instanceof Incoming) {
+        source.addEventListener("sourceopen", () => void this.feed(source, clip, () => settled).catch(() => done(false)), { once: true });
+      }
       // held by pause() between clips: this one starts on resume()
       if (!this.held) audio.play().catch(() => done(false));
     });
+  }
+
+  /** Hands a downloading clip to the player as its bytes arrive. */
+  private async feed(source: MediaSource, clip: Incoming, over: () => boolean): Promise<void> {
+    const buffer = source.addSourceBuffer(clip.mime);
+    // mp3 carries no timestamps: play the pieces one after another
+    buffer.mode = "sequence";
+    let at = 0;
+    for (;;) {
+      if (over()) return;
+      if (at < clip.chunks.length) {
+        const pending = clip.chunks.slice(at);
+        at = clip.chunks.length;
+        const bytes = new Uint8Array(pending.reduce((n, c) => n + c.byteLength, 0));
+        let offset = 0;
+        for (const c of pending) {
+          bytes.set(c, offset);
+          offset += c.byteLength;
+        }
+        await new Promise<void>((resolve, reject) => {
+          buffer.addEventListener("updateend", () => resolve(), { once: true });
+          buffer.addEventListener("error", () => reject(new Error("the clip could not be decoded")), { once: true });
+          buffer.appendBuffer(bytes);
+        });
+        continue;
+      }
+      if (clip.done) break;
+      await clip.more();
+    }
+    if (over()) return;
+    // nothing arrived at all: a failed clip, not a silent one
+    if (!clip.chunks.length) throw new Error("no audio arrived");
+    if (source.readyState === "open") source.endOfStream();
   }
 }
 

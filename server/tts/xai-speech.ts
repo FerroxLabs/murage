@@ -6,7 +6,7 @@
 // per sentence, the same shape as the other voice services here.
 //
 // Runs on the HARNESS only: the key must not leave the server.
-import type { Audio, Voice } from "./elevenlabs.ts";
+import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 
 export interface XaiSpeechEndpoint {
   baseUrl: string;
@@ -23,6 +23,11 @@ export const XAI_VOICES: Voice[] = [
 const IDS = new Set(XAI_VOICES.map((v) => v.id));
 
 export async function synthesize(text: string, voice: string | undefined, endpoint: XaiSpeechEndpoint | null, call: typeof fetch = fetch): Promise<Audio> {
+  return (await synthesizeClip(text, voice, endpoint, false, call)) as Audio;
+}
+
+/** `streamed`: hand the audio on as it arrives; xAI sends it as it is made. */
+export async function synthesizeClip(text: string, voice: string | undefined, endpoint: XaiSpeechEndpoint | null, streamed: boolean, call: typeof fetch = fetch): Promise<Clip> {
   if (!endpoint) throw new Error("Connect an xAI key in Settings on the computer to use xAI voices.");
   // a voice from another service falls back to xAI's default voice
   const chosen = voice && IDS.has(voice) ? voice : "eve";
@@ -40,5 +45,5 @@ export async function synthesize(text: string, voice: string | undefined, endpoi
   if (res.status === 401 || res.status === 403) throw new Error("xAI rejected the saved key. Paste a fresh one in Settings.");
   if (res.status === 429) throw new Error("xAI is rate-limiting this account. Wait a moment and try again.");
   if (!res.ok) throw new Error(`Speaking failed (${res.status})`);
-  return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get("content-type") || "audio/mpeg" };
+  return clipFrom(res, res.headers.get("content-type") || "audio/mpeg", streamed);
 }

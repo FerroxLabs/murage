@@ -26,6 +26,22 @@ export interface Audio {
   mime: string;
 }
 
+/** Audio handed on as the service makes it, so playback can start before
+ *  the clip is finished (the first words of a sentence arrive in a third of
+ *  the time the whole sentence takes). */
+export interface StreamedAudio {
+  stream: ReadableStream<Uint8Array>;
+  mime: string;
+}
+
+export type Clip = Audio | StreamedAudio;
+
+/** A checked, successful response as one clip, or as it arrives. */
+export async function clipFrom(res: Response, mime: string, streamed: boolean): Promise<Clip> {
+  if (streamed && res.body) return { stream: res.body, mime };
+  return { bytes: new Uint8Array(await res.arrayBuffer()), mime };
+}
+
 export type VerifyResult = { ok: true } | { ok: false; message: string };
 
 async function safeJson(res: Response): Promise<any> {
@@ -93,12 +109,18 @@ export async function listVoices(key: string): Promise<Voice[]> {
 }
 
 export async function synthesize(text: string, voiceId: string, key: string): Promise<Audio> {
-  const res = await fetch(`${API}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${FORMAT}`, {
+  return (await synthesizeClip(text, voiceId, key, false)) as Audio;
+}
+
+/** ElevenLabs' /stream endpoint sends the audio as it is made. */
+export async function synthesizeClip(text: string, voiceId: string, key: string, streamed: boolean): Promise<Clip> {
+  const route = streamed ? "/stream" : "";
+  const res = await fetch(`${API}/text-to-speech/${encodeURIComponent(voiceId)}${route}?output_format=${FORMAT}`, {
     method: "POST",
     headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
     body: JSON.stringify({ text, model_id: MODEL }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));
-  return { bytes: new Uint8Array(await res.arrayBuffer()), mime: "audio/mpeg" };
+  return clipFrom(res, "audio/mpeg", streamed);
 }

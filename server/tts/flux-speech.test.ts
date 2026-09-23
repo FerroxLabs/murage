@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { synthesize, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
+import { synthesize, synthesizeClip, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
 import { availableProviders, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
@@ -34,6 +34,17 @@ describe("Flux speech", () => {
     expect(sent.body).toEqual({ model: "flux-voice-speak", input: "Hello there.", voice: "cedar", response_format: "mp3" });
     expect(sent.auth).toBe("Bearer flux-test");
     expect(audio).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg" });
+  });
+
+  it("hands the audio on as it arrives when asked to stream, without reading it first", async () => {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) { pulled += 1; controller.enqueue(new Uint8Array([pulled])); if (pulled === 3) controller.close(); } }, { highWaterMark: 0 });
+    const call = (async () => new Response(body, { status: 200, headers: { "content-type": "audio/mpeg" } })) as typeof fetch;
+    const clip = await synthesizeClip("Hello there.", "cedar", FLUX, true, call);
+    expect("stream" in clip && clip.mime).toBe("audio/mpeg");
+    expect(pulled).toBe(0);
+    const reader = (clip as { stream: ReadableStream<Uint8Array> }).stream.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
   });
 
   it("gives an agent carrying another engine's voice Flux's default instead of a 400", async () => {
