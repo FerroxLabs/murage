@@ -27,12 +27,18 @@ function launch(executable, args, options, run = execFile) {
  * so renderer-controlled input can never become a process argument. */
 export async function openBlankTerminal(platform = process.platform, run = execFile) {
   if (platform === "darwin") {
-    return launch(
-      "osascript",
-      ["-e", 'tell application "Terminal" to activate'],
-      undefined,
-      run,
-    );
+    // `open -a` goes through Launch Services: no Automation permission to be
+    // refused (an AppleScript "activate" needed one and failed silently in a
+    // build without it), and it brings up a window even when Terminal is
+    // running with none. Await its exit, as on Windows: a process that merely
+    // spawned is not a Terminal the owner can see.
+    return new Promise((resolve) => {
+      try {
+        run("open", ["-a", "Terminal"], { timeout: 15_000 }, (error) => resolve(!error));
+      } catch {
+        resolve(false);
+      }
+    });
   }
   if (platform === "win32") {
     // execFile uses pipes, so -NoExit alone can leave PowerShell without an
