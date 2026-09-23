@@ -542,6 +542,12 @@ export type StoreChange =
 /** What a task is called before its first message names it. */
 export const UNTITLED_TASK = "New task";
 
+/** A request card the person has not answered yet: the predicate the channel
+ * switch guard and the client's approval strip both apply. */
+export function isOpenRequestCard(message: Message): boolean {
+  return message.kind === "options" && Boolean(message.card?.requestId) && !message.card?.answered && !message.card?.dismissed;
+}
+
 const PEER_PREAMBLE = /^\[(Message from|Delegated by) @([^,\]\n]+),[^\]\n]*\]/;
 
 /** A task's name, taken from the first thing you asked it to do. */
@@ -1675,6 +1681,19 @@ export class Store {
     const stop = end === -1 ? t.messages.length : end;
     const start = Math.max(0, stop - limit);
     return { messages: t.messages.slice(start, stop), hasMore: start > 0, activeLeafId: t.activeLeafId };
+  }
+
+  /** How many of the newest messages a newest page must hold so that every
+   * open request card and the active branch head are in it (0 for an empty
+   * thread). A client that hydrates by page renders approvals and the visible
+   * branch from what it holds, so those rows may not fall off the front of
+   * the page (upstream #1527). An uncached thread answers from SQLite without
+   * materializing its transcript. */
+  newestPageSpan(threadId: string): number {
+    const t = this.threads.get(threadId);
+    if (!t) return mdb.newestPageSpan(threadId, mdb.readActiveLeafOrNewest(threadId));
+    const first = t.messages.findIndex((message) => message.id === t.activeLeafId || isOpenRequestCard(message));
+    return first === -1 ? 0 : t.messages.length - first;
   }
 
   /** A `limit`-message window containing `messageId`, positioned like the

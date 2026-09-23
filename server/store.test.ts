@@ -2364,6 +2364,34 @@ describe("Store bounded message pages", () => {
     expect(empty.messageWindow("nothing", "x", 5)).toBeNull();
   });
 
+  // Upstream #1527: the desktop hydrates by page, and renders the approval
+  // strip and the visible branch from what it holds.
+  it("spans a newest page back to the oldest open request card and the branch head, cached or not", () => {
+    const store = new Store(selection);
+    const card = (requestId: string, extra: Record<string, unknown> = {}) =>
+      ({ role: "bot", kind: "options", card: { title: "Allow?", subtitle: "", options: ["Allow", "Deny"], requestId, tool: "Bash", ...extra } }) as never;
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const message = i === 10 ? card("answered", { answered: "Allow" })
+        : i === 20 ? card("dismissed", { dismissed: true })
+          : i === 30 ? card("open")
+            : ({ role: "user", kind: "text", text: `m ${i}` } as never);
+      ids.push(store.appendMessage("span", message)!.id);
+    }
+    const fresh = (cached: boolean) => {
+      const reader = new Store(selection);
+      if (cached) reader.messagesFor("span");
+      return reader;
+    };
+    for (const cached of [false, true]) {
+      expect(fresh(cached).newestPageSpan("span"), `cached=${cached}`).toBe(20);
+      expect(fresh(cached).newestPageSpan("nothing")).toBe(0);
+    }
+    // a rewound branch head older than the open card reaches further back
+    mdb.setActiveLeaf("span", ids[5]!);
+    for (const cached of [false, true]) expect(fresh(cached).newestPageSpan("span"), `cached=${cached}`).toBe(45);
+  });
+
   it("reads only the page from SQLite and never caches a partial page as the thread", async () => {
     seed("big", 237);
     const { all } = full("big");
