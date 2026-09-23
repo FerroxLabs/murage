@@ -150,4 +150,15 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   await expect.poll(() => turnedOff).toEqual(["opencode"]);
   await expect(page.getByText("OpenCode is here, and nobody is signed in to it.")).toHaveCount(0, { timeout: 15_000 });
   signedOut = [];
+
+  // a failed sign-in owes nothing: cleared, and gone until it fails again
+  source("sign-in-failed", "activity", { tool: { name: "Setup needed", ok: false, authRequired: true, errorDetails: "Not signed in" } }, "old-task", Date.now() - 5 * 60 * 60 * 1000);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const failure = page.getByRole("listitem").filter({ hasText: "Sign in needed" });
+  await expect(failure).toHaveCount(1);
+  await failure.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(failure).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: /^Connections/ }).click();
+  await expect(page.getByRole("heading", { name: "Sign in needed" })).toHaveCount(0);
 });

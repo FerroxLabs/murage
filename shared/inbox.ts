@@ -98,6 +98,9 @@ export interface InboxItem {
    *  way the card's own "Not now" does (connector-cards/:id/dismiss). Old
    *  ones from routines that stopped days ago had no way out of the Inbox. */
   dismissible?: true;
+  /** Nothing is owed on it, so the owner may clear it away (InboxStateUpdate
+   *  `cleared`). It comes back only if it happens again. */
+  clearable?: true;
   link: InboxLink;
 }
 export interface InboxQuery { view?: InboxView; query?: string; page?: number; pageSize?: number; includeSnoozed?: boolean }
@@ -130,4 +133,7 @@ export interface InboxPage {
    *  routines that keep failing on a dead credential. */
   connections: number;
 }
-export interface InboxStateUpdate { id: string; version: string; read?: boolean; snoozedUntil?: number | null }
+/** `cleared`: set the item aside until something newer happens to it. Only
+ *  for items owing no decision (a failed sign-in, a missed request, a
+ *  report); a request still waiting is answered, never cleared. */
+export interface InboxStateUpdate { id: string; version: string; read?: boolean; snoozedUntil?: number | null; cleared?: true }

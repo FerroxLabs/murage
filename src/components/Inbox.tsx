@@ -232,6 +232,19 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
       setBusy(false);
     } finally { changing.current = false; }
   };
+  // Clearing what owes nothing (a failed sign-in, a missed request): gone
+  // until it happens again. One by one through `update`, all on the page here.
+  const clearAll = async (items: InboxItem[]) => {
+    if (changing.current || busy || !items.length) return;
+    changing.current = true; setBusy(true); setError(null);
+    try {
+      for (const item of items) await api("/api/inbox/state", { method: "POST", body: JSON.stringify({ id: item.id, version: item.version, cleared: true }) });
+      setRevision(current => current + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Those items could not be cleared.");
+      setBusy(false);
+    } finally { changing.current = false; }
+  };
   // An engine the owner does not use: turned off, exactly as Settings >
   // Engines does, so it stops asking to be signed in to. Confirmed first,
   // because a bot set to that engine stops working with it.
@@ -386,11 +399,14 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         ))}
       </ul>
     )}
-    {list.filter(item => item.dismissible).length > 1 && (
-      <div className="mb-3 flex justify-end">
-        <button className={button} disabled={busy} onClick={() => void dismiss(list.filter(item => item.dismissible))}>
+    {(list.filter(item => item.dismissible).length > 1 || list.filter(item => item.clearable).length > 1) && (
+      <div className="mb-3 flex flex-wrap justify-end gap-2">
+        {list.filter(item => item.dismissible).length > 1 && <button className={button} disabled={busy} onClick={() => void dismiss(list.filter(item => item.dismissible))}>
           Dismiss all {list.filter(item => item.dismissible).length} connection requests
-        </button>
+        </button>}
+        {list.filter(item => item.clearable).length > 1 && <button className={button} disabled={busy} onClick={() => void clearAll(list.filter(item => item.clearable))}>
+          Clear all {list.filter(item => item.clearable).length} that need nothing from you
+        </button>}
       </div>
     )}
     <ul className="space-y-3" aria-label="Inbox items">
@@ -419,6 +435,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
           <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
           <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
           {item.dismissible && <button className={button} disabled={busy} onClick={() => void dismiss([item])}>Dismiss</button>}
+          {item.clearable && <button className={button} disabled={busy} onClick={() => void update(item, { cleared: true })}>Clear</button>}
           {view !== "decisions" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
             ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
             : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}

@@ -29,6 +29,10 @@ export function initializeInbox(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS inbox_item_state (
     source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER);
     CREATE INDEX IF NOT EXISTS messages_inbox_kind_thread_at ON messages(kind,thread_id,at DESC);`);
+  // Cleared: set aside by the owner until something newer happens to it.
+  // Added after the table shipped, so an existing database gains the column.
+  const columns = db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>;
+  if (!columns.some(column => column.name === "cleared_at")) db.exec("ALTER TABLE inbox_item_state ADD COLUMN cleared_at INTEGER");
 }
 
 // Restrict sources to permitted threads before grouping or searching. A
@@ -121,7 +125,7 @@ const SOURCE = `WITH raw AS (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY source_key ORDER BY CASE WHEN status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END DESC,at DESC,source_row DESC) AS position,
     COUNT(*) OVER (PARTITION BY source_key) AS copies FROM raw
 ), items AS (
-  SELECT r.*, s.read_version, s.snoozed_until,
+  SELECT r.*, s.read_version, s.snoozed_until, s.cleared_at,
     -- TWO FLAGS, NOT ONE. A decision is owed on the first set and nothing is
     -- owed on the second: see the comment at the top of shared/inbox.ts for
     -- why putting them in one bucket made the count unreadable. The status
@@ -178,7 +182,7 @@ const SOURCE = `WITH raw AS (
 ) `;
 interface Row {
   source_key: string; thread_id: string; message_id: string; at: number; kind: string; json: string;
-  status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; copies: number;
+  status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; cleared_at: number | null; copies: number;
 }
 /** Routine runs, oldest first, for the rollup. Bounded: a workspace that has
  *  run every thirty minutes for a year has seventeen thousand of these, and
@@ -236,6 +240,7 @@ function item(row: Row, access: InboxAccess): InboxItem {
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
     ...(row.kind === "connector" && row.status === "pending" && source.botId ? { dismissible: true as const } : {}),
+    ...(row.decision !== 1 ? { clearable: true as const } : {}),
     link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}), ...(row.kind === "text" ? { artifactId: message.artifactIds[0] as string } : {}) } };
 }
 function queryValues(query: InboxQuery) {
@@ -282,7 +287,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
       OR (?='routines' AND kind_segment='routine')
       OR (?='to-read' AND to_read=1)
       OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
-    AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)
+    AND (?=1 OR ((snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)))
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;
   // Snooze applies to decisions too. "Not now" is a legitimate answer to
@@ -299,7 +304,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // a request never removes it from the decisions count, because reading is
   // not answering; reading DOES clear it from the to-read count, because
   // there reading is the whole action.
-  const live = "(snoozed_until IS NULL OR snoozed_until<=?)";
+  const live = "(snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)";
   // ONE COUNT PER THING THAT CAN BE ASKED OF A PERSON, AND NONE FOR THE REST.
   //
   // Routines and results are never counted here, and that is the point of the
@@ -372,21 +377,26 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
 export function updateInboxState(db: DatabaseSync, update: InboxStateUpdate, access: InboxAccess, now = Date.now()) {
   const allowed = scope(access);
   if (!update || typeof update.id !== "string" || update.id.length > 8192 || typeof update.version !== "string"
-    || !/^[a-f0-9]{64}$/.test(update.version) || Object.keys(update).some(key => !["id", "version", "read", "snoozedUntil"].includes(key))
+    || !/^[a-f0-9]{64}$/.test(update.version) || Object.keys(update).some(key => !["id", "version", "read", "snoozedUntil", "cleared"].includes(key))
+    || (update.cleared !== undefined && update.cleared !== true)
     || (update.read !== undefined && typeof update.read !== "boolean")
     || (update.snoozedUntil !== undefined && update.snoozedUntil !== null && (!Number.isSafeInteger(update.snoozedUntil) || update.snoozedUntil <= now || update.snoozedUntil > now + 30 * 24 * 60 * 60 * 1000))
-    || (update.read === undefined && update.snoozedUntil === undefined)) reject(400, "Invalid Inbox update.");
+    || (update.read === undefined && update.snoozedUntil === undefined && update.cleared === undefined)) reject(400, "Invalid Inbox update.");
   const sourceKey = Buffer.from(update.id, "base64url").toString("utf8");
   const row = db.prepare(SOURCE + "SELECT * FROM items WHERE source_key=?").get(allowed, sourceKey) as unknown as Row | undefined;
   if (!row) throw new InboxError(404, "Inbox item is unavailable.");
   if (version(row.json) !== update.version) reject(409, "This item changed. Refresh Inbox before updating it.");
-  db.prepare(`INSERT INTO inbox_item_state(source_key,read_version,read_at,snoozed_until) VALUES(?,?,?,?)
+  // Clearing is never answering: something still waiting on the owner is
+  // answered (or snoozed), not cleared away.
+  if (update.cleared && row.decision === 1) reject(409, "This is waiting on your answer. Answer it rather than clearing it.");
+  db.prepare(`INSERT INTO inbox_item_state(source_key,read_version,read_at,snoozed_until,cleared_at) VALUES(?,?,?,?,?)
     ON CONFLICT(source_key) DO UPDATE SET
       read_version=CASE WHEN ? THEN excluded.read_version ELSE inbox_item_state.read_version END,
       read_at=CASE WHEN ? THEN excluded.read_at ELSE inbox_item_state.read_at END,
-      snoozed_until=CASE WHEN ? THEN excluded.snoozed_until ELSE inbox_item_state.snoozed_until END`)
-    .run(sourceKey, update.read === true ? update.version : null, update.read === true ? now : null, update.snoozedUntil ?? null,
-      update.read !== undefined ? 1 : 0, update.read !== undefined ? 1 : 0, update.snoozedUntil !== undefined ? 1 : 0);
+      snoozed_until=CASE WHEN ? THEN excluded.snoozed_until ELSE inbox_item_state.snoozed_until END,
+      cleared_at=CASE WHEN ? THEN excluded.cleared_at ELSE inbox_item_state.cleared_at END`)
+    .run(sourceKey, update.read === true ? update.version : null, update.read === true ? now : null, update.snoozedUntil ?? null, update.cleared ? now : null,
+      update.read !== undefined ? 1 : 0, update.read !== undefined ? 1 : 0, update.snoozedUntil !== undefined ? 1 : 0, update.cleared ? 1 : 0);
   return { ok: true as const };
 }
 

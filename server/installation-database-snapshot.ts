@@ -47,7 +47,7 @@ function count(db: DatabaseSync, sql: string): number {
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
   messages: { required: true, optional: [] },
   thread_state: { required: true, optional: [] },
-  inbox_item_state: { required: false, optional: [] },
+  inbox_item_state: { required: false, optional: ["cleared_at"] },
   artifacts: { required: false, optional: ["producer", "publication_id"] },
   output_publications: { required: false, optional: [] },
   image_operations: { required: false, optional: [] },

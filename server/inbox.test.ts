@@ -481,3 +481,33 @@ it("an open request to connect an app can be set aside, and then stops being owe
   expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")).toMatchObject({ status: "resolved" });
   expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")?.dismissible).toBeUndefined();
 });
+
+it("a failure owing nothing can be cleared until it happens again; a waiting request cannot", () => {
+  const { db } = fixture();
+  const failure = (id: string, at: number) => put(db, { id, at, kind: "activity", tool: { name: "Setup needed", ok: false, authRequired: true, errorDetails: "Not signed in" } });
+  failure("fail-1", 100); failure("fail-2", 200); put(db, {});
+  const shown = listInbox(db, { view: "connections" }, access, 1_000);
+  const error = shown.items.find(item => item.kind === "error")!;
+  expect(error).toMatchObject({ clearable: true, duplicates: 2 });
+  const request = listInbox(db, { view: "approvals" }, access, 1_000).items[0];
+  expect(request.clearable).toBeUndefined();
+  expect(() => updateInboxState(db, { id: request.id, version: request.version, cleared: true }, access, 1_000)).toThrow("Answer it");
+
+  updateInboxState(db, { id: error.id, version: error.version, cleared: true }, access, 1_000);
+  expect(listInbox(db, { view: "connections" }, access, 1_001).items.find(item => item.kind === "error")).toBeUndefined();
+  expect(listInbox(db, {}, access, 1_001).toRead).toBe(0);
+  // the same failure again, later: back
+  failure("fail-3", 2_000);
+  expect(listInbox(db, { view: "connections" }, access, 2_001).items.find(item => item.kind === "error")).toMatchObject({ duplicates: 3 });
+});
+
+it("an Inbox database from before clearing gains the column and keeps its read marks", () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-inbox-old-")); roots.push(root);
+  const db = new DatabaseSync(join(root, "messages.db")); databases.push(db);
+  db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
+  db.exec("CREATE TABLE inbox_item_state (source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER)");
+  db.prepare("INSERT INTO inbox_item_state VALUES('k','v',1,NULL)").run();
+  initializeInbox(db); initializeInbox(db);
+  expect((db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>).map(c => c.name)).toEqual(["source_key", "read_version", "read_at", "snoozed_until", "cleared_at"]);
+  expect(db.prepare("SELECT read_version FROM inbox_item_state WHERE source_key='k'").get()).toEqual({ read_version: "v" });
+});
