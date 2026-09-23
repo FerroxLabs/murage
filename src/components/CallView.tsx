@@ -35,7 +35,7 @@ import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
+import { callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -481,7 +481,7 @@ function Call({ bot }: { bot: Bot }) {
       if (log.some((entry) => entry.outcome === "answered" || entry.outcome === "looked_up")) {
         void fetch(`/api/bots/${bot.id}/call-note`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: callRouteHeaders(),
           body: JSON.stringify({ threadId: threadRef.current, durationMs: Date.now() - callStartedAt.current, log }),
           // the overlay is closing; the request must outlive it
           keepalive: true,

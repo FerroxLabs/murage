@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { synthesize, FLUX_VOICES } from "./flux-speech.ts";
-import { voiceProvider } from "./index.ts";
+import { synthesize, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
+import { speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
 
@@ -74,5 +74,50 @@ describe("Flux speech", () => {
     });
     const rejected = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
     await expect(synthesize("Hi.", "marin", OPENAI, rejected)).rejects.toThrow("OpenAI rejected the saved key");
+  });
+});
+
+describe("when a speech source is not switched on", () => {
+  const SILENT_RUN = (async () => ({ stdout: "", stderr: "" })) as any;
+  const asked: string[] = [];
+  const serve = (dark: Set<string>) =>
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url);
+      if ([...dark].some((base) => url.startsWith(base))) return new Response("{}", { status: 404 });
+      return new Response(new Uint8Array([7]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    asked.length = 0;
+  });
+
+  it("the next source speaks, and the refusing one is skipped on the next sentence", async () => {
+    useVoiceRoutes({ speech: () => [FLUX, OPENAI], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }) });
+    serve(new Set([FLUX.baseUrl]));
+    const first = await speak(cfg({ provider: "flux" }), "Hello there.");
+    expect(first.bytes).toEqual(new Uint8Array([7]));
+    expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`, `${OPENAI.baseUrl}/audio/speech`]);
+    asked.length = 0;
+    await speak(cfg({ provider: "flux" }), "Second sentence.");
+    expect(asked).toEqual([`${OPENAI.baseUrl}/audio/speech`]);
+  });
+
+  it("with no source left, the computer's own voice speaks instead of nothing", async () => {
+    useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }) });
+    serve(new Set([FLUX.baseUrl]));
+    const said = await speak(cfg({ provider: "flux" }), "Hello there.", undefined, SILENT_RUN).catch((error) => error);
+    expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`]);
+    // the system runner was used: not the Flux refusal
+    expect(said).not.toBeInstanceOf(SpeechUnavailable);
+  });
+
+  it("a real failure is reported, not papered over with another voice", async () => {
+    useVoiceRoutes({ speech: () => [FLUX, OPENAI], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }) });
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url);
+      return new Response("{}", { status: 401 });
+    });
+    await expect(speak(cfg({ provider: "flux" }), "Hello.")).rejects.toThrow("Flux rejected the saved key");
+    expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`]);
   });
 });

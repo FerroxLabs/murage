@@ -47,6 +47,10 @@ export function isFluxVoice(id: string | undefined): boolean {
   return Boolean(id && IDS.has(id));
 }
 
+/** The provider answered, but speech is not switched on for this account
+ *  (Flux while its speech capability is dark). The next source can take over. */
+export class SpeechUnavailable extends Error {}
+
 async function said(res: Response): Promise<string> {
   try {
     const body: any = await res.json();
@@ -74,7 +78,7 @@ export async function synthesize(text: string, voice: string, endpoint: VoiceEnd
   } catch {
     throw new Error(`Couldn't reach ${provider} to speak. Check your connection.`);
   }
-  if (res.status === 404) throw new Error(`${provider} voices aren't switched on for this account yet.`);
+  if (res.status === 404) throw new SpeechUnavailable(`${provider} voices aren't switched on for this account yet.`);
   if (res.status === 401 || res.status === 403) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
   if (res.status === 402) throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
   if (res.status === 429) throw new Error((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`);

@@ -60,7 +60,7 @@ import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
-import { describeVoiceRoutes, voiceEndpoint, type VoicePart } from "./voice/voice-routes.ts";
+import { describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
@@ -550,10 +550,12 @@ const cfg = loadConfig();
 /** Where one part of a call runs: Flux first, then the owner's own model
  *  connections (server/voice/voice-routes.ts). `MURAGE_VOICE_ROUTE_BASE` is a
  *  test seam only: it points every resolved endpoint at a local stub. */
-function voiceRouteFor(part: VoicePart) {
-  const endpoint = voiceEndpoint(part, providerConnections);
+function voiceRoutesFor(part: VoicePart) {
   const stub = process.env.MURAGE_VOICE_ROUTE_BASE?.trim();
-  return endpoint && stub ? { ...endpoint, baseUrl: stub.replace(/\/+$/, "") } : endpoint;
+  return voiceEndpoints(part, providerConnections).map(endpoint => stub ? { ...endpoint, baseUrl: stub.replace(/\/+$/, "") } : endpoint);
+}
+function voiceRouteFor(part: VoicePart) {
+  return voiceRoutesFor(part)[0] ?? null;
 }
 const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), resolveAlias: id => {
   const alias = cfg.flux?.connectionAliases?.find(row => row.id === id);
@@ -651,7 +653,7 @@ providerConnections.subscribe(changedIds => {
 });
 // Hosted speech and the per-part call routes come from the same model
 // connections (server/voice/voice-routes.ts).
-tts.useVoiceRoutes({ speech: () => voiceRouteFor("speech"), describe: () => describeVoiceRoutes(providerConnections) });
+tts.useVoiceRoutes({ speech: () => voiceRoutesFor("speech"), describe: () => describeVoiceRoutes(providerConnections) });
 
 let providerConfigBusy = false;
 let fluxMediaRequests = 0;

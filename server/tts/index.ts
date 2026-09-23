@@ -17,13 +17,45 @@ import type { VoiceEndpoint, VoicePart } from "../voice/voice-routes.ts";
 /** Where hosted speech runs (Flux, or an own OpenAI key) and which provider
  *  serves each part of a call. Injected by the harness, which owns the model
  *  connections; nothing here reads a key from config itself. */
-let speechRoute: () => VoiceEndpoint | null = () => null;
+let speechRoutes: () => VoiceEndpoint[] = () => [];
 let voiceRoutes: () => Record<VoicePart, string | null> | null = () => null;
-export function useVoiceRoutes(routes: { speech: () => VoiceEndpoint | null; describe: () => Record<VoicePart, string | null> }) {
-  speechRoute = routes.speech;
+export function useVoiceRoutes(routes: { speech: () => VoiceEndpoint[]; describe: () => Record<VoicePart, string | null> }) {
+  speechRoutes = routes.speech;
   voiceRoutes = routes.describe;
+  unavailable.clear();
 }
-const hostedSpeech = () => speechRoute() !== null;
+const hostedSpeech = () => speechRoutes().length > 0;
+
+/** Sources that said speech is not switched on, and until when to skip them.
+ *  A call speaks a sentence at a time: without this every sentence would pay
+ *  a refused request first. Rechecked after ten minutes, so a capability that
+ *  switches on is picked up without a restart. */
+const unavailable = new Map<string, number>();
+const UNAVAILABLE_MS = 10 * 60_000;
+const sourceId = (e: VoiceEndpoint) => `${e.via} ${e.baseUrl}`;
+
+/** Hosted speech, one source after another. When every source refuses as
+ *  not switched on, the computer's own voice speaks rather than nothing:
+ *  a call that goes silent looks broken, and a plainer voice does not. */
+async function speakHosted(text: string, voice: string, run?: systemVoices.Runner) {
+  let refused: Error | null = null;
+  for (const route of speechRoutes()) {
+    if ((unavailable.get(sourceId(route)) ?? 0) > Date.now()) continue;
+    try {
+      return await fluxSpeech.synthesize(text, voice, route);
+    } catch (error) {
+      if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
+      unavailable.set(sourceId(route), Date.now() + UNAVAILABLE_MS);
+      refused = error;
+    }
+  }
+  if (platformCanSpeak() || run) {
+    return windowsVoices.windowsVoicesAvailable()
+      ? windowsVoices.synthesizeWindows(text, undefined, run)
+      : systemVoices.synthesizeSystem(text, undefined, run);
+  }
+  throw refused ?? new NoVoiceConfigured("key");
+}
 import * as systemVoices from "./system-voices.ts";
 import * as windowsVoices from "./windows-voices.ts";
 
@@ -122,9 +154,8 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Pro
  * to speak with, which the route turns into a 409 the client can explain. */
 export function speak(cfg: AppConfig, text: string, voiceId?: string, run?: systemVoices.Runner) {
   if (voiceProvider(cfg) === "flux") {
-    const route = speechRoute();
-    if (!route) throw new NoVoiceConfigured("key");
-    return fluxSpeech.synthesize(text, voiceId || cfg.tts?.voice || "marin", route);
+    if (!hostedSpeech()) throw new NoVoiceConfigured("key");
+    return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run);
   }
   if (voiceProvider(cfg) === "system") {
     const voice = voiceId || cfg.tts?.voice;

@@ -55,6 +55,7 @@ export const useFixtureBot = () => useSyncExternalStore(subscribe, () => window.
 const BRIDGE = `
 window.__speech = { starts: 0, stops: 0, onText: null, onEnd: null, fed: 0, options: [] };
 window.muragebox = {
+  desktopSurfaceSecret: "fixture-surface-secret",
   speechStart: async (options) => { window.__speech.starts += 1; window.__speech.options.push(options); },
   speechFeed: (bytes) => { window.__speech.fed += bytes.byteLength; },
   speechStop: async () => { window.__speech.stops += 1; },
@@ -92,7 +93,7 @@ test.beforeAll(async () => {
         // a Mac (on-device dictation) unless the page says otherwise
         if (id === "\0host-caps") return `export const useDesktopCapabilities=()=>({ready:true,capabilities:{dictation:{available:new URLSearchParams(location.search).get("os")!=="linux"},host:{platform:"darwin"}}});`;
         if (id !== "\0host-entry") return;
-        return `${BRIDGE}
+        return `
 import React from "react"; import { createRoot } from "react-dom/client";
 import { useFixtureBot } from "@/state/store"; import { CallOverlay } from "/src/components/CallView.tsx"; import "/src/styles.css";
 function Fixture() { const bot = useFixtureBot(); return React.createElement(CallOverlay, { bot }); }
@@ -102,7 +103,8 @@ createRoot(document.getElementById("root")).render(React.createElement(Fixture))
         vite.middlewares.use((req, res, next) => {
           if (req.url?.split("?")[0] !== "/__call") return next();
           res.setHeader("content-type", "text/html");
-          res.end('<div id="root"></div><script type="module" src="/__call.js"></script>');
+          // the bridge is the preload's: it exists before any app module runs
+          res.end(`<div id="root"></div><script>${BRIDGE}</script><script type="module" src="/__call.js"></script>`);
         });
       },
     }],
@@ -139,7 +141,14 @@ async function harness(page: Page, os: "mac" | "linux" = "mac") {
     const text = JSON.parse(route.request().postData() ?? "{}").text;
     await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ready: true, utterances: [text] }) });
   });
+  // The real harness serves the call routes to the desktop app only, and
+  // refuses them without the per-launch proof: so does this fake.
+  const desktop = (route: Route) => {
+    const headers = route.request().headers();
+    return headers["x-murage-surface"] === "desktop" && headers["x-murage-surface-secret"] === "fixture-surface-secret";
+  };
   await page.route("**/api/bots/bot-1/voice-host", async (route: Route) => {
+    if (!desktop(route)) return route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"desktop only"}' });
     const body = JSON.parse(route.request().postData() ?? "{}");
     hostBodies.push(body);
     if (body.warm) return route.fulfill({ status: 202, contentType: "application/json", body: "{}" });

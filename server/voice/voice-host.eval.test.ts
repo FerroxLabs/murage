@@ -90,7 +90,9 @@ const CASES: Array<{ said: string; state: VoiceHostState; want: Expect }> = [
 const planned = routeVia("host", [via]);
 
 describe.skipIf(!planned)("voice host, live routing", () => {
-  const host: VoiceEndpoint = { ...planned!, model: process.env.MURAGE_VOICE_HOST_MODEL || planned!.model };
+  // the body is collected even when skipped: no key means nothing to build
+  if (!planned) return;
+  const host: VoiceEndpoint = { ...planned, model: process.env.MURAGE_VOICE_HOST_MODEL || planned.model };
   // Flux's own lookup route is not deployed yet: Flux runs use xAI's search.
   const lookup = (via !== "flux" && routeVia("lookup", [via])) || routeVia("lookup", ["xai"]);
   const rows: string[] = [];

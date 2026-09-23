@@ -66,9 +66,10 @@ const PLAN: Record<VoicePart, Array<[ProviderPreset, string]>> = {
   ],
 };
 
-/** The endpoint that serves `part`, or null when nothing can. */
-export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceEndpoint | null {
+/** Every endpoint that can serve `part`, in the order they are tried. */
+export function voiceEndpoints(part: VoicePart, source: ConnectionSource): VoiceEndpoint[] {
   const connections = source.list().filter((c) => c.enabled);
+  const found: VoiceEndpoint[] = [];
   for (const [preset, model] of PLAN[part]) {
     for (const connection of connections.filter((c) => c.preset === preset)) {
       const resolved = source.resolve(connection.id);
@@ -76,10 +77,16 @@ export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceE
       // Anthropic's preset is its bare host; both its OpenAI-compatible chat
       // endpoint and its Messages API live under /v1.
       const base = resolved.baseUrl.replace(/\/+$/, "");
-      return { via: preset, label: connection.label, baseUrl: preset === "anthropic" ? `${base}/v1` : base, key: resolved.key.trim(), model };
+      found.push({ via: preset, label: connection.label, baseUrl: preset === "anthropic" ? `${base}/v1` : base, key: resolved.key.trim(), model });
+      break;
     }
   }
-  return null;
+  return found;
+}
+
+/** The endpoint that serves `part`, or null when nothing can. */
+export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceEndpoint | null {
+  return voiceEndpoints(part, source)[0] ?? null;
 }
 
 /** What the app may know: which provider serves each part, nothing more. */

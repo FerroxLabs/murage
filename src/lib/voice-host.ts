@@ -4,6 +4,13 @@
 // `hand_down` event, and the call screen sends that request through the
 // ordinary send path, so the engine turn, the approvals and the transcript
 // are the same ones a typed message gets. This file just carries the events.
+import { desktopSurfaceHeaders } from "@/lib/live-events";
+
+/** The call routes read the owner's thread and inbox, so the harness serves
+ *  them to the desktop app only: every request carries its per-launch proof. */
+export function callRouteHeaders(): Record<string, string> {
+  return { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() };
+}
 
 export type HostEvent =
   | { type: "sentence"; text: string }
@@ -30,7 +37,7 @@ export const HOST_OFF_FOR_CALL = new Set(["key", "auth", "premium", "unavailable
 export function warmHost(botId: string): void {
   void fetch(`/api/bots/${botId}/voice-host`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: callRouteHeaders(),
     body: JSON.stringify({ warm: true }),
   }).catch(() => undefined);
 }
@@ -50,7 +57,7 @@ export async function hostTurn(
   try {
     res = await fetch(`/api/bots/${botId}/voice-host`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: callRouteHeaders(),
       body: JSON.stringify(input),
       signal,
     });
