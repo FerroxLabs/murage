@@ -76,6 +76,7 @@ export function spokenToolAction(tool: string, detail: string): string {
   const file = detail.match(/(?:^|[\s/])([\w.-]+\.\w{1,6})\b/)?.[1];
   // connected apps (Composio) and its tool search: heard live as
   // "composio multi execute tool"
+  if (/send voice note/.test(both)) return "send you a voice note";
   if (/composio.*(search tools|tool search)/.test(both)) return "look up which app tools to use";
   if (/composio/.test(both)) return "use your connected apps";
   if (/^\s*(python3?|node|ruby|perl)\s+-[ce]\b|\bscript\b/.test(`${words(detail)}`.toLowerCase()) || /\b(python3?|node) -[ce]\b/.test(detail)) {

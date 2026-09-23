@@ -142,6 +142,7 @@ describe("narrateTool", () => {
     expect(narrateTool("COMPOSIO_MULTI_EXECUTE_TOOL")).toBe("working in your connected apps");
     expect(narrateTool("composio__COMPOSIO_SEARCH_TOOLS")).toBe("finding the right tool");
     expect(narrateTool("search_tool")).toBe("finding the right tool");
+    expect(narrateTool("mcp__agents__send_voice_note")).toBe("recording a voice note");
     expect(narrateTool('python3 -c "import json"')).toBe("running a small script");
     expect(narrateTool("SOME_VENDOR_THING")).toBe("using a tool");
     expect(narrateTool('curl -X POST "https://x/y" --data @{}')).toBeNull();

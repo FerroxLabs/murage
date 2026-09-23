@@ -377,6 +377,7 @@ describe("tool approvals, spoken on a call", () => {
     ["Local computer approval", "composio__COMPOSIO_MULTI_EXECUTE_TOOL", "use your connected apps"],
     ["Local computer approval", "composio__COMPOSIO_SEARCH_TOOLS", "look up which app tools to use"],
     ["Local computer approval", 'python3 -c "\nimport json\np=1"', "run a small script on your computer"],
+    ["other", "agents__send_voice_note", "send you a voice note"],
   ])("%s / %s → %s", (tool, detail, action) => {
     expect(spokenToolAction(tool, detail)).toBe(action);
   });

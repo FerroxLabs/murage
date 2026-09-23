@@ -237,6 +237,7 @@ export function narrateTool(toolName: string): string | null {
   const bare = name.toLowerCase().replace(/^composio__/, "");
   const verbs: Array<[RegExp, string]> = [
     // connected apps (Composio) and engines' tool search: never read the id
+    [/^send_voice_note$/, "recording a voice note"],
     [/^composio_search_tools$|^search_tools?$|^tool_search$/, "finding the right tool"],
     [/^composio_(multi_)?execute_tool$|^composio_/, "working in your connected apps"],
     [/^(python3?|node|ruby|perl)( |$)/, "running a small script"],
