@@ -19,6 +19,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -77,6 +78,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
+    chmodSync(FAKE_CLAUDE, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-branch-test-"));
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
@@ -91,6 +93,14 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "hang" },
             config: { cli: FAKE_CLI, fullAuto: true },
+          },
+          // Claude keeps an idle process per thread between turns; the dump
+          // is written once per process, so its pid names the process a
+          // turn ran in
+          claude: {
+            driver: "claudeAgent",
+            environment: { FAKE_CLAUDE_DUMP: join(home, "claude-dump.json") },
+            config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
         },
       }),
@@ -259,6 +269,58 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       expect(bot.messages.filter((m: Msg) => m.text === "second try")).toHaveLength(1);
     },
     45_000,
+  );
+
+  // #1562: after an edit the rewound history rides in the prompt. Claude's
+  // idle process still held the abandoned branch, and with no cursor sent it
+  // was reused, so the engine saw both branches. The harness must ask for a
+  // reset whenever it rebuilds the context, in any memory mode.
+  it(
+    "an edit asks Claude to drop the retained session holding the abandoned branch",
+    async () => {
+      // memory "active" already reset the session on its own path; the
+      // defect lived in every other mode
+      expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+      try {
+      const dump = join(home, "claude-dump.json");
+      const launched = () => JSON.parse(readFileSync(dump, "utf8")) as { pid: number; argv: string[] };
+      const replies = async () => (await getBot(created.id)).messages.filter((m: Msg) => m.role === "bot" && m.kind === "text").length;
+      const created = (await api("POST", "/api/bots")).body.bot;
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
+      })).status).toBe(200);
+
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "abandoned question" })).status).toBe(202);
+      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 1, "the first reply");
+      const first = launched();
+
+      // An ordinary follow-up resumes the same session and asks for no
+      // reset. (Its process is replaced anyway today: the agents MCP token
+      // rotates per turn, which changes the spawn contract.)
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "follow-up" })).status).toBe(202);
+      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 2, "the follow-up reply");
+      expect(launched().argv).toContain("--resume");
+
+      const bot = await getBot(created.id);
+      const original: Msg = bot.messages.find((m: Msg) => m.role === "user" && m.text === "abandoned question");
+      expect((await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, { text: "replacement question" })).status).toBe(202);
+      await waitFor(async () => {
+        const b = await getBot(created.id);
+        return !b.busy && activePath(b.messages, b.activeLeafId).some((m) => m.role === "bot" && m.kind === "text");
+      }, "the reply on the edited branch");
+      const rebuilt = launched();
+      expect(rebuilt.pid).not.toBe(first.pid);
+      expect(rebuilt.argv).not.toContain("--resume");
+      // the reset crossed the harness/driver boundary: the idle process was
+      // closed because the context was rebuilt, not by chance
+      const closes = readFileSync(join(home, ".murage", "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean)
+        .map((line) => JSON.parse(line)).filter((e) => e.source === "claude.session").map((e) => e.msg?.close);
+      expect(closes).toEqual(["spawn contract changed", "context reset"]);
+      } finally {
+        await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "active" });
+      }
+    },
+    40_000,
   );
 
   it(

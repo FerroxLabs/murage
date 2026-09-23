@@ -930,7 +930,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // a retry relaunches the whole CLI; the backoff is scaled down in tests
       // so a fake's transient failures don't stall real seconds
       const retryScale = Number(process.env.FAKE_CLAUDE_RETRY_SCALE ?? "1");
-      const sessionId = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+      const sessionId = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
       const newSessionId = sessionId ? null : newId();
 
       const args = [
@@ -1083,8 +1083,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // Reuse the live process when it is idle, unchanged, and is the session
       // the harness wants resumed. Anything else: close it and spawn fresh
       // (with --resume, so the conversation continues in the new process).
+      // A missing cursor alone still reuses (legacy callers send none), so a
+      // rebuilt conversation says so explicitly: without the reset an edit,
+      // branch switch, cwd or engine change replayed the transcript on top
+      // of the idle process's old context (upstream 581a740b, #1562).
       const live = sessions.get(threadId);
-      if (live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
+      if (!turn.sessionReset && live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
         if (live.idleTimer) clearTimeout(live.idleTimer);
         const liveTurn: SessionTurn = {
           turnId,
@@ -1121,7 +1125,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         return { turnId };
       }
-      if (live) closeSession(threadId, "spawn contract changed");
+      if (live) closeSession(threadId, turn.sessionReset ? "context reset" : "spawn contract changed");
 
       // Until sessions.set() below, this turn owns every launch resource.
       // Any bind, private-config or synchronous spawn failure must release
@@ -1563,7 +1567,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               previous?.close();
               try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
-                await sendTurn({ ...turn, resumeCursor: cursor }, { turnId });
+                // The reset was consumed by the first launch. The retry
+                // resumes the new session, never the context it replaced.
+                await sendTurn({ ...turn, sessionReset: false, resumeCursor: cursor }, { turnId });
               } catch (e) {
                 if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
                 retryState.delete(threadId);
