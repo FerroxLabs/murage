@@ -344,7 +344,8 @@ test("an approval is asked in plain words, and a question about it goes to the h
   await page.evaluate(() => (window as any).__setBot({ busy: true, messages: [
     { id: "ap1", role: "bot", kind: "options", at: 1, card: { tool: "other", subtitle: "Agents_web_search", requestId: "req-1", options: ["Allow", "Deny"] } },
   ] }));
-  await expect.poll(() => h.spoken).toContain("Can I search the web? Yes or no.");
+  // the first approval of a call also offers a yes for the rest of the call
+  await expect.poll(() => h.spoken).toContain("Can I search the web? Say yes, no, or yes for the rest of the call.");
   h.replies.push([{ type: "sentence", text: "It wants to search for this week's AI news. Yes or no?" }, { type: "done" }]);
   await page.evaluate(() => (window as any).__say("What is it searching for?"));
   await expect.poll(() => h.spoken.at(-1)).toBe("It wants to search for this week's AI news. Yes or no?");
@@ -352,6 +353,29 @@ test("an approval is asked in plain words, and a question about it goes to the h
   expect((await actions(page)).some((a) => a.type === "decideRequest")).toBe(false);
   await page.evaluate(() => (window as any).__say("Yes"));
   await expect.poll(async () => (await actions(page)).at(-1)).toMatchObject({ type: "decideRequest", requestId: "req-1", behavior: "allow" });
+});
+
+test("a yes for the rest of the call answers the same kind of request until hang-up, and nothing else", async ({ page }) => {
+  const h = await harness(page);
+  const card = (id: string, subtitle: string) => ({ id, role: "bot", kind: "options", at: 1, card: { tool: "Local computer approval", subtitle, requestId: `req-${id}`, options: ["Allow", "Deny"] } });
+  await page.evaluate((c) => (window as any).__setBot({ busy: true, messages: [c] }), card("a1", "composio__COMPOSIO_MULTI_EXECUTE_TOOL"));
+  await expect.poll(() => h.spoken.at(-1)).toBe("Can I use your connected apps? Say yes, no, or yes for the rest of the call.");
+  await page.evaluate(() => (window as any).__say("yes for the rest of the call"));
+  await expect.poll(async () => (await actions(page)).filter((a) => a.type === "decideRequest").length).toBe(1);
+  await expect.poll(() => h.spoken.at(-1)).toBe("Okay. I'll use your connected apps without asking until you hang up.");
+
+  // the same kind again: allowed without a word
+  await page.evaluate((cards) => (window as any).__setBot({ busy: true, messages: cards }), [
+    { ...card("a1", "composio__COMPOSIO_MULTI_EXECUTE_TOOL"), card: { ...card("a1", "x").card, subtitle: "composio__COMPOSIO_MULTI_EXECUTE_TOOL", answered: true } },
+    card("a2", "composio__COMPOSIO_MULTI_EXECUTE_TOOL"),
+  ]);
+  await expect.poll(async () => (await actions(page)).filter((a) => a.type === "decideRequest").map((a) => a.requestId)).toEqual(["req-a1", "req-a2"]);
+  const spokenBefore = h.spoken.length;
+
+  // a different kind is still asked, and asked plainly
+  await page.evaluate((cards) => (window as any).__setBot({ busy: true, messages: cards }), [card("a3", 'python3 -c "import json"')]);
+  await expect.poll(() => h.spoken.at(-1)).toBe("Can I run a small script on your computer? Yes or no.");
+  expect(h.spoken.length).toBe(spokenBefore + 1);
 });
 
 test("cancel from the host stops the running turn", async ({ page }) => {
