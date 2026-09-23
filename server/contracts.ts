@@ -229,6 +229,13 @@ export interface SendTurnInput {
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
   resumeCursor?: unknown;
+  /** Start without the previous native context, including a retained idle
+   * process. Takes precedence over resumeCursor. Set whenever the harness
+   * rebuilt or cleared the conversation's cursor (an edit, a branch switch,
+   * a cwd or engine change, a memory refresh): the rebuilt history travels
+   * in `text`/`transcript`, and replaying it on top of the old context would
+   * hand the engine both branches (upstream #1562). */
+  sessionReset?: boolean;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string }>;
   /** Bot persona (name/title/description) as a system prompt. */

@@ -12,6 +12,12 @@
 // through untouched, and with no gate configured the bridge remains the
 // frame-preserving pipe (apart from local ping replies).
 //
+// The third exception is the answer to a `tools/list`. Every engine passes a
+// tool's inputSchema to its model provider, and strict providers refuse a
+// root that is not a plain object, failing the whole turn. That answer is
+// rewritten to a provider-safe root (mcp-tool-schema.ts, upstream #1390);
+// the far end still validates each call against its own schema.
+//
 // A configured gate fails CLOSED (0.1.52 decision U-11, audit A5): when the
 // harness control endpoint times out, errors or answers malformed, nobody can
 // say the person is not driving, so a tools/call is refused with reconnect
@@ -37,6 +43,7 @@ import {
   createControlClient,
 } from "./control-client.ts";
 import { augmentedPath } from "./env-path.ts";
+import { createToolListNormalizer } from "./mcp-tool-schema.ts";
 
 // 45s of TOTAL silence before the bridge even probes. An MCP session is
 // legitimately quiet between tool calls and a slow screenshot can take tens
@@ -329,7 +336,8 @@ export function runMcpBridge(options: BridgeOptions): void {
     detach();
     child.kill("SIGKILL");
   };
-  const detach = pipeMcpLines(process.stdin, createMcpBridgeInterceptor({
+  const toolLists = createToolListNormalizer();
+  const intercept = createMcpBridgeInterceptor({
     answer,
     forward: async (line) => {
       try {
@@ -353,8 +361,12 @@ export function runMcpBridge(options: BridgeOptions): void {
         },
       }
       : {}),
-  }), () => child.stdin.end(), transportFailed);
-  pipeMcpLines(child.stdout, answer, () => {}, transportFailed);
+  });
+  const detach = pipeMcpLines(process.stdin, (line) => {
+    toolLists.observeRequest(line);
+    return intercept(line);
+  }, () => child.stdin.end(), transportFailed);
+  pipeMcpLines(child.stdout, (line) => answer(toolLists.rewriteResponse(line)), () => {}, transportFailed);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {

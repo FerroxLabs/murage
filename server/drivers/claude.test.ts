@@ -1052,6 +1052,38 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(2);
   });
 
+  // #1562: a rebuilt conversation (edit, branch switch, cwd or engine
+  // change) carries its history in the prompt. Reusing the idle process
+  // underneath, or --resume-ing the old cursor, replays that history on top
+  // of the abandoned context.
+  it.each([false, true])("sessionReset discards the retained idle process, old cursor supplied: %s", async (withCursor) => {
+    await create();
+    const dump = join(scratch, "session-reset.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const first = await instance.adapter.sendTurn({ threadId: "t-rebuilt", text: "abandoned branch" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const previous = JSON.parse(readFileSync(dump, "utf8"));
+    const oldSession = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-rebuilt", text: "replacement history", sessionReset: true,
+      ...(withCursor ? { resumeCursor: oldSession } : {}),
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const replacement = JSON.parse(readFileSync(dump, "utf8"));
+    expect(replacement.pid).not.toBe(previous.pid);
+    expect(replacement.argv).not.toContain("--resume");
+    expect(replacement.argv).not.toContain(oldSession);
+    expect(replacement.prompt.message.content).toBe("replacement history");
+    const newSession = (recorder.events.filter((e) => e.type === "session.started").at(-1) as { sessionId: string }).sessionId;
+    expect(newSession).not.toBe(oldSession);
+
+    // an ordinary follow-up reuses the replacement again
+    const third = await instance.adapter.sendTurn({ threadId: "t-rebuilt", text: "continue", resumeCursor: newSession });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
+    expect(JSON.parse(readFileSync(dump, "utf8")).pid).toBe(replacement.pid);
+  });
+
   it("resets one idle native session without resuming its history or closing a sibling", async () => {
     await create();
     const dump = join(scratch, "reset-session.json");
@@ -1353,6 +1385,29 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   // carries that id), so every event it emits — the second turn.started and
   // the eventual turn.completed — must carry it too; a fresh id would leave
   // the harness waiting on a completion that never arrives (WIN1 fix round).
+  // The reset is consumed by the first launch: a pre-accept relaunch must
+  // resume the replacement session, not mint yet another one (#1562).
+  it("a relaunch after a sessionReset resumes the replacement session", async () => {
+    const dump = join(scratch, "reset-retry.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-reset");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    const turn = await instance.adapter.sendTurn({
+      threadId: "t-reset-retry", text: PRE_ACCEPT_PROMPT, sessionReset: true, resumeCursor: "old-abandoned-session",
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
+    expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+    const sessionIds = recorder.events.filter((e) => e.type === "session.started" && e.turnId === turn.turnId)
+      .map((e) => (e as { sessionId: string }).sessionId);
+    expect(new Set(sessionIds).size).toBe(1);
+    expect(sessionIds[0]).not.toBe("old-abandoned-session");
+    const retried = JSON.parse(readFileSync(dump, "utf8"));
+    expect(retried.argv).toContain("--resume");
+    expect(retried.argv[retried.argv.indexOf("--resume") + 1]).toBe(sessionIds[0]);
+  }, 20_000);
+
   it("a relaunched turn keeps the id sendTurn returned through to turn.completed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-same-id");

@@ -244,6 +244,10 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
     delete process.env.FAKE_ACP_LOAD_NULL;
+    delete process.env.FAKE_ACP_LOAD_ERROR;
+    delete process.env.FAKE_ACP_RPC_DUMP;
+    delete process.env.FAKE_ACP_PROMPT_DUMP;
+    delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -1067,6 +1071,83 @@ createInterface({ input: process.stdin }).on("line", line => {
     await instance.adapter.interruptTurn("t-int");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ type: "turn.completed" });
+  });
+
+  // An agent that streams part of an answer and then goes silent forever
+  // never answers session/prompt, which has no wall-clock deadline (a long
+  // answer legitimately streams for minutes). Before the prompt idle guard
+  // the only thing that ended the turn was the server's 20-minute stall
+  // watchdog, so the bot sat busy for twenty minutes and then reported "no
+  // activity" rather than naming the engine that stopped talking.
+  it("fails a turn whose agent goes silent mid-answer, and kills the wedged child", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    await create(GrokAgentDriver, "stall-after-text");
+    await instance.adapter.sendTurn({ threadId: "t-stall", text: "go" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    // the chunk it did stream reached the transcript before the silence
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(true);
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
+    expect(error?.message).toMatch(/went silent/i);
+    // the message names the knob, so the owner of a slow model can raise it
+    expect(error?.message).toContain("MURAGE_ACP_PROMPT_IDLE_MS");
+    expect(instance.adapter.hasSession("t-stall")).toBe(false);
+  });
+
+  // The deadline restarts on traffic in either direction, so a card nobody
+  // has answered yet must never read as an unresponsive agent: the engine is
+  // silent because it is waiting for the person, and the guard would other-
+  // wise fail the turn out from under their cursor.
+  it("the prompt idle guard does not expire an agent while a person is answering a card", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({
+      threadId: "t-stall-ask",
+      text: "go",
+      integrations: {
+        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "linux", scope: "local-computer" },
+      },
+    });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+
+    await instance.adapter.respondToRequest("t-stall-ask", (opened as any).requestId, { behavior: "allow" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
+  // An end_turn with nothing to show for it used to complete ok:true, so the
+  // person's message went unanswered with no error card, Inbox item or
+  // incident (upstream #1623).
+  it("an end_turn with no reply, image or tool result is a failed turn with a plain reason", async () => {
+    await create(GrokAgentDriver, "empty-reply");
+    await instance.adapter.sendTurn({ threadId: "t-empty", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
+    expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message)
+      .toMatch(/finished without a reply, an image or a tool result/);
+  });
+
+  it("reasoning with no answer is a lost turn, not a success", async () => {
+    // a provider that never leaves its thinking stream: thought chunks
+    // stream, the engine still answers end_turn
+    await create(GrokAgentDriver, "reasoning-only");
+    await instance.adapter.sendTurn({ threadId: "t-reasoning", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
+    expect(recorder.events.some((e) => e.type === "content.delta" && (e as any).streamKind === "reasoning_text")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "item.completed")).toBe(false);
+  });
+
+  it("an end_turn with only an image is still a success", async () => {
+    await create(GrokAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image-only", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
   });
 
   it("cancellation-close regression: exit on cancellation is not an unexpected failure", async () => {
@@ -2242,6 +2323,60 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(started).toMatchObject({ sessionId: "fake-acp-session" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
+  });
+
+  // #1705: a fresh session after a failed session/load has no history, and
+  // sending only the latest message made the bot forget the whole thread.
+  // The transcript the harness sent (already through the memory replay
+  // filter) rides into the new session instead.
+  it.each(["null", "opencode-not-found"])("replays the thread into session/new when session/load fails (%s)", async (failure) => {
+    if (failure === "null") process.env.FAKE_ACP_LOAD_NULL = "1";
+    else process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify({ code: -32602, message: "Session not found", data: { sessionId: "missing-cursor" } });
+    const promptDump = join(scratch, "replayed-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    await create(GeminiAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-history",
+      text: "What did I say?",
+      resumeCursor: "missing-cursor",
+      transcript: [{ role: "user", text: "Remember ALPHA." }, { role: "assistant", text: "Remembered." }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>)
+      .filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    expect(text).toMatch(/could not be restored[\s\S]*User: Remember ALPHA\.\nAssistant: Remembered\.[\s\S]*What did I say\?$/);
+  });
+
+  // #1705: a sign-in refusal or invalid params is not a missing session.
+  // Treating it as one started a blank session, dropped the thread and hid
+  // the engine's reason.
+  it.each([
+    [-32000, "authentication required", undefined, "auth_required"],
+    // the key is assembled at runtime so no credential-shaped literal sits in the source
+    [-32602, "Invalid params", { details: "model m-bogus is not available; key sk-test-" + "SYNTHETICKEYCANARY".repeat(2) }, "rpc_error"],
+  ])("fails the turn visibly when session/load is refused (%s)", async (code, message, data, stopReason) => {
+    process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify({ code, message, ...(data ? { data } : {}) });
+    const rpcFile = join(scratch, "refused-load.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(ClassifiedErrorDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-load-refused", text: "Continue", resumeCursor: "saved-session",
+      transcript: [{ role: "user", text: "Prior message" }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason });
+    const methods = JSON.parse(readFileSync(rpcFile, "utf8")) as string[];
+    expect(methods).toContain("session/load");
+    expect(methods).not.toContain("session/new");
+    expect(methods).not.toContain("session/prompt");
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string; details?: string; setup?: boolean } | undefined;
+    expect(error?.details).toContain("ACP request: session/load");
+    if (data) {
+      // the engine's own reason, redacted, not the generic JSON-RPC message
+      expect(error?.message).toContain("model m-bogus is not available");
+      expect(JSON.stringify(recorder.events)).not.toContain("SYNTHETICKEYCANARY");
+    } else {
+      expect(error?.setup).toBe(true);
+    }
   });
 
   it("applyTurnEnv sees the picker model after resolveTurnModel", async () => {

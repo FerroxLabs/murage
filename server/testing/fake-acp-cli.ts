@@ -8,7 +8,11 @@
 //   FAKE_ACP_LOAD_NULL  answer session/load with null, the way a real agent
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
-//   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//   FAKE_ACP_MODE   happy (default) | image | empty-reply | reasoning-only | exit-early | fail-after-text | hang | stall-after-text | no-auth | auth-required | permission
+//                   | stall-after-text (stream one message chunk, then go
+//                     fully silent forever — no update, no result, no exit:
+//                     a wedged agent mid-answer. Nothing else will arrive, so
+//                     the driver's prompt idle guard must fail the turn)
 //                     | wrapped-tool  one tool call made through a "use a tool"
 //                     wrapper, failing with a reason in its content
 //                   | tool-image  two completed tool calls whose output carries
@@ -83,6 +87,8 @@
 //                   (default "echo hi")
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
+//   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
+//                   (a refusal, or OpenCode's session-not-found shape)
 //   FAKE_ACP_PROMPT_DUMP  path to write the last session/prompt's content
 //                   blocks as JSON, so a test can assert what reached the
 //                   engine (text, and any inline image parts)
@@ -470,6 +476,14 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
   });
 }
 
+/** Scripted reasoning-only turn: thought chunks and nothing else, the shape
+ * of a provider that never leaves its thinking stream yet still answers
+ * end_turn, which the driver must report as a lost turn, not a success. */
+function playReasoningTurn() {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { text: "considering the request at length" } } } });
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_thought_chunk", content: { text: " without ever producing an answer" } } } });
+}
+
 function playTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-1", title: "run" } } });
@@ -649,6 +663,10 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      if (process.env.FAKE_ACP_LOAD_ERROR) {
+        out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_LOAD_ERROR) });
+        break;
+      }
       if (process.env.FAKE_ACP_LOAD_NULL) {
         result(msg.id, null);
         break;
@@ -761,6 +779,8 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params });
         if (variant === "success" || variant === "unmatched") {
           if (variant === "unmatched") out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "Internal error" } });
+          // a success answers with something; a bare end_turn is a lost turn
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture reply" } } } });
           result(msg.id, { stopReason: "end_turn" });
         } else {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 404, message: "fixture rejection https://billing.invalid/?key=fake-secret-canary",...(variant==="terminal"?{error_kind:"max_tokens_truncation"}:{}) } } });
@@ -831,7 +851,11 @@ function handle(msg: any) {
         process.stderr.write(`${lines.join("\n")}\n`, () => {
           // let the driver read stderr before the prompt settles
           setTimeout(() => {
-            if (mode === "stderr-happy") result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+            if (mode === "stderr-happy") {
+              // a success answers with something; a bare end_turn is a lost turn
+              out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture reply" } } } });
+              result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+            }
             else out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { message: "fixture engine failure" } } });
           }, 200);
         });
@@ -855,6 +879,15 @@ function handle(msg: any) {
       }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
+        setInterval(() => {}, 1_000);
+        return;
+      }
+      if (mode === "stall-after-text") {
+        // Stream a chunk, then go fully silent forever: no further update, no
+        // result, no exit. The shape of a wedged OpenCode agent that stopped
+        // mid-answer. Nothing else will ever arrive, so only the driver's own
+        // prompt idle guard can end this turn.
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "half an answer, then silence" } } } });
         setInterval(() => {}, 1_000);
         return;
       }
@@ -1139,6 +1172,7 @@ function handle(msg: any) {
       else if (mode === "tool-image") playToolImageTurn();
       else if (mode === "computer-exec-image") playComputerExecImageTurn();
       else if (mode === "wrapped-tool-image") playWrappedToolImageTurn();
+      else if (mode === "reasoning-only") playReasoningTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "fuigo-question") {
         // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with

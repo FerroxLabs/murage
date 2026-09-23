@@ -5227,6 +5227,13 @@ async function startTurn(
   // this already-built turn must either keep its old session or replay on the
   // following turn, never start a blank session with no transcript.
   let resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
+  // A context that is not resumed was rebuilt (edit, branch switch, cwd or
+  // engine change, external update): the engine must drop what it retained,
+  // not only skip the cursor. Claude keeps an idle process per thread and
+  // reused it whenever no cursor was sent, so the replayed history landed on
+  // top of the abandoned one. Decided here, in every memory mode; the
+  // memory refresh below can also set it (upstream 581a740b, #1562).
+  let sessionReset = !resume;
 
   const persona = [
     `You are ${bot.name}, a personal bot in Murage.`,
@@ -5674,7 +5681,15 @@ async function startTurn(
           const rebuilt=buildTurnContext({text:turnPrompt,transcript,
             rewound,memoryRefreshed:revoked,fresh,externallyUpdated:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind)});
           turnText=rebuilt.turnText;
-          if(revoked)resumeCursor=undefined;
+          if(revoked){resumeCursor=undefined;sessionReset=true;}
+        } else {
+          // A resumed turn still carries its transcript: an ACP engine whose
+          // session/load fails replays it into the new session (#1705), so
+          // it must be the authorized history, never the raw branch.
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
@@ -5692,6 +5707,7 @@ async function startTurn(
           turnText=buildTurnContext({text:turnPrompt,transcript,
             rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:replaysTranscriptNatively(instance.driverKind)}).turnText;
           resumeCursor=undefined;
+          sessionReset=true;
         }
         if(!resumeCursor) {
           // Claude's idle retained process is not reported by hasSession; its
@@ -5784,6 +5800,7 @@ async function startTurn(
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
         resumeCursor,
+        sessionReset,
         transcript,
         system:
           persona +
