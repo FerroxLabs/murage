@@ -1599,6 +1599,14 @@ export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSign
     let cursor: string | undefined;
     let itemCount = 0;
     let complete = false;
+    // What the service says about its own catalog (upstream #1615,
+    // 59f14174). A walk can end "cleanly", with no cursor, on page 1 of 4,
+    // or keep minting fresh cursors for the same page. Neither may pass for
+    // the whole catalog, and the refusal says how much did arrive.
+    let lastReportedPage: number | undefined;
+    let reportedTotalPages: number | undefined;
+    let reportedTotalItems: number | undefined;
+    let stop = "limit";
     for (let page = 0; page < MAX_CATALOG_PAGES && itemCount < MAX_CATALOG_ITEMS; page += 1) {
       if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
       try {
@@ -1607,11 +1615,11 @@ export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSign
         const res = backendKey
           ? await fetch(`${toolkitBase()}/toolkits?${params}`, { headers: { "x-api-key": backendKey }, signal })
           : await brokerRequest(cfg, cursor ? `/v1/catalog?${new URLSearchParams({ cursor })}` : "/v1/catalog", { signal });
-        if (!res.ok) break;
+        if (!res.ok) { stop = "http-error"; break; }
         const json: any = await res.json();
         if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
         const items = json.items ?? json.data ?? [];
-        if (!Array.isArray(items)) break;
+        if (!Array.isArray(items)) { stop = "bad-page"; break; }
         const boundedItems = items.slice(0, MAX_CATALOG_ITEMS - itemCount);
         itemCount += boundedItems.length;
         for (const t of boundedItems) {
@@ -1627,19 +1635,46 @@ export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSign
             domain: null,
           });
         }
+        const totalItems = Number(json.total_items);
+        if (Number.isSafeInteger(totalItems) && totalItems > 0) reportedTotalItems = totalItems;
+        const totalPages = Number(json.total_pages);
+        if (Number.isSafeInteger(totalPages) && totalPages > 0) reportedTotalPages = totalPages;
+        const reportedPage = Number(json.current_page);
+        if (Number.isSafeInteger(reportedPage)) {
+          // A page that does not advance is a replay behind a fresh cursor.
+          if (lastReportedPage !== undefined && reportedPage <= lastReportedPage) { stop = "page-stuck"; break; }
+          lastReportedPage = reportedPage;
+        }
         const next = typeof json.next_cursor === "string" ? json.next_cursor.trim() : "";
-        if (!next) { complete = boundedItems.length === items.length; break; }
-        if (!/^[A-Za-z0-9+/_=-]{1,256}$/.test(next) || seenCursors.has(next)) break;
+        const lastPage = lastReportedPage !== undefined && reportedTotalPages !== undefined && lastReportedPage >= reportedTotalPages;
+        if (!next || lastPage) {
+          const pagesShort = lastReportedPage !== undefined && reportedTotalPages !== undefined && lastReportedPage < reportedTotalPages;
+          // Raw records, not unique cards: a catalog that lists one app
+          // twice is complete, and failing closed on it would empty the page.
+          const itemsShort = reportedTotalItems !== undefined && itemCount < reportedTotalItems;
+          complete = boundedItems.length === items.length && !pagesShort && !itemsShort;
+          stop = complete ? "end" : "ended-short";
+          break;
+        }
+        if (!/^[A-Za-z0-9+/_=-]{1,256}$/.test(next) || seenCursors.has(next)) { stop = "cursor-repeated"; break; }
         seenCursors.add(next);
         cursor = next;
       } catch {
         // Fail below without leaking upstream details or presenting a partial
         // catalog as complete. First-page failures retain the curated fallback.
+        stop = "network";
         break;
       }
     }
     if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
-    if (!complete && cardsBySlug.size) throw new Error("The app catalog could not be loaded completely. Please retry.");
+    if (!complete && cardsBySlug.size) {
+      // Still fails closed: a partial catalog is never served or cached. Only
+      // counts are reported, never upstream text.
+      const loaded = cardsBySlug.size.toLocaleString("en-US");
+      const of = reportedTotalItems !== undefined && reportedTotalItems > cardsBySlug.size ? ` of ${reportedTotalItems.toLocaleString("en-US")}` : "";
+      console.warn(`[connectors] app catalog paging stopped early (${stop}) after ${loaded}${of} apps`);
+      throw new Error(`The app catalog could not be loaded completely. Please retry. Loaded ${loaded}${of} apps.`);
+    }
     if (cardsBySlug.size) {
       const cards = [...cardsBySlug.values()];
       if (complete && identity && generation === toolkitRequestGeneration) toolkitCache = { at: Date.now(), cards, identity };
