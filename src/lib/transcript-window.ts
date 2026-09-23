@@ -4,6 +4,10 @@
  * messages mount by default; a pill expands by the same step. */
 export const TRANSCRIPT_WINDOW_SIZE = 120;
 
+/** How close to the top a reader scrolled back has to get before the next
+ * rows (held or on the server) are brought in. */
+export const SCROLLBACK_TRIGGER_PX = 200;
+
 export interface TranscriptWindow<T> {
   visible: T[];
   /** Messages hidden before the window — the pill's "(X more)" count. */
@@ -71,5 +75,21 @@ export function resolveTranscriptWindow<T>(
     laterCount: messages.length - end,
     startIndex: start,
     endIndex: end,
+  };
+}
+
+/** Older messages were prepended ahead of the row that used to be first
+ * (`shift` = its new index; -1 when it is gone, e.g. a branch switch).
+ * Indices below are positions in the list, so a mounted window would slide
+ * `shift` rows back in time; move it with the rows instead. `reveal` is the
+ * reader at the top asking for those rows: a window at the top (start 0)
+ * then stays there so they appear. Pages a jump walks through are not asked
+ * for by the reader and stay unmounted (upstream #1527). */
+export function windowAfterPrepend<W extends { start: number; end: number | null }>(window: W, shift: number, reveal = false): W {
+  if (shift <= 0) return window;
+  return {
+    ...window,
+    start: reveal && window.start === 0 ? 0 : window.start + shift,
+    end: window.end === null ? null : window.end + shift,
   };
 }

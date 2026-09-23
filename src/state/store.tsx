@@ -48,6 +48,7 @@ import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
+import { createScrollback, MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
@@ -175,6 +176,9 @@ export interface Message {
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
+  /** screen messages from a bounded page: the server left the pixels out and
+   * serves them from /api/threads/:threadId/messages/:id/image */
+  hasImage?: boolean;
   at: number;
   /** the message this one follows; null = thread root. Edited messages
    * share a parentId with the version they replace — that's a fork. */
@@ -246,6 +250,9 @@ export interface Group {
    * thread and omit this collection. */
   tasks?: GroupTask[];
   messages: Message[];
+  /** The server answered a bounded page and older messages remain in storage
+   * (upstream #1527). Absent on an unpaged response, which is the whole thread. */
+  hasMore?: boolean;
 }
 
 /** One of a channel's independent conversations. The channel's threadId
@@ -400,6 +407,9 @@ export interface Bot {
   /** The owner opted this bot into their own running Chrome (one bot at most). */
   useMyChrome?: boolean;
   messages: Message[];
+  /** The server answered a bounded page and older messages remain in storage
+   * (upstream #1527). Absent on an unpaged response, which is the whole thread. */
+  hasMore?: boolean;
   /** Renderer-only deletion transition; never expose the removed transcript. */
   awaitingThreadSnapshot?: boolean;
   deletedThreadId?: string;
@@ -638,6 +648,16 @@ export interface AppState {
   /** queueIds whose drain frame beat the POST continuation. One-shot and
    * bounded to a short event window so other clients cannot grow it forever. */
   consumedQueueIds: Record<string, true>;
+  /** Threads with a scrollback page in flight, so one scroll or click cannot
+   * ask the server for the same page twice. */
+  loadingOlder: Record<string, true>;
+  /** Bumped whenever a thread's transcript is replaced or its visible branch
+   * moves. A scrollback page carries the value it was asked under, so a page
+   * that was in flight across a thread switch, an edit or a rewind is dropped
+   * instead of prepending rows from a transcript this client left behind.
+   * Ordinary appends do not bump it: a page must still land over messages
+   * that arrived while it was on the wire (upstream #1527). */
+  transcriptGeneration: Record<string, number>;
 }
 
 const MAX_CONSUMED_QUEUE_IDS = 64;
@@ -877,6 +897,9 @@ export type Action =
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
   | { type: "focusMessage"; threadId: string; messageId: string }
+  // scrollback: ask the server for the page before the oldest message held
+  | { type: "loadOlderMessages"; threadId: string }
+  | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
   | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
   | {
@@ -949,6 +972,24 @@ export function openNotificationTarget(
     bot.threadId === target.threadId ||
     (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
   if (known) dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+}
+
+/** Retire the scrollback pages a thread has in flight: whatever they return
+ * describes a transcript this client no longer holds (upstream #1527). */
+function bumpTranscriptGeneration(state: AppState, ...threadIds: Array<string | undefined | null>): AppState {
+  const ids = threadIds.filter((threadId): threadId is string => Boolean(threadId));
+  if (!ids.length) return state;
+  const transcriptGeneration = { ...state.transcriptGeneration };
+  for (const threadId of ids) transcriptGeneration[threadId] = (transcriptGeneration[threadId] ?? 0) + 1;
+  return { ...state, transcriptGeneration };
+}
+
+/** Put an older page in front of what a conversation holds. A page that
+ * overlaps (it raced an edit, or a jump already fetched some of it) keeps the
+ * held copy, which is the newer one. */
+function prependOlder<T extends { messages: Message[]; hasMore?: boolean }>(owner: T, older: Message[], hasMore: boolean): T {
+  const held = new Set(owner.messages.map((message) => message.id));
+  return { ...owner, messages: [...older.filter((message) => !held.has(message.id)), ...owner.messages], hasMore };
 }
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -1072,9 +1113,11 @@ export function reducer(state: AppState, action: Action): AppState {
         state.selectedId && known(state.selectedId)
           ? state.selectedId
           : (chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "");
+      // Every transcript in the snapshot replaces the one held before it.
+      const fenced = bumpTranscriptGeneration(state, ...action.bots.map((b) => b.threadId), ...action.groups.map((g) => g.threadId));
       return reconcileSnapshotQueues(
         {
-          ...state,
+          ...fenced,
           bots: action.bots,
           groups: action.groups,
           computerControl: action.computerControl,
@@ -1082,6 +1125,26 @@ export function reducer(state: AppState, action: Action): AppState {
         },
         [...action.bots, ...action.groups],
       );
+    }
+    case "loadOlderMessages":
+      return state.loadingOlder[action.threadId]
+        ? state
+        : { ...state, loadingOlder: { ...state.loadingOlder, [action.threadId]: true } };
+    case "olderMessages": {
+      const { [action.threadId]: _done, ...loadingOlder } = state.loadingOlder;
+      // The page describes the transcript as it stood when it was asked for.
+      // If that transcript has since been replaced or rewound, its rows may
+      // belong to a thread or branch this client left — drop them, but never
+      // leave the loading state stuck on.
+      if ((state.transcriptGeneration[action.threadId] ?? 0) !== action.generation) {
+        return { ...state, loadingOlder };
+      }
+      return {
+        ...state,
+        loadingOlder,
+        bots: state.bots.map((bot) => (bot.threadId === action.threadId ? prependOlder(bot, action.messages, action.hasMore) : bot)),
+        groups: state.groups.map((group) => (group.threadId === action.threadId ? prependOlder(group, action.messages, action.hasMore) : group)),
+      };
     }
     case "showRoutines":
       return {
@@ -1177,11 +1240,21 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, webhookAttempts: attempts.slice(-2_000) };
     }
     case "groupPatched": {
-      const exists = state.groups.some((g) => g.id === action.group.id);
+      // A payload carrying a transcript replaces what this client holds, so
+      // pages asked for under the old one no longer describe it.
+      const fenced = action.group.messages ? bumpTranscriptGeneration(state, action.group.threadId) : state;
+      const exists = fenced.groups.some((g) => g.id === action.group.id);
       const groups = exists
-        ? state.groups.map((g) => {
+        ? fenced.groups.map((g) => {
             if (g.id !== action.group.id) return g;
-            const next: Group = { ...g, ...action.group, messages: action.group.messages ?? g.messages };
+            const next: Group = {
+              ...g,
+              ...action.group,
+              messages: action.group.messages ?? g.messages,
+              // A transcript answers the scrollback question with it: a page
+              // says so, and one without the marker is the whole thread.
+              hasMore: action.group.messages ? Boolean(action.group.hasMore) : g.hasMore,
+            };
             // The server omits an unset task pin, so a switch to another task
             // (New task, or picking one) must not keep the previous task's
             // folder lock or pinned message on screen.
@@ -1191,8 +1264,8 @@ export function reducer(state: AppState, action: Action): AppState {
             }
             return next;
           })
-        : [{ ...(action.group as Group), messages: action.group.messages ?? [] }, ...state.groups];
-      return { ...state, groups };
+        : [{ ...(action.group as Group), messages: action.group.messages ?? [] }, ...fenced.groups];
+      return { ...fenced, groups };
     }
     case "groupDeleted": {
       const groups = state.groups.filter((g) => g.id !== action.groupId);
@@ -1331,11 +1404,15 @@ export function reducer(state: AppState, action: Action): AppState {
       const deletedSelection = switchedThread && Array.isArray(action.bot.tasks);
       if (Array.isArray(action.bot.messages) &&
           (switchedThread || (before.awaitingThreadSnapshot && action.bot.threadId === before.threadId))) {
-        return reducer(next, { type: "taskSwitched", bot: { ...before, ...action.bot, messages: action.bot.messages } });
+        // hasMore spelled out: `before`'s answer belongs to the thread being left.
+        return reducer(next, { type: "taskSwitched", bot: { ...before, ...action.bot, messages: action.bot.messages, hasMore: action.bot.hasMore } });
       }
-      const patched = updateBot(next, action.bot.id, (b) => ({
+      const patched = updateBot(deletedSelection ? bumpTranscriptGeneration(next, before.threadId) : next, action.bot.id, (b) => ({
         ...b,
         ...action.bot,
+        // Messages are ignored on a same-thread frame, so its page marker is
+        // too: this client may already have paged further back than it says.
+        hasMore: deletedSelection ? false : b.hasMore,
         threadId: deletedSelection ? action.bot.threadId : b.threadId,
         activeLeafId: deletedSelection ? null : b.activeLeafId,
         awaitingThreadSnapshot: deletedSelection || b.awaitingThreadSnapshot,
@@ -1576,7 +1653,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
       if (!bot) return state;
-      return updateBot(state, bot.id, (b) => ({
+      // The visible branch moved (an edit, a rewind, another client's switch).
+      return updateBot(bumpTranscriptGeneration(state, action.threadId), bot.id, (b) => ({
         ...b,
         activeLeafId: action.activeLeafId,
       }));
@@ -1591,7 +1669,7 @@ export function reducer(state: AppState, action: Action): AppState {
         if (!children.length) break;
         cur = children.reduce((a, b) => (b.at >= a.at ? b : a)).id;
       }
-      return updateBot(state, action.botId, (b) => ({ ...b, activeLeafId: cur }));
+      return updateBot(bumpTranscriptGeneration(state, bot.threadId), action.botId, (b) => ({ ...b, activeLeafId: cur }));
     }
     // optimistic room edits; the server's group frame confirms them later
     case "patchGroup": {
@@ -1701,10 +1779,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "taskSwitched": {
       const before = state.bots.find(bot => bot.id === action.bot.id);
       const pending = before?.awaitingThreadSnapshot && before.threadId === action.bot.threadId ? before.pendingThreadEvents ?? [] : [];
-      const switched = updateBot(state, action.bot.id, (bot) => ({
+      const switched = updateBot(bumpTranscriptGeneration(state, action.bot.threadId), action.bot.id, (bot) => ({
         ...bot,
         ...action.bot,
         messages: action.bot.messages ?? [],
+        // The snapshot decides whether this thread has scrollback; merging
+        // would carry the previous thread's answer onto this one.
+        hasMore: action.bot.hasMore,
         awaitingThreadSnapshot: false,
         deletedThreadId: undefined,
         pendingThreadEvents: undefined,
@@ -1760,6 +1841,8 @@ export const initialState: AppState = {
   mascotMotion: null,
   pendingQueued: {},
   consumedQueueIds: {},
+  loadingOlder: {},
+  transcriptGeneration: {},
 };
 
 // ── API client ─────────────────────────────────────────────────────────
@@ -2016,7 +2099,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return result.bot;
         },
         reconcile: async (botId, signal) => {
-          const result: { bots: BotAnnouncement[] } = await api("/api/bots", { signal });
+          // A page, not every transcript (upstream #1527): only the record is
+          // used unless the bot moved thread, and then a page is what it needs.
+          const result: { bots: BotAnnouncement[] } = await api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`, { signal });
           return result.bots.find((candidate) => candidate.id === botId) ?? null;
         },
         onAuthoritative: (bot, optimisticOverlay) => {
@@ -2060,6 +2145,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const bot=result.bots?.find((bot:Bot)=>bot.id===botId);
       if(!bot)throw new Error("Thread settings could not be reconciled. Refresh before sending.");
       rawDispatch({type:"botPatched",bot});
+    });
+
+    const scrollback = createScrollback({
+      getState: () => stateRef.current,
+      dispatch: rawDispatch,
+      request: (path) => api(path),
+      onError: showError,
     });
 
     const wrapped: React.Dispatch<Action> = (action) => {
@@ -2466,8 +2558,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
+        // A switch answers with the newest page and `hasMore` (upstream
+        // #1527); older messages page back through /api/threads/:id/messages.
         case "switchTask":
-          api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "POST" })
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
             .then((r: any) => {if(r?.bot){dispatch({ type: "taskSwitched", bot: r.bot });void api(`/api/bots/${action.botId}/read`,{method:"POST",body:JSON.stringify({threadId:action.threadId})}).catch(showError);}})
             .catch(showError);
           break;
@@ -2501,7 +2595,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch(showError);
           break;
         case "switchGroupTask":
-          api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "POST" })
+          api(`/api/groups/${action.groupId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
             .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
             .catch(showError);
           break;
@@ -2528,6 +2622,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (botBeforeUpdate) {
             botPatchQueue.enqueue(action.botId, action.patch, botBeforeUpdate);
           }
+          break;
+        }
+        case "loadOlderMessages":
+          void scrollback.loadOlder(action.threadId);
+          break;
+        // A jump to a message older than the held page: walk back until it is
+        // held, then focus again, so the views that ignored a target they
+        // could not find open a window around it now.
+        case "focusMessage": {
+          const { threadId, messageId } = action;
+          void scrollback.loadThrough(threadId, messageId).then((outcome) => {
+            if (outcome === "fetched") rawDispatch({ type: "focusMessage", threadId, messageId });
+          });
           break;
         }
         default:
@@ -2650,7 +2757,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     const loadAll = async (): Promise<boolean> => {
       const chat = () =>
-        api("/api/bots").then(({ bots, groups, computerControl }) => {
+        // The newest page of each open thread (upstream #1527). Every
+        // transcript at once made startup slow on long threads and was more
+        // than a companion over a tunnel could buffer.
+        api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, computerControl }) => {
           if (!alive) return;
           rawDispatch({
             type: "hydrate",

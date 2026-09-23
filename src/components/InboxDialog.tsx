@@ -4,6 +4,7 @@ import { Inbox } from "./Inbox";
 import { openFiles } from "./Files";
 import type { InboxLink, InboxView } from "../../shared/inbox";
 import { t } from "@/lib/i18n";
+import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 export function InboxDialog({ onClose, initialView }: { onClose: () => void; initialView?: InboxView }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -19,12 +20,13 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
       const bot = state.bots.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
       const group = state.groups.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
       if (bot) {
-        const result = await api(`/api/bots/${bot.id}/tasks/${link.threadId}`, { method: "POST" });
+        // A page, like every switch; focusMessage pages back to the request.
+        const result = await api(`/api/bots/${bot.id}/tasks/${link.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.bot || result.bot.threadId !== link.threadId) throw new Error(t("source.openError"));
         dispatch({ type: "taskSwitched", bot: result.bot });
         dispatch({ type: "select", id: bot.id,threadId:link.threadId });
       } else if (group) {
-        const result = await api(`/api/groups/${group.id}/tasks/${link.threadId}`, { method: "POST" });
+        const result = await api(`/api/groups/${group.id}/tasks/${link.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
         if (!result.group || result.group.threadId !== link.threadId) throw new Error(t("source.openError"));
         dispatch({ type: "groupPatched", group: result.group });
         dispatch({ type: "select", id: group.id });

@@ -8,6 +8,7 @@ import { Loader2, PhoneOff, X } from "lucide-react";
 
 import { currentCall, deferCallCleanup, endCall, useOnCall } from "@/lib/call";
 import { routeSpokenGroupMessage } from "@/lib/group-call";
+import { unheardMessages } from "@/lib/scrollback";
 import { track } from "@/lib/analytics";
 import { normalizeState } from "@/lib/mascot";
 import { speaker } from "@/lib/tts";
@@ -379,7 +380,8 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
       );
     }
 
-    const fresh = messages.filter((message) => !spokenIds.current.has(message.id));
+    // unheardMessages: a scrollback page loaded mid-call is not news.
+    const fresh = unheardMessages(messages, spokenIds.current);
     if (!fresh.length) return;
     for (const message of fresh) spokenIds.current.add(message.id);
 

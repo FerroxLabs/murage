@@ -71,13 +71,16 @@ import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
+  SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  windowAfterPrepend,
 } from "@/lib/transcript-window";
 import { useReplyDraft } from "@/lib/drafts";
+import { useMessageById } from "@/lib/held-message";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -1229,6 +1232,8 @@ export function GroupView({ group }: { group: Group }) {
   // the instructions strip, the folder card, the pinned message, the
   // composer — belongs to the chat, not to the overview.
   const showChat = !group.channelProject || projectTab === "chat";
+  // The pinned message may be older than the held page (upstream #1527).
+  const pinnedMessage = useMessageById(group.threadId, group.pinnedMessageId || undefined, group.messages);
 
   // Mascot stays while a member works; the finished reply pops in above it.
   const lastGroupMessage = group.messages.at(-1);
@@ -1271,17 +1276,30 @@ export function GroupView({ group }: { group: Group }) {
   // the anchored boundary re-tails on a render-phase reset when the room (or
   // its thread) changes. Working dots below stay on the FULL list's tail.
   const transcriptKey = `${group.id}:${group.threadId}`;
+  // `firstId`: see ChatView — the boundary moves with the rows when a page of
+  // older messages lands in front of them (upstream #1527).
+  const firstMessageId = group.messages[0]?.id;
+  // Height captured before a reader-initiated expand or page (see
+  // showEarlier/loadOlder below). Declared here because a pending capture is
+  // also how the window tells the page the reader asked for from the pages a
+  // jump walks through.
+  const preExpandHeight = useRef<{ key: string; height: number } | null>(null);
   const [transcriptWindow, setTranscriptWindow] = useState<{
     key: string;
     start: number;
     end: number | null;
+    firstId?: string;
   }>(() => ({
     key: transcriptKey,
     start: tailWindowStart(group.messages.length),
     end: null,
+    firstId: firstMessageId,
   }));
   if (transcriptWindow.key !== transcriptKey) {
-    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null });
+    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null, firstId: firstMessageId });
+  } else if (transcriptWindow.firstId !== firstMessageId) {
+    const shift = transcriptWindow.firstId ? group.messages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
+    setTranscriptWindow({ ...windowAfterPrepend(transcriptWindow, shift, preExpandHeight.current?.key === transcriptKey), firstId: firstMessageId });
   }
   const {
     visible: windowedMessages,
@@ -1331,25 +1349,50 @@ export function GroupView({ group }: { group: Group }) {
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
-  // (browser scroll anchoring is disabled on this container).
-  const preExpandHeight = useRef<number | null>(null);
+  // (browser scroll anchoring is disabled on this container). The capture
+  // belongs to the thread it was taken in (see ChatView).
+  const captureHeight = () => {
+    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
+  };
+  const restoreHeight = () => {
+    const el = scrollRef.current;
+    const captured = preExpandHeight.current;
+    if (!captured || !el) return;
+    preExpandHeight.current = null;
+    if (captured.key !== transcriptKey) return;
+    el.scrollTop += el.scrollHeight - captured.height;
+    // keep the resume-follow heuristic from reading the restore as a
+    // downward user scroll
+    previousScrollTop.current = el.scrollTop;
+  };
   const showEarlier = () => {
-    preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
+    captureHeight();
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
     const start = expandWindowStart(startIndex);
     setTranscriptWindow((w) => ({ ...w, start }));
   };
+  useLayoutEffect(restoreHeight, [transcriptWindow.start, transcriptKey]);
+
+  // Scrollback across the network, as in ChatView (upstream #1527).
+  const olderPending = Boolean(state.loadingOlder[group.threadId]);
+  const loadOlder = () => {
+    if (olderPending) return;
+    captureHeight();
+    setBottomFollow(false);
+    dispatch({ type: "loadOlderMessages", threadId: group.threadId });
+  };
+  useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
   useLayoutEffect(() => {
+    if (!olderPending) preExpandHeight.current = null;
+  }, [olderPending]);
+  const reachedTop = () => {
     const el = scrollRef.current;
-    if (preExpandHeight.current === null || !el) return;
-    el.scrollTop += el.scrollHeight - preExpandHeight.current;
-    preExpandHeight.current = null;
-    // keep the resume-follow heuristic from reading the restore as a
-    // downward user scroll
-    previousScrollTop.current = el.scrollTop;
-  }, [transcriptWindow.start]);
+    if (!el || followRef.current || el.scrollTop > SCROLLBACK_TRIGGER_PX) return;
+    if (hiddenCount > 0) showEarlier();
+    else if (group.hasMore) loadOlder();
+  };
 
   const showLater = () => {
     setBottomFollow(false);
@@ -1594,10 +1637,11 @@ export function GroupView({ group }: { group: Group }) {
         </div>
       )}
 
-      {/* Pinned message banner — resolves against the room's full transcript */}
+      {/* Pinned message banner — resolves against the room's transcript, or
+          reads the one row when it is older than the held page */}
       {(() => {
         if (!showChat) return null;
-        const pinned = group.messages.find((m) => m.id === group.pinnedMessageId && m.kind === "text");
+        const pinned = pinnedMessage?.kind === "text" ? pinnedMessage : undefined;
         const text = pinned ? (pinned.text ?? "").replace(/\s+/g, " ").trim() : "";
         if (!pinned || !text) return null;
         const sender = pinned.role === "user" ? "You" : (pinned.from?.name ?? "A bot");
@@ -1666,6 +1710,7 @@ export function GroupView({ group }: { group: Group }) {
           });
           previousScrollTop.current = scrollTop;
           if (resume) setBottomFollow(true);
+          else reachedTop();
         }}
       >
         {setupPending ? (
@@ -1702,7 +1747,7 @@ export function GroupView({ group }: { group: Group }) {
               </div>
             </div>
           )}
-          {hiddenCount > 0 && (
+          {hiddenCount > 0 ? (
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
@@ -1711,7 +1756,18 @@ export function GroupView({ group }: { group: Group }) {
                 Show earlier messages ({hiddenCount} more)
               </button>
             </div>
-          )}
+          ) : group.hasMore ? (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={loadOlder}
+                disabled={olderPending}
+                data-testid="load-earlier"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+              >
+                {olderPending ? "Loading earlier messages…" : "Load earlier messages"}
+              </button>
+            </div>
+          ) : null}
           <Transcript
             group={group}
             members={members}
