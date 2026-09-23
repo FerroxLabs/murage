@@ -644,6 +644,9 @@ export interface BotRecord {
   /** This bot's own voice id, so a room of bots doesn't sound like one
    * person. Falls back to the app-wide voice in config. */
   voice?: string;
+  /** The voice service this bot speaks with (its `voice` is one of that
+   *  service's voices). Unset: the workspace's voice service. */
+  voiceProvider?: "flux" | "xai" | "elevenlabs" | "system";
   /** true after an edit/branch-switch rewound the visible conversation:
    * provider sessions still hold the abandoned branch, so the next turn
    * must start fresh (drop cursors) and replay the surviving path. */

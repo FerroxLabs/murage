@@ -186,3 +186,11 @@ describe("persona is spoken to the bot and read by nothing that routes", () => {
     }
   });
 });
+
+describe("an agent's voice service", () => {
+  it("accepts each service, stores an empty choice as absent, and refuses anything else", () => {
+    expect(parseBotProfilePatch({ voiceProvider: "xai" })).toEqual({ ok: true, patch: { voiceProvider: "xai" } });
+    expect(parseBotProfilePatch({ voiceProvider: "" })).toEqual({ ok: true, patch: { voiceProvider: undefined } });
+    expect(parseBotProfilePatch({ voiceProvider: "azure" as any }).ok).toBe(false);
+  });
+});

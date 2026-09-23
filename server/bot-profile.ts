@@ -16,6 +16,7 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "avatarCrop",
   "mascotBody",
   "voice",
+  "voiceProvider",
   "speakReplies",
 ] as const;
 
@@ -53,6 +54,11 @@ const profilePatchSchema = z.object({
     .string({ error: "voice must be a string" })
     .max(BOT_PROFILE_LIMITS.voice, { error: "voice must be at most 200 characters" })
     .optional(),
+  // Which voice service speaks for this agent; "" goes back to the
+  // workspace default. The voice id above belongs to this service.
+  voiceProvider: z
+    .enum(["flux", "xai", "elevenlabs", "system", ""], { error: "voiceProvider must be flux, xai, elevenlabs or system" })
+    .optional(),
   speakReplies: z.boolean({ error: "speakReplies must be true or false" }).optional(),
 });
 
@@ -70,6 +76,7 @@ export type BotProfilePatch = Partial<
     | "avatarCrop"
     | "mascotBody"
     | "voice"
+    | "voiceProvider"
     | "speakReplies"
   >
 >;
@@ -101,8 +108,10 @@ export function parseBotProfilePatch(input: BotProfilePatchInput, strict = false
     return { ok: false, error: issue?.message ?? "invalid profile patch" };
   }
 
-  const { avatarUrl, persona, ...fields } = parsed.data;
+  const { avatarUrl, persona, voiceProvider, ...fields } = parsed.data;
   const patch: BotProfilePatch = fields;
+  // "" goes back to the workspace's voice service: stored as absent
+  if (voiceProvider !== undefined) patch.voiceProvider = voiceProvider || undefined;
   if (avatarUrl !== undefined) patch.avatarUrl = avatarUrl || undefined;
   // Same clear-value rule as avatarUrl: absent, never an empty string. A
   // cleared voice note must leave no `Personality:` line on the next turn.

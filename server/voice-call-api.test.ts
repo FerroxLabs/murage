@@ -148,3 +148,19 @@ it("with Flux as the voice engine the 13 voices are listed without asking Flux",
   expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Marin" });
   expect(seen.length).toBe(requests);
 });
+
+it("each agent speaks with its own voice service, chosen on the agent", async () => {
+  const { body } = await api("POST", "/api/bots", { name: "Rex", modelSelection: { instanceId: "verification", model: "fake" } });
+  const bot = body.bot;
+  const patched = await api("PATCH", `/api/bots/${bot.id}`, { voiceProvider: "xai", voice: "rex" });
+  expect(patched.status).toBe(200);
+  // this workspace has no xAI key: the request went to xAI's voices, not
+  // the workspace's Flux voices, and says what to connect
+  const spoke = await api("POST", "/api/tts/speak", { text: "Morning.", voiceId: "rex", botId: bot.id });
+  expect(spoke.status).toBe(502);
+  expect(spoke.body.error).toContain("xAI");
+  const voices = await api("GET", `/api/tts/voices?provider=xai`);
+  expect(voices.body.voices).toHaveLength(28);
+  const config = await api("GET", "/api/config");
+  expect(config.body.tts.available).toMatchObject({ xai: false });
+});

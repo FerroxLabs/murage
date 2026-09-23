@@ -264,7 +264,7 @@ const appConfigSchema = z.object({
    * engine: "flux" (the workspace's Flux key; the default when none is
    * chosen and no ElevenLabs key is saved), "elevenlabs" (the owner's own
    * key) or "system" (the Mac's or Windows' built-in voices, no key). */
-  tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["flux", "elevenlabs", "system"]).optional() }).optional(),
+  tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["flux", "xai", "elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText, enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional() }).optional(),
   /** Optional external search credentials are write-only workspace state.
@@ -331,7 +331,7 @@ export interface AppConfig {
   /** A named host from the user's SSH config. Authentication stays with SSH. */
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
-  tts?: { key?: string; voice?: string; provider?: "flux" | "elevenlabs" | "system" };
+  tts?: { key?: string; voice?: string; provider?: "flux" | "xai" | "elevenlabs" | "system" };
   imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string };
   webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };

@@ -363,6 +363,8 @@ export interface Bot {
   speakReplies?: boolean;
   /** this bot's own voice id (falls back to the app-wide one) */
   voice?: string;
+  /** This agent's voice service; unset uses the workspace's. */
+  voiceProvider?: "flux" | "xai" | "elevenlabs" | "system";
   pinned?: boolean;
   hidden?: boolean;
   sidebarHidden?: boolean;
@@ -449,9 +451,11 @@ export interface ConfigStatus {
     configured: boolean;
     ready: boolean;
     voice: string;
-    provider?: "flux" | "elevenlabs" | "system";
+    provider?: "flux" | "xai" | "elevenlabs" | "system";
     /** Which provider serves each part of a call (Flux, or an own key); never a key. */
     routes?: { host: string | null; lookup: string | null; speech: string | null; transcribe: string | null } | null;
+    /** Which voice services an agent can pick from on this computer. */
+    available?: { flux: boolean; xai: boolean; elevenlabs: boolean; system: boolean };
   };
   /** Shared write-only credential for on-demand GPT Image avatars. */
   imageGen?: { configured: boolean };

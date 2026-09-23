@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { synthesize, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
-import { speak, useVoiceRoutes, voiceProvider } from "./index.ts";
+import { availableProviders, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
 
@@ -119,5 +119,34 @@ describe("when a speech source is not switched on", () => {
     });
     await expect(speak(cfg({ provider: "flux" }), "Hello.")).rejects.toThrow("Flux rejected the saved key");
     expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`]);
+  });
+});
+
+describe("each agent's own voice service", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const XAI = { baseUrl: "https://api.x.ai/v1", key: "own-xai" };
+
+  it("an agent on xAI speaks through xAI's voices, whatever the workspace uses", async () => {
+    let sent: any;
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent = { url, body: JSON.parse(String(init.body)) };
+      return new Response(new Uint8Array([9]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    });
+    useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }), xai: () => XAI });
+    const audio = await speak(cfg({ provider: "flux" }), "Morning, boss.", "rex", undefined, "xai");
+    expect(audio.bytes).toEqual(new Uint8Array([9]));
+    expect(sent).toEqual({ url: "https://api.x.ai/v1/tts", body: { text: "Morning, boss.", voice_id: "rex", language: "en" } });
+    // another service's voice id falls back to xAI's default
+    await speak(cfg({ provider: "flux" }), "Hi.", "marin", undefined, "xai");
+    expect(sent.body.voice_id).toBe("eve");
+  });
+
+  it("lists each service's voices and says which services can speak", async () => {
+    useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }), xai: () => XAI });
+    expect(await listVoices(cfg(), undefined, "xai")).toHaveLength(28);
+    expect(await listVoices(cfg(), undefined, "flux")).toHaveLength(13);
+    expect(availableProviders(cfg())).toMatchObject({ xai: true, flux: false, elevenlabs: false });
+    useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }) });
+    expect(availableProviders(cfg()).xai).toBe(false);
   });
 });

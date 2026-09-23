@@ -124,3 +124,13 @@ export function describeVoiceRoutes(source: ConnectionSource): Record<VoicePart,
     transcribe: voiceEndpoint("transcribe", source)?.via ?? null,
   };
 }
+
+/** The first saved, enabled connection for `preset`, for a service outside
+ *  the call plan (xAI's own voices). Never logged, never sent to the app. */
+export function connectionFor(preset: ProviderPreset, source: ConnectionSource): { baseUrl: string; key: string } | null {
+  for (const connection of source.list().filter((c) => c.enabled && c.preset === preset)) {
+    const resolved = source.resolve(connection.id);
+    if (resolved?.key?.trim()) return { baseUrl: resolved.baseUrl.replace(/\/+$/, ""), key: resolved.key.trim() };
+  }
+  return null;
+}

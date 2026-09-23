@@ -21,14 +21,14 @@ export function VoiceSettings({
   onPatch,
 }: {
   bot: Bot;
-  onPatch: (patch: Partial<Pick<Bot, "voice" | "speakReplies">>) => void;
+  onPatch: (patch: Partial<Pick<Bot, "voice" | "voiceProvider" | "speakReplies">>) => void;
 }) {
   const { state, dispatch } = useStore();
   const tts = state.config?.tts;
 
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
-  const [switching, setSwitching] = useState(false);
+  const switching = false;
   const [error, setError] = useState<string | null>(null);
   const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
@@ -41,7 +41,10 @@ export function VoiceSettings({
   // the harness had been driving Windows' System.Speech for releases, so a
   // Windows owner could not switch on an engine that already worked.
   const hostPlatform = capabilities.host.platform;
-  const provider = tts?.provider ?? "elevenlabs";
+  // Each agent picks its own voice service; without a choice it uses the
+  // workspace's. So a room of agents can mix xAI, OpenAI and ElevenLabs.
+  const provider = bot.voiceProvider ?? tts?.provider ?? "elevenlabs";
+  const xaiAvailable = Boolean(tts?.available?.xai);
   // Hosted voices: Flux, or the owner's own OpenAI key (same voices).
   const hostedVia = tts?.routes?.speech ?? null;
   const fluxAvailable = Boolean(hostedVia);
@@ -52,7 +55,10 @@ export function VoiceSettings({
   // file for a string. shared/system-voices.test.ts runs this instead.
   const offer = systemVoiceOffer(hostPlatform, provider);
   const systemVoicesAvailable = offer.available;
-  const configured = Boolean(tts?.configured);
+  // whether THIS agent's service can speak (the workspace's `configured`
+  // describes the workspace's own service)
+  const configured =
+    provider === "flux" ? fluxAvailable : provider === "xai" ? xaiAvailable : provider === "system" ? systemVoicesAvailable : Boolean(tts?.available?.elevenlabs ?? tts?.configured);
 
   useEffect(() => {
     if (!configured) {
@@ -61,7 +67,7 @@ export function VoiceSettings({
     }
     let alive = true;
     setLoadingVoices(true);
-    api("/api/tts/voices")
+    api(`/api/tts/voices?provider=${provider}`)
       .then((r: { voices?: typeof voices; error?: string }) => {
         if (!alive) return;
         setVoices(r.voices ?? []);
@@ -74,16 +80,13 @@ export function VoiceSettings({
     };
   }, [configured, provider]);
 
-  const setProvider = (next: "flux" | "elevenlabs" | "system") => {
-    if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable)) return;
-    setSwitching(true);
+  const setProvider = (next: "flux" | "xai" | "elevenlabs" | "system") => {
+    if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable) || (next === "xai" && !xaiAvailable)) return;
     setError(null);
-    // the provider is a setting, not a secret — it rides the ordinary
-    // config write, and the key row reappears or disappears with it
-    api("/api/config", { method: "PUT", body: JSON.stringify({ tts: { provider: next } }) })
-      .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setSwitching(false));
+    // this agent's choice, saved on the agent; its old voice belonged to
+    // the other service, so it is cleared and the new service's default
+    // speaks until one is picked
+    onPatch({ voiceProvider: next, voice: "" });
   };
 
   const saveKey = () => {
@@ -116,16 +119,17 @@ export function VoiceSettings({
         {offer.sentence}
       </div>
 
-      {(fluxAvailable || provider === "flux" || systemVoicesAvailable || provider === "system") && (
+      {(fluxAvailable || xaiAvailable || provider === "flux" || provider === "xai" || systemVoicesAvailable || provider === "system") && (
         <div className="mt-4">
           <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
           <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
             {([
               { value: "flux", label: hostedLabel, available: fluxAvailable, hint: "Add a Flux key, or an OpenAI key, in Settings to use these voices." },
+              { value: "xai", label: "xAI", available: xaiAvailable, hint: "Connect an xAI key in Settings, Models, to use xAI's voices." },
               { value: "elevenlabs", label: "ElevenLabs", available: true, hint: undefined },
               { value: "system", label: offer.label, available: offer.available, hint: offer.unavailableHint },
             ] as const)
-              .filter((option) => option.value !== "system" || systemVoicesAvailable || provider === "system")
+              .filter((option) => (option.value !== "system" || systemVoicesAvailable || provider === "system") && (option.value !== "xai" || xaiAvailable || provider === "xai"))
               .map((option) => (
               <button
                 key={option.value}
@@ -154,6 +158,14 @@ export function VoiceSettings({
               ? "Speaks through your own OpenAI key, billed by OpenAI. No other key needed."
               : "Speaks through your Flux account, billed per character. No other key needed."
             : "Add a Flux key, or an OpenAI key, in Settings to use these voices."}
+        </div>
+      )}
+
+      {provider === "xai" && (
+        <div className="mt-3 text-[12.5px] text-ink-secondary">
+          {xaiAvailable
+            ? "Speaks with xAI's voices through your own xAI key, billed by xAI. 28 voices."
+            : "Connect an xAI key in Settings, Models, to use xAI's voices."}
         </div>
       )}
 

@@ -60,7 +60,7 @@ import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
-import { describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
+import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
@@ -555,6 +555,11 @@ const cfg = loadConfig();
 /** Where one part of a call runs: Flux first, then the owner's own model
  *  connections (server/voice/voice-routes.ts). `MURAGE_VOICE_ROUTE_BASE` is a
  *  test seam only: it points every resolved endpoint at a local stub. */
+/** The voice service a bot speaks with, looked up here rather than taken
+ *  from the request: the client names the bot, never the service. */
+function botVoiceProvider(botId: unknown) {
+  return typeof botId === "string" ? store.bot(botId)?.voiceProvider : undefined;
+}
 function voiceRoutesFor(part: VoicePart) {
   const stub = process.env.MURAGE_VOICE_ROUTE_BASE?.trim();
   return voiceEndpoints(part, providerConnections).map(endpoint => stub ? { ...endpoint, baseUrl: stub.replace(/\/+$/, "") } : endpoint);
@@ -658,7 +663,7 @@ providerConnections.subscribe(changedIds => {
 });
 // Hosted speech and the per-part call routes come from the same model
 // connections (server/voice/voice-routes.ts).
-tts.useVoiceRoutes({ speech: () => voiceRoutesFor("speech"), describe: () => describeVoiceRoutes(providerConnections) });
+tts.useVoiceRoutes({ speech: () => voiceRoutesFor("speech"), describe: () => describeVoiceRoutes(providerConnections), xai: () => connectionFor("xai", providerConnections) });
 
 let providerConfigBusy = false;
 let fluxMediaRequests = 0;
@@ -15895,13 +15900,16 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && path === "/api/tts/prepare") {
       const body = await readBody(req);
       return json(res, 200, {
-        ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
+        ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined, botVoiceProvider(body.botId)),
         utterances: toUtterances(String(body.text ?? "")),
       });
     }
     if (method === "GET" && path === "/api/tts/voices") {
       try {
-        return json(res, 200, { voices: await tts.listVoices(cfg) });
+        // ?provider= lists another service's voices, for an agent switching
+        const asked = url.searchParams.get("provider");
+        const provider = asked === "flux" || asked === "xai" || asked === "elevenlabs" || asked === "system" ? asked : botVoiceProvider(url.searchParams.get("botId"));
+        return json(res, 200, { voices: await tts.listVoices(cfg, undefined, provider) });
       } catch (e) {
         return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
       }
@@ -15915,7 +15923,7 @@ const server = createServer(async (req, res) => {
       // voice account into an unbounded, billable synthesis job.
       if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
       try {
-        const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
+        const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined, undefined, botVoiceProvider(body.botId));
         res.writeHead(200, {
           "content-type": audio.mime,
           "content-length": String(audio.bytes.byteLength),

@@ -74,7 +74,7 @@ describe("configuration", () => {
   it("never reports the key itself", async () => {
     const { describeVoice } = await voice();
     const described = describeVoice(cfg({ key: "sk-secret", voice: "v-1" }));
-    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null });
+    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null, available: expect.objectContaining({ elevenlabs: true, xai: false }) });
     expect(JSON.stringify(described)).not.toContain("sk-secret");
   });
 
@@ -201,6 +201,7 @@ describe("built-in macOS voices", () => {
       voice: "Albert",
       provider: "system",
       routes: null,
+      available: expect.objectContaining({ system: onMac }),
     });
   });
 

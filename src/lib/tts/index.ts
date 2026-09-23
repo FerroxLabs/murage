@@ -137,7 +137,7 @@ export class Speaker {
     this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
     let utterances: string[];
     try {
-      utterances = await this.prepare(text, opts.voiceId, controller.signal);
+      utterances = await this.prepare(text, opts.voiceId, controller.signal, opts.botId);
     } catch (e) {
       if (live()) this.set({ ...IDLE, error: e instanceof Error ? e.message : String(e) });
       if (this.request === controller) this.request = null;
@@ -155,7 +155,7 @@ export class Speaker {
     // turn — the only gap the listener hears is the first.
     type Rendered = { blob: Blob; error?: never } | { blob?: never; error: unknown };
     const render = (utterance: string): Promise<Rendered> =>
-      this.render(utterance, opts.voiceId, controller.signal).then(
+      this.render(utterance, opts.voiceId, controller.signal, opts.botId).then(
         (blob) => ({ blob }),
         (error: unknown) => ({ error }),
       );
@@ -226,7 +226,7 @@ export class Speaker {
 
     type Rendered = { text: string; blob?: Blob; error?: unknown };
     const render = (text: string): Promise<Rendered> =>
-      this.render(text, opts.voiceId, controller.signal).then(
+      this.render(text, opts.voiceId, controller.signal, opts.botId).then(
         (blob) => ({ text, blob }),
         (error: unknown) => ({ text, error }),
       );
@@ -281,11 +281,12 @@ export class Speaker {
     };
   }
 
-  private async prepare(text: string, voiceId: string | undefined, signal: AbortSignal): Promise<string[]> {
+  // botId: the harness speaks with that agent's own voice service
+  private async prepare(text: string, voiceId: string | undefined, signal: AbortSignal, botId?: string): Promise<string[]> {
     const res = await fetch("/api/tts/prepare", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voiceId }),
+      body: JSON.stringify({ text, voiceId, botId }),
       signal,
     });
     const body: TtsPrepareBody = await res.json().catch(() => ({}));
@@ -296,11 +297,11 @@ export class Speaker {
     return body.utterances ?? [];
   }
 
-  private async render(text: string, voiceId: string | undefined, signal: AbortSignal): Promise<Blob> {
+  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId?: string): Promise<Blob> {
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voiceId }),
+      body: JSON.stringify({ text, voiceId, botId }),
       signal,
     });
     if (!res.ok) {
