@@ -30,13 +30,14 @@ import { t } from "@/lib/i18n";
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Loader2, Phone, PhoneOff, X } from "lucide-react";
+import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { HOST_OFF_FOR_CALL, hostTurn, warmHost } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
+import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
@@ -87,7 +88,12 @@ export function CallTargetButton({
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const active = useOnCall() === targetId;
-  const supported = capabilities.dictation.available && Boolean(window.muragebox?.speechStart);
+  // A Mac recognizes speech on the device. Windows and Linux capture the
+  // microphone in the app and transcribe through the workspace's Flux key.
+  const macSpeech = capabilities.dictation.available && Boolean(window.muragebox?.speechStart);
+  const fluxSpeech =
+    Boolean(state.config?.flux?.configured) && typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+  const supported = macSpeech || fluxSpeech;
   const configured = Boolean(state.config?.tts?.configured);
   const everyTargetHasVoice = voices.length > 0 && voices.every((voice) => Boolean(voice));
   const voiceReady =
@@ -103,7 +109,7 @@ export function CallTargetButton({
     : !capabilitiesReady
       ? t("calls.checkingAvailability")
       : !supported
-        ? t("calls.macOnly")
+        ? "Add a Flux key in Settings to make calls on this computer"
         : !configured
           ? "Set up a voice in a bot's settings to make calls"
           : !voiceReady
@@ -112,11 +118,11 @@ export function CallTargetButton({
 
   const reason = !capabilitiesReady
     ? "Checking whether this device can make calls."
-    : !capabilities.dictation.available
-      ? "Calls require Murage for macOS because speech recognition runs on-device."
-      : !window.muragebox?.speechStart
+    : !supported
+      ? capabilities.dictation.available
         ? "The speech service is unavailable in this app build. Restart or update Murage."
-        : !configured
+        : "Calls on this computer understand you through Flux. Add a Flux key in Settings."
+      : !configured
           ? "Add a Flux key, an ElevenLabs key, or switch to the built-in Mac voices so the bot can speak during calls."
           : !voiceReady
             ? voices.length > 1
@@ -210,6 +216,23 @@ export function CallOverlay({ bot }: { bot: Bot }) {
 
 function Call({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
+  const { capabilities } = useDesktopCapabilities();
+  // One microphone for the whole call (src/lib/call-mic.ts): Apple's
+  // recognizer on a Mac, Flux transcription elsewhere, both fed from an
+  // echo-cancelled capture so the owner can talk over the bot.
+  const micRef = useRef<CallMic | null>(null);
+  if (!micRef.current) {
+    const kind = callMicKind({
+      appleSpeech: capabilities.dictation.available && Boolean(window.muragebox?.speechStart),
+      fluxConfigured: Boolean(state.config?.flux?.configured),
+      capture: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),
+    });
+    micRef.current = kind ? createCallMic(kind) : createFallbackMic();
+  }
+  /** A recognition turn is running in the recognizer. */
+  const micLive = useRef(false);
+  const [muted, setMuted] = useState(false);
+  const duplex = () => Boolean(micRef.current?.duplex);
   const speech = useSpeech();
   const initialPhase: Phase = bot.busy ? "working" : "listening";
   const [phase, setPhase] = useState<Phase>(initialPhase);
@@ -236,7 +259,8 @@ function Call({ bot }: { bot: Bot }) {
   const callStartedAt = useRef(Date.now());
   const threadRef = useRef(bot.threadId);
   threadRef.current = bot.threadId;
-  const pushToTalk = usePushToTalk(bot.id, phase === "listening", () => {
+  // Push to talk drives the Mac helper directly; there is none elsewhere.
+  const pushToTalk = usePushToTalk(bot.id, phase === "listening" && micRef.current?.kind === "apple", () => {
     setNote("Push to talk couldn't start. Check Microphone and Speech Recognition access.");
   });
 
@@ -282,8 +306,21 @@ function Call({ bot }: { bot: Bot }) {
   }, []);
 
   const hush = useCallback(() => {
-    void window.muragebox?.speechStop();
+    micLive.current = false;
+    void micRef.current?.stop();
   }, []);
+
+  /** Make sure a recognition turn is running, without changing phase. */
+  const openTurn = useCallback(() => {
+    if (!alive.current || currentCall() !== bot.id || micLive.current) return;
+    micLive.current = true;
+    void micRef.current?.start({ endpointMs: CALL_ENDPOINT_MS, hints: [bot.name] }).catch(() => {
+      micLive.current = false;
+      if (alive.current && currentCall() === bot.id) {
+        setNote("The microphone couldn't start. Check Microphone and Speech Recognition access.");
+      }
+    });
+  }, [bot.id, bot.name]);
 
   const listen = useCallback(() => {
     if (!alive.current || currentCall() !== bot.id) return;
@@ -291,15 +328,20 @@ function Call({ bot }: { bot: Bot }) {
     setHeard("");
     heardRef.current = "";
     setNote(null);
-    void window.muragebox?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
-      if (alive.current && currentCall() === bot.id) {
-        setNote("The microphone couldn't start. Check Microphone and Speech Recognition access.");
-      }
-    });
-  }, [bot.id, move]);
+    openTurn();
+  }, [bot.id, move, openTurn]);
 
-  /** Speak, with the microphone closed for the duration (see the header
-   * comment — an open mic during playback is a feedback loop). */
+  /** The owner talked over the bot: stop speaking and listen to them. */
+  const bargeIn = useCallback(() => {
+    sayGeneration.current += 1;
+    hostSpeaking.current = false;
+    speaker.stop();
+    move("listening");
+  }, [move]);
+
+  /** Speak. With an echo-cancelled microphone it stays open, so the owner can
+   * talk over the bot; on the fallback it closes for the duration (an open,
+   * uncancelled mic during playback is a feedback loop). */
   const say = useCallback(
     async (text: string) => {
       if (!alive.current || currentCall() !== bot.id) return false;
@@ -307,7 +349,7 @@ function Call({ bot }: { bot: Bot }) {
       // Move first. stopSpeech() finishes asynchronously, and its close must
       // never observe an old "listening" phase and reopen the mic.
       move("speaking");
-      hush();
+      if (!duplex()) hush();
       await speaker.speak(text, { botId: bot.id, voiceId: bot.voice });
       return alive.current && currentCall() === bot.id && sayGeneration.current === mine;
     },
@@ -337,7 +379,7 @@ function Call({ bot }: { bot: Bot }) {
     async (said: string) => {
       if (!alive.current || currentCall() !== bot.id) return;
       move("sending");
-      hush();
+      if (!duplex()) hush();
       const controller = new AbortController();
       hostAbort.current?.abort();
       hostAbort.current = controller;
@@ -427,6 +469,7 @@ function Call({ bot }: { bot: Bot }) {
       hostAbort.current?.abort();
       pulse.current?.dispose();
       pulse.current = null;
+      micRef.current?.close();
       // Leave the call's record in the conversation. Only when the host took
       // part: an engine-only call is already fully in the transcript.
       const log = callLog.current;
@@ -454,15 +497,28 @@ function Call({ bot }: { bot: Bot }) {
 
   // ── the microphone ───────────────────────────────────────────────────
   useEffect(() => {
-    const bridge = window.muragebox;
-    if (!bridge) return;
-    const offTranscript = bridge.onSpeechTranscript((line) => {
-      if (!alive.current || currentCall() !== bot.id || phaseRef.current !== "listening") return;
+    let cancelled = false;
+    let offTranscript = () => {};
+    let offEnd = () => {};
+    let offVoice = () => {};
+    const attach = (mic: CallMic) => {
+    offTranscript = mic.onLine((line) => {
+      // With an echo-cancelled mic, words heard while the bot is speaking are
+      // the owner talking over it.
+      const bargeable = mic.duplex && phaseRef.current === "speaking";
+      if (!alive.current || currentCall() !== bot.id || (phaseRef.current !== "listening" && !bargeable)) return;
       if (line.error) {
         setNote("Dictation stopped unexpectedly. Check Microphone and Speech Recognition access.");
         return;
       }
       if (typeof line.text !== "string") return;
+      if (bargeable) {
+        // a word or two could be a cough the recognizer guessed at; two
+        // words, or a finished sentence, is the owner
+        const words = line.text.trim().split(/\s+/).filter(Boolean);
+        if (line.partial !== false && words.length < 2) return;
+        bargeIn();
+      }
       setHeard(line.text);
       heardRef.current = line.partial === false ? "" : line.text;
       if (line.partial !== false) return;
@@ -538,7 +594,8 @@ function Call({ bot }: { bot: Bot }) {
       callLog.current.push({ said, outcome: "engine" });
       dispatch({ type: "send", botId: bot.id, text: said, threadId: bot.threadId });
     });
-    const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
+    offEnd = mic.onEnd(({ code, reason }) => {
+      micLive.current = false;
       if (!alive.current || currentCall() !== bot.id) return;
       if (code === 2) {
         setNote("Calls need macOS dictation, which isn't available here yet.");
@@ -573,18 +630,45 @@ function Call({ bot }: { bot: Bot }) {
       // the helper exits after every final result; if we are still meant
       // to be listening, that means the user's turn ended — start the next
       if (phaseRef.current === "listening") listen();
+      // talking over the bot needs a turn running while it speaks
+      else if (mic.duplex && phaseRef.current === "speaking") openTurn();
     });
-    if (bot.busy && !approval && !question && !hostOn.current) move("working");
-    else listen();
+    // Flux transcription has no partial words to barge in on; sustained
+    // voice while the bot speaks is the owner talking over it.
+    offVoice = mic.onVoice((speaking) => {
+      if (speaking && mic.kind === "flux" && mic.duplex && phaseRef.current === "speaking" && alive.current) bargeIn();
+    });
+    };
+    const begin = () => {
+      if (cancelled) return;
+      attach(micRef.current!);
+      if (bot.busy && !approval && !question && !hostOn.current) move("working");
+      else listen();
+    };
+    // Capture first: if the microphone cannot be opened here, a Mac falls
+    // back to the helper's own microphone (half duplex, as before 0.1.59).
+    void micRef.current!.open().then(begin, () => {
+      if (cancelled) return;
+      if (micRef.current?.kind === "apple") {
+        micRef.current.close();
+        micRef.current = createFallbackMic();
+        begin();
+      } else {
+        setNote("The microphone couldn't start. Check Microphone access for Murage.");
+      }
+    });
     return () => {
+      cancelled = true;
       offTranscript();
       offEnd();
-      void window.muragebox?.speechStop();
+      offVoice();
+      micLive.current = false;
+      void micRef.current?.stop().catch(() => undefined);
     };
     // busy/approval are intentionally initial snapshots. Their live changes
     // are handled below without tearing down native event listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, sayThenListen]);
+  }, [bargeIn, bot.id, bot.threadId, dispatch, hush, hostReply, listen, move, openTurn, sayThenListen]);
 
   // ── narrate the work, speak the answer, read the approvals ───────────
   useEffect(() => {
@@ -725,8 +809,9 @@ function Call({ bot }: { bot: Bot }) {
     else pulse.current?.stop();
   }, [pulsing]);
 
-  const status =
-    phase === "listening"
+  const status = muted
+    ? "Muted"
+    : phase === "listening"
       ? pushToTalk
         ? "Push to talk"
         : "Listening"
@@ -801,6 +886,24 @@ function Call({ bot }: { bot: Bot }) {
             Interrupt
           </button>
         )}
+        {micRef.current?.duplex && (
+          <button
+            onClick={() => {
+              const next = !muted;
+              micRef.current?.setMuted(next);
+              setMuted(next);
+            }}
+            aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+            aria-pressed={muted}
+            className={cn(
+              "flex items-center gap-2 rounded-full border px-4 py-2.5 text-[13.5px] hover:bg-raised",
+              muted ? "border-warning/60 text-warning" : "border-hairline/50 text-ink",
+            )}
+          >
+            {muted ? <MicOff size={16} /> : <Mic size={16} />}
+            {muted ? "Unmute" : "Mute"}
+          </button>
+        )}
         <button
           onClick={() => endCall(bot.id)}
           className="flex items-center gap-2 rounded-full bg-danger px-5 py-2.5 text-[14px] font-medium text-white hover:brightness-110"
@@ -810,7 +913,9 @@ function Call({ bot }: { bot: Bot }) {
       </div>
 
       <div className="text-[11.5px] text-ink-secondary/70">
-        Hold Control + Option to talk · Space interrupts · Esc hangs up
+        {micRef.current?.duplex
+          ? "Talk over me to interrupt · Space interrupts · Esc hangs up"
+          : "Hold Control + Option to talk · Space interrupts · Esc hangs up"}
       </div>
     </div>
   );

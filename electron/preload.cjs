@@ -192,6 +192,8 @@ contextBridge.exposeInMainWorld("muragebox", {
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
   speechStop: () => ipcRenderer.invoke("speech:stop"),
   speechFinish: () => ipcRenderer.invoke("speech:finish"),
+  /** Call mode: 16 kHz mono s16le from the echo-cancelled microphone. */
+  speechFeed: (bytes) => ipcRenderer.send("speech:pcm", bytes),
   onSpeechTranscript: (cb) => {
     const handler = (_event, line) => cb(line);
     ipcRenderer.on("speech:transcript", handler);

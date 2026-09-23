@@ -6,6 +6,14 @@
 // electron/speech.mjs as this background app bundle so macOS can resolve the
 // microphone and speech purpose strings in its Info.plist.
 //
+// `--pcm-file PATH` (call mode): do NOT open the microphone. The call screen
+// captures it through Chromium, whose echo canceller removes the bot's own
+// voice (Apple's voice processing cannot initialise with a USB mic and
+// separate speakers, error -10875), and the main process appends that audio
+// to PATH as 16 kHz mono signed 16-bit PCM. This helper tails the file and
+// recognizes it. That is what lets the microphone stay open while the bot
+// speaks, so the owner can talk over it.
+//
 // `--endpoint-ms N` ends the audio stream after N milliseconds without a
 // transcript change. SFSpeechRecognizer does not finalize a buffer-backed
 // request on silence by itself; it only produces `isFinal` after endAudio().
@@ -45,6 +53,21 @@ let stopFile: String? = {
   return args[index + 1]
 }()
 
+let pcmFile: String? = {
+  let args = CommandLine.arguments
+  guard let index = args.firstIndex(of: "--pcm-file"), index + 1 < args.count else { return nil }
+  return args[index + 1]
+}()
+
+// `--hint WORD` (repeatable): names the recognizer should expect, such as the
+// bot being called. Without it "Hey Sable" was heard as "Disable".
+let hints: [String] = {
+  let args = CommandLine.arguments
+  return args.indices.compactMap { i in
+    args[i] == "--hint" && i + 1 < args.count ? String(args[i + 1].prefix(64)) : nil
+  }
+}()
+
 let finishFile: String? = {
   let args = CommandLine.arguments
   guard let index = args.firstIndex(of: "--finish-file"), index + 1 < args.count else { return nil }
@@ -69,6 +92,8 @@ if let stopFile {
 // handler is installed once the audio engine exists; the timer keeps polling
 // if an unusually fast key release beats authorization/setup.
 var finishHandler: (() -> Void)?
+// Held so the fed-mode reader is not released while it runs.
+var pcmReader: DispatchSourceTimer?
 var finishTimer: DispatchSourceTimer?
 if let finishFile {
   let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
@@ -142,8 +167,61 @@ SFSpeechRecognizer.requestAuthorization { status in
 
   let request = SFSpeechAudioBufferRecognitionRequest()
   request.shouldReportPartialResults = true
+  if !hints.isEmpty { request.contextualStrings = Array(hints.prefix(20)) }
   if recognizer.supportsOnDeviceRecognition {
     request.requiresOnDeviceRecognition = true
+  }
+
+  if let pcmFile {
+    // Fed mode: tail the PCM file the main process writes.
+    guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)
+    else { fail("pcm-format") }
+    guard let handle = FileHandle(forReadingAtPath: pcmFile) else { fail("pcm-file-missing") }
+    var audioFinished = false
+    var carry = Data()
+    let finishAudio = {
+      DispatchQueue.main.async {
+        guard !audioFinished else { return }
+        audioFinished = true
+        request.endAudio()
+      }
+    }
+    finishHandler = finishAudio
+    var endpointer: SilenceEndpointer?
+    if endpointMs > 0 {
+      endpointer = SilenceEndpointer(gapMs: endpointMs) { finishAudio() }
+      endpointer?.start()
+    }
+    let reader = DispatchSource.makeTimerSource(queue: .main)
+    reader.schedule(deadline: .now(), repeating: .milliseconds(20))
+    reader.setEventHandler {
+      guard !audioFinished else { reader.cancel(); return }
+      let chunk = handle.readDataToEndOfFile()
+      guard !chunk.isEmpty else { return }
+      carry.append(chunk)
+      let frames = carry.count / 2
+      guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { return }
+      buffer.frameLength = AVAudioFrameCount(frames)
+      carry.withUnsafeBytes { raw in
+        if let dst = buffer.int16ChannelData?[0], let src = raw.baseAddress {
+          memcpy(dst, src, frames * 2)
+        }
+      }
+      carry.removeFirst(frames * 2)
+      request.append(buffer)
+    }
+    reader.resume()
+    pcmReader = reader
+    recognizer.recognitionTask(with: request) { result, error in
+      if let result = result {
+        let text = result.bestTranscription.formattedString
+        endpointer?.saw(text)
+        emit(["partial": !result.isFinal, "text": text])
+        if result.isFinal { exit(0) }
+      }
+      if error != nil { fail("recognition-error") }
+    }
+    return
   }
 
   let engine = AVAudioEngine()

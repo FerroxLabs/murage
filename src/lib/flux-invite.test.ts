@@ -215,6 +215,16 @@ describe("nothing in the app is gated on a Flux key", () => {
     // (Add FluxRouter key, or the own-key link to Advanced). If the lock ever
     // stops honouring the own key, this entry has to go with it.
     "components/ConnectedAppsLock.tsx",
+    // CallView reads it twice, both additive (0.1.59). With a Flux key a call
+    // gets the fast voice host, and Windows and Linux get calls at all,
+    // understood through Flux transcription. Without one, a Mac call is
+    // exactly the on-device, engine-only call it was before, and the call
+    // button elsewhere says where to add a key. If a Mac call ever needs Flux
+    // to start, this entry has to go.
+    "components/CallView.tsx",
+    // VoiceSettings offers "Flux" as a voice engine only when a key exists.
+    // ElevenLabs and the built-in voices are unchanged without one.
+    "components/VoiceSettings.tsx",
   ]);
 
   const sources = (): string[] => {

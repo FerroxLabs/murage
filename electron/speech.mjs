@@ -4,6 +4,7 @@
 // Compiled lazily in development; each recording session is one helper app.
 import { spawn } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -83,6 +84,13 @@ export async function startSpeech(win, options = {}) {
     ? Math.min(5_000, Math.max(250, Math.round(requested)))
     : 0;
   const args = endpointMs ? ["--endpoint-ms", String(endpointMs)] : [];
+  // Call mode feeds the helper the renderer's echo-cancelled microphone
+  // instead of letting it open the mic (see speech-helper.swift, --pcm-file).
+  const fed = options?.fed === true;
+  const hints = Array.isArray(options?.hints)
+    ? options.hints.filter((h) => typeof h === "string" && h.trim()).slice(0, 20).map((h) => h.trim().slice(0, 64))
+    : [];
+  for (const hint of hints) args.push("--hint", hint);
 
   try {
     ensureBuilt();
@@ -90,7 +98,20 @@ export async function startSpeech(win, options = {}) {
     sendEnd(win, { code: 1, reason: "helper-build-failed" });
     return;
   }
-  launchSpeechSession(win, args);
+  launchSpeechSession(win, args, { fed });
+}
+
+/** Append renderer audio (16 kHz mono s16le) to the fed session, if any.
+ *  Audio for a session that is not fed, or already stopping, is dropped. */
+export function feedSpeech(bytes) {
+  const session = child;
+  if (!session?.pcmPath || session.stopRequested) return;
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > 64_000) return;
+  try {
+    appendFileSync(session.pcmPath, bytes);
+  } catch {
+    // the session is being torn down; its close event reports the outcome
+  }
 }
 
 /**
@@ -98,7 +119,7 @@ export async function startSpeech(win, options = {}) {
  * build gates first; this is exported so the lifecycle tests can drive it
  * with a fake `open` waiter on every CI platform.
  */
-export function launchSpeechSession(win, args = []) {
+export function launchSpeechSession(win, args = [], { fed = false } = {}) {
   // A direct spawn of Contents/MacOS/speech-helper loses the app-bundle
   // identity and TCC kills it for lacking a usage description. LaunchServices
   // preserves that identity. `open` redirects its stdout/stderr to files,
@@ -108,8 +129,10 @@ export function launchSpeechSession(win, args = []) {
   const errorPath = path.join(sessionDir, "stderr.log");
   const stopPath = path.join(sessionDir, "stop");
   const finishPath = path.join(sessionDir, "finish");
+  const pcmPath = fed ? path.join(sessionDir, "mic.pcm") : null;
   writeFileSync(outputPath, "");
   writeFileSync(errorPath, "");
+  if (pcmPath) writeFileSync(pcmPath, "");
 
   let proc;
   try {
@@ -130,6 +153,7 @@ export function launchSpeechSession(win, args = []) {
         stopPath,
         "--finish-file",
         finishPath,
+        ...(pcmPath ? ["--pcm-file", pcmPath] : []),
       ],
       { stdio: "ignore" },
     );
@@ -145,6 +169,7 @@ export function launchSpeechSession(win, args = []) {
     errorPath,
     stopPath,
     finishPath,
+    pcmPath,
     sessionDir,
     stopRequested: false,
     exit: createHelperExit(),

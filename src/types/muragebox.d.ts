@@ -230,7 +230,9 @@ type SkillRecordingPayload = {
       };
       /** Start native dictation. Call mode supplies endpointMs so silence
        * finalizes a turn; composer dictation omits it and remains manual. */
-      speechStart(options?: { endpointMs?: number }): Promise<void>;
+      speechStart(options?: { endpointMs?: number; fed?: boolean; hints?: string[] }): Promise<void>;
+      /** Call mode: echo-cancelled microphone audio (16 kHz mono s16le) for a fed session. */
+      speechFeed?(bytes: Uint8Array): void;
       speechStop(): Promise<void>;
       /** Finish capture and emit the recognizer's final transcript. */
       speechFinish?(): Promise<void>;

@@ -30,7 +30,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
-import { finishSpeech, startSpeech, stopSpeech, speechActive } from "./speech.mjs";
+import { feedSpeech, finishSpeech, startSpeech, stopSpeech, speechActive } from "./speech.mjs";
 import {
   recorderPermissionStatus,
   recorderActive,
@@ -3064,6 +3064,11 @@ ipcMain.handle("speech:stop", () => {
 });
 ipcMain.handle("speech:finish", () => {
   if (nativeActions.appleSpeech) finishSpeech();
+});
+// Call audio for a fed recognizer session: fire-and-forget, one message per
+// ~64 ms of 16 kHz PCM, so it is `on`, not `handle`.
+ipcMain.on("speech:pcm", (_event, bytes) => {
+  if (nativeActions.appleSpeech) feedSpeech(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes ?? []));
 });
 
 ipcMain.handle("skill-recorder:permissions", () => recorderPermissionStatus());
