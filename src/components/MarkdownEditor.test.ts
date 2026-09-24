@@ -149,17 +149,47 @@ describe("opening and viewing", () => {
     expect(backend.records()).toEqual([]);
   });
 
+  it("opens a file with GFM tables in rich mode and saves an edit elsewhere without touching the tables", async () => {
+    const read = readCorpus("rich-tables.md");
+    const { session, controller, writes } = setup(read);
+    expect(session.getState().mode).toBe("rich");
+    const { editor } = attachHeadlessEditor(controller);
+    typeAtEndOfFirstBlock(editor, " (edited)");
+    await controller.save();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].content).toBe(read.content.replace("# Prices\n", "# Prices (edited)\n"));
+  });
+
+  it("rewrites only an edited table when a cell changes", async () => {
+    const read = readCorpus("rich-tables.md");
+    const { controller, writes } = setup(read);
+    const { editor } = attachHeadlessEditor(controller);
+    let at = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (at === -1 && node.isText && node.text === "Coffee") at = pos;
+      return at === -1;
+    });
+    editor.commands.command(({ tr }) => { tr.insertText("Espresso", at, at + "Coffee".length); return true; });
+    await controller.save();
+    const saved = writes[0].content;
+    const [before, after] = read.content.split(/\| Item[\s\S]*?`green` +\|\n/);
+    expect(saved.startsWith(before)).toBe(true);
+    expect(saved.endsWith(after)).toBe(true);
+    const table = saved.slice(before.length, saved.length - after.length);
+    expect(table).toBe("| Item     | Price | Notes   |\n| -------- | ----: | ------- |\n| Espresso | 3.50  | **hot** |\n| Tea      | 2.75  | `green` |\n");
+  });
+
   it("opens a file the gate refuses in Source mode on its exact text and explains why", () => {
-    const read = readCorpus("source-table.md");
+    const read = readCorpus("source-table-extra-cells.md");
     const { session, controller } = setup(read);
     expect(session.getState().mode).toBe("source");
     expect(controller.setMode("rich")).toBe(false);
     expect(session.getState().mode).toBe("source");
-    expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: ["unsupported-syntax"], unsupportedSyntax: ["table"] });
+    expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: ["unsupported-syntax"], unsupportedSyntax: ["table:extra-cells"] });
     const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
-    expect(html).toContain("Rich editing is off: this file uses Markdown the rich editor would change (table). Source mode keeps every byte.");
+    expect(html).toContain("Rich editing is off: this file uses Markdown the rich editor would change (table:extra-cells). Source mode keeps every byte.");
     expect(html).toMatch(/<button[^>]*aria-pressed="false"[^>]*disabled=""[^>]*>Rich<\/button>/);
-    expect(html).toContain(`>| Name | Score |\n| --- | --- |\n| a \\| b | 1 |\n</textarea>`);
+    expect(html).toContain(`>| a | b |\n| - | - |\n| 1 | 2 | 3 |\n</textarea>`);
   });
 
   it("keeps mixed newlines in Source mode and saves them verbatim", async () => {
@@ -315,7 +345,7 @@ describe("reloads and conflicts", () => {
   it("falls back to Source mode when a reload brings syntax the rich editor would change", () => {
     const { session, controller } = setup(readCorpus("rich-basic.md"));
     const { editor, updates } = attachHeadlessEditor(controller);
-    const table = "| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    const table = "| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n";
     controller.observeDisk({ revision: rev("r2"), content: table, bom: false });
     expect(session.getState()).toMatchObject({ mode: "source", draft: table, status: "clean" });
     expect(updates.count).toBe(0);
@@ -702,14 +732,14 @@ describe("recovered drafts and closing (fix round 1)", () => {
   });
 
   it("re-checks rich eligibility once Source typing pauses", () => {
-    const { controller, scheduler } = setup(readCorpus("source-table.md"));
+    const { controller, scheduler } = setup(readCorpus("source-table-extra-cells.md"));
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
     controller.editSource("# No table now\n\nPlain text.\n");
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
     scheduler.flush();
     expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: [], unsupportedSyntax: [] });
     expect(renderToStaticMarkup(createElement(MarkdownEditor, { controller }))).not.toMatch(/disabled=""[^>]*>Rich<\/button>/);
-    controller.editSource("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    controller.editSource("| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n");
     scheduler.flush();
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
   });
@@ -718,7 +748,7 @@ describe("recovered drafts and closing (fix round 1)", () => {
   // An equal reason list must not count as a change, or the store listener
   // fires in the middle of a render.
   it("does not notify subscribers when re-analysing unchanged text during render", () => {
-    for (const file of ["rich-basic.md", "source-table.md"]) {
+    for (const file of ["rich-basic.md", "source-table-extra-cells.md"]) {
       const { controller } = setup(readCorpus(file));
       let notified = 0;
       const unsubscribe = controller.subscribe(() => { notified += 1; });

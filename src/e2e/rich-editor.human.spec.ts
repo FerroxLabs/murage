@@ -140,3 +140,30 @@ test("the drag handle's + adds a block below, and a checked task saves as [x]", 
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByTestId("saved")).toHaveText("# Plan\n\nBetween\n\n- [x] One");
 });
+
+test("a file with GFM tables edits in place: the edited table is rewritten, the other keeps its text", async ({ page }, info) => {
+  const start = "# Rates\n\n|Tier|Price|\n|:--|--:|\n|Basic|10|\n\n| Plan | Seats |\n| ---- | ----- |\n| Team | 5     |\n\nEnd.";
+  await page.setViewportSize({ width: 900, height: 900 });
+  await page.goto(origin + "/__rich?skin=dark&start=" + encodeURIComponent(start));
+  const box = page.getByRole("textbox", { name: "Notes" });
+  await expect(box.locator("table")).toHaveCount(2);
+  await expect(box.locator("th").first()).toHaveText("Tier");
+  await box.locator("td", { hasText: "Basic" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" plan");
+  await page.screenshot({ path: info.outputPath("tables-dark.png") });
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("saved")).toHaveText([
+    "# Rates",
+    "",
+    "| Tier       | Price |",
+    "| :--------- | ----: |",
+    "| Basic plan | 10    |",
+    "",
+    "| Plan | Seats |",
+    "| ---- | ----- |",
+    "| Team | 5     |",
+    "",
+    "End.",
+  ].join("\n"));
+});

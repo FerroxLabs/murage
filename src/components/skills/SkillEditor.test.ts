@@ -36,6 +36,10 @@ describe("which instructions open in the rich editor", () => {
   it("opens ordinary skill Markdown rich, even when saving would tidy its spacing or list markers", () => {
     expect(richEditable("# Invoice Creator\n\nYou help.\n\n\n## When to Use\n\n**Use this skill when:**\n* User asks\n* User needs\n")).toBe(true);
   });
+  it("opens a skill with a GFM table rich, but not one whose rows hold cells the editor would drop", () => {
+    expect(richEditable("# Rates\n\n|Tier|Price|\n|:--|--:|\n|Basic|10|\n")).toBe(true);
+    expect(richEditable("# Rates\n\n|Tier|Price|\n|:--|--:|\n|Basic|10|extra|\n")).toBe(false);
+  });
   it("falls back to plain text for a skill too big for the rich editor", () => {
     expect(richEditable("A line of instructions.\n".repeat(3000))).toBe(false);
   });

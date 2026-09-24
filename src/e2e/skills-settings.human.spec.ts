@@ -174,12 +174,17 @@ test("a skill is duplicated, then the copy is edited and saved", async ({ page }
 });
 
 test("editing a built-in skill edits the owner's own copy", async ({ page }, info) => {
+  // Invoice Creator has GFM tables, so it opens in the rich editor, which is
+  // taller than the plain-text box. The fixture page cannot scroll (the app's
+  // body is overflow:hidden; Settings scrolls its own panel), so give it room.
+  await page.setViewportSize({ width: 1280, height: 1100 });
   await page.goto(origin + "/__skills");
   await page.getByLabel("Search skills").fill("invoice creator");
   await page.getByRole("button", { name: /^Invoice Creator/ }).first().click();
   await expect(page.getByText("Built-in", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByText("Built-in skills can't be changed, so this edits your own copy.")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Instructions" }).locator("table").first()).toBeVisible();
   await page.screenshot({ path: info.outputPath("editor-built-in.png"), fullPage: true });
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved.")).toBeVisible();

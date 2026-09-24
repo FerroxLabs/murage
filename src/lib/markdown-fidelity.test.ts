@@ -86,7 +86,7 @@ describe("committed Markdown corpus", () => {
 
   it("names the class that forced Source mode", () => {
     const unsupported = (file: string) => analyzeMarkdownFidelity(readCorpus(file).text).unsupportedTokenClasses;
-    expect(unsupported("source-table.md")).toContain("table");
+    expect(unsupported("source-table-extra-cells.md")).toEqual(["table:extra-cells"]);
     expect(unsupported("source-reference-links.md")).toContain("def");
     expect(unsupported("source-html-comment.md")).toContain("html");
     expect(unsupported("source-directive.md")).toEqual(["directive"]);
@@ -214,5 +214,137 @@ describe("editor extension set", () => {
     expect(edited.startsWith("---\r\ntitle: Windows file\r\n---\r\n\r\n# Windows file (edited)\r\n")).toBe(true);
     expect(edited.replace(/\r\n/g, "")).not.toMatch(/\n/);
     expect(edited.endsWith("```\r\n")).toBe(true);
+  });
+});
+
+describe("GFM tables", () => {
+  const editors: Editor[] = [];
+  afterAll(() => { for (const editor of editors) editor.destroy(); });
+
+  /** Open `text` as the workspace editor does, run `edit`, compose the save. */
+  function saveAfter(text: string, edit?: (editor: Editor) => void): string {
+    const report = analyzeMarkdownFidelity(text);
+    expect(report.reasons).toEqual([]);
+    const parts = report.parts!;
+    const editor = new Editor({ element: null, injectCSS: false, extensions: createMarkdownExtensions({ resizableTables: true }), content: parts.body, contentType: "markdown" });
+    editors.push(editor);
+    edit?.(editor);
+    return composeMarkdownDocument(parts, editor.getMarkdown());
+  }
+
+  /** Replace the text of the first cell whose text is `from`. */
+  function editCell(from: string, to: string) {
+    return (editor: Editor) => {
+      let at = -1;
+      editor.state.doc.descendants((node, pos) => {
+        if (at === -1 && node.isText && node.text === from) at = pos;
+        return at === -1;
+      });
+      expect(at).toBeGreaterThan(-1);
+      editor.commands.command(({ tr }) => { tr.insertText(to, at, at + from.length); return true; });
+    };
+  }
+
+  const cases: Array<[string, string]> = [
+    ["aligned", "# Scores\n\n| Name   | Score |\n| ------ | ----- |\n| Alice  | 10    |\n| Bob    | 7     |\n"],
+    ["compact", "|a|b|\n|-|-|\n|1|2|\n"],
+    ["alignment row", "| Left | Centre | Right |\n|:---|:---:|---:|\n| l | c | r |\n"],
+    ["followed immediately by a text line (GFM reads it as a row)", "| a | b |\n| - | - |\n| 1 | 2 |\nplain text line\n"],
+    ["followed by text after a blank line", "| a | b |\n| - | - |\n| 1 | 2 |\n\nText right after.\n"],
+    ["two tables", "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n|c|d|\n|--|--|\n|3|4|\n"],
+    ["frontmatter", "---\ntitle: Tables\n---\n\n| Key | Value |\n| :-- | --: |\n| `x|y` | **bold** |\n"],
+    ["CRLF", "| a | b |\r\n| - | - |\r\n| 1 | 2 |\r\n"],
+    ["no outer pipes", "a | b\n--|--\n1 | 2\n"],
+  ];
+
+  for (const [name, text] of cases) {
+    it(`opens rich and saves unchanged bytes: ${name}`, () => {
+      const report = analyzeMarkdownFidelity(text);
+      expect(report).toMatchObject({ richEditable: true, reasons: [], unsupportedTokenClasses: [] });
+      expect(report.tokenClasses).toContain("table");
+      expect(roundTripMarkdownBody(report.parts!.body).markdown).toBe(report.parts!.body);
+      expect(saveAfter(text)).toBe(text);
+    });
+  }
+
+  it("rewrites only the edited table, as valid GFM carrying the edit", () => {
+    const text = "# Two\n\n| Name   | Score |\n| ------ | ----- |\n| Alice  | 10    |\n\n|c|d|\n|:-:|-:|\n|3|4|\n\nAfter.\n";
+    const saved = saveAfter(text, editCell("Alice", "Alicia"));
+    // The edited table is normalized; everything else keeps its bytes.
+    expect(saved).toBe("# Two\n\n| Name   | Score |\n| ------ | ----- |\n| Alicia | 10    |\n\n|c|d|\n|:-:|-:|\n|3|4|\n\nAfter.\n");
+    const second = saveAfter(text, editCell("4", "40"));
+    expect(second.startsWith("# Two\n\n| Name   | Score |\n| ------ | ----- |\n| Alice  | 10    |\n\n")).toBe(true);
+    expect(second.endsWith("\n\nAfter.\n")).toBe(true);
+    const table = second.split("\n\n")[2];
+    expect(table.split("\n")).toHaveLength(3);
+    expect(table).toMatch(/^\| c +\| d +\|\n\| :-+: \| -+: \|\n\| 3 +\| 40 +\|$/);
+    // The saved file is itself rich-editable and parses back to the edit.
+    const reopened = analyzeMarkdownFidelity(second);
+    expect(reopened.richEditable).toBe(true);
+    const doc = roundTripMarkdownBody(reopened.parts!.body).doc;
+    expect(JSON.stringify(doc)).toContain('"text":"40"');
+    expect(JSON.stringify(doc)).toContain('"align":"center"');
+  });
+
+  it("writes an edit of a compact table in the normalized form", () => {
+    const saved = saveAfter("Intro\n\n|a|b|\n|-|-|\n|1|2|\n\nEnd\n", editCell("2", "two"));
+    expect(saved).toBe("Intro\n\n| a   | b   |\n| --- | --- |\n| 1   | two |\n\nEnd\n");
+  });
+
+  it("escapes pipes in an edited table's cells and keeps the delimiter row as wide as the column", () => {
+    const text = "| Name | Score |\n| :--- | ---: |\n| a \\| b | 1 |\n| `x|y` | 2 |\n";
+    const saved = saveAfter(text, editCell("1", "10"));
+    expect(saved).toBe("| Name   | Score |\n| :----- | ----: |\n| a \\| b | 10    |\n| `x\\|y` | 2     |\n");
+    // Reopening gives the same cells back.
+    const again = analyzeMarkdownFidelity(saved);
+    expect(again.richEditable).toBe(true);
+    const cells: string[] = [];
+    const walk = (node: { type?: string; text?: string; content?: unknown[] }) => { if (node.text) cells.push(node.text); for (const child of (node.content ?? []) as typeof node[]) walk(child); };
+    walk(roundTripMarkdownBody(again.parts!.body).doc);
+    expect(cells).toEqual(["Name", "Score", "a | b", "10", "x|y", "2"]);
+  });
+
+  it("goes back to the author's text when an edit is undone by hand", () => {
+    const text = "|a|b|\n|-|-|\n|1|2|\n";
+    const saved = saveAfter(text, editor => { editCell("2", "3")(editor); editCell("3", "2")(editor); });
+    expect(saved).toBe(text);
+  });
+
+  it("ignores a column resize, which Markdown cannot express", () => {
+    const text = "|a|b|\n|-|-|\n|1|2|\n";
+    const saved = saveAfter(text, editor => {
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "tableHeader") editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, colwidth: [240] }));
+        return true;
+      });
+    });
+    expect(saved).toBe(text);
+  });
+
+  it("keeps constructs that would lose or move text in Source mode", () => {
+    // A row longer than the header: marked drops the extra cell.
+    expect(analyzeMarkdownFidelity("| a | b |\n| - | - |\n| 1 | 2 | 3 |\n")).toMatchObject({ richEditable: false, reasons: ["unsupported-syntax"], unsupportedTokenClasses: ["table:extra-cells"] });
+    // A table directly under a paragraph or directly above a heading gains a blank line.
+    expect(analyzeMarkdownFidelity("Intro\n| a | b |\n| - | - |\n| 1 | 2 |\n")).toMatchObject({ richEditable: false, reasons: ["round-trip-changed"] });
+    expect(analyzeMarkdownFidelity("| a | b |\n| - | - |\n| 1 | 2 |\n# Next\n")).toMatchObject({ richEditable: false, reasons: ["round-trip-changed"] });
+    // Unsupported syntax inside a cell is still found.
+    expect(analyzeMarkdownFidelity("| a |\n| - |\n| ![i](x.png) |\n").unsupportedTokenClasses).toEqual(["image"]);
+    expect(analyzeMarkdownFidelity("| a |\n| - |\n| x<br>y |\n").unsupportedTokenClasses).toEqual(["html"]);
+  });
+
+  it("never takes a table's source from HTML, and a table without one is normalized", () => {
+    const editor = new Editor({ element: null, injectCSS: false, extensions: createMarkdownExtensions(), content: EMPTY_MARKDOWN_DOC });
+    editors.push(editor);
+    const spec = editor.extensionManager.attributes.find(item => item.type === "table" && item.name === "markdownSource");
+    expect(spec?.attribute).toMatchObject({ default: null, rendered: false });
+    const element = { getAttribute: () => "| x |\n| - |\n| evil |" } as unknown as HTMLElement;
+    expect(spec?.attribute.parseHTML?.(element)).toBeNull();
+    // A pasted or inserted table (no source attribute) serializes normalized.
+    const cell = (type: string, text: string) => ({ type, content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    editor.commands.setContent({ type: "doc", content: [{ type: "table", content: [
+      { type: "tableRow", content: [cell("tableHeader", "a")] },
+      { type: "tableRow", content: [cell("tableCell", "1")] },
+    ] }] });
+    expect(editor.getMarkdown()).toBe("| a   |\n| --- |\n| 1   |");
   });
 });

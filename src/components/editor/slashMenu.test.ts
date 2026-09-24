@@ -161,18 +161,15 @@ describe("a document built with the slash commands", () => {
     expect(report.richEditable).toBe(true);
   });
 
-  it("a table from the menu saves as a Markdown table; the file then opens in Source mode, never re-padded silently", () => {
+  it("a table from the menu saves as a Markdown table that opens rich again, byte for byte", () => {
     const editor = newEditor();
     runSlash(editor, "Heading 2"); type(editor, "Prices");
     runSlash(editor, "Table");
     type(editor, "Item");
     const markdown = editor.getMarkdown();
-    expect(markdown).toMatch(/^## Prices\n\n+\| Item +\| +\| +\|\n\| -+ \| -+ \| -+ \|\n(\| +\| +\| +\|\n){2}$/);
-    // @tiptap/markdown 3.31.3 pads cells and adds blank lines around a
-    // table, so tables stay outside the rich set (see source-table.md in
-    // the fidelity corpus): the gate sends the file to Source mode.
+    expect(markdown).toMatch(/^## Prices\n\n\| Item +\| +\| +\|\n\| -+ \| -+ \| -+ \|\n(\| +\| +\| +\|\n){1}\| +\| +\| +\|$/);
     const report = analyzeMarkdownFidelity(`${markdown}\n`);
-    expect(report.unsupportedTokenClasses).toEqual(["table"]);
-    expect(report.richEditable).toBe(false);
+    expect(report.unsupportedTokenClasses).toEqual([]);
+    expect(report.richEditable).toBe(true);
   });
 });

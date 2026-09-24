@@ -1,5 +1,5 @@
 {
-  "description": "F4-T2 Markdown round-trip corpus (adopted U-06). `rich`: the pinned @tiptap/markdown 3.31.3 parse -> serialize reproduces the file byte for byte and every token class is supported. `source`: the file opens in Source mode for the listed reasons. Bytes are exact; see .gitattributes.",
+  "description": "F4-T2 Markdown round-trip corpus (adopted U-06). `rich`: the pinned @tiptap/markdown 3.31.3 parse -> serialize reproduces the file byte for byte (an unchanged table keeps its own text) and every token class is supported. `source`: the file opens in Source mode for the listed reasons. Bytes are exact; see .gitattributes.",
   "files": [
     {
       "file": "rich-basic.md",
@@ -62,12 +62,30 @@
       "note": "frontmatter with an empty body"
     },
     {
-      "file": "source-table.md",
+      "file": "rich-table-escaped-pipe.md",
+      "expect": "rich",
+      "note": "GFM table with an escaped pipe: the unchanged table keeps its own text"
+    },
+    {
+      "file": "rich-tables.md",
+      "expect": "rich",
+      "note": "frontmatter, aligned table with alignment row and inline marks, compact table whose last row is plain text, centred alignment row, text after tables"
+    },
+    {
+      "file": "source-table-extra-cells.md",
       "expect": "source",
       "reasons": [
         "unsupported-syntax"
       ],
-      "note": "GFM table with an escaped pipe: 3.31.3 re-pads cells and adds blank lines"
+      "note": "a row longer than the header: marked drops the extra cell, so the editor would never show it"
+    },
+    {
+      "file": "source-table-after-paragraph.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "a table that interrupts a paragraph: the serializer puts a blank line between them"
     },
     {
       "file": "source-reference-links.md",

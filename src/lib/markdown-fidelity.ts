@@ -16,6 +16,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Markdown } from "@tiptap/markdown";
 import StarterKit from "@tiptap/starter-kit";
+import { createSourcePreservingTable, tableRowsFitHeader } from "./markdown-table";
 import type { WorkspaceNewline } from "../../shared/workspace-files";
 
 /** Measured on the pinned parser: dense Markdown takes ~30 ms at 16 KiB,
@@ -44,6 +45,8 @@ export const SUPPORTED_MARKDOWN_TOKEN_CLASSES = Object.freeze([
   "paragraph",
   "space",
   "strong",
+  // Tables keep their source text while unchanged (markdown-table.ts).
+  "table",
   // The TaskList extension's own tokenizer claims `- [ ]` lists before marked
   // sees them, so task lists lex as these two classes, not `list_item`.
   "taskItem",
@@ -57,10 +60,10 @@ const SUPPORTED = new Set<string>(SUPPORTED_MARKDOWN_TOKEN_CLASSES);
  * proves exactly what the editor will do. Underline has no Markdown syntax;
  * the trailing-node plugin would append an unauthored paragraph on the first
  * keystroke; links never open or auto-create from typed or pasted text.
- * Tables stay registered so pasted tables keep their structure, but a file
- * containing one opens in Source mode because 3.31.3 re-pads table cells and
- * adds blank lines around them. There is no image extension: rich mode never
- * fetches a local or remote image. `resizableTables` only adds the column
+ * The table re-emits the author's own table text while the table is
+ * unchanged (3.31.3 alone re-pads cells and adds blank lines around it) and
+ * writes an edited table in a normalized form (markdown-table.ts). There is
+ * no image extension: rich mode never fetches a local or remote image. `resizableTables` only adds the column
  * drag handles of the live editor; the schema and the Markdown are the same. */
 export function createMarkdownExtensions(options: { resizableTables?: boolean } = {}): AnyExtension[] {
   return [
@@ -71,10 +74,19 @@ export function createMarkdownExtensions(options: { resizableTables?: boolean } 
     }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    TableKit.configure({ table: { resizable: options.resizableTables === true } }),
+    TableKit.configure({ table: false }),
+    SourcePreservingTable.configure({ resizable: options.resizableTables === true }),
     Markdown,
   ];
 }
+
+/** The table's source check parses with the analyzer, which uses this same
+ *  extension set, so both sides of the comparison come from one parser. */
+const SourcePreservingTable = createSourcePreservingTable(markdown => {
+  const manager = analyzer().markdown;
+  if (!manager) throw new Error("Markdown extension is not registered");
+  return manager.parse(markdown);
+});
 
 /** A document whose body is empty. ProseMirror requires one block. */
 export const EMPTY_MARKDOWN_DOC: JSONContent = Object.freeze({ type: "doc", content: [{ type: "paragraph" }] }) as JSONContent;
@@ -202,6 +214,9 @@ function tokenClass(token: MarkdownToken): string {
       return /^ {0,3}#/.test(raw) ? "heading" : "heading:setext";
     case "link":
       return raw.startsWith("[^") ? "footnote" : raw.startsWith("[") ? "link" : raw.startsWith("<") ? "link:autolink" : "link:bare";
+    case "table":
+      // A row longer than the header holds cells the editor drops.
+      return tableRowsFitHeader(raw) ? "table" : "table:extra-cells";
     case "paragraph":
       // marked has no tokens for directives or display math; they lex as
       // plain paragraphs and would be edited as prose.
