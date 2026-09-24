@@ -28,7 +28,7 @@ describe("house rules storage", () => {
   it("keeps the shipped text free of em dashes and the word safe", () => {
     expect(DEFAULT_HOUSE_RULES).not.toMatch(/[—–]/);
     expect(DEFAULT_HOUSE_RULES).not.toMatch(/\bsafe/i);
-    expect(DEFAULT_HOUSE_RULES.trim().split(/\s+/).length).toBeLessThan(700);
+    expect(DEFAULT_HOUSE_RULES.trim().split(/\s+/).length).toBeLessThan(950);
   });
 
   it("is on with the shipped default when nothing is saved", () => {

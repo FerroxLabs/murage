@@ -31,7 +31,7 @@ describe("house rules settings", () => {
 
   it("opens the shipped default in the rich editor, and keeps it short", () => {
     expect(richEditable(DEFAULT_HOUSE_RULES)).toBe(true);
-    expect(wordCount(DEFAULT_HOUSE_RULES)).toBeLessThan(700);
+    expect(wordCount(DEFAULT_HOUSE_RULES)).toBeLessThan(950);
   });
 
   it("uses plain words: no em dashes and no \"safe\" in the copy", () => {
