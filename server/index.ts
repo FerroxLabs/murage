@@ -113,7 +113,7 @@ import {
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
-import { TaskAllowances, chatAllowance, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
+import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -3823,6 +3823,7 @@ function stopLinePlace(botId: string, threadId: string, commandCwd?: unknown): S
     home: homedir(),
     knownRecipients: new Set([...knownRecipients(DATA_DIR, botId), ...ownerAndThreadRecipients(threadId)]),
     realpath: stopLineRealpath,
+    repoOf: githubRepoOf,
   };
 }
 

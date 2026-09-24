@@ -11,7 +11,7 @@ card or in chat.
 | --- | --- | --- |
 | Deleting | Inside the folder the bot works in (the turn folder, its own Murage workspace and thread folder, temp): build output, caches, files it made | A target outside that folder (home, Documents, Desktop, another disk, `~`, `/`); a target Murage cannot place (`$VAR`, `$(…)`, `xargs rm`, a relative path with no folder); deleting mail, files or records through a connected app; `DROP` / `TRUNCATE` / `DELETE FROM`; `git push --force`, `push --delete`, `branch -D`, `reset --hard`; a disk wipe |
 | Paying | Reading charges, invoices, balances | Charges, payouts, refunds, purchases, transfers through a connected app, the Stripe CLI, or a POST to a payment API |
-| Messaging | A reply in an existing conversation; a message to someone this bot has already written to | The first message to a new person or group; anything public (posts, tweets, broadcasts); a message whose recipient Murage cannot read |
+| Messaging | A reply in an existing conversation; a message to someone this bot has already written to; anything to the owner (their linked Telegram, Slack and Discord accounts and paired DMs) or to the person a channel conversation is with; a `gh` post to a repository it already posted to with the owner's say-so; a plain `git push` | The first message to a new person or group; anything public (posts, tweets, broadcasts); the first `gh issue`/`pr` comment, create or review, `gh release create` or `gh api` POST per repository; a message whose recipient Murage cannot read |
 
 Covered spellings include `rm` (any flags), `rmdir`, `unlink`, `trash`, `shred`,
 `git clean`, `git rm`, `find -delete` / `-exec rm`, `mv … /dev/null` or to the
@@ -31,7 +31,8 @@ The card offers **Allow once**, **Allow for this task** (the same kind of action
 in the same place: same folder subtree, same recipient, same payee, until the
 task ends, at most 12 hours, gone on restart) and **Always allow**, whose key is
 scoped the same way (`stop:delete:/Users/ada/Projects/site`,
-`stop:message:bob@example.com`, `stop:pay:stripe:cus_123`), never the bare tool
+`stop:message:bob@example.com`, `stop:pay:stripe:cus_123`,
+`stop:public:github:owner/repo`), never the bare tool
 name. When Murage cannot say where, only **Allow once** is offered. Telegram
 shows **Allow for this task** on these cards only.
 

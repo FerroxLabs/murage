@@ -1,11 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
+import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, githubRepoFromGitConfig, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { classifyStopLine } from "./stop-line.ts";
 
 describe("task allowances", () => {
@@ -92,5 +92,29 @@ describe("the owner and the thread are known recipients", () => {
     expect(classifyStopLine("mcp__slack__send_message", { channel: "<@U0OWNER>", text: "done" }, "", place)).toBeNull();
     expect(classifyStopLine("mcp__telegram__send_message", { chat_id: 7777, text: "done" }, "", place)).toBeNull();
     expect(classifyStopLine("mcp__slack__send_message", { channel: "@someone-else" }, "", place)?.kind).toBe("message");
+  });
+});
+
+describe("the repository a gh post lands in", () => {
+  it("reads origin from a git config", () => {
+    expect(githubRepoFromGitConfig('[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:Ada/site.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n')).toBe("Ada/site");
+    expect(githubRepoFromGitConfig('[remote "origin"]\n\turl = https://github.com/ada/site\n')).toBe("ada/site");
+    expect(githubRepoFromGitConfig('[remote "origin"]\n\turl = https://gitlab.com/ada/site.git\n')).toBeUndefined();
+  });
+
+  it("finds it from a subfolder, and through a worktree's pointer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-gh-repo-"));
+    try {
+      mkdirSync(join(dir, "main", ".git", "worktrees", "w"), { recursive: true });
+      writeFileSync(join(dir, "main", ".git", "config"), '[remote "origin"]\n\turl = git@github.com:ada/site.git\n');
+      mkdirSync(join(dir, "main", "src"), { recursive: true });
+      expect(githubRepoOf(join(dir, "main", "src"))).toBe("ada/site");
+      mkdirSync(join(dir, "wt"));
+      writeFileSync(join(dir, "wt", ".git"), `gitdir: ${join(dir, "main", ".git", "worktrees", "w")}\n`);
+      writeFileSync(join(dir, "main", ".git", "worktrees", "w", "commondir"), "../..\n");
+      expect(githubRepoOf(join(dir, "wt"))).toBe("ada/site");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

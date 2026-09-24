@@ -15,8 +15,8 @@
 //   - Recipients: everyone a bot has already sent a message to, so the next
 //     message to them is a reply-in-kind rather than "someone new". Durable,
 //     one small JSON file per bot under the data dir, on this desktop only.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { normalizeRecipient, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 
@@ -148,4 +148,42 @@ export function recipientForms(ids: readonly string[]): string[] {
     const bare = normalizeRecipient(id).replace(/^[@#]/, "");
     return bare ? [bare, `@${bare}`] : [];
   });
+}
+
+/** The GitHub `owner/repo` of a git config's origin remote, from its text. */
+export function githubRepoFromGitConfig(config: string): string | undefined {
+  const section = /\[remote "origin"\]([^[]*)/.exec(config)?.[1] ?? "";
+  const url = /^\s*url\s*=\s*(\S+)/m.exec(section)?.[1];
+  const m = url && /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : undefined;
+}
+
+/** The GitHub repository a folder belongs to, read from its git config
+ * without running git: walk up to `.git`, follow a worktree's `gitdir:` and
+ * `commondir`. Undefined for anything unusual; the post then stops with no
+ * repository-scoped grant. */
+export function githubRepoOf(dir: string): string | undefined {
+  let current = dir;
+  for (let i = 0; i < 40; i += 1) {
+    const dotGit = join(current, ".git");
+    try {
+      let gitDir = dotGit;
+      if (!statSync(dotGit).isDirectory()) {
+        const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+        if (!pointer) return undefined;
+        gitDir = isAbsolute(pointer) ? pointer : join(current, pointer);
+        const common = join(gitDir, "commondir");
+        if (existsSync(common)) {
+          const shared = readFileSync(common, "utf8").trim();
+          gitDir = isAbsolute(shared) ? shared : join(gitDir, shared);
+        }
+      }
+      return githubRepoFromGitConfig(readFileSync(join(gitDir, "config"), "utf8"));
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return undefined;
+      current = parent;
+    }
+  }
+  return undefined;
 }

@@ -63,6 +63,9 @@ export interface StopLinePlace {
   /** Optional: resolve links for an absolute path (the deepest existing
    * ancestor). Without it the check is lexical only. */
   realpath?: (path: string) => string;
+  /** Optional: the GitHub `owner/repo` a folder's origin remote points at,
+   * for a `gh` post that names no `--repo`. */
+  repoOf?: (dir: string) => string | undefined;
 }
 
 // ── shared vocabulary ─────────────────────────────────────────────────
@@ -368,7 +371,7 @@ function commandHit(name: string, args: Word[], ops: Word[], cwd: string | undef
       if (args.some((a) => a.text === "delete") || args.some((a, i) => (a.text === "-X" || a.text === "--method") && /^delete$/i.test(args[i + 1]?.text ?? ""))) {
         return { kind: "delete", place: "app:github", what: `Delete something on GitHub: ${short(line)}` };
       }
-      return null;
+      return ghPostHit(args, cwd, place, line);
     case "dd":
       if (args.some((a) => /^of=\/dev\//.test(a.text))) return { kind: "delete", what: `Erase a disk: ${short(line)}` };
       return null;
@@ -397,6 +400,44 @@ function commandHit(name: string, args: Word[], ops: Word[], cwd: string | undef
       if (/^mkfs(\.\w+)?$/.test(name)) return { kind: "delete", what: `Erase a disk: ${short(line)}` };
       return null;
   }
+}
+
+/** `gh` posting in someone's view: an issue, pull request, review, comment
+ * or release is public on a public repository, and visible to everyone on
+ * the repository either way. It stops the first time per repository; once
+ * the owner allowed one, that repository is a known place like a known
+ * recipient. A plain `git push` is not a post and is not judged here. */
+function ghPostHit(args: Word[], cwd: string | undefined, place: StopLinePlace, line: string): StopHit | null {
+  const texts = args.map((a) => a.text);
+  const [group, action] = operands(args).map((w) => w.text);
+  const posting =
+    (group === "issue" && /^(comment|create|new)$/.test(action ?? "")) ||
+    (group === "pr" && /^(comment|create|new|review)$/.test(action ?? "")) ||
+    (group === "release" && /^(create|new)$/.test(action ?? "")) ||
+    (group === "discussion" && /^(create|comment)$/.test(action ?? ""));
+  let repo: string | undefined;
+  const flag = texts.findIndex((t) => t === "-R" || t === "--repo");
+  if (flag !== -1) repo = texts[flag + 1];
+  const joined = texts.find((t) => t.startsWith("--repo="));
+  if (joined) repo = joined.slice("--repo=".length);
+  let apiPost = false;
+  if (group === "api") {
+    const path = operands(args)[1]?.text ?? "";
+    const method = (() => { const i = texts.findIndex((t) => t === "-X" || t === "--method"); return i === -1 ? "" : (texts[i + 1] ?? "").toUpperCase(); })();
+    const hasFields = texts.some((t) => /^(-f|-F|--field|--raw-field|--input)$/.test(t));
+    apiPost = (method === "POST" || (!method && hasFields)) && /(^|\/)(issues|pulls|comments|releases|reviews|discussions)(\/|$)/.test(path);
+    const fromPath = /^\/?repos\/([^/]+\/[^/]+)\//.exec(path)?.[1];
+    if (fromPath) repo = fromPath;
+  }
+  if (!posting && !apiPost) return null;
+  repo ??= cwd && place.repoOf ? place.repoOf(cwd) : undefined;
+  const where = repo ? `github:${repo.replace(/\.git$/, "").toLowerCase()}` : undefined;
+  if (where && place.knownRecipients.has(where)) return null;
+  return {
+    kind: "message",
+    ...(where ? { place: `public:${where}`, recipients: [where] } : {}),
+    what: `Post on GitHub${repo ? ` in ${repo}` : ", and Murage cannot tell which repository"}, where others can read it: ${short(line, 100)}`,
+  };
 }
 
 function gitHit(args: Word[], cwd: string | undefined, place: StopLinePlace, found: Collected, line: string): StopHit | null {
@@ -720,19 +761,23 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
  * undefined when the hit has no place to scope it to (then only "Allow once"
  * is offered). A bare tool name is never the key for these three kinds. */
 export function stopLineKey(hit: StopHit): string | undefined {
-  return hit.place ? `stop:${hit.kind}:${hit.place}` : undefined;
+  if (!hit.place) return undefined;
+  // a public post is keyed by where it is public: `stop:public:github:o/r`
+  return hit.kind === "message" && hit.place.startsWith("public:") ? `stop:${hit.place}` : `stop:${hit.kind}:${hit.place}`;
 }
 
 /** Is a stop-line key a grant over this hit? Same kind always; a delete key
  * covers its folder's whole subtree; every other place must match exactly. */
 export function stopLineKeyCovers(key: string, hit: StopHit): boolean {
+  if (!hit.place) return false;
+  if (key.startsWith("stop:public:")) return hit.kind === "message" && `stop:${hit.place}` === key;
   const m = /^stop:(delete|pay|message):(.+)$/.exec(key);
-  if (!m || m[1] !== hit.kind || !hit.place) return false;
+  if (!m || m[1] !== hit.kind) return false;
   const granted = m[2]!;
   if (granted === hit.place) return true;
   return hit.kind === "delete" && granted.startsWith("/") && hit.place.startsWith(`${granted}/`);
 }
 
 export function isStopLineKey(key: string): boolean {
-  return /^stop:(delete|pay|message):./.test(key);
+  return /^stop:(delete|pay|message|public):./.test(key);
 }

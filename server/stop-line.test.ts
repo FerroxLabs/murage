@@ -13,7 +13,7 @@ const place = (extra: Partial<StopLinePlace> = {}): StopLinePlace => ({
   cwd: CWD,
   roots: [CWD, "/Users/ada/.murage/workspaces/bot-1", "/tmp"],
   home: HOME,
-  knownRecipients: new Set(["#general", "c0123", "boss@example.com"]),
+  knownRecipients: new Set(["#general", "c0123", "boss@example.com", "github:ada/known"]),
   ...extra,
 });
 
@@ -111,6 +111,14 @@ const rows: Row[] = [
   ["composio gmail send new", "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", account: "a", arguments: { recipient_email: "new@x.com" } }] }, "message"],
   ["curl to slack api", ...shell("curl -X POST https://slack.com/api/chat.postMessage -d channel=C1"), "message"],
   ["sendmail to someone", ...shell("sendmail someone@example.com < note.txt"), "message"],
+  ["gh issue comment", ...shell("gh issue comment 12 --body done -R ada/site"), "message"],
+  ["gh pr create", ...shell("gh pr create --title x --body y --repo ada/site"), "message"],
+  ["gh pr review", ...shell("gh pr review 3 --approve -R ada/site"), "message"],
+  ["gh release create", ...shell("gh release create v1.0 -R ada/site"), "message"],
+  ["gh api POST a comment", ...shell("gh api repos/ada/site/issues/1/comments -f body=hi"), "message"],
+  ["gh pr list is reading", ...shell("gh pr list -R ada/site"), "pass"],
+  ["gh post to a repo it already posted to", ...shell("gh issue comment 1 -R Ada/Known --body x"), "pass"],
+  ["plain git push is not a post", ...shell("git push origin feature"), "pass"],
   ["Murage's own peer tool is not an outside message", "mcp__agents__ask_bot", { to: "Planner", message: "hi" }, "pass"],
 ];
 
@@ -182,6 +190,18 @@ describe("stop line keys", () => {
     const pay = classifyStopLine("mcp__stripe__create_charge", { customer: "cus_1" }, "", place())!;
     expect(stopLineKey(pay)).toBe("stop:pay:stripe:cus_1");
     expect(stopLineKeyCovers("stop:pay:stripe:cus_2", pay)).toBe(false);
+  });
+
+  it("keys a gh post per repository, and reads the repository from the folder when no --repo", () => {
+    const hit = classifyStopLine("Bash", { command: "gh pr comment 3 --body ok -R ada/Site" }, "", place())!;
+    expect(stopLineKey(hit)).toBe("stop:public:github:ada/site");
+    expect(hit.recipients).toEqual(["github:ada/site"]);
+    expect(stopLineKeyCovers("stop:public:github:ada/site", hit)).toBe(true);
+    expect(stopLineKeyCovers("stop:public:github:ada/other", hit)).toBe(false);
+    const fromFolder = classifyStopLine("Bash", { command: "gh issue create --title t --body b" }, "", place({ repoOf: () => "ada/site" }))!;
+    expect(stopLineKey(fromFolder)).toBe("stop:public:github:ada/site");
+    expect(stopLineKey(classifyStopLine("Bash", { command: "gh issue create --title t" }, "", place())!)).toBeUndefined();
+    expect(stopLineKey(classifyStopLine("mcp__twitter__create_tweet", { text: "x" }, "", place())!)).toBe("stop:public:twitter");
   });
 
   it("gives no key when it cannot say where", () => {
