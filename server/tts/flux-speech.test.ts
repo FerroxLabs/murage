@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { synthesize, synthesizeClip, FLUX_GROK_MODEL, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
-import { availableProviders, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
+import { availableProviders, describeVoice, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
 
@@ -193,5 +193,76 @@ describe("each agent's own voice service", () => {
     expect(availableProviders(cfg())).toMatchObject({ xai: true, flux: false, elevenlabs: false });
     useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }) });
     expect(availableProviders(cfg()).xai).toBe(false);
+  });
+});
+
+describe("one Flux list with every Flux voice", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const XAI = { baseUrl: "https://api.x.ai/v1", key: "own-xai" };
+  const routes = (xai?: typeof XAI) =>
+    useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }), ...(xai ? { xai: () => xai } : {}) });
+
+  it("lists OpenAI's 13 and xAI's 28 under Flux, each with a gender and where it comes from", async () => {
+    routes();
+    const voices = await listVoices(cfg(), undefined, "flux");
+    expect(voices).toHaveLength(41);
+    expect(new Set(voices.map((v) => v.id)).size).toBe(41);
+    expect(voices.filter((v) => v.provider === "openai")).toHaveLength(13);
+    expect(voices.filter((v) => v.provider === "grok")).toHaveLength(28);
+    for (const v of voices) {
+      expect(["female", "male", "neutral"]).toContain(v.gender);
+      expect(v.description).toBeTruthy();
+      expect(`${v.label} ${v.description}`).not.toMatch(/—|\b(she|he|her|his|woman|man|female|male)\b/i);
+    }
+    const byId = Object.fromEntries(voices.map((v) => [v.id, v]));
+    expect(byId.nova).toMatchObject({ gender: "female", provider: "openai", description: "upbeat and energetic" });
+    expect(byId.alloy!.gender).toBe("neutral");
+    expect(byId.onyx!.gender).toBe("male");
+    expect(byId.eve).toMatchObject({ gender: "female", provider: "grok", description: "energetic" });
+    expect(byId.rex).toMatchObject({ gender: "male", description: "confident" });
+    expect(voices.filter((v) => v.provider === "grok" && v.gender === "female").map((v) => v.id).sort())
+      .toEqual(["ara", "aurora", "carina", "celeste", "eve", "iris", "liora", "luna", "ursa"]);
+  });
+
+  it("keeps OpenAI's 13 alone where only an own OpenAI key speaks (no Flux to reach xAI's voices)", async () => {
+    useVoiceRoutes({ speech: () => [OPENAI], describe: () => ({ host: null, lookup: null, speech: "openai", transcribe: null }) });
+    expect(await listVoices(cfg(), undefined, "flux")).toHaveLength(13);
+  });
+
+  it("a Grok voice picked under Flux plays through Flux's xAI alias, even with an own xAI key", async () => {
+    let sent: any;
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent = { url, body: JSON.parse(String(init.body)) };
+      return new Response(new Uint8Array([5]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    });
+    routes(XAI);
+    await speak(cfg({ provider: "flux" }), "Morning.", "ara", undefined, "flux");
+    expect(sent).toEqual({ url: `${FLUX.baseUrl}/audio/speech`, body: { model: FLUX_GROK_MODEL, input: "Morning.", voice: "ara", response_format: "mp3" } });
+    // an OpenAI voice under Flux stays on flux-voice-speak
+    await speak(cfg({ provider: "flux" }), "Morning.", "nova", undefined, "flux");
+    expect(sent.body).toMatchObject({ model: "flux-voice-speak", voice: "nova" });
+  });
+
+  it("a bot saved on xAI before this keeps working: own xAI key when set, else Flux's xAI alias", async () => {
+    let sent: any;
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent = { url, body: JSON.parse(String(init.body)) };
+      return new Response(new Uint8Array([5]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    });
+    routes(XAI);
+    await speak(cfg(), "Hi.", "leo", undefined, "xai");
+    expect(sent.url).toBe("https://api.x.ai/v1/tts");
+    routes();
+    await speak(cfg(), "Hi.", "leo", undefined, "xai");
+    expect(sent).toEqual({ url: `${FLUX.baseUrl}/audio/speech`, body: { model: FLUX_GROK_MODEL, input: "Hi.", voice: "leo", response_format: "mp3" } });
+    expect(await listVoices(cfg(), undefined, "xai")).toHaveLength(28);
+  });
+
+  it("tells the picker whether the owner has an xAI key of their own", () => {
+    routes(XAI);
+    expect(describeVoice(cfg()).xaiKey).toBe(true);
+    routes();
+    expect(describeVoice(cfg()).xaiKey).toBe(false);
+    expect(describeVoice(cfg()).available.xai).toBe(true);
   });
 });

@@ -56,6 +56,24 @@ async function speakXai(text: string, voice: string | undefined, streamed: boole
   }
 }
 
+/** A Grok voice picked from the Flux list: always Flux's xAI alias, since
+ *  that is where the list said it comes from. If Flux will not speak it,
+ *  an own xAI key takes over, else the Flux list's other voices do. */
+async function speakFluxGrok(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
+  const flux = fluxGrokRoute();
+  if (flux && !isUnavailable(flux)) {
+    try {
+      return await fluxSpeech.synthesizeClip(text, voice, flux, streamed);
+    } catch (error) {
+      if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
+      markUnavailable(flux);
+    }
+  }
+  const own = xaiRoute();
+  if (own) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
+  return speakHosted(text, voice, run, streamed);
+}
+
 /** Hosted speech, one source after another. When every source refuses as
  *  not switched on, the computer's own voice speaks rather than nothing:
  *  a call that goes silent looks broken, and a plainer voice does not. */
@@ -111,7 +129,7 @@ export class NoVoiceConfigured extends Error {
     super(
       reason === "key"
         ? "Add an ElevenLabs key in Settings on the computer to turn on voice."
-        : "Pick a voice in the agent profile.",
+        : "Pick a voice in the bot's settings.",
     );
     this.reason = reason;
   }
@@ -169,6 +187,9 @@ export function describeVoice(cfg: AppConfig) {
     routes: voiceRoutes(),
     /** Which voice services an agent can pick from here. */
     available: availableProviders(cfg),
+    /** An xAI key of the owner's own. Without one, xAI's voices sit in the
+     *  Flux list instead of an engine of their own. */
+    xaiKey: xaiRoute() !== null,
   };
 }
 
@@ -178,7 +199,9 @@ export function verifyKey(key: string) {
 
 export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?: VoiceProvider): Promise<elevenlabs.Voice[]> {
   const provider = effectiveProvider(cfg, own);
-  if (provider === "flux") return fluxSpeech.FLUX_VOICES;
+  // One Flux list: OpenAI's voices, plus xAI's through Flux's xAI alias
+  // when Flux itself is connected (an own OpenAI key cannot reach them).
+  if (provider === "flux") return fluxGrokRoute() ? [...fluxSpeech.FLUX_VOICES, ...xaiSpeech.XAI_VOICES] : fluxSpeech.FLUX_VOICES;
   if (provider === "xai") return xaiSpeech.XAI_VOICES;
   if (provider === "system") {
     return windowsVoices.windowsVoicesAvailable()
@@ -209,7 +232,10 @@ function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined,
   if (provider === "xai") return speakXai(text, voiceId, streamed);
   if (provider === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
-    return speakHosted(text, voiceId || cfg.tts?.voice || "marin", run, streamed);
+    const voice = voiceId || cfg.tts?.voice || "marin";
+    // ids never collide between the two lists, so the voice says which
+    if (xaiSpeech.isXaiVoice(voice)) return speakFluxGrok(text, voice, run, streamed);
+    return speakHosted(text, voice, run, streamed);
   }
   if (provider === "system") {
     const voice = voiceId || cfg.tts?.voice;

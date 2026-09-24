@@ -477,6 +477,8 @@ export interface ConfigStatus {
     routes?: { host: string | null; lookup: string | null; speech: string | null; transcribe: string | null } | null;
     /** Which voice services an agent can pick from on this computer. */
     available?: { flux: boolean; xai: boolean; elevenlabs: boolean; system: boolean };
+    /** an xAI key of the owner's own (not only Flux's xAI alias) */
+    xaiKey?: boolean;
   };
   /** Shared write-only credential for on-demand GPT Image avatars. */
   imageGen?: { configured: boolean };

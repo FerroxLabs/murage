@@ -74,7 +74,7 @@ describe("configuration", () => {
   it("never reports the key itself", async () => {
     const { describeVoice } = await voice();
     const described = describeVoice(cfg({ key: "sk-secret", voice: "v-1" }));
-    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null, available: expect.objectContaining({ elevenlabs: true, xai: false }) });
+    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null, available: expect.objectContaining({ elevenlabs: true, xai: false }), xaiKey: false });
     expect(JSON.stringify(described)).not.toContain("sk-secret");
   });
 
@@ -86,7 +86,7 @@ describe("configuration", () => {
       "Add an ElevenLabs key in Settings on the computer to turn on voice.",
     );
     expect(() => speak(cfg({ key: "k" }), "hi")).toThrow(
-      "Pick a voice in the agent profile.",
+      "Pick a voice in the bot's settings.",
     );
   });
 
@@ -202,6 +202,7 @@ describe("built-in macOS voices", () => {
       provider: "system",
       routes: null,
       available: expect.objectContaining({ system: onMac }),
+      xaiKey: false,
     });
   });
 
@@ -238,7 +239,7 @@ describe("built-in macOS voices", () => {
     const { speak, NoVoiceConfigured } = await voice();
     expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(NoVoiceConfigured);
     expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(
-      "Pick a voice in the agent profile.",
+      "Pick a voice in the bot's settings.",
     );
   });
 });

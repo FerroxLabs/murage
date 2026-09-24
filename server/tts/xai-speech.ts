@@ -14,13 +14,26 @@ export interface XaiSpeechEndpoint {
 }
 
 /** xAI's built-in voices (GET /v1/tts/voices, 2026-09-23). The list is
- *  static so the settings panel needs no network call to show it. */
+ *  static so the settings panel needs no network call to show it. Genders
+ *  are xAI's own; descriptions only where xAI documents one. */
+const FEMALE = new Set(["ara", "aurora", "carina", "celeste", "eve", "iris", "liora", "luna", "ursa"]);
+const DESCRIBED: Record<string, string> = { eve: "energetic", ara: "warm", rex: "confident", sal: "balanced", leo: "authoritative" };
 export const XAI_VOICES: Voice[] = [
   "eve", "ara", "leo", "rex", "sal", "altair", "atlas", "aurora", "carina", "castor", "celeste", "cosmo", "helios", "helix",
   "iris", "kepler", "liora", "lumen", "luna", "lux", "naksh", "orion", "perseus", "rigel", "sirius", "ursa", "zagan", "zenith",
-].map((id) => ({ id, label: id[0]!.toUpperCase() + id.slice(1) }));
+].map((id) => ({
+  id,
+  label: id[0]!.toUpperCase() + id.slice(1),
+  description: DESCRIBED[id] ?? "multilingual",
+  gender: FEMALE.has(id) ? "female" : "male",
+  provider: "grok",
+}));
 
 const IDS = new Set(XAI_VOICES.map((v) => v.id));
+
+export function isXaiVoice(id: string | undefined): boolean {
+  return Boolean(id && IDS.has(id));
+}
 
 export async function synthesize(text: string, voice: string | undefined, endpoint: XaiSpeechEndpoint | null, call: typeof fetch = fetch): Promise<Audio> {
   return (await synthesizeClip(text, voice, endpoint, false, call)) as Audio;

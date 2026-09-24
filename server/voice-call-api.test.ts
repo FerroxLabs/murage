@@ -144,13 +144,14 @@ it("a call leaves one note in the thread, and an empty call leaves nothing", asy
   expect(await count()).toBe(before + 1);
 }, 60_000);
 
-it("with Flux as the voice engine the 13 voices are listed without asking Flux", async () => {
+it("with Flux as the voice engine all 41 Flux voices (OpenAI and Grok) are listed without asking Flux", async () => {
   const put = await api("PUT", "/api/config", { tts: { provider: "flux" } });
   expect(put.status).toBe(200);
   const requests = seen.length;
   const voices = await api("GET", "/api/tts/voices");
-  expect(voices.body.voices).toHaveLength(13);
-  expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Marin" });
+  expect(voices.body.voices).toHaveLength(41);
+  expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Marin", gender: "female", provider: "openai" });
+  expect(voices.body.voices.find((v: { id: string }) => v.id === "ara")).toMatchObject({ gender: "female", provider: "grok" });
   expect(seen.length).toBe(requests);
 });
 

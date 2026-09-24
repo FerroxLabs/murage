@@ -73,7 +73,7 @@ export function systemVoiceOffer(
       : provider === "flux"
         ? " the voices come through the workspace's Flux account."
         : provider === "xai"
-          ? " the voices are xAI's, through your own xAI key."
+          ? " the voices are xAI's own."
         : " the ElevenLabs key is shared by the workspace.";
   return { available, label, source, sentence, unavailableHint: SYSTEM_VOICE_UNAVAILABLE_HINT };
 }
