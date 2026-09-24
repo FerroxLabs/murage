@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { SettingsPanel } from "./SettingsPanel";
-import { BOT_SETTINGS_SECTIONS, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
+import { BOT_SETTINGS_SECTIONS, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
 import { BotSettingsDraftContext, BotSettingsNavigationContext, type BotSettingsDraft } from "./bot-settings-drafts";
 
 export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
@@ -12,6 +12,7 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
   const matches = useMemo(() => filterBotSettingsSections(query), [query]);
   const selected = BOT_SETTINGS_SECTIONS.find(item => item.id === section)!;
+  const label = (item: typeof selected) => botSettingsSectionLabel(item, bot.name);
   const dirty = Object.entries(drafts).filter(([, state]) => state.dirty), saving = Object.values(drafts).some(state => state.saving);
   const updateDraft = useCallback((key: string, state: BotSettingsDraft | null) => setDrafts(current => {
     if (state && current[key]?.dirty === state.dirty && current[key]?.saving === state.saving) return current;
@@ -34,7 +35,8 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   }, []);
   useEffect(() => { content.current?.querySelector<HTMLElement>("[data-settings-scroll]")?.scrollTo({ top: 0 }); }, [section]);
   // "Add a skill" from anywhere, even with this window already open, lands
-  // on Skills (BotSkillsPanel opens its picker and clears the intent).
+  // on Skills (BotSkillsPanel opens its picker and clears the intent). The
+  // Edit links in "What shapes" move between sections the same way.
   useEffect(() => { if (state.botSettingsIntent) setSection(state.botSettingsIntent.section); }, [state.botSettingsIntent]);
   useEffect(() => { if (!saving) setNotice(null); }, [saving]);
   useEffect(() => { if (query && matches.length && !matches.some(item => item.id === section)) setSection(matches[0].id); }, [query, matches, section]);
@@ -57,16 +59,16 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
           <label htmlFor="bot-settings-search" className="sr-only">Search settings</label>
           <input id="bot-settings-search" autoFocus type="search" value={query} maxLength={100} onChange={event => setQuery(event.target.value)} placeholder="Search settings" className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus sm:min-h-0" />
           <label className="block min-w-0 flex-1 text-[12px] sm:hidden"><span className="sr-only">Section</span><select value={section} onChange={event => setSection(event.target.value as BotSettingsSection)} className="min-h-10 w-full rounded-lg border border-hairline/50 bg-inset px-2 text-[13px]">
-            {!matches.some(item => item.id === section) && <option value={section}>{selected.label}</option>}{matches.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            {!matches.some(item => item.id === section) && <option value={section}>{label(selected)}</option>}{matches.map(item => <option key={item.id} value={item.id}>{label(item)}</option>)}
           </select></label>
           </div>
-          <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{item.label}</button>)}</div>
+          <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{label(item)}</button>)}</div>
           {!matches.length && <p className="mt-3 text-[12px] text-ink-secondary">No matching settings sections.</p>}
           {query && <button className="mt-2 min-h-9 text-[12px] text-ink-secondary underline" onClick={() => setQuery("")}>Clear search</button>}
         </nav>
         <div ref={content} className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* The section menu above already shows this name on a phone. */}
-          <h2 className="shrink-0 px-5 pt-4 text-[17px] font-medium max-sm:sr-only">{selected.label}</h2>
+          <h2 className="shrink-0 px-5 pt-4 text-[17px] font-medium max-sm:sr-only">{label(selected)}</h2>
           <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
         </div>
       </div>

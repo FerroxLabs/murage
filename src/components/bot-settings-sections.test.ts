@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
-import { activeSettingsRole, BOT_SETTINGS_SECTIONS, filterBotSettingsSections, settingsRoleLabel } from "./bot-settings-sections";
+import { activeSettingsRole, BOT_SETTINGS_SECTIONS, botSettingsSectionLabel, filterBotSettingsSections, settingsRoleLabel } from "./bot-settings-sections";
 
 it("keeps the approved sections distinct and finds controls by their familiar names", () => {
-  expect(BOT_SETTINGS_SECTIONS).toHaveLength(11);
-  expect(new Set(BOT_SETTINGS_SECTIONS.map(section => section.id)).size).toBe(11);
+  expect(BOT_SETTINGS_SECTIONS).toHaveLength(12);
+  expect(new Set(BOT_SETTINGS_SECTIONS.map(section => section.id)).size).toBe(12);
+  expect(filterBotSettingsSections("house rules").map(section => section.id)).toEqual(["shapes"]);
+  expect(filterBotSettingsSections("what it reads").map(section => section.id)).toEqual(["shapes"]);
   expect(filterBotSettingsSections("working folder").map(section => section.id)).toEqual(["access"]);
   expect(filterBotSettingsSections("effort").map(section => section.id)).toEqual(["model"]);
   expect(filterBotSettingsSections("notebook").map(section => section.id)).toEqual(["memory"]);
@@ -17,4 +19,9 @@ it("reports active roles from authority fields and never infers leadership from 
   expect(activeSettingsRole({ chiefOfStaff: true, chiefScope: "workspace" })).toBe("chief");
   expect(activeSettingsRole({ individual: true })).toBe("individual");
   expect(settingsRoleLabel("leader")).toBe("Team leader");
+});
+it("names the shapes section after the bot", () => {
+  const shapes = BOT_SETTINGS_SECTIONS.find(section => section.id === "shapes")!;
+  expect(botSettingsSectionLabel(shapes, "Moss")).toBe("What shapes Moss");
+  expect(botSettingsSectionLabel(BOT_SETTINGS_SECTIONS[0], "Moss")).toBe("Overview");
 });
