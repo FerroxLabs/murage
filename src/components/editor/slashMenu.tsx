@@ -84,8 +84,8 @@ export const SLASH_ITEMS: readonly SlashItem[] = Object.freeze([
   },
   {
     label: "Task list",
-    description: "Track to-dos with checkboxes",
-    keywords: ["task", "todo", "to-do", "checkbox", "check"],
+    description: "Track tasks with checkboxes",
+    keywords: ["task", "todo", "checklist", "checkbox", "check"],
     icon: ListTodo,
     action: ({ editor, range }) => { editor.chain().focus().deleteRange(range).toggleList("taskList", "taskItem").run(); },
   },

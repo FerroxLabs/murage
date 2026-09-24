@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { api, useStore, type Bot } from "@/state/store";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/cn";
+import { botRole } from "@/lib/bot-role";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { SkillPicker } from "./skills/SkillPicker";
@@ -707,7 +708,7 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(SKILL_PAGE_SIZE);
   // The Chief of Staff guide belongs to the workspace Chief only.
-  const isChief = bot.chiefOfStaff === true && bot.chiefScope === "workspace";
+  const isChief = botRole(bot) === "chief";
   const [readingGuide, setReadingGuide] = useState(false);
   useEffect(() => setReadingGuide(false), [bot.id]);
 
