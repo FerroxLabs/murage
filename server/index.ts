@@ -4092,7 +4092,11 @@ bus.subscribe((event: RuntimeEvent) => {
       // new. Checked on every permission, whatever the mode, from the engine's
       // structured tool call; a task allowance the owner gave can cover it.
       const stopHit = permission && asker && event.requestId && !questionAsk ? stopLineFor(asker.id, event.threadId, event) : null;
-      if (stopHit && event.requestId) stopHitByRequest.set(`${event.threadId}:${event.requestId}`, stopHit);
+      if (stopHit && event.requestId) {
+        // bounded: an ask that times out is never answered here
+        if (stopHitByRequest.size >= 1_000) stopHitByRequest.delete(stopHitByRequest.keys().next().value!);
+        stopHitByRequest.set(`${event.threadId}:${event.requestId}`, stopHit);
+      }
       const verdict = permission && asker && event.requestId
         ? autoVerdict(asker, event.tool, event.summary, {
             stopLine: questionAsk ? undefined : stopHit,
