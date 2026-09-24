@@ -86,7 +86,7 @@ test("actual desktop recovery rejects failed verification before identity or wor
   const context = { desktopDataOwner: {}, desktopDataDir: "fixture", desktopRecoveryMode: true, desktopShutdownStarted: false,
     requireDesktopBackupTool: async () => { throw Object.assign(Error("unverified"), { code: "AGE_TOOL_UNVERIFIED" }); },
     canRestoreSeparateInstallation: () => false, runInstallationRecoveryWorker: () => { calls++; } };
-  const run = vm.runInNewContext(`(${mainFunction("runDesktopRecovery", "\nfunction initializeBackgroundLifecycle")})`, context);
+  const run = vm.runInNewContext(`(${mainFunction("runDesktopRecovery", "\nfunction ")})`, context);
   const readIdentity = () => { calls++; return "synthetic"; };
   await assert.rejects(run("backup-encrypted", { readIdentity }), error => error.code === "AGE_TOOL_UNVERIFIED");
   assert.equal(calls, 0);
@@ -103,7 +103,7 @@ test("actual desktop recovery retains ordinary Windows failure paths without cha
       stopDesktopCompanion: async () => {}, browserSurface: null, browserHost: null, cuaReady: Promise.resolve(), stopCua: async () => {},
       process: { platform, env: {}, resourcesPath: "resources" }, path, trackOwnedServerChild: () => {},
       runInstallationRecoveryWorker: async () => { throw failure; } };
-    const run = vm.runInNewContext(`(${mainFunction("runDesktopRecovery", "\nfunction initializeBackgroundLifecycle")})`, context);
+    const run = vm.runInNewContext(`(${mainFunction("runDesktopRecovery", "\nfunction ")})`, context);
     await assert.rejects(run("inspect-encrypted", { archive: "fixture.age", readIdentity: async () => "synthetic" }), error => error === failure);
     assert.equal(context.retainedSeparateDirectory, platform === "win32" ? "private-stage" : null);
   }
