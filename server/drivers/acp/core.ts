@@ -86,6 +86,40 @@ import { redactSecretsInText } from "../../redact.ts";
 
 import { toolFilePaths } from "../../own-workspace-approval.ts";
 
+/** Built-in ACP tool kinds that name what they do. None of them is a call
+ * into the computer MCP server, which reaches the engine as an MCP tool. */
+const ACP_BUILTIN_KINDS = new Set(["read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode"]);
+const COMPUTER_TOOL = /^(?:mcp__)?computer(?:__|$)/;
+
+/** Whether an ACP permission ask is the host computer's own control tool.
+ * With the host computer attached, only these keep the local-computer
+ * treatment (no remembered grants, the computer card); a shell command or
+ * another MCP tool on the same turn is judged like any other ask, so a stop
+ * line card keeps its scoped choices. A call that names no tool at all
+ * stays a computer action: a name this cannot read is never widened. */
+export function acpAskControlsComputer(toolCall: unknown): boolean {
+  if (!toolCall || typeof toolCall !== "object" || Array.isArray(toolCall)) return true;
+  const call = toolCall as { kind?: unknown; title?: unknown; rawInput?: unknown; _meta?: unknown };
+  const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
+  const meta = call._meta && typeof call._meta === "object" ? (call._meta as Record<string, unknown>)["fuigo/tool"] : undefined;
+  const identity = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : undefined;
+  const input = call.rawInput && typeof call.rawInput === "object" && !Array.isArray(call.rawInput) ? call.rawInput as Record<string, unknown> : undefined;
+  const names = [
+    identity?.namespace === "mcp" ? text(identity.name) : "",
+    text(input?.tool_name),
+    text(call.title),
+  ].filter(Boolean);
+  if (names.some(name => COMPUTER_TOOL.test(name))) return true;
+  // Another MCP tool the engine named, through its dispatcher or directly.
+  if (identity?.namespace === "mcp" && text(identity.name)) return false;
+  if (identity?.name === "use_tool" && text(input?.tool_name)) return false;
+  // One of the engine's own tools.
+  if (identity?.namespace === "fuigo_build" && identity.name !== "use_tool" && text(identity.name)) return false;
+  if (ACP_BUILTIN_KINDS.has(text(call.kind))) return false;
+  // An MCP-shaped name for another server ("browser__open").
+  return !names.some(name => /^[\w.-]+__[\w.-]+$/.test(name));
+}
+
 /** The files an ACP permission request names, for the own-workspace check.
  *
  * A bot's writes inside its OWN managed folders no longer ask, but only
@@ -1774,6 +1808,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
           const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
+          const computerAsk = controlsHost && acpAskControlsComputer(toolCall);
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return;
@@ -1802,7 +1837,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               requestId,
               behavior: optionId && behavior === "allow" ? "allow" : "deny",
               source: optionId ? source : "system",
-              approvalScope: controlsHost ? "local-computer" : undefined,
+              approvalScope: computerAsk ? "local-computer" : undefined,
             });
             return Boolean(optionId);
           };
@@ -1819,7 +1854,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             requestType: "permission",
             tool,
             summary,
-            approvalScope: controlsHost ? "local-computer" : undefined,
+            approvalScope: computerAsk ? "local-computer" : undefined,
             ...(questionTool ? { questionTool: true as const } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.

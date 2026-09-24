@@ -85,6 +85,8 @@
 //                     drained turn was sent)
 //   FAKE_ACP_PERMISSION_COMMAND  the command a permission-mode ask names
 //                   (default "echo hi")
+//   FAKE_ACP_PERMISSION_TOOLCALL  JSON tool call a permission-mode ask sends
+//                   verbatim instead of the default shell command
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -169,6 +171,9 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // permission modes: the command the approval asks about (default "echo hi")
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
+// A whole tool call (JSON) for a permission-mode ask, verbatim, so a test can
+// replay the exact shape an engine sent (an MCP tool through use_tool).
+const permissionToolCall = process.env.FAKE_ACP_PERMISSION_TOOLCALL ? JSON.parse(process.env.FAKE_ACP_PERMISSION_TOOLCALL) : null;
 const permissionFile = process.env.FAKE_ACP_PERMISSION_FILE || "/tmp/fake-acp-edit.md";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // A second, distinguishable 1x1 raster: the computer surface's frame.
@@ -1369,7 +1374,9 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
-            toolCall: mode === "question-tool"
+            toolCall: permissionToolCall && mode === "permission"
+              ? permissionToolCall
+              : mode === "question-tool"
               ? {
                   kind: "other",
                   title: "AskUserQuestion",

@@ -248,6 +248,8 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_RPC_DUMP;
     delete process.env.FAKE_ACP_PROMPT_DUMP;
     delete process.env.FAKE_ACP_COMMANDS;
+    delete process.env.FAKE_ACP_PERMISSION_TOOLCALL;
+    delete process.env.FAKE_ACP_PERMISSION_COMMAND;
     delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
     recorder?.stop();
     await instance?.dispose();
@@ -665,7 +667,64 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.capabilities.customMcp).toBe(true);
   });
 
+  // The host computer being attached does not make every ask a computer
+  // action. A shell delete is the stop line's to classify (with its scoped
+  // grants); only the computer tools keep the local-computer treatment.
+  const hostComputer = {
+    localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const },
+  };
+  it("scopes only computer tools as local-computer when the host computer is attached", async () => {
+    process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({
+      toolCallId: "01a0d3c86935734f9da19c8d3ff2ed00",
+      kind: "execute",
+      title: "Execute `rm \"/Users/owner/outside/delete-me.txt\"`",
+      rawInput: { variant: "Bash", command: "rm \"/Users/owner/outside/delete-me.txt\"", is_background: false },
+      _meta: { "fuigo/tool": { version: 1, name: "run_terminal_command", kind: "execute", namespace: "fuigo_build", label: "Run Command", read_only: false } },
+    });
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-host-shell", text: "go", integrations: hostComputer });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell" } });
+    expect((opened as any).approvalScope).toBeUndefined();
+    await instance.adapter.respondToRequest("t-host-shell", (opened as any).requestId, { behavior: "deny" });
+    const resolved = await recorder.until((e) => e.type === "request.resolved");
+    expect((resolved as any).approvalScope).toBeUndefined();
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it.each([
+    ["through use_tool", { toolCallId: "use_tool_1", kind: "other", title: "computer__click",
+      rawInput: { variant: "UseTool", tool_name: "computer__click", tool_input: { x: 1, y: 2 } },
+      _meta: { "fuigo/tool": { version: 1, name: "use_tool", kind: "use_tool", namespace: "fuigo_build", label: "Use Tool", read_only: false } } }],
+    ["as a direct MCP tool", { toolCallId: "mcp_1", kind: "other", title: "Click",
+      rawInput: { x: 1 }, _meta: { "fuigo/tool": { version: 1, name: "computer__click", namespace: "mcp" } } }],
+    ["named only by its title", { kind: "other", title: "mcp__computer__screenshot", rawInput: {} }],
+    ["with no name at all", { kind: "other", rawInput: {} }],
+  ])("keeps a computer tool %s as local-computer", async (_label, toolCall) => {
+    process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-host-computer", text: "go", integrations: hostComputer });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", approvalScope: "local-computer" });
+    await instance.adapter.respondToRequest("t-host-computer", (opened as any).requestId, { behavior: "allow" });
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ approvalScope: "local-computer" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("does not scope another MCP tool as local-computer", async () => {
+    process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({ toolCallId: "use_tool_2", kind: "other", title: "browser__agent_browser_open",
+      rawInput: { variant: "UseTool", tool_name: "browser__agent_browser_open", tool_input: { url: "https://example.com" } },
+      _meta: { "fuigo/tool": { version: 1, name: "use_tool", kind: "use_tool", namespace: "fuigo_build", label: "Use Tool", read_only: false } } });
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-host-other", text: "go", integrations: hostComputer });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect((opened as any).approvalScope).toBeUndefined();
+    await instance.adapter.respondToRequest("t-host-other", (opened as any).requestId, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
+    process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({ kind: "other", title: "computer__screenshot", rawInput: {} });
     await create(GrokAgentDriver, "permission");
     await instance.adapter.sendTurn({
       threadId: "t-perm",
@@ -683,7 +742,7 @@ describe("ACP turns (fake CLI)", () => {
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({
       requestType: "permission",
-      tool: "shell",
+      tool: "other",
       approvalScope: "local-computer",
     });
 
