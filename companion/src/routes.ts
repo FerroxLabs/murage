@@ -101,6 +101,10 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
+  // The composer's "/" menu: names and descriptions of the bot's own engine
+  // commands, a read the harness scopes to bots this surface can see. The
+  // commands themselves travel as ordinary POST /api/bots/:id/messages.
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/engine-commands$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/always-allow$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages\/[\w-]+\/edit$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/active-branch$/ },
@@ -286,6 +290,10 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
+  // The composer's "/" menu: names and descriptions of the bot's own engine
+  // commands, a read the harness scopes to bots this surface can see. The
+  // commands themselves travel as ordinary POST /api/bots/:id/messages.
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/engine-commands$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/always-allow$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages\/[\w-]+\/edit$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/active-branch$/ },

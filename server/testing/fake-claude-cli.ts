@@ -91,7 +91,31 @@ const argAfter = (flag: string): string | null => {
   return i === -1 ? null : (argv[i + 1] ?? null);
 };
 
-const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+// Claude Code's own "/" commands, as 2.1.x reports them: names on every
+// `init` (`slash_commands`, with the terminal-bound subset in
+// `terminal_slash_commands`), descriptions in the answer to the SDK's
+// `initialize` control request. Off unless FAKE_CLAUDE_COMMANDS is set ("1"
+// for this set, or a JSON array of its own), so the exact event sequences
+// the older tests pin stay as they were.
+const FAKE_COMMANDS: Array<{ name: string; description: string; argumentHint: string }> = !process.env.FAKE_CLAUDE_COMMANDS
+  ? []
+  : process.env.FAKE_CLAUDE_COMMANDS !== "1"
+  ? JSON.parse(process.env.FAKE_CLAUDE_COMMANDS)
+  : [
+      { name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "<optional custom summarization instructions>" },
+      { name: "context", description: "Show current context usage", argumentHint: "" },
+      { name: "review", description: "Review a pull request", argumentHint: "" },
+      { name: "statusline", description: "Set up Claude Code's status line UI", argumentHint: "" },
+      { name: "clear", description: "Clear conversation history and free up context", argumentHint: "" },
+    ];
+const FAKE_TERMINAL_COMMANDS = ["statusline"];
+const out = (obj: unknown) => {
+  const frame = obj as { type?: string; subtype?: string };
+  const decorated = FAKE_COMMANDS.length && frame?.type === "system" && frame.subtype === "init"
+    ? { ...frame, slash_commands: FAKE_COMMANDS.map((command) => command.name), terminal_slash_commands: FAKE_TERMINAL_COMMANDS }
+    : obj;
+  process.stdout.write(JSON.stringify(decorated) + "\n");
+};
 // Mirrors ENGINE_FRAME_MAX_BYTES in server/drivers/bounded-lines.ts. "é" is
 // two UTF-8 bytes: the oversize text alone is one KiB over the limit, and the
 // large text is 14 MiB, the size of a 10 MiB image as base64.
@@ -504,6 +528,15 @@ const playTurn = (prompt: JsonValue) => {
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
+  // A local command (/context) answers in `result` alone, with no assistant
+  // message: print mode returns the command's resultText there.
+  if (promptText(prompt).trim() === "/context") {
+    out({ type: "result", subtype: "success", is_error: false, result: "FAKE_CONTEXT 12k of 200k tokens used", stop_reason: null, total_cost_usd: 0, session_id: sessionId });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+
   if (mode === "background-result") {
     // Actual installed 0.1.49 capture: stopped task notification, init,
     // task-notification result, then init and the user's assistant/tool work.
@@ -690,6 +723,14 @@ process.stdin.on("data", (c) => {
     try {
       prompt = JSON.parse(line);
     } catch {
+      continue;
+    }
+    const control = prompt as { type?: string; request_id?: string; request?: { subtype?: string } } | null;
+    if (control?.type === "control_request") {
+      if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify(control)}\n`);
+      out(control.request?.subtype === "initialize"
+        ? { type: "control_response", response: { subtype: "success", request_id: control.request_id, response: { commands: FAKE_COMMANDS, output_style: "default", available_output_styles: ["default"], models: [], account: {} } } }
+        : { type: "control_response", response: { subtype: "error", request_id: control.request_id, error: "unsupported" } });
       continue;
     }
     if (turnRunning) steered.push(promptText(prompt));

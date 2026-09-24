@@ -19,11 +19,13 @@ export interface ComposerSlashTrigger {
 }
 
 /** Slash commands configure the whole send, so they are offered only at the
- * beginning of a draft and only while the first token is being typed. */
+ * beginning of a draft and only while the first token is being typed. The
+ * token takes what engine command names use too (digits, `_`, `.`, and the
+ * `:` of Claude plugin commands), so the menu stays open while one is typed. */
 export function composerSlashTrigger(text: string, caretInput: number): ComposerSlashTrigger | null {
   const caret = Math.max(0, Math.min(text.length, Math.floor(caretInput)));
   const prefix = text.slice(0, caret);
-  const match = /^\/([a-z-]*)$/i.exec(prefix);
+  const match = /^\/([a-z0-9_.:-]*)$/i.exec(prefix);
   if (!match) return null;
   return { query: match[1] ?? "", start: 0, end: caret };
 }

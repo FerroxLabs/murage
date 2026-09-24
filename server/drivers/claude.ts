@@ -70,6 +70,8 @@ import {
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { normalizeEngineCommands } from "../engine-commands.ts";
+import { engineCommandText } from "../../shared/engine-commands.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -766,6 +768,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       /** Set when Murage stopped this turn (interruptTurn, resetSession,
        * stopAll). Its process exit is then a cancellation, not a crash. */
       stopRequested?: boolean;
+      /** One of Claude Code's own "/" commands. A local one (/context,
+       * /cost) answers only in `result.result`, with no assistant message,
+       * so that text is shown when the turn produced none of its own. */
+      engineCommand?: boolean;
+      answered?: boolean;
     }
     interface Session {
       child: ReturnType<typeof spawnCli>;
@@ -782,6 +789,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       closing: boolean;
       stderr: string;
       finishClose?: () => Promise<void>;
+      /** Claude Code's "/" commands. `init` names them (`slash_commands`,
+       * and `terminal_slash_commands` for the ones bound to a terminal
+       * screen); the `initialize` control response describes them. Either
+       * can arrive first, so both are kept and the list is re-reported when
+       * it changes. */
+      commands?: {
+        requestId: string;
+        names?: unknown[];
+        terminalOnly?: string[];
+        details?: Map<string, { description?: unknown; argumentHint?: unknown }>;
+        reported?: string;
+      };
     }
     const sessions = new Map<string, Session>();
     const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
@@ -921,6 +940,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         throw new Error("local computer control requires the interactive approval broker");
       }
       const turnId = relaunch?.turnId ?? newId();
+      // A command turn is the command alone: Claude Code runs "/name args"
+      // sent as the prompt in stream-json mode (the Agent SDK's documented
+      // way to run one), and reads it only when "/" opens the message.
+      const turnPrompt = turn.engineCommand ? engineCommandText(turn.engineCommand) : turn.text;
       const retryAbort = new AbortController();
       const retry = retryState.get(threadId) ?? { attempt: 0, cancelled: false };
       // Only a genuinely new user turn starts un-cancelled. A relaunch keeps
@@ -1096,6 +1119,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           sawStreamDelta: false,
           boundary: createAttemptBoundary(),
           submission: null,
+          engineCommand: Boolean(turn.engineCommand),
         };
         live.turn = liveTurn;
         active.set(threadId, activeTurn(turnId, live.broker, () => {
@@ -1103,7 +1127,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           stopSession(live);
         }, () => liveTurn.stopRequested === true));
         emit({ ...base(threadId, turnId), type: "turn.started" });
-        liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary, turn.images);
+        liveTurn.submission = writeUser(live, threadId, turnPrompt, liveTurn.boundary, turn.images);
         const written = await liveTurn.submission;
         if (!written) {
           forgetActive(threadId);
@@ -1255,6 +1279,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         sawStreamDelta: false,
         boundary: createAttemptBoundary(),
         submission: null,
+        engineCommand: Boolean(turn.engineCommand),
       };
       const session: Session = {
         child,
@@ -1267,6 +1292,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         idleTimer: null,
         closing: false,
         stderr: "",
+        commands: { requestId: `murage-commands-${newId()}` },
       };
       sessions.set(threadId, session);
 
@@ -1311,6 +1337,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // as the result consumes it, so nothing accumulates across a turn.
       const toolNameByUse = new Map<string, string>();
 
+      /** Report the command list when it changed. Names come from `init`;
+       * descriptions join them once the `initialize` answer is in. */
+      const reportEngineCommands = () => {
+        const known = session.commands;
+        if (!known?.names) return;
+        const raw = known.names.map((name) => {
+          const detail = typeof name === "string" ? known.details?.get(name.replace(/^\//, "")) : undefined;
+          return detail ? { name, ...detail } : name;
+        });
+        const commands = normalizeEngineCommands(raw, known.terminalOnly);
+        const key = JSON.stringify(commands);
+        if (key === known.reported) return;
+        known.reported = key;
+        emit({ ...base(threadId, currentTurnId()), type: "engine.commands", commands });
+      };
+
       const handleLine = (line: string) => {
         let o: any;
         try {
@@ -1336,6 +1378,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (o.subtype === "init") {
               if (typeof o.session_id === "string") session.sessionId = o.session_id;
               emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model });
+              if (Array.isArray(o.slash_commands) && session.commands) {
+                session.commands.names = o.slash_commands;
+                session.commands.terminalOnly = Array.isArray(o.terminal_slash_commands)
+                  ? o.terminal_slash_commands.filter((name: unknown): name is string => typeof name === "string")
+                  : [];
+                reportEngineCommands();
+              }
             } else if (o.subtype === "thinking_tokens") {
               emit({ ...base(threadId, currentTurnId()), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
             }
@@ -1371,7 +1420,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               if (!session.turn?.sawStreamDelta) {
                 emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: text });
               }
-              if (session.turn) session.turn.sawStreamDelta = false;
+              if (session.turn) {
+                session.turn.sawStreamDelta = false;
+                session.turn.answered = true;
+              }
               emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_text", text });
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
@@ -1408,6 +1460,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               }
             }
             break;
+          case "control_response": {
+            // Only the answer to our own `initialize` is read, and only its
+            // command descriptions: nothing else rides on it.
+            const response = o.response ?? {};
+            if (!session.commands || response.request_id !== session.commands.requestId) break;
+            const described = response.response?.commands;
+            if (response.subtype === "success" && Array.isArray(described)) {
+              session.commands.details = new Map(
+                described
+                  .filter((entry: any) => entry && typeof entry.name === "string")
+                  .map((entry: any) => [entry.name.replace(/^\//, ""), { description: entry.description, argumentHint: entry.argumentHint }]),
+              );
+              reportEngineCommands();
+            }
+            break;
+          }
           case "result":
             // A stopped/completed background task can produce its own
             // synthetic follow-up result before the submitted user's reply.
@@ -1428,6 +1496,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // not permission to release this turn before close finalization.
             if (session.turn?.stopRequested) return;
             if (stoppedResult) retryState.delete(threadId);
+            // A local command (/context, /cost) answers here and nowhere else.
+            if (session.turn?.engineCommand && !session.turn.answered && o.is_error !== true && typeof o.result === "string" && o.result.trim()) {
+              emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: o.result });
+              emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_text", text: o.result });
+            }
             settle(
               stoppedResult || (o.is_error !== true && !session.turn?.authFailed),
               stoppedResult ? "cancelled" : session.turn?.authFailed ? "auth_required" : o.stop_reason ?? o.terminal_reason ?? null,
@@ -1639,10 +1712,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       active.set(threadId, activeTurn(turnId, broker, stop, () => launchTurn.stopRequested === true || retry.cancelled));
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
+      // Ask for the command descriptions before the first message, as the
+      // Agent SDK does (control_request `initialize`; its answer carries
+      // `commands: [{name, description, argumentHint}]`). Nothing waits on
+      // it: `init` names the commands either way, and a CLI that does not
+      // answer only leaves them without descriptions.
+      if (session.commands) {
+        const ask = { type: "control_request", request_id: session.commands.requestId, request: { subtype: "initialize" } };
+        try {
+          child.stdin.write(JSON.stringify(ask) + "\n");
+          appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: ask });
+        } catch { /* the prompt write below reports a dead stdin */ }
+      }
+
       // prompt over stdin as a stream-json message — never argv (ARG_MAX).
       // stdin stays OPEN: that is what keeps the session alive for a
       // mid-turn steer or the next turn; closeSession() ends it.
-      launchTurn.submission = writeUser(session, threadId, turn.text, launchTurn.boundary, turn.images);
+      launchTurn.submission = writeUser(session, threadId, turnPrompt, launchTurn.boundary, turn.images);
       if (!(await launchTurn.submission)) {
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch

@@ -519,6 +519,35 @@ process.stdin.on("data", (chunk) => {
         }
         break;
       }
+      // Command turns (codex-cli 0.156 v2 protocol, `codex app-server
+      // generate-ts`). skills/list answers `{}` unless FAKE_CODEX_SKILLS
+      // (a JSON SkillMetadata[]) is set, so older tests see no report.
+      case "skills/list":
+        out({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: process.env.FAKE_CODEX_SKILLS
+            ? { data: [{ cwd: msg.params?.cwds?.[0] ?? "", skills: JSON.parse(process.env.FAKE_CODEX_SKILLS), errors: [] }] }
+            : {},
+        });
+        break;
+      case "review/start":
+        nativeThreadId = msg.params.threadId;
+        out({ jsonrpc: "2.0", id: msg.id, result: { ...turnResult(), reviewThreadId: nativeThreadId } });
+        notify("item/started", { item: { id: "rv1", type: "enteredReviewMode", review: "current changes" } });
+        notify("item/completed", { item: { id: "rv2", type: "exitedReviewMode", review: "FAKE_REVIEW no issues found" } });
+        dump();
+        notify("turn/completed", { turn: { status: "completed" } });
+        break;
+      case "thread/compact/start":
+        nativeThreadId = msg.params.threadId;
+        out({ jsonrpc: "2.0", id: msg.id, result: {} });
+        notify("turn/started", { turn: { status: "inProgress" } });
+        notify("item/started", { item: { id: "cc1", type: "contextCompaction" } });
+        notify("item/completed", { item: { id: "cc1", type: "contextCompaction" } });
+        dump();
+        notify("turn/completed", { turn: { status: "completed" } });
+        break;
       default:
         if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, result: {} });
     }

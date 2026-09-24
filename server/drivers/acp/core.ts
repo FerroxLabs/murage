@@ -618,6 +618,8 @@ const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage, type FrameOverflow } from "../bounded-lines.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
+import { normalizeEngineCommands } from "../../engine-commands.ts";
+import { engineCommandText } from "../../../shared/engine-commands.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -1837,6 +1839,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // native log but never normalized: the prompt result is the settle.
           if (msg.method !== "session/update") return;
           const p = msg.params ?? {};
+          // The engine's own "/" commands. Fuigo and Grok Build send the list
+          // right after session/new, BEFORE the prompt, so this is read ahead
+          // of the prompt gate below that drops every other pre-prompt
+          // update. It is the current list, not history, so a session/load
+          // replay's copy counts too. Only this turn's session speaks for it.
+          if (p.update?.sessionUpdate === "available_commands_update") {
+            if (typeof p.sessionId !== "string" || !sessionId || p.sessionId === sessionId) {
+              emit({ ...base(threadId, turnId), type: "engine.commands", commands: normalizeEngineCommands(p.update.availableCommands) });
+            }
+            return;
+          }
           if (!state.promptSent || p._meta?.isReplay === true) return;
           const u = p.update ?? {};
           switch (u.sessionUpdate) {
@@ -2387,7 +2400,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               state.promptSent = true;
               promptStartedAt = Date.now();
             }
-            const text = support.buildPromptText
+            // A command turn is the command alone. Fuigo and Grok Build
+            // recognise "/name" only when it opens the FIRST text block
+            // (fuigo-shell slash_authority::parse_slash_prefix), so the
+            // persona that every other turn carries in front of the message
+            // would turn the command into chat. Nothing is lost: the persona
+            // rides in front of every ordinary turn, including the next one.
+            const text = turn.engineCommand
+              ? engineCommandText(turn.engineCommand)
+              : support.buildPromptText
               ? support.buildPromptText(promptTurn)
               : promptTurn.system
                 ? `${promptTurn.system}\n\n${promptTurn.text}`

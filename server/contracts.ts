@@ -10,6 +10,7 @@ import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
 import type { QuestionAnswer, QuestionSpec } from "../shared/questions.ts";
 import type { AgentPlanEntry } from "../shared/agent-plan.ts";
+import type { EngineCommand } from "../shared/engine-commands.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -132,6 +133,13 @@ export type RuntimeEvent = RuntimeEventBase &
     /** The agent's to-do list for this turn, whole: each update replaces the
      * previous one (ACP `plan`). Live only — it is not a transcript message. */
     | { type: "plan.updated"; entries: AgentPlanEntry[] }
+    /** The engine's own "/" commands, whole: each report replaces the last
+     * (ACP `available_commands_update`, Claude's init `slash_commands`, the
+     * Codex set this driver maps to app-server calls). Already filtered to
+     * what can run without a terminal screen (server/engine-commands.ts).
+     * Not a transcript message: the harness caches it per bot for the
+     * composer's "/" menu. */
+    | { type: "engine.commands"; commands: EngineCommand[] }
     | {
         type: "request.opened";
         requestType: "permission" | "question";
@@ -240,6 +248,12 @@ export interface SendTurnInput {
   transcript?: Array<{ role: "user" | "assistant"; text: string }>;
   /** Bot persona (name/title/description) as a system prompt. */
   system?: string;
+  /** This turn is one of the engine's own "/" commands, picked or typed by
+   * the owner. The driver sends `engineCommandText(engineCommand)` as the
+   * whole prompt (or the app-server call it maps to): no persona or memory
+   * prefix, because an engine only reads a command that starts its first
+   * text block with "/". `text` still carries the same command. */
+  engineCommand?: { name: string; args: string };
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
     memory?: { command: string; args: string[]; env: Record<string, string> };

@@ -23,7 +23,11 @@ export function decorateMemoryInstance(live: ProviderInstance): ProviderInstance
     }
   });
   const sendTurn = async (input: SendTurnInput) => {
-    const { memoryContext, ...turn } = input;
+    const { memoryContext: bundled, ...turn } = input;
+    // An engine command reaches the engine as the command alone, so it
+    // carries no reference, and counts as an unbundled turn below: the next
+    // ordinary turn delivers the bundle again.
+    const memoryContext = input.engineCommand ? undefined : bundled;
     if (input.integrations?.memory) {
       const { memory, ...integrations } = input.integrations;
       if (Object.hasOwn(integrations.custom ?? {}, "murage-memory")) throw new Error("MEMORY_MCP_NAME_COLLISION");
