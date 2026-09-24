@@ -609,7 +609,7 @@ export type AppSettingsSection =
  *  another section an Edit link in "What shapes <bot>" points at. */
 export type BotSettingsIntent =
   | { section: "skills"; addSkill: boolean }
-  | { section: "shapes" | "identity" | "memory"; addSkill?: undefined };
+  | { section: "shapes" | "identity" | "memory" | "permissions"; addSkill?: undefined };
 
 export interface AppState {
   bots: Bot[];

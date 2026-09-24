@@ -1065,3 +1065,90 @@ button:disabled.bg-danger {
 .chat-md {
   overflow-wrap: anywhere;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WHAT'S NEW (src/components/WhatsNewDialog.tsx)
+
+   The cards are art panels, not app surfaces: each keeps the palette it was
+   approved in (Forge dark, and Paper for Projects) whichever skin the app is
+   on, the same way a photograph does not re-tint for Light. Their colours
+   live here, beside the palettes, so no component carries raw hex.
+
+   Instrument Serif (SIL OFL 1.1, third_party/instrument-serif/) is bundled
+   rather than fetched, because the desktop app has to work offline. Only the
+   What's new headlines use it; the app stays on Inter.
+   ───────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./assets/fonts/instrument-serif-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+.whats-new {
+  --wn-font-display: "Instrument Serif", Georgia, serif;
+  --wn-accent: #ff6b35;
+  --wn-accent-ink: #ff8255;
+  --wn-accent-ink-hover: #ffa07d;
+  --wn-on-accent: #2a1207;
+  --wn-ground: #0a0a0a;
+  --wn-panel: #121212;
+  --wn-panel-deep: #111111;
+  --wn-tile: #181818;
+  --wn-edge: #2e2e2e;
+  --wn-edge-soft: #2a2a2a;
+  --wn-tile-edge: #262626;
+  --wn-ghost-edge: #3a3a3a;
+  --wn-ink: #f5f5f5;
+  --wn-ink-strong: #ffffff;
+  --wn-ink-body: #c9c9c9;
+  --wn-ink-list: #e8e8e8;
+  --wn-ink-muted: #a8a8a8;
+  --wn-ink-faint: #8a8a8a;
+  --wn-close-ink: #e5e5e5;
+  --wn-chip-ground: rgba(10, 10, 10, 0.72);
+  --wn-chip-edge: rgba(255, 130, 85, 0.35);
+  --wn-close-ground: rgba(10, 10, 10, 0.6);
+  --wn-ring: rgba(255, 107, 53, 0.18);
+  --wn-paper: #f6f1e7;
+  --wn-paper-art: #eadfcb;
+  --wn-paper-ink: #1c1a17;
+  --wn-paper-ink-body: #4a443b;
+  --wn-paper-ink-list: #2b2721;
+  --wn-paper-ink-muted: #6b6255;
+  --wn-paper-close: #5a5146;
+  --wn-paper-accent: #a83c14;
+  --wn-paper-chip: rgba(168, 60, 20, 0.1);
+  --wn-paper-edge: #cfc3ae;
+  --wn-paper-on-ink: #fffdf8;
+  --wn-dot-search: #7cc4ff;
+  --wn-dot-rules: #e0b15a;
+  --wn-dot-access: #b69cff;
+  --wn-dot-commands: #5fd4a4;
+}
+/* The global :focus-visible ring (above) in the panels' own accent. A card's
+   title takes focus only so a screen reader announces the new card; it is
+   not a control, so it shows no ring. */
+.whats-new :focus-visible {
+  outline-color: var(--wn-accent);
+}
+.whats-new [data-whats-new-card="projects"] :focus-visible {
+  outline-color: var(--wn-paper-accent);
+}
+.whats-new h2[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+.whats-new-display {
+  font-family: var(--wn-font-display);
+  font-weight: 400;
+}
+@keyframes whats-new-card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.whats-new-card {
+  animation: whats-new-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .whats-new-card { animation: none; }
+}

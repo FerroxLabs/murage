@@ -53,6 +53,35 @@ export function deferCallCleanup(targetId: string, isMounted: () => boolean): vo
   });
 }
 
+/** Somewhere other than the call button asked to call this bot (What's new's
+ * "Call a bot"). The bot's own call button answers it once it is on screen,
+ * by pressing itself, so a missing voice or microphone gets the same help it
+ * would get from a click rather than a call that silently fails. */
+let requested: string | null = null;
+
+export function requestCall(targetId: string): void {
+  requested = targetId;
+  notify();
+}
+
+/** Claims the request for `targetId`: true once, then false. */
+export function takeCallRequest(targetId: string): boolean {
+  if (requested !== targetId) return false;
+  requested = null;
+  return true;
+}
+
+export function useCallRequest(): string | null {
+  return useSyncExternalStore(
+    (fn) => {
+      watchers.add(fn);
+      return () => watchers.delete(fn);
+    },
+    () => requested,
+    () => requested,
+  );
+}
+
 export function useOnCall(): string | null {
   return useSyncExternalStore(
     (fn) => {

@@ -330,17 +330,28 @@ export function Composer({
   const caretRef = useRef(0);
   caretRef.current = caret;
   // "New message to…" in the menu bar / tray menu opens this chat ready to type.
+  // What's new's "Engine commands" asks for the "/" menu too (`slash`): an
+  // empty draft becomes "/", which is exactly what typing it would do. A
+  // draft with words in it is left alone and only focused.
   useEffect(() => {
     const focus = (event: Event) => {
-      const wanted = (event as CustomEvent<{ botId?: string }>).detail?.botId;
+      const detail = (event as CustomEvent<{ botId?: string; slash?: boolean }>).detail;
+      const wanted = detail?.botId;
       const input = inputRef.current;
       if (!input || input.disabled || (wanted && bot && bot.id !== wanted)) return;
       input.focus();
+      if (detail?.slash && input.value.trim() === "") {
+        editText("/");
+        setCaret(1);
+        setDismissedSlashAt(null);
+        requestAnimationFrame(() => inputRef.current?.setSelectionRange(1, 1));
+        return;
+      }
       input.setSelectionRange(input.value.length, input.value.length);
     };
     window.addEventListener(FOCUS_COMPOSER_EVENT, focus);
     return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, focus);
-  }, [bot]);
+  }, [bot, editText]);
   /** Returns keyboard focus to the draft, keeping the caret where it was. */
   const refocusInput = useCallback(() => {
     requestAnimationFrame(() => {

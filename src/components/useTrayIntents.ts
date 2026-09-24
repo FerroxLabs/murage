@@ -3,11 +3,12 @@ import { useEffect, useRef } from "react";
 import { openNotificationTarget, useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import type { TrayOpenTarget } from "@/types/muragebox";
+import { FOCUS_COMPOSER_EVENT } from "@/lib/composer-focus";
 
 const id = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
 
-/** Composer.tsx listens for this and focuses the draft once it is on screen. */
-export const FOCUS_COMPOSER_EVENT = "murage:focus-composer";
+/** Composer.tsx listens for this; it lives in lib/composer-focus.ts. */
+export { FOCUS_COMPOSER_EVENT };
 
 /** What the menu bar / tray menu asks the window to show: an approval card,
  * a running conversation, or a bot's chat with the composer focused. */
