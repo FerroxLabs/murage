@@ -285,6 +285,7 @@ describe("agents-proxy MCP surface", () => {
       "generate_image",
       "web_search",
       "tool_result_read",
+      "allow_for_task",
       "list_bots",
       "ask_bot",
       "delegate_bot",

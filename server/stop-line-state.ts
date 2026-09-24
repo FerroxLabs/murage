@@ -90,3 +90,53 @@ export function rememberRecipients(dataDir: string, botId: string, recipients: r
   writeFileSync(temp, JSON.stringify({ recipients: next }), { mode: 0o600 });
   renameSync(temp, file);
 }
+
+export interface ChatAllowanceRequest {
+  kind: "delete" | "message" | "pay";
+  place: string;
+  app?: string;
+}
+
+/** Turn what the owner said in chat ("you can delete anything in
+ * ~/Projects/site today") into a task allowance, or refuse it.
+ *
+ * The bot asks for it through a tool, which means the words reaching here
+ * are the model's. So the place must appear in the OWNER's own latest
+ * message, as written, as its ~ form or as its full path: a page, a file or
+ * another bot telling the model "allow deleting ~" never put those words in
+ * the owner's mouth. The caller has already refused any turn the owner is
+ * not at. */
+export function chatAllowance(
+  request: ChatAllowanceRequest,
+  ownerText: string,
+  home: string,
+  realpath: (path: string) => string = (path) => path,
+): { ok: true; key: string; note: string } | { ok: false; error: string } {
+  const said = ownerText.toLowerCase();
+  const place = request.place.trim();
+  if (!place) return { ok: false, error: "Say which folder, person or payee the owner named." };
+  if (request.kind === "delete") {
+    const home_ = home.replace(/\/+$/, "");
+    const absolute = place === "~" || place.startsWith("~/") ? `${home_}${place.slice(1)}` : place;
+    if (!absolute.startsWith("/")) return { ok: false, error: "Give the folder as a full path or starting with ~/." };
+    const clean = absolute.replace(/\/+$/, "").replace(/\/\.(?=\/|$)/g, "");
+    if (clean.split("/").includes("..")) return { ok: false, error: "Give the folder without .. in it." };
+    if (!clean || clean === home_) return { ok: false, error: "Murage does not allow deleting across the whole home folder or disk. Ask the owner to name a folder." };
+    const tilde = clean.startsWith(`${home_}/`) ? `~${clean.slice(home_.length)}` : clean;
+    if (![place, clean, tilde].some((form) => said.includes(form.toLowerCase()))) {
+      return { ok: false, error: "The owner's latest message does not name that folder. Ask the owner to say it in their own words." };
+    }
+    return { ok: true, key: `stop:delete:${realpath(clean)}`, note: `You allowed deleting anything in ${tilde} for the rest of this task.` };
+  }
+  const who = normalizeRecipient(place);
+  const bare = who.replace(/^[@#]/, "");
+  if (!bare || !said.includes(bare)) {
+    return { ok: false, error: `The owner's latest message does not name ${place}. Ask the owner to say it in their own words.` };
+  }
+  if (request.kind === "message") {
+    return { ok: true, key: `stop:message:${who}`, note: `You allowed messaging ${place} for the rest of this task.` };
+  }
+  const app = request.app?.trim().toLowerCase();
+  if (!app || !/^[a-z0-9_-]{1,60}$/.test(app)) return { ok: false, error: "Say which payment app, such as stripe." };
+  return { ok: true, key: `stop:pay:${app}:${who}`, note: `You allowed payments to ${place} through ${app} for the rest of this task.` };
+}

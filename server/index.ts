@@ -113,7 +113,7 @@ import {
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
-import { TaskAllowances, knownRecipients, rememberRecipients } from "./stop-line-state.ts";
+import { TaskAllowances, chatAllowance, knownRecipients, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -4136,11 +4136,7 @@ bus.subscribe((event: RuntimeEvent) => {
             if (outcome === "unavailable") throw new Error("the ask is no longer open");
             stopHitByRequest.delete(`${event.threadId}:${requestId}`);
             rememberStopRecipients(asker.id, stopHit ?? undefined);
-            // Full access now routes every engine ask through here so the stop
-            // line can hold; the tool's own chip already shows the action, and
-            // a second "auto-approved" chip per command would bury the chat.
-            // Every other automatic answer keeps its chip.
-            if (verdict.source !== "full-access") pushMessage({
+            pushMessage({
               role: "bot",
               kind: "activity",
               tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },
@@ -10390,6 +10386,36 @@ const server = createServer(async (req, res) => {
           if (error instanceof tts.NoVoiceConfigured) return json(res, 409, { error: `No voice is set up for this bot yet (${error.message}) Tell the owner, and answer in text.` });
           return json(res, 502, { error: `The voice note could not be made: ${error instanceof Error ? error.message : String(error)} Answer in text instead.` });
         }
+      }
+
+      // The owner said so in chat: "you can delete anything in ~/Projects/site
+      // today". The bot records it as a task allowance for the stop line
+      // (server/stop-line.ts). Honoured only on a turn the owner started and is
+      // at (never a channel, webhook, routine or another bot's turn), only for
+      // a place the owner's own latest message names, and always with a note
+      // in the chat saying exactly what was allowed.
+      if (path === "/api/internal/stop-line-allowance" && method === "POST") {
+        const body = z.object({ kind: z.enum(["delete", "message", "pay"]), place: z.string().min(1).max(500), app: z.string().min(1).max(60).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        if (fullAccessTurnOrigin(internalClaim.threadId) !== "owner" || internalClaim.depth !== 0 || internalEventId) {
+          return json(res, 403, { error: "Only the owner can allow this, in a conversation they are having with you right now. Ask the owner to confirm it on the card instead." });
+        }
+        const ownerText = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user")?.text ?? "";
+        const decided = chatAllowance(body, ownerText, homedir(), stopLineRealpath);
+        if (!decided.ok) return json(res, 400, { error: decided.error });
+        taskAllowances.grant(internalClaim.botId, internalClaim.threadId, decided.key);
+        store.appendMessage(internalClaim.threadId, { role: "bot", kind: "activity", tool: { name: decided.note, ok: true } });
+        appendDecision(DATA_DIR, {
+          threadId: internalClaim.threadId,
+          botId: internalClaim.botId,
+          botName: store.bot(internalClaim.botId)?.name,
+          tool: "allow_for_task",
+          summary: decided.note,
+          decision: "auto-approved",
+          source: "task-allowance",
+          rule: decided.key,
+        });
+        return json(res, 200, { allowed: true, note: decided.note, until: "the end of this task, at most 12 hours" });
       }
 
       if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }

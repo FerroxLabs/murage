@@ -30,7 +30,10 @@ const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href;
 /** A shell profile read: Auto stops at it, Full access does not. */
-const PROTECTED_READ = "cat ~/.zshrc";
+/** Auto stops at this (destructive guard); Full access, inside the bot's own
+ * folder, does not. A shell profile read would stop both: the key guard
+ * holds under Full access too. */
+const PROTECTED_READ = "rm -rf build";
 const TELEGRAM_OWNER = 777;
 const TELEGRAM_TOKEN = "123:abcdefghijklmnopqrstuvwxyz123456";
 
@@ -174,7 +177,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         engineDiscovery: "explicit",
         features: { skillRecorder: true },
         instances: {
-          // asks the client to approve reading a shell profile
+          // asks the client to approve cleaning a build folder
           protected: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
