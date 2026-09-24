@@ -264,7 +264,7 @@ export function VoiceSettings({
           </div>
           {previewError && <div role="alert" className="mt-1.5 text-[11.5px] text-danger">{previewError}</div>}
           {voices.some((v) => v.gender) && (
-            <div className="mt-1.5 text-[11.5px] text-ink-secondary">Grouped by how each voice sounds.</div>
+            <div className="mt-1.5 text-[11.5px] text-ink-secondary">Every voice speaks every language.</div>
           )}
         </div>
       )}

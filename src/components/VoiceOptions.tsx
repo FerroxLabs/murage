@@ -19,7 +19,6 @@ const GROUPS = [
   { gender: "male", label: "Male" },
   { gender: "neutral", label: "Neutral" },
 ] as const;
-const PROVIDER = { openai: "OpenAI", grok: "Grok" } as const;
 
 /** Female, Male, Neutral, each alphabetical; empty groups are left out. */
 export function voiceGroups(voices: PickerVoice[]) {
@@ -29,18 +28,18 @@ export function voiceGroups(voices: PickerVoice[]) {
   })).filter((group) => group.voices.length > 0);
 }
 
-/** "Nova, upbeat and energetic (OpenAI)"; the provider only where the list
- *  mixes two. */
-export function voiceOptionText(voice: PickerVoice, showProvider: boolean): string {
-  const text = voice.description ? `${voice.label}, ${voice.description}` : voice.label;
-  return showProvider && voice.provider ? `${text} (${PROVIDER[voice.provider]})` : text;
+/** "Kira: Upbeat, confident, American". Every voice is multilingual, which
+ *  the picker says once instead of on every row; the provider stays in the
+ *  data but off the row. */
+export function voiceOptionText(voice: PickerVoice, _showProvider?: boolean): string {
+  if (!voice.description) return voice.label;
+  return `${voice.label}: ${voice.description[0]!.toUpperCase()}${voice.description.slice(1)}`;
 }
 
 export function VoiceOptions({ voices }: { voices: PickerVoice[] }) {
-  const showProvider = new Set(voices.map((v) => v.provider).filter(Boolean)).size > 1;
   const option = (v: PickerVoice) => (
     <option key={v.id} value={v.id}>
-      {voiceOptionText(v, showProvider)}
+      {voiceOptionText(v)}
     </option>
   );
   if (!voices.some((v) => v.gender)) return <>{voices.map(option)}</>;

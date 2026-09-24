@@ -24,22 +24,26 @@ describe("the voice picker", () => {
     expect(html.match(/<option /g)).toHaveLength(41);
   });
 
-  it("names each voice plainly, with whose voice it is only where the list mixes two", () => {
+  it("names each voice with Murage's name, how it sounds and its accent", () => {
     const nova = FLUX_VOICES.find((v) => v.id === "nova")!;
     const eve = XAI_VOICES.find((v) => v.id === "eve")!;
-    expect(voiceOptionText(nova, true)).toBe("Nova, upbeat and energetic (OpenAI)");
-    expect(voiceOptionText(eve, true)).toBe("Eve, energetic (Grok)");
-    expect(voiceOptionText(eve, false)).toBe("Eve, energetic");
-    expect(render(all)).toContain('value="eve">Eve, energetic (Grok)</option>');
-    // xAI's own engine lists only its 28: no provider suffix needed
-    expect(render(XAI_VOICES)).not.toContain("(Grok)");
-    expect(render(all)).not.toMatch(/—/);
+    const naksh = XAI_VOICES.find((v) => v.id === "naksh")!;
+    expect(voiceOptionText(nova)).toBe("Kira: Upbeat, confident, American");
+    expect(voiceOptionText(eve)).toBe("Harriet: Energetic, friendly, British");
+    // no accent where the listens disagreed
+    expect(voiceOptionText(naksh)).toBe("Arjun: Calm, measured");
+    const html = render(all);
+    expect(html).toContain('value="eve">Harriet: Energetic, friendly, British</option>');
+    expect(html).not.toMatch(/\((OpenAI|Grok)\)|multilingual/);
+    const names = all.map((v) => v.label);
+    expect(new Set(names).size).toBe(41);
+    for (const v of all) expect(names).not.toContain(v.id[0]!.toUpperCase() + v.id.slice(1));
   });
 
   it("keeps a flat list for voices that carry no gender (ElevenLabs, built-in)", () => {
     const html = render([{ id: "v1", label: "Rachel", description: "calm" }] as typeof all);
     expect(html).not.toContain("<optgroup");
-    expect(html).toContain('value="v1">Rachel, calm</option>');
+    expect(html).toContain('value="v1">Rachel: Calm</option>');
   });
 });
 

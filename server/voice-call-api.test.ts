@@ -150,7 +150,7 @@ it("with Flux as the voice engine all 41 Flux voices (OpenAI and Grok) are liste
   const requests = seen.length;
   const voices = await api("GET", "/api/tts/voices");
   expect(voices.body.voices).toHaveLength(41);
-  expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Marin", gender: "female", provider: "openai" });
+  expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Nora", gender: "female", provider: "openai" });
   expect(voices.body.voices.find((v: { id: string }) => v.id === "ara")).toMatchObject({ gender: "female", provider: "grok" });
   expect(seen.length).toBe(requests);
 });

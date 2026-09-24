@@ -14,20 +14,42 @@ export interface XaiSpeechEndpoint {
 }
 
 /** xAI's built-in voices (GET /v1/tts/voices, 2026-09-23). The list is
- *  static so the settings panel needs no network call to show it. Genders
- *  are xAI's own; descriptions only where xAI documents one. */
-const FEMALE = new Set(["ara", "aurora", "carina", "celeste", "eve", "iris", "liora", "luna", "ursa"]);
-const DESCRIBED: Record<string, string> = { eve: "energetic", ara: "warm", rex: "confident", sal: "balanced", leo: "authoritative" };
-export const XAI_VOICES: Voice[] = [
-  "eve", "ara", "leo", "rex", "sal", "altair", "atlas", "aurora", "carina", "castor", "celeste", "cosmo", "helios", "helix",
-  "iris", "kepler", "liora", "lumen", "luna", "lux", "naksh", "orion", "perseus", "rigel", "sirius", "ursa", "zagan", "zenith",
-].map((id) => ({
-  id,
-  label: id[0]!.toUpperCase() + id.slice(1),
-  description: DESCRIBED[id] ?? "multilingual",
-  gender: FEMALE.has(id) ? "female" : "male",
-  provider: "grok",
-}));
+ *  static so the settings panel needs no network call to show it. `id` is
+ *  xAI's own and is what gets stored and sent; `label` is the name Murage
+ *  shows. Genders are xAI's own. The descriptions come from six listens of
+ *  two sample sentences per voice (2026-09-24), plus the five xAI documents;
+ *  an accent is named only where the listens agreed. Every voice speaks
+ *  every supported language, so that is said once, under the picker. */
+export const XAI_VOICES: Voice[] = ([
+  ["eve", "Harriet", "Energetic, friendly, British", "female"],
+  ["ara", "Maya", "Warm, friendly, American", "female"],
+  ["aurora", "Elena", "Calm, cheerful, American", "female"],
+  ["carina", "Ivy", "Bright, youthful, American", "female"],
+  ["celeste", "Sadie", "Friendly, bright, American", "female"],
+  ["iris", "Claire", "Measured, bright, American", "female"],
+  ["liora", "Naomi", "Calm, measured, American", "female"],
+  ["luna", "Jade", "Friendly, confident, American", "female"],
+  ["ursa", "Beth", "Bright, crisp, American", "female"],
+  ["leo", "Alistair", "Authoritative, calm, British", "male"],
+  ["rex", "Grant", "Confident, calm, American", "male"],
+  ["sal", "Nathan", "Balanced, calm, American", "male"],
+  ["altair", "Simon", "Calm, measured, American", "male"],
+  ["atlas", "Ben", "Calm, friendly, American", "male"],
+  ["castor", "Graham", "Measured, confident, American", "male"],
+  ["cosmo", "Felix", "Calm, confident, American", "male"],
+  ["helios", "Adrian", "Measured, friendly, American", "male"],
+  ["helix", "Jamie", "Friendly, cheerful, American", "male"],
+  ["kepler", "Neil", "Confident, measured, American", "male"],
+  ["lumen", "Tyler", "Confident, friendly, American", "male"],
+  ["lux", "Evan", "Calm, steady, American", "male"],
+  ["naksh", "Arjun", "Calm, measured", "male"],
+  ["orion", "Cole", "Friendly, confident, American", "male"],
+  ["perseus", "Reid", "Calm, measured, American", "male"],
+  ["rigel", "Toby", "Measured, confident", "male"],
+  ["sirius", "Wes", "Confident, clear, American", "male"],
+  ["zagan", "Victor", "Deep, confident, American", "male"],
+  ["zenith", "Luke", "Calm, friendly, American", "male"],
+] as const).map(([id, label, description, gender]) => ({ id, label, description, gender, provider: "grok" as const }));
 
 const IDS = new Set(XAI_VOICES.map((v) => v.id));
 

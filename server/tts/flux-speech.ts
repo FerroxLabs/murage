@@ -30,22 +30,24 @@ function baseFor(endpoint: VoiceEndpoint): string {
   return (stub || endpoint.baseUrl).replace(/\/+$/, "");
 }
 
-/** The voices Flux offers on `flux-voice-speak` (OpenAI's list). OpenAI does
+/** The voices Flux offers on `flux-voice-speak` (OpenAI's list). `id` is
+ *  OpenAI's own and is what gets stored and sent; `label` is the name Murage
+ *  shows, described from six listens per voice (2026-09-24). OpenAI does
  *  not publish genders; these are how each voice commonly sounds. */
 export const FLUX_VOICES: Voice[] = ([
-  ["marin", "Marin", "natural and warm", "female"],
-  ["cedar", "Cedar", "natural and grounded", "male"],
-  ["alloy", "Alloy", "even and balanced", "neutral"],
-  ["ash", "Ash", "clear and confident", "male"],
-  ["ballad", "Ballad", "soft and expressive", "male"],
-  ["coral", "Coral", "bright and friendly", "female"],
-  ["echo", "Echo", "calm and even", "male"],
-  ["fable", "Fable", "British storyteller", "male"],
-  ["nova", "Nova", "upbeat and energetic", "female"],
-  ["onyx", "Onyx", "deep and steady", "male"],
-  ["sage", "Sage", "measured and thoughtful", "female"],
-  ["shimmer", "Shimmer", "light and clear", "female"],
-  ["verse", "Verse", "expressive and lively", "male"],
+  ["marin", "Nora", "Warm, natural, American", "female"],
+  ["cedar", "Owen", "Grounded, friendly, American", "male"],
+  ["alloy", "Quinn", "Balanced, even", "neutral"],
+  ["ash", "Ryan", "Confident, friendly, American", "male"],
+  ["ballad", "Oliver", "Soft, expressive, British", "male"],
+  ["coral", "Zoe", "Bright, energetic, American", "female"],
+  ["echo", "Noah", "Calm, even, American", "male"],
+  ["fable", "Rupert", "Storyteller, crisp, British", "male"],
+  ["nova", "Kira", "Upbeat, confident, American", "female"],
+  ["onyx", "Marcus", "Deep, steady, American", "male"],
+  ["sage", "Tessa", "Crisp, cheerful, American", "female"],
+  ["shimmer", "Chloe", "Light, bright, American", "female"],
+  ["verse", "Mateo", "Expressive, friendly, American", "male"],
 ] as const).map(([id, label, description, gender]) => ({ id, label, description, gender, provider: "openai" as const }));
 
 const IDS = new Set(FLUX_VOICES.map((v) => v.id));

@@ -215,11 +215,11 @@ describe("one Flux list with every Flux voice", () => {
       expect(`${v.label} ${v.description}`).not.toMatch(/—|\b(she|he|her|his|woman|man|female|male)\b/i);
     }
     const byId = Object.fromEntries(voices.map((v) => [v.id, v]));
-    expect(byId.nova).toMatchObject({ gender: "female", provider: "openai", description: "upbeat and energetic" });
+    expect(byId.nova).toMatchObject({ gender: "female", provider: "openai", label: "Kira", description: "Upbeat, confident, American" });
     expect(byId.alloy!.gender).toBe("neutral");
     expect(byId.onyx!.gender).toBe("male");
-    expect(byId.eve).toMatchObject({ gender: "female", provider: "grok", description: "energetic" });
-    expect(byId.rex).toMatchObject({ gender: "male", description: "confident" });
+    expect(byId.eve).toMatchObject({ gender: "female", provider: "grok", label: "Harriet", description: "Energetic, friendly, British" });
+    expect(byId.rex).toMatchObject({ gender: "male", label: "Grant", description: "Confident, calm, American" });
     expect(voices.filter((v) => v.provider === "grok" && v.gender === "female").map((v) => v.id).sort())
       .toEqual(["ara", "aurora", "carina", "celeste", "eve", "iris", "liora", "luna", "ursa"]);
   });
