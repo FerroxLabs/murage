@@ -35,6 +35,7 @@ import { CallButton } from "./CallView";
 import { ChatHeaderMenu, type HeaderMenuItem } from "./ChatHeaderMenu";
 import { openFiles } from "./Files";
 import { MemoryLauncher } from "./MemoryLauncher";
+import { modShortcut } from "@/lib/keyboard-shortcuts";
 import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
 import { RoleBadge } from "./RoleBadge";
@@ -247,7 +248,7 @@ export function ChatHeader({
       find: {
         id: "find",
         label: t("chatHeader.find"),
-        description: t("chatHeader.findShortcut"),
+        description: modShortcut("F"),
         icon: <Search size={16} />,
         checked: findOpen,
         onSelect: onToggleFind,
@@ -409,7 +410,7 @@ export function ChatHeader({
               "shrink-0 rounded-md p-1.5 hover:bg-raised",
               findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
-            title={t("chatHeader.findTitle")}
+            title={`${t("chatHeader.find")} (${modShortcut("F")})`}
           >
             <Search size={18} />
           </button>

@@ -25,6 +25,11 @@ export function shortcutPlatformIsMac(): boolean {
   if (typeof window !== "undefined" && window.muragebox?.platform) return window.muragebox.platform === "darwin";
   return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
 }
+/** A Mod chord as a tooltip writes it: `⌘F` / `⌘⇧Z` on a Mac, `Ctrl+F` /
+ * `Ctrl+Shift+Z` everywhere else. */
+export function modShortcut(key: string, { shift = false, mac = shortcutPlatformIsMac() }: { shift?: boolean; mac?: boolean } = {}): string {
+  return mac ? `⌘${shift ? "⇧" : ""}${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
+}
 export function shortcutKeys(item: Shortcut, mac: boolean): string[] {
   return item.keys.map(key => key === "Mod" ? mac ? "⌘" : "Ctrl" : key === "Alt" && mac ? "Option" : key === "Escape" ? "Esc" : key === "Enter" && mac ? "Return" : key);
 }

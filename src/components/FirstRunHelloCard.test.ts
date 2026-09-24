@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { saveHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
+import { saveHelloAnswer, skipHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
 
 interface Call {
   path: string;
@@ -143,5 +143,48 @@ describe("the hello step's answer", () => {
     } finally {
       fetched.mockRestore();
     }
+  });
+});
+
+// "Skip for now" passes over the email, not the name. The Windows customer
+// pass typed "Sam", pressed Skip, and was then called "there".
+describe("skipping the hello step", () => {
+  const skipDeps = (box: ReturnType<typeof harness>) => {
+    const skipped: string[] = [];
+    return { skipped, deps: { ...box.deps, skip: async (step: "hello") => { skipped.push(step); } } };
+  };
+
+  it("keeps a typed name, and sends nobody to the list", async () => {
+    const box = harness();
+    const { skipped, deps } = skipDeps(box);
+    const result = await skipHelloAnswer({ name: "  Sam ", email: "" }, deps);
+    expect(box.calls).toEqual([{ path: "/api/config", method: "PUT", body: { profile: { name: "Sam" } } }]);
+    expect(box.identified).toEqual([]);
+    expect(box.gates).toEqual(["skipped"]);
+    expect(skipped).toEqual(["hello"]);
+    expect(result.greeting).toContain("Sam");
+  });
+
+  it("never saves a half-typed email when skipping", async () => {
+    const box = harness();
+    const { deps } = skipDeps(box);
+    await skipHelloAnswer({ name: "Sam", email: "sam@exa" }, deps);
+    expect(JSON.stringify(box.calls)).not.toContain("sam@exa");
+  });
+
+  it("saves nothing when no name was typed", async () => {
+    const box = harness();
+    const { skipped, deps } = skipDeps(box);
+    const result = await skipHelloAnswer({ name: "   ", email: "" }, deps);
+    expect(box.calls).toEqual([]);
+    expect(skipped).toEqual(["hello"]);
+    expect(result.greeting).toBe("");
+  });
+
+  it("does not skip past a name that did not save", async () => {
+    const box = harness({ savedProfile: { name: "Somebody Else" } });
+    const { skipped, deps } = skipDeps(box);
+    await expect(skipHelloAnswer({ name: "Sam", email: "" }, deps)).rejects.toThrow();
+    expect(skipped).toEqual([]);
   });
 });

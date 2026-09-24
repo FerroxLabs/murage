@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 
+import { modShortcut } from "@/lib/keyboard-shortcuts";
 import { createMarkdownExtensions, EMPTY_MARKDOWN_DOC } from "@/lib/markdown-fidelity";
 import { createSlashCommand, SlashMenuPopup, type SlashKeyHandle, type SlashState } from "./slashMenu";
 import "./rich-markdown-editor.css";
@@ -157,8 +158,8 @@ function FormatButtons({ editor, variant }: { editor: Editor; variant: "full" | 
       <ToolbarButton title="Heading 2" active={editor.isActive("heading", { level: 2 })} onClick={() => chain().toggleHeading({ level: 2 }).run()}><Heading2 size={16} aria-hidden="true" /></ToolbarButton>
       <ToolbarButton title="Heading 3" active={editor.isActive("heading", { level: 3 })} onClick={() => chain().toggleHeading({ level: 3 }).run()}><Heading3 size={16} aria-hidden="true" /></ToolbarButton>
       <Divider />
-      <ToolbarButton title="Bold (⌘B)" active={editor.isActive("bold")} onClick={() => chain().toggleBold().run()}><Bold size={16} aria-hidden="true" /></ToolbarButton>
-      <ToolbarButton title="Italic (⌘I)" active={editor.isActive("italic")} onClick={() => chain().toggleItalic().run()}><Italic size={16} aria-hidden="true" /></ToolbarButton>
+      <ToolbarButton title={`Bold (${modShortcut("B")})`} active={editor.isActive("bold")} onClick={() => chain().toggleBold().run()}><Bold size={16} aria-hidden="true" /></ToolbarButton>
+      <ToolbarButton title={`Italic (${modShortcut("I")})`} active={editor.isActive("italic")} onClick={() => chain().toggleItalic().run()}><Italic size={16} aria-hidden="true" /></ToolbarButton>
       <ToolbarButton title="Strikethrough" active={editor.isActive("strike")} onClick={() => chain().toggleStrike().run()}><Strikethrough size={16} aria-hidden="true" /></ToolbarButton>
       <ToolbarButton title="Inline code" active={editor.isActive("code")} onClick={() => chain().toggleCode().run()}><Code size={16} aria-hidden="true" /></ToolbarButton>
       <Divider />
@@ -171,8 +172,8 @@ function FormatButtons({ editor, variant }: { editor: Editor; variant: "full" | 
         <>
           <ToolbarButton title="Divider" onClick={() => chain().setHorizontalRule().run()}><Minus size={16} aria-hidden="true" /></ToolbarButton>
           <Divider />
-          <ToolbarButton title="Undo (⌘Z)" disabled={!editor.can().undo()} onClick={() => chain().undo().run()}><Undo2 size={16} aria-hidden="true" /></ToolbarButton>
-          <ToolbarButton title="Redo (⌘⇧Z)" disabled={!editor.can().redo()} onClick={() => chain().redo().run()}><Redo2 size={16} aria-hidden="true" /></ToolbarButton>
+          <ToolbarButton title={`Undo (${modShortcut("Z")})`} disabled={!editor.can().undo()} onClick={() => chain().undo().run()}><Undo2 size={16} aria-hidden="true" /></ToolbarButton>
+          <ToolbarButton title={`Redo (${modShortcut("Z", { shift: true })})`} disabled={!editor.can().redo()} onClick={() => chain().redo().run()}><Redo2 size={16} aria-hidden="true" /></ToolbarButton>
           {linkOpen ? <LinkField editor={editor} onDone={() => setLinkOpen(false)} /> : null}
         </>
       )}

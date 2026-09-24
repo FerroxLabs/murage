@@ -81,6 +81,7 @@ import {
   windowAfterPrepend,
 } from "@/lib/transcript-window";
 import { useReplyDraft } from "@/lib/drafts";
+import { modShortcut } from "@/lib/keyboard-shortcuts";
 import { useMessageById } from "@/lib/held-message";
 
 function dayLabel(at: number): string {
@@ -1485,7 +1486,7 @@ export function GroupView({ group }: { group: Group }) {
               "rounded-md p-1.5 hover:bg-raised",
               findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
-            title="Find in conversation (⌘F)"
+            title={`Find in conversation (${modShortcut("F")})`}
           >
             <Search size={18} />
           </button>

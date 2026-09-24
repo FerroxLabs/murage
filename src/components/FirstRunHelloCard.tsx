@@ -58,6 +58,7 @@ export interface HelloAnswerDeps {
   identify: (email: string) => void;
   markGate: (status: "submitted" | "skipped") => void;
   answer: (step: "hello", answer: string) => Promise<void>;
+  skip?: (step: "hello") => Promise<void>;
 }
 
 const LIVE: HelloAnswerDeps = {
@@ -65,6 +66,7 @@ const LIVE: HelloAnswerDeps = {
   identify: identifyEmail,
   markGate: setEmailGateDone,
   answer: answerSetupStep,
+  skip: skipSetupStep,
 };
 
 /**
@@ -104,6 +106,28 @@ export async function saveHelloAnswer(
   // transcript is where a person checks what an assistant heard.
   await deps.answer("hello", [profile.name, profile.email].filter(Boolean).join(", "));
   return { profile, greeting: greetingLine(profile.name) };
+}
+
+/**
+ * "Skip for now" PASSES OVER THE EMAIL, NOT A NAME THEY ALREADY TYPED.
+ *
+ * It used to drop both, so somebody who typed their name and skipped the
+ * address was called "there" from then on. A typed name is saved (and the
+ * save confirmed, as above); the email is never saved or sent on a skip,
+ * however much of it was typed, and nobody goes on the list.
+ */
+export async function skipHelloAnswer(
+  typed: { name: string; email: string },
+  deps: HelloAnswerDeps = LIVE,
+): Promise<{ greeting: string }> {
+  const name = typed.name.trim();
+  if (name) {
+    const result = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile: { name } }) });
+    if (result?.profile?.name !== name) throw new Error(copy.failure);
+  }
+  try { deps.markGate("skipped"); } catch { /* a blocked store is not a failed skip */ }
+  await (deps.skip ?? skipSetupStep)("hello");
+  return { greeting: name ? greetingLine(name) : "" };
 }
 
 export function FirstRunHelloCard({ settled }: { settled: boolean }) {
@@ -149,8 +173,8 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
     setBusy(true);
     setFailure("");
     try {
-      try { setEmailGateDone("skipped"); } catch { /* as above */ }
-      await skipSetupStep("hello");
+      const { greeting } = await skipHelloAnswer({ name, email });
+      if (greeting) setSaved(greeting);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
