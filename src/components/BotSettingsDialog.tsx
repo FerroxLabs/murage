@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { SettingsPanel } from "./SettingsPanel";
 import { BOT_SETTINGS_SECTIONS, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
 import { BotSettingsDraftContext, BotSettingsNavigationContext, type BotSettingsDraft } from "./bot-settings-drafts";
@@ -10,7 +11,10 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   const opener = useRef<HTMLElement | null>(null);
   const [section, setSection] = useState<BotSettingsSection>(state.botSettingsIntent?.section ?? "overview"), [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
-  const matches = useMemo(() => filterBotSettingsSections(query), [query]);
+  // "What shapes" reads the desktop-only /shapes route; elsewhere it would be
+  // an empty page, so the section is not offered at all.
+  const desktop = useDesktopSurface();
+  const matches = useMemo(() => filterBotSettingsSections(query).filter(item => desktop || item.id !== "shapes"), [query, desktop]);
   const selected = BOT_SETTINGS_SECTIONS.find(item => item.id === section)!;
   const label = (item: typeof selected) => botSettingsSectionLabel(item, bot.name);
   const dirty = Object.entries(drafts).filter(([, state]) => state.dirty), saving = Object.values(drafts).some(state => state.saving);
