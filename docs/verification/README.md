@@ -39,6 +39,7 @@ Use only mapped, tested commands:
 - [Channels](channels.md)
 - [Engines and Doctor](engines.md)
 - [Agent questions](questions.md)
+- [Full access stops](full-access-stops.md)
 
 Renderer-only behavior—Settings, sidebar drag-and-drop, the VM modal, the
 built-in browser panel, and updater UI—is not proven by this first harness.
