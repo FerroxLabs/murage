@@ -384,9 +384,9 @@ invokes; `rmSync`/`rm`/`rm -rf` rows are the allowlisted ones in section 5.
 | `scripts/verify-question-fuigo.mjs:302` | `removeTempDir` | `owned` | L58 `mkdtempSync(join(tmpdir(), "murage-fuigo-question-"));` |
 | `server/bot-package-archive.ts:171` | `rmSync` | `scratch` | L149 `mkdtempSync(join(dirname(target), ".murage-package-write-"));` |
 | `server/bot-package-import.ts:263` | `rmSync` | `stagingDirectory` | L252 `mkdtempSync(join(options.dataDir, ".package-import-"));` |
-| `server/skill-collection.ts:144` | `rmSync` | `previous` | `join(root(), \`.replaced-${randomUUID()}\`)` under DATA_DIR/skill-collection (runtime, allowlisted) |
-| `server/skill-collection.ts:146` | `rmSync` | `incoming` | `join(root(), \`.incoming-${randomUUID()}\`)`, created by this import (runtime, allowlisted) |
-| `server/skill-collection.ts:168` | `rmSync` | `join(root(), name)` | DATA_DIR/skill-collection/<name>, name checked by `isSkillName` first (runtime, allowlisted) |
+| `server/skill-collection.ts:148` | `rmSync` | `previous` | `join(root(), \`.replaced-${randomUUID()}\`)` under DATA_DIR/skill-collection (runtime, allowlisted) |
+| `server/skill-collection.ts:150` | `rmSync` | `incoming` | `join(root(), \`.incoming-${randomUUID()}\`)`, created by this import (runtime, allowlisted) |
+| `server/skill-collection.ts:173` | `rmSync` | `join(root(), name)` | DATA_DIR/skill-collection/<name>, name checked by `isSkillName` first (runtime, allowlisted) |
 | `server/container-computer.ts:909` | `rm` | `context` | L904 `await mkdtemp(join(tmpdir(), "murage-cua-image-"));` |
 | `server/drivers/claude.ts:283` | `rmSync` | `dirname(filePath` | `dirname(filePath)`: the per-session mkdtemp `murage-mcp-`/`murage-system-` directory (L980, L1071) (runtime, allowlisted) |
 | `server/drivers/claude.ts:1033` | `rmSync` | `dirname(mcpConfigPath` | `dirname(mcpConfigPath)`: mkdtemp `murage-mcp-` (L980) (runtime, allowlisted) |

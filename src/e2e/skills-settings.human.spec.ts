@@ -147,6 +147,43 @@ test("one Topic dropdown lists a topic, and it and the search clear each other",
   await expect(topic).toHaveValue("");
 });
 
+test("a skill is duplicated, then the copy is edited and saved", async ({ page }, info) => {
+  await page.goto(origin + "/__skills");
+  await page.getByRole("button", { name: "Import skill" }).click();
+  await page.getByLabel("Choose a skill file or zip").setInputFiles({ name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from(md("standup-notes", "Summarise the standup in three bullets.")) });
+  await page.getByRole("button", { name: "Open it" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+  await expect(page.getByText("This is your copy of standup-notes.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "standup-notes-copy" })).toBeVisible();
+  await expect(page.getByText("Copied from standup-notes")).toBeVisible();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Name").fill("Standup notes, short");
+  await page.getByLabel("What it's for").fill("Short standup notes.");
+  const instructions = page.getByRole("textbox", { name: "Instructions" });
+  await instructions.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Keep it under fifty words.");
+  await page.screenshot({ path: info.outputPath("editor.png"), fullPage: true });
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Standup notes, short" })).toBeVisible();
+  await expect(page.getByText("Keep it under fifty words.")).toBeVisible();
+  await expect(page.getByText("---")).toHaveCount(0);
+});
+
+test("editing a built-in skill edits the owner's own copy", async ({ page }, info) => {
+  await page.goto(origin + "/__skills");
+  await page.getByLabel("Search skills").fill("invoice creator");
+  await page.getByRole("button", { name: /^Invoice Creator/ }).first().click();
+  await expect(page.getByText("Built-in", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByText("Built-in skills can't be changed, so this edits your own copy.")).toBeVisible();
+  await page.screenshot({ path: info.outputPath("editor-built-in.png"), fullPage: true });
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await expect(page.getByText(/^Copied from Invoice Creator/)).toBeVisible();
+});
+
 test("a search with no results says so", async ({ page }) => {
   await page.goto(origin + "/__skills");
   await page.getByLabel("Search skills").fill("zzqxv nothing matches this");

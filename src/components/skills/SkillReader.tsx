@@ -6,23 +6,20 @@
 // window (one Add button). A skill that needs a look is switched on only
 // after its findings are shown and the owner says "Use it anyway"; a
 // Blocked skill has no switch and no Add button at all.
-import { ChevronDown, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ChatMarkdown } from "../ChatMarkdown";
 import { Switch } from "../SettingsPrimitives";
+import { BUILT_IN_COPY_NOTE, SkillEditor } from "./SkillEditor";
 import { VerdictBadge } from "./VerdictBadge";
-import { deleteCollectionSkill, findingLines, readSkill, refusalOf, setSkillForBot, type SkillDetail } from "@/lib/skills-api";
+import { collectionSlug, deleteCollectionSkill, duplicateSkill, findingLines, readSkill, refusalOf, setSkillForBot, skillBody, type SkillDetail } from "@/lib/skills-api";
 
 /** Long skills render this much until "Show all". */
 export const READER_PREVIEW_CHARS = 60_000;
 export const BLOCKED_LINE = "This skill was blocked by the safety check and can't be switched on.";
 
-/** The instructions without their header block (name, description and
- *  other settings), which the reader already shows in words above. */
-export function skillBody(text: string): string {
-  return text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "").replace(/^\s+/, "");
-}
+export { skillBody };
 
 export type ReaderMode = { kind: "settings" } | { kind: "bot"; botId: string };
 export type Pending = { kind: "enable"; botId: string } | { kind: "delete"; bots: string[] } | null;
@@ -40,10 +37,15 @@ export interface SkillReaderViewProps {
   onCancel(): void;
   onDelete(): void;
   onShowAll(): void;
+  onDuplicate?(): void;
+  onEdit?(): void;
+  /** A line about what just happened (a copy made, a save that switched a bot off). */
+  notice?: string;
 }
 
 const LINK = "-ml-1.5 flex items-center gap-1 rounded px-1.5 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-ink";
 const BUTTON = "rounded-lg px-3 py-1.5 text-[12.5px] font-medium disabled:opacity-50";
+const SMALL = "inline-flex items-center gap-1 rounded-md bg-control px-2 py-1 text-[12px] text-ink hover:bg-control/70 disabled:opacity-50";
 
 export function SkillReaderView(props: SkillReaderViewProps) {
   const { skill, mode, busy, pending } = props;
@@ -69,6 +71,22 @@ export function SkillReaderView(props: SkillReaderViewProps) {
             <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} />
             {skill.kind !== "library" && <span className="text-[11.5px] text-ink-secondary">{skill.source}</span>}
           </div>
+          {(props.onEdit || props.onDuplicate) && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {props.onEdit && (
+                <button type="button" disabled={busy} onClick={props.onEdit} className={SMALL}>
+                  <Pencil size={12} aria-hidden="true" />
+                  Edit
+                </button>
+              )}
+              {props.onDuplicate && (
+                <button type="button" disabled={busy} onClick={props.onDuplicate} className={SMALL}>
+                  <Copy size={12} aria-hidden="true" />
+                  Duplicate
+                </button>
+              )}
+            </div>
+          )}
         </div>
         {mode.kind === "bot" && !blocked && (
           inBot?.enabled ? (
@@ -80,6 +98,8 @@ export function SkillReaderView(props: SkillReaderViewProps) {
           )
         )}
       </div>
+
+      {props.notice && <p role="status" className="mt-3 rounded-lg bg-accent/10 px-3 py-2 text-[12.5px] text-ink">{props.notice}</p>}
 
       {/* What Skill Guard found, in plain words */}
       {blocked ? (
@@ -185,23 +205,28 @@ export function SkillReaderView(props: SkillReaderViewProps) {
 }
 
 /** The reader with its requests: loads the skill, switches it per bot
- *  (asking first when it needs a look), and deletes imported skills. */
+ *  (asking first when it needs a look), deletes imported skills, and makes
+ *  copies and edits. A built-in skill is edited as the owner's own copy. */
 export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: string; mode: ReaderMode; onBack(): void; onChanged?(): void }) {
+  const [ref, setRef] = useState(skillRef);
   const [skill, setSkill] = useState<SkillDetail | null>(null);
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [editing, setEditing] = useState<{ note?: string } | null>(null);
+  const [notice, setNotice] = useState("");
 
+  useEffect(() => setRef(skillRef), [skillRef]);
   const load = useCallback(async () => {
     try {
-      setSkill(await readSkill(skillRef));
+      setSkill(await readSkill(ref));
       setLoadError("");
     } catch (cause) {
       setLoadError(refusalOf(cause).message || "This skill couldn't be read.");
     }
-  }, [skillRef]);
+  }, [ref]);
   useEffect(() => {
     setSkill(null);
     setPending(null);
@@ -215,6 +240,7 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
   const run = async (work: () => Promise<unknown>, leaving = false) => {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       await work();
       onChanged?.();
@@ -224,6 +250,25 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
       const refusal = refusalOf(cause);
       if (refusal.code === "in-use" && refusal.bots) setPending({ kind: "delete", bots: refusal.bots });
       else setError(refusal.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** A copy in Your skills, opened (and, for an edit, opened in the editor). */
+  const copy = async (then: "open" | "edit") => {
+    if (!skill) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { skill: made } = await duplicateSkill(skill.ref);
+      onChanged?.();
+      setRef(made.ref);
+      if (then === "edit") setEditing({ note: BUILT_IN_COPY_NOTE });
+      else setNotice(`This is your copy of ${skill.name}.`);
+    } catch (cause) {
+      setError(refusalOf(cause).message || "That couldn't be copied.");
     } finally {
       setBusy(false);
     }
@@ -239,6 +284,23 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
   }
   if (!skill) return <p className="mt-3 text-[12px] text-ink-secondary">Loading…</p>;
 
+  if (editing && skill.kind === "collection") {
+    return (
+      <SkillEditor
+        key={skill.ref}
+        skill={skill}
+        note={editing.note}
+        onCancel={() => setEditing(null)}
+        onSaved={({ needsLook }) => {
+          setEditing(null);
+          onChanged?.();
+          setNotice(needsLook.length ? `Saved. Switched off on ${needsLook.join(", ")} until you confirm it.` : "Saved.");
+          void load();
+        }}
+      />
+    );
+  }
+
   return (
     <SkillReaderView
       skill={skill}
@@ -247,8 +309,11 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
       pending={pending}
       error={error}
       showAll={showAll}
+      notice={notice}
       onBack={onBack}
       onShowAll={() => setShowAll(true)}
+      onDuplicate={() => void copy("open")}
+      onEdit={() => (skill.kind === "collection" ? setEditing({}) : void copy("edit"))}
       onSwitch={(botId, on) => {
         if (on && skill.verdict === "review") return setPending({ kind: "enable", botId });
         void run(() => setSkillForBot(skill.ref, botId, on));
@@ -257,10 +322,10 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
         const current = pending;
         setPending(null);
         if (current?.kind === "enable") void run(() => setSkillForBot(skill.ref, current.botId, true, skill.scan.contentHash));
-        if (current?.kind === "delete") void run(() => deleteCollectionSkill(skill.name, true), true);
+        if (current?.kind === "delete") void run(() => deleteCollectionSkill(collectionSlug(skill.ref), true), true);
       }}
       onCancel={() => setPending(null)}
-      onDelete={() => void run(() => deleteCollectionSkill(skill.name), true)}
+      onDelete={() => void run(() => deleteCollectionSkill(collectionSlug(skill.ref)), true)}
     />
   );
 }

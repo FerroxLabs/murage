@@ -39,6 +39,12 @@ export function verdictLabel(verdict: SkillVerdict): typeof CLEAN_LINE | "Needs 
   return verdict === "clean" ? CLEAN_LINE : verdict === "review" ? "Needs a look" : "Blocked";
 }
 
+/** The instructions without their header block (name, description and
+ *  other settings), which the screens show in words instead. */
+export function skillBody(text: string): string {
+  return text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "").replace(/^\s+/, "");
+}
+
 /** Each finding once, in the order found. */
 export function findingLines(scan: Pick<SkillScan, "findings">): string[] {
   return [...new Set(scan.findings.map((finding) => finding.message))];
@@ -69,6 +75,26 @@ export function setSkillForBot(ref: string, botId: string, on: boolean, acknowle
 
 export function deleteCollectionSkill(name: string, fromBots = false, request: Request = api): Promise<{ removedFrom: string[] }> {
   return request(`/api/skills/collection/${encodeURIComponent(name)}`, { method: "DELETE", body: JSON.stringify(fromBots ? { fromBots: true } : {}) });
+}
+
+/** A copy of any skill in Your skills ("<name>-copy"), to open or edit. */
+export function duplicateSkill(ref: string, request: Request = api): Promise<{ skill: SkillDetail }> {
+  return request(`/api/skills/${encodeURIComponent(ref)}/duplicate`, { method: "POST", body: JSON.stringify({}) });
+}
+
+/** The name a skill in Your skills is kept under (its ref without "collection:"). */
+export function collectionSlug(ref: string): string {
+  return ref.startsWith("collection:") ? ref.slice("collection:".length) : ref;
+}
+
+/** Save an edit to one of your skills. `needsLook` names the bots it was
+ *  switched off on because the new version needs a look first. */
+export function saveSkill(
+  ref: string,
+  edit: { displayName: string; description: string; body: string },
+  request: Request = api,
+): Promise<{ skill: SkillDetail; needsLook: string[]; failed: string[] }> {
+  return request(`/api/skills/collection/${encodeURIComponent(collectionSlug(ref))}`, { method: "PUT", body: JSON.stringify(edit) });
 }
 
 /** What a refused request said, for the screens: its code, its scan, and

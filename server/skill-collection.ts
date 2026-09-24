@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
-import { isSkillName, parseSkillMd } from "./skills.ts";
+import { DESCRIPTION_MAX, isSkillName, parseSkillMd, SKILL_NAME_MAX } from "./skills.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
 import type { SkillScan } from "./skill-guard/types.ts";
 
@@ -21,12 +21,16 @@ export const MAX_SKILL_FILES = 30;
 export const MAX_SKILL_FILE_BYTES = 256 * 1024;
 export const MAX_SKILL_TOTAL_BYTES = 2 * 1024 * 1024;
 
-export type SkillSourceKind = "file" | "folder" | "zip" | "link";
+export type SkillSourceKind = "file" | "folder" | "zip" | "link" | "copy";
 export interface CollectionSkill {
   name: string;
+  /** What the owner calls it, when they named it in the editor. */
+  displayName?: string;
   description: string;
   source: { kind: SkillSourceKind; label: string };
   importedAt: string;
+  /** Set when the owner edited it here. */
+  updatedAt?: string;
   /** Paths of the files kept, SKILL.md first. */
   files: string[];
   /** Files that were not text and so were not kept. */
@@ -117,7 +121,7 @@ export function getCollectionSkill(name: string): (CollectionSkill & { text: str
 export function importCollectionSkill(
   input: SkillFile[],
   source: CollectionSkill["source"],
-  options: { replace?: boolean; skipped?: string[] } = {},
+  options: { replace?: boolean; skipped?: string[]; keep?: Partial<Pick<CollectionSkill, "displayName" | "importedAt" | "updatedAt">> } = {},
 ): CollectionSkill | { error: string; code: "invalid" | "too-big" | "exists" } {
   const normalized = normalizeSkillFiles(input);
   if ("error" in normalized) return normalized;
@@ -154,6 +158,7 @@ export function importCollectionSkill(
     files: normalized.files.map((file) => file.path),
     skipped: options.skipped ?? [],
     scan,
+    ...options.keep,
   };
   writeRecords({ ...readRecords(), [parsed.name]: record });
   return record;
@@ -167,4 +172,72 @@ export function deleteCollectionSkill(name: string): boolean {
   writeRecords(records);
   rmSync(join(root(), name), { recursive: true, force: true });
   return true;
+}
+
+/** SKILL.md with its header block rewritten: `name` and `description` set,
+ *  every other header key kept as it was, and (when given) a new body. */
+export function rewriteSkillHeader(text: string, fields: { name: string; description: string; body?: string }): string {
+  const match = text.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)([\s\S]*)$/);
+  const lines = match ? match[1]!.split(/\r?\n/) : [];
+  const kept: string[] = [];
+  let dropping = false;
+  for (const line of lines) {
+    const key = /^([A-Za-z][\w-]*):/.exec(line)?.[1]?.toLowerCase();
+    if (key) dropping = key === "name" || key === "description";
+    else if (line.trim() && !/^[ \t]/.test(line)) dropping = false;
+    if (!dropping) kept.push(line);
+  }
+  const description = fields.description.replace(/\s+/g, " ").trim();
+  const body = (fields.body ?? (match ? match[2]! : text)).replace(/^\s+/, "");
+  return ["---", `name: ${fields.name}`, `description: ${JSON.stringify(description)}`, ...kept, "---", body].join("\n").replace(/\n*$/, "\n");
+}
+
+/** The first free "<name>-copy", "<name>-copy-2", ... in the collection. */
+export function copyName(name: string): string {
+  const taken = readRecords();
+  for (let n = 1; n < 1000; n += 1) {
+    const suffix = n === 1 ? "-copy" : `-copy-${n}`;
+    const candidate = `${name.slice(0, SKILL_NAME_MAX - suffix.length).replace(/-+$/, "")}${suffix}`;
+    if (isSkillName(candidate) && !taken[candidate]) return candidate;
+  }
+  return `${name.slice(0, SKILL_NAME_MAX - 14)}-copy-${randomUUID().slice(0, 8)}`;
+}
+
+/** A copy of a skill (from the collection or the library) in Your skills,
+ *  under a new name, labelled with the original's name. */
+export function duplicateIntoCollection(
+  files: SkillFile[],
+  original: { name: string; displayName: string; description: string },
+  wanted?: string,
+): CollectionSkill | { error: string; code: "invalid" | "too-big" | "exists" } {
+  const name = wanted && isSkillName(wanted) && !readRecords()[wanted] ? wanted : copyName(original.name);
+  const skillMd = files.find((file) => file.path === "SKILL.md");
+  if (!skillMd) return { error: "That skill has no instructions to copy.", code: "invalid" };
+  const copied = files.map((file) => (file === skillMd ? { path: "SKILL.md", content: rewriteSkillHeader(file.content, { name, description: original.description }) } : file));
+  return importCollectionSkill(copied, { kind: "copy", label: original.displayName.slice(0, 200) }, {
+    keep: original.displayName !== original.name ? { displayName: `${original.displayName} (copy)`.slice(0, 120) } : undefined,
+  });
+}
+
+/** Edit one of the owner's skills in place: same name (the slug never
+ *  changes), new description, instructions and display name. Rescanned. */
+export function updateCollectionSkill(
+  name: string,
+  edit: { displayName?: string; description: string; body: string },
+): (CollectionSkill & { text: string; contents: SkillFile[] }) | { error: string; code: "invalid" | "too-big" | "exists" | "missing" } {
+  const current = getCollectionSkill(name);
+  if (!current) return { error: "No such skill.", code: "missing" };
+  const description = edit.description.replace(/\s+/g, " ").trim();
+  if (!description || description.length > DESCRIPTION_MAX) return { error: `A description is needed, at most ${DESCRIPTION_MAX} characters.`, code: "invalid" };
+  const text = rewriteSkillHeader(current.text, { name, description, body: edit.body });
+  const files = current.contents.map((file) => (file.path === "SKILL.md" ? { path: "SKILL.md", content: text } : file));
+  const displayName = edit.displayName === undefined ? current.displayName : edit.displayName.replace(/\s+/g, " ").trim().slice(0, 120) || undefined;
+  const saved = importCollectionSkill(files, current.source, {
+    replace: true,
+    skipped: current.skipped,
+    keep: { importedAt: current.importedAt, updatedAt: new Date().toISOString(), ...(displayName && displayName !== name ? { displayName } : {}) },
+  });
+  if ("error" in saved) return saved;
+  if (saved.name !== name) return { error: "The skill's name changed while saving.", code: "invalid" };
+  return getCollectionSkill(name) ?? { error: "No such skill.", code: "missing" };
 }

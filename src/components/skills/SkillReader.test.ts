@@ -89,6 +89,24 @@ describe("the verdict, quiet unless there is something to act on", () => {
   });
 });
 
+describe("Edit and Duplicate", () => {
+  it("offers both on any skill, including a built-in one", () => {
+    const html = render({ onEdit: noop, onDuplicate: noop });
+    expect(html).toContain(">Edit<");
+    expect(html).toContain(">Duplicate<");
+    const library = render({ skill: detail({ kind: "library", ref: "library:invoice-chaser", source: "Library" }), onEdit: noop, onDuplicate: noop });
+    expect(library).toContain(">Edit<");
+    expect(library).toContain(">Duplicate<");
+  });
+
+  it("shows neither when the screen gives no way to do them, and says what a save did", () => {
+    const html = render();
+    expect(html).not.toContain(">Edit<");
+    expect(html).not.toContain(">Duplicate<");
+    expect(render({ notice: "Saved. Switched off on Ember until you confirm it." })).toContain("Switched off on Ember until you confirm it.");
+  });
+});
+
 describe("the skill's instructions", () => {
   it("are shown without their header block", async () => {
     const { skillBody } = await import("./SkillReader");

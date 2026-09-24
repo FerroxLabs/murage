@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { deleteCollectionSkill, getCollectionSkill, importCollectionSkill, listCollection, type CollectionSkill, type SkillSourceKind } from "./skill-collection.ts";
+import { deleteCollectionSkill, duplicateIntoCollection, getCollectionSkill, importCollectionSkill, listCollection, updateCollectionSkill, type CollectionSkill } from "./skill-collection.ts";
 import { fetchSkillFromLink, readSkillZip } from "./skill-import-sources.ts";
 import { browseFacets, searchSkills, skillIndexStats, skillsByFacet } from "./skill-search.ts";
 import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
@@ -39,7 +39,11 @@ interface SkillSummary {
 
 const LIBRARY = "library:";
 const COLLECTION = "collection:";
-const SOURCE_LABEL: Record<SkillSourceKind, string> = { file: "Imported from a file", folder: "Imported from a folder", zip: "Imported from a zip", link: "Imported from a link" };
+const SOURCE_LABEL: Record<Exclude<CollectionSkill["source"]["kind"], "copy">, string> = { file: "Imported from a file", folder: "Imported from a folder", zip: "Imported from a zip", link: "Imported from a link" };
+/** Where one of the owner's skills came from, in words. */
+export function sourceLabel(source: CollectionSkill["source"]): string {
+  return source.kind === "copy" ? `Copied from ${source.label}` : SOURCE_LABEL[source.kind];
+}
 
 let verdictCache: { root: string; skills: Record<string, { verdict: SkillVerdict }> } | null = null;
 function shippedVerdict(id: string): SkillVerdict | null {
@@ -89,7 +93,7 @@ function usedBy(ref: string, bots: SkillsApiBot[]): SkillSummary["usedBy"] {
 
 function collectionSummary(skill: CollectionSkill, bots: SkillsApiBot[]): SkillSummary {
   const ref = `${COLLECTION}${skill.name}`;
-  return { ref, name: skill.name, description: skill.description, kind: "collection", verdict: skill.scan.verdict, source: SOURCE_LABEL[skill.source.kind], usedBy: usedBy(ref, bots) };
+  return { ref, name: skill.displayName || skill.name, description: skill.description, kind: "collection", verdict: skill.scan.verdict, source: sourceLabel(skill.source), usedBy: usedBy(ref, bots) };
 }
 
 function librarySummary(hit: { id: string; name: string; description: string }, bots: SkillsApiBot[]): SkillSummary {
@@ -178,6 +182,65 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     return { status: 201, body: { skill: { ...collectionSummary(imported, request.bots()), scan: imported.scan, skipped: imported.skipped } } };
   }
 
+  const dup = /^\/api\/skills\/([^/]+)\/duplicate$/.exec(path);
+  if (dup && method === "POST") {
+    const ref = parseRef(dup[1]!);
+    if (!ref) return { status: 404, body: { error: "No such skill." } };
+    const input = z.object({ name: z.string().max(200).optional() }).strict().safeParse((await request.readBody().catch(() => ({}))) ?? {});
+    if (!input.success) return { status: 400, body: { error: "name must be a skill name", code: "invalid" } };
+    let files: Array<{ path: string; content: string }>;
+    let original: { name: string; displayName: string; description: string };
+    if (ref.kind === "collection") {
+      const skill = getCollectionSkill(ref.name);
+      if (!skill) return { status: 404, body: { error: "No such skill." } };
+      files = skill.contents;
+      original = { name: skill.name, displayName: skill.displayName || skill.name, description: skill.description };
+    } else {
+      const library = libraryScan(ref.name);
+      if (!library) return { status: 404, body: { error: "No such skill." } };
+      // The library keeps only reviewed instructions: they are what is copied.
+      files = [{ path: "SKILL.md", content: library.text }];
+      original = { name: ref.name, displayName: libraryName(ref.name), description: library.description };
+    }
+    const copied = duplicateIntoCollection(files, original, input.data.name);
+    if ("error" in copied) return { status: copied.code === "exists" ? 409 : 400, body: copied };
+    return { status: 201, body: { skill: { ...collectionSummary(copied, request.bots()), scan: copied.scan } } };
+  }
+
+  const edit = /^\/api\/skills\/collection\/([^/]+)$/.exec(path);
+  if (edit && method === "PUT") {
+    const name = decodeURIComponent(edit[1]!);
+    if (!isSkillName(name) || !getCollectionSkill(name)) return { status: 404, body: { error: "No such skill." } };
+    const input = z.object({ displayName: z.string().max(200).optional(), description: z.string().min(1).max(4000), body: z.string().max(256 * 1024) }).strict().safeParse(await request.readBody());
+    if (!input.success) return { status: 400, body: { error: "Send a description and the instructions.", code: "invalid" } };
+    const bots = request.bots();
+    const ref = `${COLLECTION}${name}`;
+    const users = usedBy(ref, bots);
+    const saved = updateCollectionSkill(name, input.data);
+    if ("error" in saved) return { status: saved.code === "missing" ? 404 : 400, body: saved };
+    // Every bot with this skill gets the new version, through the same gate
+    // as a first install: a clean skill that was on stays on; one that now
+    // needs a look is left off until the owner confirms it; Blocked is off.
+    const needsLook: string[] = [];
+    const failed: string[] = [];
+    for (const user of users) {
+      removeSkill(user.botId, name);
+      const installed = installSkill(user.botId, ref, saved.contents);
+      if ("error" in installed) {
+        failed.push(user.botName);
+        continue;
+      }
+      if (!user.enabled || saved.scan.verdict === "blocked") continue;
+      if (saved.scan.verdict === "review") {
+        needsLook.push(user.botName);
+        continue;
+      }
+      const on = setSkillEnabled(user.botId, name, true);
+      if ("error" in on) failed.push(user.botName);
+    }
+    return { status: 200, body: { skill: { ...collectionSummary(saved, request.bots()), scan: saved.scan }, needsLook, failed } };
+  }
+
   const del = /^\/api\/skills\/collection\/([^/]+)$/.exec(path);
   if (del && method === "DELETE") {
     const name = decodeURIComponent(del[1]!);
@@ -245,7 +308,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       const summary = collectionSummary(skill, bots);
-      return { status: 200, body: { ...summary, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy) } };
+      return { status: 200, body: { ...summary, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) } };
     }
     const library = libraryScan(ref.name);
     if (!library) return { status: 404, body: { error: "No such skill." } };
