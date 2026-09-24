@@ -49,7 +49,7 @@ and attached.
 | # | Decision |
 |---|---|
 | D1 | Imported skills land in the owner's own **Your skills** collection in Settings, are scanned once there, and are switched on per bot. |
-| D2 | Three verdicts: **No red flags**, **Needs a look** (switch on only after seeing the findings and confirming once), **Blocked** (cannot be switched on; read or delete only). |
+| D2 | Three verdicts: clean (owner review 2026-09-24: shown as a small shield labelled "Checked, nothing risky found", or "Built-in" for library skills; the word "No red flags" felt noisy), **Needs a look** (switch on only after seeing the findings and confirming once), **Blocked** (cannot be switched on; read or delete only). |
 | D3 | The built-in library is scanned before it ships. Library skills that come out Blocked are removed from the library. |
 | D4 | The scanner starts from Ferrox Labs' Skill Guard (the Wayland desktop app's TypeScript scanner, brought in under Murage's AGPL-3.0-or-later license) plus Murage's own invisible-character check, plus the static pattern tables of NVIDIA SkillSpector (Apache-2.0, credited). SkillSpector's code-flow and YARA analysis come later as a deep scan (see Later phases). |
 | D5 | One **New Bot** and one **New Team** menu item, each opening a describe-first chooser. "New Bot from Template" and the Library window's Bots and Teams tabs go away. |

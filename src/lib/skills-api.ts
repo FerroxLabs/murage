@@ -32,8 +32,11 @@ export type ImportInput =
   | { zip: string; label?: string; replace?: boolean };
 type Request = (path: string, init?: RequestInit) => Promise<any>;
 
-export function verdictLabel(verdict: SkillVerdict): "No red flags" | "Needs a look" | "Blocked" {
-  return verdict === "clean" ? "No red flags" : verdict === "review" ? "Needs a look" : "Blocked";
+/** What a clean verdict means, said once: the shield's label and the import result. */
+export const CLEAN_LINE = "Checked, nothing risky found";
+
+export function verdictLabel(verdict: SkillVerdict): typeof CLEAN_LINE | "Needs a look" | "Blocked" {
+  return verdict === "clean" ? CLEAN_LINE : verdict === "review" ? "Needs a look" : "Blocked";
 }
 
 /** Each finding once, in the order found. */

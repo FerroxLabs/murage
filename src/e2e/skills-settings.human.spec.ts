@@ -90,7 +90,7 @@ test("a zip is imported, checked, and switched on for a bot", async ({ page }, i
   await expect(page.getByText("Drop a skill's file, folder or zip here")).toBeVisible();
   await page.getByLabel("Choose a skill file or zip").setInputFiles({ name: "invoice-chaser.zip", mimeType: "application/zip", buffer: await zipOf({ "invoice-chaser/SKILL.md": md("invoice-chaser", "Draft polite reminders for overdue invoices."), "invoice-chaser/examples.md": "Example." }) });
   await expect(page.getByText("invoice-chaser is in your skills.")).toBeVisible();
-  await expect(page.getByText("No red flags")).toBeVisible();
+  await expect(page.getByText("Checked, nothing risky found")).toBeVisible();
   await page.screenshot({ path: info.outputPath("import-done.png"), fullPage: true });
   await page.getByRole("button", { name: "Open it" }).click();
   await expect(page.getByText("Draft polite reminders for overdue invoices.")).toBeVisible();

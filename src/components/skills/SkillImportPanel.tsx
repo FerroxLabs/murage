@@ -121,7 +121,7 @@ export function SkillImportPanel({ onBack, onOpen }: { onBack(): void; onOpen(re
       ) : state.kind === "done" ? (
         <div className="mt-4 rounded-lg bg-inset p-3">
           <div className="text-[13px] font-medium text-ink">{state.skill.name} is in your skills.</div>
-          <div className="mt-1"><VerdictBadge verdict={state.skill.verdict} /></div>
+          <div className="mt-1"><VerdictBadge verdict={state.skill.verdict} spelled /></div>
           {findingLines(state.skill.scan).length > 0 && (
             <ul className="mt-1 list-disc pl-4 text-[12px] text-ink-secondary">{findingLines(state.skill.scan).map((line) => <li key={line}>{line}</li>)}</ul>
           )}

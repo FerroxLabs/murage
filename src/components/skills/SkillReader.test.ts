@@ -31,8 +31,9 @@ const render = (over: Partial<SkillReaderViewProps> = {}) =>
 describe("the skill reader", () => {
   it("shows a clean skill with a switch per bot, and says which engines can't use skills", () => {
     const html = render();
-    expect(html).toContain("No red flags");
-    expect(html).toContain("The safety check found no red flags.");
+    expect(html).toContain('aria-label="Checked, nothing risky found"');
+    expect(html).not.toContain("No red flags");
+    expect(html).not.toContain("safety check found");
     expect(html).toContain("Use with");
     expect(html.match(/role="switch"/g)).toHaveLength(2);
     expect(html).toContain("This bot&#x27;s engine can&#x27;t use skills.");
@@ -75,6 +76,16 @@ describe("the skill reader", () => {
     expect(performance.now() - start).toBeLessThan(1500);
     expect(skill.text.length).toBeGreaterThan(READER_PREVIEW_CHARS);
     expect(html).toContain("Show all");
+  });
+});
+
+describe("the verdict, quiet unless there is something to act on", () => {
+  it("says Built-in for a library skill and spells out only Needs a look and Blocked", () => {
+    const library = render({ skill: detail({ kind: "library", ref: "library:invoice-chaser", source: "Library" }) });
+    expect(library).toContain("Built-in");
+    expect(library).not.toContain("Checked, nothing risky found");
+    const review = render({ skill: detail({ verdict: "review", scan: { verdict: "review", contentHash: "c".repeat(64), findings: [finding("Tells the bot to ignore its instructions")] } }) });
+    expect(review).toContain("Needs a look");
   });
 });
 

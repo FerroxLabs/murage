@@ -66,8 +66,8 @@ export function SkillReaderView(props: SkillReaderViewProps) {
           <h3 className="truncate text-[15px] font-medium text-ink">{skill.name}</h3>
           <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{skill.description}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <VerdictBadge verdict={skill.verdict} />
-            <span className="text-[11.5px] text-ink-secondary">{skill.source}</span>
+            <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} />
+            {skill.kind !== "library" && <span className="text-[11.5px] text-ink-secondary">{skill.source}</span>}
           </div>
         </div>
         {mode.kind === "bot" && !blocked && (
@@ -92,9 +92,7 @@ export function SkillReaderView(props: SkillReaderViewProps) {
           <div className="font-medium">Worth a look before you use it:</div>
           <ul className="mt-1 list-disc pl-4">{findings.map((line) => <li key={line}>{line}</li>)}</ul>
         </div>
-      ) : (
-        <p className="mt-3 text-[12px] text-ink-secondary">The safety check found no red flags.</p>
-      )}
+      ) : null}
       {skill.scan.findings.length > 0 && (
         <button type="button" onClick={() => setEvidence((open) => !open)} className={`${LINK} mt-1`} aria-expanded={evidence}>
           {evidence ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}

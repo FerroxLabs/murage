@@ -4,7 +4,7 @@ import { deleteCollectionSkill, findingLines, importSkill, listSkills, readSkill
 
 describe("skill verdicts in plain words", () => {
   it("names each verdict", () => {
-    expect(verdictLabel("clean")).toBe("No red flags");
+    expect(verdictLabel("clean")).toBe("Checked, nothing risky found");
     expect(verdictLabel("review")).toBe("Needs a look");
     expect(verdictLabel("blocked")).toBe("Blocked");
   });

@@ -28,7 +28,7 @@ function SkillRow({ skill, onOpen }: { skill: SkillSummary; onOpen(ref: string):
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
         </div>
         <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-          <VerdictBadge verdict={skill.verdict} />
+          <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} />
           <span className="text-[11px] text-ink-secondary">{usedByLine(skill)}</span>
         </div>
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
