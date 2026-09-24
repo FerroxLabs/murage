@@ -61,7 +61,7 @@ export function createApprovalNotifications({ Notification, platform, onOpen, au
         if (opened || stopped || (token && !routes.has(token))) return;
         opened = true;
         if (token) forgetRoute(key);
-        try { onOpen({ botId: payload.botId, threadId: payload.threadId }); } catch { /* Navigation failure never changes authority. */ }
+        try { onOpen({ botId: payload.botId, threadId: payload.threadId, messageId: payload.messageId }); } catch { /* Navigation failure never changes authority. */ }
       };
       if (token) { routes.set(token, openOnce); routeKeys.set(key, token); }
       notice.on("click", openOnce);

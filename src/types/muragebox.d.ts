@@ -193,7 +193,11 @@ type SkillRecordingPayload = {
       };
       approvalNotifications?: {
         show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string }): Promise<{ accepted: boolean }>;
-        onOpen(callback: (target: { botId: string; threadId: string }) => void): () => void;
+        onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
+      };
+      /** Menu bar / system tray menu intents (electron/background-lifecycle.mjs). */
+      tray?: {
+        onOpen(callback: (target: TrayOpenTarget) => void): () => void;
       };
       startup?: {
         status(): Promise<StartupBackgroundState>;
@@ -412,6 +416,11 @@ export interface UpdaterState {
   /** hand-off only: whether a terminal was opened to paste it into */
   terminalOpened?: boolean;
 }
+
+export type TrayOpenTarget =
+  | { kind: "approval"; botId?: string; threadId: string; messageId: string }
+  | { kind: "conversation"; botId: string; threadId: string }
+  | { kind: "compose"; botId: string };
 
 export interface StartupBackgroundState {
   platform:NodeJS.Platform;

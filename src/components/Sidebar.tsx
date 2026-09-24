@@ -116,6 +116,7 @@ import { SidebarNeedsYou } from "./SidebarNeedsYou";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
+import { useTrayIntents } from "./useTrayIntents";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
@@ -1946,6 +1947,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     return () => { window.removeEventListener("murage:open-files", open); window.removeEventListener("murage:open-memory", memory); };
   }, [desktop, state.bots, state.selectedId, dispatch]);
   useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>setInboxOpen(true)),[]);
+  useTrayIntents();
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());

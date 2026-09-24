@@ -3061,6 +3061,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
     const stopApprovalClicks = window.muragebox?.approvalNotifications?.onOpen(target => {
       openNotificationTarget(dispatch, target, stateRef.current);
+      // land on the card itself, not just its conversation
+      if (typeof target.messageId === "string" && target.messageId) dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId });
     });
     return () => {
       alive = false;

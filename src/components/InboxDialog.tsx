@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { api, useStore } from "@/state/store";
+import { useStore } from "@/state/store";
+import { openInboxLink } from "@/lib/open-inbox-link";
 import { Inbox } from "./Inbox";
 import { openFiles } from "./Files";
 import type { InboxLink, InboxView } from "../../shared/inbox";
 import { t } from "@/lib/i18n";
-import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 
 export function InboxDialog({ onClose, initialView }: { onClose: () => void; initialView?: InboxView }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -17,21 +17,7 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
     if (gate.current) return;
     gate.current = true; setError(undefined);
     try {
-      const bot = state.bots.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
-      const group = state.groups.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
-      if (bot) {
-        // A page, like every switch; focusMessage pages back to the request.
-        const result = await api(`/api/bots/${bot.id}/tasks/${link.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
-        if (!result.bot || result.bot.threadId !== link.threadId) throw new Error(t("source.openError"));
-        dispatch({ type: "taskSwitched", bot: result.bot });
-        dispatch({ type: "select", id: bot.id,threadId:link.threadId });
-      } else if (group) {
-        const result = await api(`/api/groups/${group.id}/tasks/${link.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" });
-        if (!result.group || result.group.threadId !== link.threadId) throw new Error(t("source.openError"));
-        dispatch({ type: "groupPatched", group: result.group });
-        dispatch({ type: "select", id: group.id });
-      } else throw new Error(t("inbox.conversationUnavailable"));
-      dispatch({ type: "focusMessage", threadId: link.threadId, messageId: link.messageId });
+      await openInboxLink(link, state, dispatch);
       onClose();
     } catch (cause) { setError(cause instanceof Error ? cause.message : t("inbox.openResultError")); }
     finally { gate.current = false; }

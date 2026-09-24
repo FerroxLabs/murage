@@ -40,7 +40,7 @@ import {
 } from "./skill-recorder.mjs";
 import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
-import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import {
@@ -181,6 +181,29 @@ const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 const DEFAULT_COMPOSIO_BROKER_URL = "https://murage-composio.patient-meadow-1a11.workers.dev";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
+// Resolved like APP_ICON: electron/** ships inside app.asar, and fs reads
+// are asar-aware, so each representation is read explicitly rather than
+// relying on nativeImage finding "@2x" siblings inside the archive.
+const TRAY_DIR = path.join(__dirname, "resources/tray");
+function trayImage(attention) {
+  const read = name => nativeImage.createFromBuffer(fs.readFileSync(path.join(TRAY_DIR, name)));
+  if (process.platform === "darwin") {
+    const image = nativeImage.createEmpty();
+    image.addRepresentation({ scaleFactor: 1, buffer: fs.readFileSync(path.join(TRAY_DIR, "trayTemplate.png")) });
+    image.addRepresentation({ scaleFactor: 2, buffer: fs.readFileSync(path.join(TRAY_DIR, "trayTemplate@2x.png")) });
+    image.setTemplateImage(true);
+    return image;
+  }
+  const name = attention ? "tray-attention" : "tray";
+  if (process.platform === "win32") {
+    const icon = nativeImage.createFromPath(path.join(TRAY_DIR, `${name}.ico`));
+    if (!icon.isEmpty()) return icon;
+    const image = nativeImage.createEmpty();
+    for (const [size, scaleFactor] of [[16, 1], [24, 1.5], [32, 2], [48, 3]]) image.addRepresentation({ scaleFactor, buffer: fs.readFileSync(path.join(TRAY_DIR, `${name}-${size}.png`)) });
+    return image;
+  }
+  return read(`${name}-32.png`);
+}
 let desktopViewerWindow = null;
 let desktopViewerOwner = null;
 let desktopViewerContextId = null;
@@ -2410,6 +2433,21 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   }
 }
 
+function sendWhenLoaded(channel,...args){
+  const win=mainWindow;if(!win||win.isDestroyed())return;
+  const send=()=>{if(!win.isDestroyed())win.webContents.send(channel,...args);};
+  if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();
+}
+/** The tray menu's reads and answers: the desktop surface, like the app. */
+async function harnessJson(route,body){
+  if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted)throw new Error("Murage is not ready yet.");
+  const response=await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`,{method:body===undefined?"GET":"POST",
+    headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},
+    ...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(5000),redirect:"error"});
+  const value=await response.json().catch(()=>null);
+  if(!response.ok)throw new Error(typeof value?.error==="string"?value.error:"Murage could not do that.");
+  return value;
+}
 function initializeBackgroundLifecycle(){
   const profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);
   const preferenceFile=profileDir?path.join(profileDir,"startup-background.json"):null;
@@ -2426,11 +2464,19 @@ function initializeBackgroundLifecycle(){
     loadPreferences:()=>{try{if(!preferenceFile)return {};const stat=fs.lstatSync(preferenceFile);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192)return {};return JSON.parse(fs.readFileSync(preferenceFile,"utf8"));}catch{return {};}},
     savePreferences:value=>{if(!preferenceFile)throw new Error("An owned installation is required to save startup settings.");if(app.isPackaged)ownedDesktopDataDir();const temporary=`${preferenceFile}.${process.pid}.tmp`;fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,preferenceFile);},
     dockAvailable:()=>process.platform==="darwin"&&app.dock?.isVisible()===true,
-    createTray:onOpen=>{const icon=nativeImage.createFromPath(APP_ICON).resize({width:18,height:18});if(process.platform==="darwin")icon.setTemplateImage(true);const tray=new Tray(icon);tray.setToolTip("Murage");tray.on("click",onOpen);return tray;},
+    createTray:onOpen=>{const tray=new Tray(trayImage(false));tray.setToolTip("Murage");tray.on("click",onOpen);return tray;},
+    presentTray:(()=>{let shown=null;return(tray,view)=>{
+      tray.setToolTip(view.tooltip);
+      if(process.platform==="darwin")tray.setTitle(view.title);
+      else if(shown!==view.attention){tray.setImage(trayImage(view.attention));shown=view.attention;}
+    };})(),
+    harness:{get:route=>harnessJson(route),post:(route,body)=>harnessJson(route,body)},
+    openTarget:target=>sendWhenLoaded("tray:open",target),
+    checkForUpdates:app.isPackaged?()=>{checkForUpdatesNow();}:undefined,
     setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),
     probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFile):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
     openWindow:()=>{const win=mainWindow&&!mainWindow.isDestroyed()?mainWindow:createWindow();if(win.isMinimized())win.restore();win.show();win.focus();},
-    openInbox:()=>{const win=mainWindow;if(!win||win.isDestroyed())return;const send=()=>{if(!win.isDestroyed())win.webContents.send("startup-background:open-inbox");};if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();},
+    openInbox:()=>sendWhenLoaded("startup-background:open-inbox"),
     explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
     automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:()=>app.quit(),
     onChange:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
