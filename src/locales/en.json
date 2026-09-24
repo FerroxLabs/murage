@@ -372,7 +372,7 @@
   "searchSettings.engineOption": "Engine tools — no separate search account",
   "searchSettings.offOption": "Off: no Murage web search",
   "searchSettings.fluxOption": "Flux Router, with your Flux key",
-  "searchSettings.fluxHelp": "Searches go through Flux Router using the Flux key saved under Models, and come back as a current answer. Flux charges per web search made, and one question can make several.",
+  "searchSettings.fluxHelp": "Searches go through Flux Router using the Flux key saved under Models. Your bots look things up on the live web and answer with what is current.",
   "searchSettings.fluxNoKey": "Flux search uses the Flux key saved under Models. Add one there first; until then web search reports that it is not set up.",
   "searchSettings.offHelp": "Off disables Murage's native search only. Independent engine and MCP search tools may still be available.",
   "searchSettings.engineHelp": "Your engine keeps its existing tools. No Tavily or Exa account is required.",
