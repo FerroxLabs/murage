@@ -8,6 +8,8 @@
 //                     mcp-elicitation | form-elicitation | user-input | image |
 //                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CODEX_MCP_SERVER / FAKE_CODEX_MCP_TOOL  the server and tool an
+//                     mcp-elicitation approval names (default agents, list_bots)
 //   FAKE_CODEX_LAUNCH_CRASHES  N: die at thread/start (before turn/start is ever sent)
 //                     with transient stderr, exit 1, for the first N launches
 //   FAKE_CODEX_LAUNCH_KILLS    N: same phase, transient stderr then SIGKILL (a signal
@@ -440,10 +442,10 @@ process.stdin.on("data", (chunk) => {
             id: 101,
             method: "mcpServer/elicitation/request",
             params: {
-              serverName: "agents",
+              serverName: process.env.FAKE_CODEX_MCP_SERVER ?? "agents",
               mode: "form",
               _meta: { codex_approval_kind: "mcp_tool_call", tool_params: {} },
-              message: 'Allow the agents MCP server to run tool "list_bots"?',
+              message: `Allow the ${process.env.FAKE_CODEX_MCP_SERVER ?? "agents"} MCP server to run tool "${process.env.FAKE_CODEX_MCP_TOOL ?? "list_bots"}"?`,
               requestedSchema: { type: "object", properties: {} },
             },
           });

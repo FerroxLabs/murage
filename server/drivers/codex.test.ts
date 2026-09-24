@@ -56,6 +56,8 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   afterEach(async () => {
     delete process.env.FAKE_CODEX_MODE;
+    delete process.env.FAKE_CODEX_MCP_SERVER;
+    delete process.env.FAKE_CODEX_MCP_TOOL;
     delete process.env.FAKE_CODEX_DUMP;
     delete process.env.FAKE_CODEX_TRANSIENTS;
     delete process.env.FAKE_CODEX_PARTIAL_FAILS;
@@ -1058,11 +1060,39 @@ describe("CodexDriver turns (fake app-server)", () => {
     await recorder.until((e) => e.type === "turn.completed");
   });
 
-  it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
+  // With the host computer attached, a shell command or another MCP server's
+  // tool is judged like any other ask, so a stop line card (a delete outside
+  // the folder) keeps "Allow for this task" and "Always allow". Only the
+  // computer's own tools keep the local-computer treatment.
+  const hostComputer = { localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const } };
+  it("does not stamp a shell command as computer control when the host computer is attached", async () => {
     await create({ mode: "approval" });
+    await instance.adapter.sendTurn({ threadId: "t-host-shell", text: "clean up", integrations: hostComputer });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "shell", toolCall: { name: "shell" } });
+    expect((opened as { approvalScope?: string }).approvalScope).toBeUndefined();
+    await instance.adapter.respondToRequest("t-host-shell", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
 
-    // host-mounted: every card carries the scope that keeps the harness's
-    // local-computer-block backstop in force for remembered always-allows
+  it("does not stamp another MCP server's tool as computer control", async () => {
+    await create({ mode: "mcp-elicitation" });
+    await instance.adapter.sendTurn({ threadId: "t-host-mcp", text: "list", integrations: hostComputer });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__list_bots" } });
+    expect((opened as { approvalScope?: string }).approvalScope).toBeUndefined();
+    await instance.adapter.respondToRequest("t-host-mcp", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
+    process.env.FAKE_CODEX_MCP_SERVER = "computer";
+    process.env.FAKE_CODEX_MCP_TOOL = "click";
+    await create({ mode: "mcp-elicitation" });
+
+    // host-mounted: a computer tool carries the scope that keeps the
+    // harness's local-computer-block backstop in force for remembered
+    // always-allows
     await instance.adapter.sendTurn({
       threadId: "t-host-scope",
       text: "clean up",

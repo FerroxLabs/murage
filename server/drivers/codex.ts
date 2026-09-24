@@ -428,8 +428,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       // server→client approval request → canonical request.opened
       // Host-scope tagging mirrors claude.ts: when this turn mounts the real
-      // Mac (not a VM), every card carries approvalScope so the harness's
-      // local-computer-block backstop applies to remembered always-allows.
+      // Mac (not a VM), a card for the computer's own tools carries
+      // approvalScope so the harness's local-computer-block backstop applies
+      // to remembered always-allows. A shell command, a file change or
+      // another MCP server's tool is judged like any other ask, so a stop
+      // line card keeps its scoped choices.
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       // Murage's Full access still stops before deleting outside its folder,
       // paying and messaging someone new (server/stop-line.ts), which only
@@ -500,6 +503,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           questions = normalized.questions;
         }
+        const shellOrEdit = method === "execCommandApproval" || method === "applyPatchApproval" ||
+          method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval";
+        const otherMcpServer = isMcpElicitation && typeof params.serverName === "string" && params.serverName !== "" && params.serverName !== "computer";
+        // An ask that names no server, or a method this does not know, stays
+        // a computer action: a name it cannot read is never widened.
+        const computerAsk = controlsHost && !shellOrEdit && !otherMcpServer;
         const requestId = newId();
         const summary = questions
           ? questions[0]!.question
@@ -561,7 +570,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           summary,
           choices,
           ...(questions ? { questions } : {}),
-          approvalScope: controlsHost ? "local-computer" : undefined,
+          approvalScope: computerAsk ? "local-computer" : undefined,
           // the engine's own call, for the stop line: a command with the
           // folder Codex runs it in, or the MCP tool with its arguments
           ...(questions ? {} : isMcpElicitation
