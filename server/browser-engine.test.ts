@@ -26,6 +26,24 @@ describe("optional browser resolver and installation", () => {
     macAdmission.mockReturnValue(false);
     expect(resolveAgentBrowserBinary(options)).toBeNull();
   });
+  // An installed app whose seal broke (a newer build copied over an older
+  // one left stray files) still carries its browser. Telling the owner to
+  // "install the optional browser engine" sent them the wrong way: nothing
+  // they could install is ever consulted in a packaged app.
+  it("says the built-in browser failed its check, and to reinstall, when the packaged one is refused", () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(bundle, { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    macAdmission.mockReturnValue(false);
+    const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } });
+    expect(status).toMatchObject({ kind: "unavailable", installable: false });
+    expect(status.kind === "unavailable" && status.reason).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+  });
+  it("says the built-in browser is missing, and to reinstall, when a packaged app has none", () => {
+    const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: temporary() } });
+    expect(status).toMatchObject({ kind: "unavailable", installable: false });
+    expect(status.kind === "unavailable" && status.reason).toBe("The browser that comes with Murage is missing. Reinstall Murage from the download to fix it.");
+  });
   it("resolves explicit executable before PATH, rejects bad override and directories", () => {
     const dataDir = temporary();
     const name = process.platform === "win32" ? "agent-browser.exe" : "agent-browser";

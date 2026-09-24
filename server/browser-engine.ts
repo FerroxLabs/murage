@@ -83,6 +83,17 @@ export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngine
   const packaged = !env.MURAGE_AGENT_BROWSER_PATH?.trim() && !!(env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH);
   if (binaryPath) return { kind: "ready", binaryPath, version: packaged || matchesPin(binaryPath, options) ? agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset(options.platform ?? process.platform, options.arch ?? process.arch)) : null, runtimeVerified: false };
   const platform = options.platform ?? process.platform;
+  // A packaged app only ever runs the browser it shipped with, so the only
+  // fix the owner has is a clean reinstall. Say so, rather than pointing at
+  // a download a packaged app never consults.
+  if (packaged) {
+    const target = `${platform}-${options.arch ?? process.arch}`;
+    let present = false;
+    try { present = lstatSync(browserBundlePaths(join((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, "browser-engine"), target).engine).isFile(); } catch { /* missing */ }
+    return { kind: "unavailable", installable: false, reason: present
+      ? "The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it."
+      : "The browser that comes with Murage is missing. Reinstall Murage from the download to fix it." };
+  }
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
   return { kind: "unavailable", reason: (options.env ?? process.env).MURAGE_AGENT_BROWSER_PATH
     ? "MURAGE_AGENT_BROWSER_PATH is not a readable executable file"
