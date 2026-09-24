@@ -41,7 +41,7 @@ import {
 } from "@/lib/flux-key-paste";
 import { SETUP_FLUX_PROVED_ANSWER, SETUP_FLUX_UNPROVED_ANSWER } from "../../shared/first-run-chief";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { api } from "@/state/store";
+import { api, useStore } from "@/state/store";
 import { FLUX_SIGNUP_URL } from "./FluxRouterConnection";
 import {
   FIRST_RUN_FOCUS,
@@ -188,6 +188,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   // machine can think with, and that can change while the card is on screen.
   const { view } = useSetupView();
   const desktop = useDesktopSurface();
+  const { refreshAfterKey } = useStore();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
@@ -228,7 +229,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
       // out on their first question with nothing joining the two. The proof
       // is one catalogue read on the key that was just stored, and it is
       // free: no model runs (src/lib/flux-key-paste.ts, `proveFluxKey`).
-      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
+      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true, refresh: refreshAfterKey });
       // Out of React's hands the moment it is stored. Nothing above keeps a
       // copy and nothing below renders one.
       setKey("");

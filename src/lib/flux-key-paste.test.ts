@@ -10,6 +10,7 @@ import {
   looksLikeFluxKey,
   proveFluxKey,
   readFluxStatus,
+  refreshAfterFluxKey,
   saveAndProveFluxKey,
   saveFluxKey,
 } from "./flux-key-paste";
@@ -293,5 +294,65 @@ describe("reading the connection before a save", () => {
 
   it("survives an answer that says nothing", async () => {
     expect(await readFluxStatus(async () => ({}))).toEqual({ configured: false, revision: "" });
+  });
+});
+
+// THE WINDOW HAS TO LEARN ABOUT THE KEY, NOT ONLY THE KEYCHAIN.
+//
+// The 0.1.59 customer pass saved a key in the welcome and kept the window's
+// pre-key reading: "Install an AI engine to get started" on Linux and
+// Windows, and the Flux voice greyed out on a Mac, until a reload. Every save
+// now ends by asking the store to read the engines and settings again.
+describe("after a key is saved, the window reads the engines and settings again", () => {
+  const bridge = async () => ({ configured: true, revision: "rev-2", conflict: false, choices: [] });
+
+  it("refreshes once the key is proved, not before", async () => {
+    const order: string[] = [];
+    const request = async (path: string) => { order.push(path); return { modelCount: 3 }; };
+    const refresh = async () => { order.push("refresh"); };
+    expect(await saveAndProveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, request, desktop: true, refresh })).toBe("proved");
+    expect(order).toEqual(["/api/flux-connection/test", "refresh"]);
+  });
+
+  it("refreshes after a plain save too, the composer's road", async () => {
+    let refreshed = 0;
+    await saveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, desktop: true, refresh: async () => { refreshed += 1; } });
+    expect(refreshed).toBe(1);
+  });
+
+  it("refreshes on a refused key as well, since the saved key did change", async () => {
+    let refreshed = 0;
+    const request = async () => ({ modelCount: 0, code: "unauthorized" });
+    expect(await saveAndProveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, request, desktop: true, refresh: async () => { refreshed += 1; } })).toBe("rejected");
+    expect(refreshed).toBe(1);
+  });
+
+  it("does not turn a failed refresh into a failed save", async () => {
+    const request = async () => ({ modelCount: 3 });
+    const refresh = async () => { throw new Error("offline"); };
+    expect(await saveAndProveFluxKey(REAL, { status: { configured: false, revision: "rev-1" }, bridge, request, desktop: true, refresh })).toBe("proved");
+  });
+
+  it("the store refresh reads both the settings and the engines", async () => {
+    const asked: string[] = [];
+    const applied: unknown[] = [];
+    await refreshAfterFluxKey({
+      request: async (path: string) => { asked.push(path); return { flux: { configured: true } }; },
+      applyConfig: (config) => { applied.push(config); },
+      refreshInstances: async () => { asked.push("instances"); },
+    });
+    expect(asked.sort()).toEqual(["/api/config", "instances"]);
+    expect(applied).toEqual([{ flux: { configured: true } }]);
+  });
+
+  it("every place that saves a key passes the store's refresh", () => {
+    const source = (file: string) =>
+      readFileSync(new URL(file, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const file of ["../components/FirstRunFluxCard.tsx", "../components/FirstRunJobsCard.tsx", "../components/Composer.tsx"]) {
+      const text = source(file);
+      const saves = text.match(/save(AndProve)?FluxKey\([^)]*\{[\s\S]*?\}\)/g) ?? [];
+      expect(saves.length, file).toBeGreaterThan(0);
+      for (const call of saves) expect(call, file).toMatch(/\brefresh\b/);
+    }
   });
 });

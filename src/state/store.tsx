@@ -46,6 +46,7 @@ import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib
 import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
+import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
 import { createScrollback, MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
@@ -2068,6 +2069,9 @@ const StoreContext = createContext<{
   flushBotPatches: (botId: string) => Promise<void>;
   /** Re-fetch engine availability — after an install, without a restart. */
   refreshInstances: () => Promise<void>;
+  /** Re-read the settings and the engines after a Flux key is saved, so the
+   *  window does not keep its pre-key reading until a reload. */
+  refreshAfterKey: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -3089,6 +3093,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const { instances } = await api("/api/instances");
     rawDispatch({ type: "instances", instances });
   }, []);
+  const refreshAfterKey = useCallback(
+    () => refreshAfterFluxKey({ request: api, applyConfig: (config) => rawDispatch({ type: "configStatus", config }), refreshInstances }),
+    [refreshInstances],
+  );
 
   // Installing a CLI or signing one in happens in a terminal, outside this
   // window — so the moment the user comes back is exactly when our engine
@@ -3112,8 +3120,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [botPatchQueue],
   );
   const value = useMemo(
-    () => ({ state, dispatch, flushBotPatches, refreshInstances }),
-    [state, dispatch, flushBotPatches, refreshInstances],
+    () => ({ state, dispatch, flushBotPatches, refreshInstances, refreshAfterKey }),
+    [state, dispatch, flushBotPatches, refreshInstances, refreshAfterKey],
   );
   return (
     <StoreContext.Provider value={value}>

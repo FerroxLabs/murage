@@ -198,7 +198,7 @@ export function Composer({
   locked?: boolean;
 }) {
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshAfterKey } = useStore();
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers members plus @everyone; explicit mentions override the room's
@@ -701,6 +701,7 @@ export function Composer({
             bridge: fluxBridge(),
             request: api,
             desktop: desktopSurface === true,
+            refresh: refreshAfterKey,
           });
         } catch {
           // The key is still out of the transcript, which was the urgent

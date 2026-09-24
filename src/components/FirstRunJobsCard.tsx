@@ -771,7 +771,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   // to the Chief and is still the right offer afterwards.
   void settled;
   const { view } = useSetupView();
-  const { dispatch } = useStore();
+  const { dispatch, refreshAfterKey } = useStore();
   const world = useFirstRunWorld(view);
   const desktop = useDesktopSurface();
   const id = chosenJob(view);
@@ -977,7 +977,7 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       // goes straight on to RUN the job on that key, and a key Flux Router
       // refuses would fail there instead, one screen away from the paste
       // that caused it.
-      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true });
+      const proof = await saveAndProveFluxKey(key, { status, bridge: fluxBridge(), request: api, desktop: desktop === true, refresh: refreshAfterKey });
       setKey("");
       if (proof === "rejected") {
         // Stay on the paste screen. "Something else" and the cancel are both

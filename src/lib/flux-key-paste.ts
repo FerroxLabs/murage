@@ -78,6 +78,11 @@ export interface FluxKeySaveOptions {
   /** True inside the desktop shell. A desktop build whose bridge is missing
    *  must refuse rather than fall back to the unencrypted route. */
   desktop?: boolean;
+  /** Read the engines and settings again once the key is stored (and, on the
+   *  first run's road, checked), so the window stops showing what it knew
+   *  before the key: "Install an AI engine", a greyed Flux voice. Best
+   *  effort: a failed refresh never fails the save. */
+  refresh?: () => Promise<unknown>;
 }
 
 export const FLUX_KEY_STORAGE_UNAVAILABLE = "Secure Flux Router storage is unavailable.";
@@ -151,6 +156,33 @@ export async function proveFluxKey(
  * that revision exists.
  */
 export async function saveFluxKey(rawKey: string, options: FluxKeySaveOptions): Promise<FluxConnectionStatus> {
+  const status = await storeFluxKey(rawKey, options);
+  await refreshQuietly(options.refresh);
+  return status;
+}
+
+async function refreshQuietly(refresh: FluxKeySaveOptions["refresh"]): Promise<void> {
+  try { await refresh?.(); } catch { /* the next focus or reload reads it again */ }
+}
+
+/**
+ * What `refresh` does in the app: the settings (`/api/config`, where the
+ * voice and search routes live) and the engine list (`/api/instances`, which
+ * decides whether the window says there is nothing to think with). Both are
+ * asked at once, and one failing does not stop the other.
+ */
+export async function refreshAfterFluxKey(deps: {
+  request: (path: string, init?: RequestInit) => Promise<any>;
+  applyConfig: (config: any) => void;
+  refreshInstances: () => Promise<unknown>;
+}): Promise<void> {
+  await Promise.allSettled([
+    deps.request("/api/config").then((config) => deps.applyConfig(config)),
+    deps.refreshInstances(),
+  ]);
+}
+
+async function storeFluxKey(rawKey: string, options: FluxKeySaveOptions): Promise<FluxConnectionStatus> {
   const key = rawKey.trim();
   if (!looksLikeFluxKey(key)) throw new Error(FLUX_KEY_NOT_A_KEY);
   const change: FluxConnectionMutation = {
@@ -180,11 +212,15 @@ export async function saveFluxKey(rawKey: string, options: FluxKeySaveOptions): 
  * a key sitting in the renderer for fifteen seconds.
  */
 export async function saveAndProveFluxKey(rawKey: string, options: FluxKeySaveOptions): Promise<FluxKeyProof> {
-  await saveFluxKey(rawKey, options);
+  await storeFluxKey(rawKey, options);
   // No request function means a desktop bridge save with no web fallback
   // wired in. Nothing can ask, so nothing is claimed.
-  if (!options.request) return "unproved";
-  return proveFluxKey(options.request);
+  const proof = options.request ? await proveFluxKey(options.request) : "unproved";
+  // After the proof, because the proof is what fetches the model list the
+  // engine list is read from. A refused key is still the saved key, so the
+  // window is refreshed either way.
+  await refreshQuietly(options.refresh);
+  return proof;
 }
 
 /** The current connection, so a save can carry its revision. */
