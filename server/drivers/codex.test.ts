@@ -1030,6 +1030,33 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
   });
 
+  // Murage's Full access stops before deleting outside its folder, paying
+  // and messaging someone new (server/stop-line.ts): a fullAuto instance
+  // keeps its reach but asks, so those three can wait for the owner.
+  it("asks instead of auto-accepting under the stop line, and reports the command", async () => {
+    await create({ mode: "approval", fullAuto: true });
+    const dump = join(scratch, "dump-stop-line.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "clean up", stopLine: true });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: "rm -rf scratch" } } });
+    await instance.adapter.respondToRequest("t-stop-line", opened.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const start = seen.calls.find((c: { method: string }) => c.method === "thread/start");
+    expect(start.params).toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "untrusted" });
+    expect(seen.calls.find((c: { method: string }) => c.method === "turn/start").params.approvalPolicy).toBe("untrusted");
+  });
+
+  it("reports an MCP tool call's server, name and arguments for the stop line", async () => {
+    await create({ mode: "mcp-elicitation" });
+    await instance.adapter.sendTurn({ threadId: "t-mcp-toolcall", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__list_bots", input: {} } });
+    await instance.adapter.respondToRequest("t-mcp-toolcall", opened.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
   it("a user Stop settles the turn as cancelled with no runtime error (STOP1)", async () => {
     await create({ mode: "approval" }); // approval mode parks the turn open
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-user-stop", text: "go" });

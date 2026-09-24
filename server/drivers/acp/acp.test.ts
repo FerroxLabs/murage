@@ -641,6 +641,46 @@ describe("ACP turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: true });
   });
 
+  // Murage's Full access stops before deleting outside its folder, paying
+  // and messaging someone new (server/stop-line.ts). A fullAuto ACP instance
+  // would answer its own asks; under the stop line it hands them to Murage,
+  // with the command itself, and spawns as a non-bypass engine.
+  it("hands a fullAuto instance's asks to Murage under the stop line", async () => {
+    process.env.FAKE_ACP_MODE = "permission";
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-stop-line",
+      displayName: "ACP Stop Line",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    const dump = join(scratch, "stop-line.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "go", stopLine: true });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: expect.any(String) } } });
+    await instance.adapter.respondToRequest("t-stop-line", opened.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+  });
+
+  it("a fullAuto instance still answers its own asks without the stop line", async () => {
+    process.env.FAKE_ACP_MODE = "permission";
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-full-auto",
+      displayName: "ACP Full Auto",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-full-auto", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
+  });
+
   it("answers a card 'Yes' with the ONE-TIME option even when the engine lists 'allow always' first (LFU2)", async () => {
     // Fuigo's real edit prompt (1.0.11 and 1.0.12, read off the wire) puts
     // `allow_always` "allow all edits during this session" ahead of

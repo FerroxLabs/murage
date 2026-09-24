@@ -917,7 +917,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       }
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-      if (controlsHost && config.permissionMode === "bypassPermissions") {
+      // Murage's Full access stops before deleting outside its folder, paying
+      // and messaging someone new (server/stop-line.ts). That only holds if
+      // the CLI asks, so a bypass instance runs this turn in acceptEdits with
+      // the broker: Murage answers everything else at once. File edits stay
+      // the CLI's own (acceptEdits), which is fine: an edit is not a delete.
+      const permissionMode = turn.stopLine && config.permissionMode === "bypassPermissions" ? "acceptEdits" : config.permissionMode;
+      if (controlsHost && permissionMode === "bypassPermissions") {
         throw new Error("local computer control requires the interactive approval broker");
       }
       const turnId = relaunch?.turnId ?? newId();
@@ -941,7 +947,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // token-level streaming: content_block_delta events between the
         // whole-message frames, so the bubble grows as the model writes
         "--include-partial-messages",
-        "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
+        "--permission-mode", permissionMode === "auto" ? "acceptEdits" : permissionMode,
       ];
       if (config.tools !== undefined) args.push("--tools", config.tools.join(","));
       const disallowedTools = [...new Set([
@@ -976,7 +982,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const allowed: string[] = [];
       if (turn.integrations?.composio) {
         mcpServers.composio = { ...turn.integrations.composio };
-        allowed.push("mcp__composio");
+        // Connected apps are where a bot pays, deletes mail and messages
+        // people. Under the stop line their calls reach Murage's broker so
+        // those three can wait for the owner; every other call is answered
+        // at once.
+        if (!turn.stopLine) allowed.push("mcp__composio");
       }
       if (turn.integrations?.computer) {
         mcpServers.computer = {
@@ -1045,7 +1055,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // bypassPermissions (fullAuto) — nothing would ever ask.
       let broker: Awaited<ReturnType<typeof createPermissionBroker>> | undefined;
       let socketPath: string | null = null;
-      if (config.permissionMode !== "bypassPermissions") {
+      if (permissionMode !== "bypassPermissions") {
         socketPath = permissionSocketPath(threadId);
         args.push("--permission-prompt-tool", "mcp__muragebox__approve");
         mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
@@ -1190,6 +1200,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   : Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
                 ...(ask.questions?.length ? { questions: ask.questions } : {}),
                 ...(filePaths ? { filePaths } : {}),
+                // the CLI's own tool name and input, for the stop line
+                ...(typeof ask.tool === "string" ? { toolCall: { name: ask.tool, input: ask.input } } : {}),
               });
             },
             onResolve: (resolved) => {

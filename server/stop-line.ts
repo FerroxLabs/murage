@@ -444,10 +444,14 @@ function gitHit(args: Word[], cwd: string | undefined, place: StopLinePlace, fou
 }
 
 function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
-  const roots = place.roots.filter((root) => root && posix.isAbsolute(root) && !isTooBroad(root, place.home)).map(clean);
   const real = (path: string) => {
     try { return place.realpath ? clean(place.realpath(path)) : path; } catch { return path; }
   };
+  // the home folder by both spellings: a linked home (macOS /var ->
+  // /private/var) must not make ~/Documents look like an ordinary folder
+  const realHome = real(clean(place.home));
+  const tooBroad = (path: string) => isTooBroad(path, place.home) || isTooBroad(path, realHome);
+  const roots = place.roots.filter((root) => root && posix.isAbsolute(root) && !tooBroad(root)).map(clean);
   const inside = (t: Target) => {
     if (!t.path) return false;
     const p = real(t.path);
@@ -465,10 +469,17 @@ function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
   // every target, never the home folder or a disk root
   let scope: string | undefined;
   if (!found.unknownDelete && outside.every((t) => t.path)) {
-    const parents = outside.map((t) => (t.glob ? real(t.path!) : posix.dirname(real(t.path!))));
+    // each target's folder, or the target itself when its folder is the home
+    // folder, Documents or a disk root (a grant over all of those is not
+    // what one card asked about)
+    const parents = outside.map((t) => {
+      const path = real(t.path!);
+      const parent = t.glob ? path : posix.dirname(path);
+      return tooBroad(parent) && !t.glob ? path : parent;
+    });
     let common = parents[0]!;
     for (const p of parents.slice(1)) while (!(p === common || p.startsWith(`${common}/`))) common = posix.dirname(common);
-    if (!isTooBroad(common, place.home) && common !== "/" && common.split("/").length > 2) scope = common;
+    if (!tooBroad(common) && common !== "/" && common.split("/").length > 2) scope = common;
   }
   const unknown = found.unknownDelete ? " (and more Murage cannot place)" : "";
   return { kind: "delete", place: scope, what: `Delete ${count} outside its folder: ${list}${unknown}` };
@@ -661,7 +672,8 @@ function commandText(tool: string, input: unknown, summary: string): string | un
     if (argv.length >= 3 && /(^|\/)(ba|z)?sh$/.test(argv[0]!) && /^-\w*c$/.test(argv[1]!)) return argv.slice(2).join(" ");
     return argv.map((part) => (/[\s'"$`]/.test(part) ? `'${part.replace(/'/g, "'\\''")}'` : part)).join(" ");
   }
-  if (COMMAND_TOOLS.has(bare) && !obj) return summary;
+  // a shell tool that reported no command: the card text is the command
+  if (COMMAND_TOOLS.has(bare)) return summary;
   return undefined;
 }
 

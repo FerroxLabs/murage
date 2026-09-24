@@ -91,6 +91,9 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
+   * records, scoped to the folder, payee or recipient the action touches. */
+  taskAllowKey?: string;
   approvalScope?: "local-computer";
   /** A provider question's structured questions (server/store.ts). */
   questions?: QuestionSpec[];

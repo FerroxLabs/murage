@@ -142,6 +142,12 @@ describe("classifyStopLine", () => {
     expect(classifyStopLine("Bash", { command: "rm -rf etc" }, "", place({ cwd: "/", roots: ["/"] }))?.kind).toBe("delete");
   });
 
+  it("knows the home folder by its linked spelling too", () => {
+    const realpath = (p: string) => p.replace(/^\/Users\/ada/, "/private/Users/ada");
+    const hit = classifyStopLine("Bash", { command: "rm -rf ~/Documents/old" }, "", place({ realpath, roots: [CWD] }))!;
+    expect(stopLineKey(hit)).toBe("stop:delete:/private/Users/ada/Documents/old");
+  });
+
   it("follows a link out of the folder when a resolver is given", () => {
     const realpath = (p: string) => (p.startsWith(`${CWD}/docs-link`) ? p.replace(`${CWD}/docs-link`, "/Users/ada/Documents") : p);
     expect(classifyStopLine("Bash", { command: "rm -rf docs-link/*" }, "", place({ realpath }))?.kind).toBe("delete");
@@ -159,7 +165,11 @@ describe("stop line keys", () => {
   });
 
   it("never scopes a key to the home folder or a disk root", () => {
-    expect(stopLineKey(classifyStopLine("Bash", { command: "rm ~/notes.txt" }, "", place())!)).toBeUndefined();
+    // a file straight in the home folder or Documents is scoped to itself
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm ~/notes.txt" }, "", place())!)).toBe("stop:delete:/Users/ada/notes.txt");
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf ~/Documents/old" }, "", place())!)).toBe("stop:delete:/Users/ada/Documents/old");
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm ~/Documents/a ~/Desktop/b" }, "", place())!)).toBeUndefined();
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf ~/Documents" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf /" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf $X" }, "", place())!)).toBeUndefined();
   });

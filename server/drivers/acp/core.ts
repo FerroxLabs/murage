@@ -1263,6 +1263,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
+        // Murage's Full access still stops before deleting outside its
+        // folder, paying and messaging someone new (server/stop-line.ts). That
+        // holds only if the engine asks, so under it a fullAuto instance runs
+        // this turn as a normal one (argv, session mode, permission replies)
+        // and Murage answers every ask that is not one of the three at once.
+        const turnConfig: AcpConfig = turn.stopLine && config.fullAuto ? { ...config, fullAuto: false } : config;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         if (support.driverKind === "grokAgent") {
           const closed = await teardowns.wait(threadId, undefined, acpStopBudget());
@@ -1270,7 +1276,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         }
         const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-        if (controlsHost && config.fullAuto) {
+        if (controlsHost && turnConfig.fullAuto) {
           throw new Error("local computer control requires interactive provider approvals");
         }
         const turnId = newId();
@@ -1748,14 +1754,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
           const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
-          if (ownedMemoryAlias && !config.fullAuto && !questionTool && state.promptSent &&
+          if (ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
             sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
             Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
             const allow = fuigoMemoryAllowOnce(toolCall, options, ownedMemoryAlias);
             if (allow) return send({ jsonrpc: "2.0", id: msg.id,
               result: { outcome: { outcome: "selected", optionId: allow } } });
           }
-          if (config.fullAuto && !questionTool) {
+          if (turnConfig.fullAuto && !questionTool) {
             const allow = optionFor("allow", true);
             if (!allow) missing("allow");
             return send({
@@ -1781,7 +1787,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // Fuigo 1.0.13 treats a bare reject_once as turn cancellation.
                 // Its response-level feedback extension keeps the tool denied
                 // while allowing a safe explanation in this same native turn.
-                ...(support.driverKind === "fuigoAgent" && !config.fullAuto && !questionTool &&
+                ...(support.driverKind === "fuigoAgent" && !turnConfig.fullAuto && !questionTool &&
                   behavior === "deny" && source === "user" &&
                   options.some(option => option.optionId === optionId && option.kind === "reject_once")
                   ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
@@ -1816,6 +1822,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
+            // The engine's own call, for the stop line: a command, a delete
+            // with the places it names, or a tool by its title and arguments.
+            ...(questionTool ? {} : { toolCall: {
+              name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : title || kind || "tool",
+              input: kind === "delete"
+                ? { ...(toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}), ...(Array.isArray(toolCall.locations) ? { locations: toolCall.locations } : {}) }
+                : toolCall.rawInput,
+            } }),
           });
         };
 
@@ -2096,7 +2110,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * handshake. A synchronous spawn failure throws to the caller, as it
          * always did for a turn that needs no card. */
         const launch = (trusted: boolean) => {
-        const argv = support.spawnArgs(config, cliTurn, { requestedModel: turn.model, folderTrusted: trusted });
+        const argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted });
         // The spawn contract (see the pool notes): everything that decides
         // which process a turn gets. The model, effort, permission mode and
         // `--trust` all ride argv; the environment is the child's exact env,
@@ -2111,7 +2125,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // the computer and browser claims are released when the turn ends.
         const integrations = turn.integrations;
         poolable = poolingEnabled() && support.pooledSessions === true && !providerBinding
-          && support.driverKind !== "grokAgent" && !config.fullAuto
+          && support.driverKind !== "grokAgent" && !turnConfig.fullAuto
           && !integrations?.computer && !integrations?.localComputer && !integrations?.browser;
         // The folder-trust record is in it too, whole: the engine caches its
         // trust verdict per workspace for the life of the process (Fuigo
@@ -2354,7 +2368,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   request: (method, params, timeoutMs) =>
                     request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
                   sessionId,
-                  config,
+                  config: turnConfig,
                   turn: cliTurn,
                   sessionModels: Array.isArray(sessionResult?.models?.availableModels)
                     ? sessionResult.models.availableModels

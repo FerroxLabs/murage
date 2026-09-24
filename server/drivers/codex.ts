@@ -427,6 +427,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Mac (not a VM), every card carries approvalScope so the harness's
       // local-computer-block backstop applies to remembered always-allows.
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+      // Murage's Full access still stops before deleting outside its folder,
+      // paying and messaging someone new (server/stop-line.ts), which only
+      // holds if Codex asks: under it a fullAuto instance keeps its
+      // unsandboxed reach but asks (`untrusted`), and Murage answers every
+      // ask that is not one of the three at once.
+      const autoAccept = config.fullAuto && !turn.stopLine;
       const handleServerRequest = (msg: any) => {
         const method = msg.method as string;
         const params = msg.params ?? {};
@@ -457,7 +463,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             : isUserInput
               ? "request_user_input"
               : "shell";
-        if (config.fullAuto && !isQuestion) {
+        if (autoAccept && !isQuestion) {
           return send({
             jsonrpc: "2.0",
             id: msg.id,
@@ -552,6 +558,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           choices,
           ...(questions ? { questions } : {}),
           approvalScope: controlsHost ? "local-computer" : undefined,
+          // the engine's own call, for the stop line: a command with the
+          // folder Codex runs it in, or the MCP tool with its arguments
+          ...(questions ? {} : isMcpElicitation
+            ? { toolCall: { name: `mcp__${String(params.serverName ?? "mcp")}__${mcpTool ?? "tool"}`, input: params?._meta?.tool_params ?? {} } }
+            : tool === "shell"
+              ? { toolCall: { name: "shell", input: { command: Array.isArray(params.command) ? params.command : typeof params.command === "string" ? params.command : summary, ...(typeof params.cwd === "string" ? { cwd: params.cwd } : {}) } } }
+              : {}),
         });
       };
 
@@ -895,7 +908,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             model: selection.model,
             ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
-            approvalPolicy: config.fullAuto ? "never" : "on-request",
+            approvalPolicy: turn.stopLine ? "untrusted" : config.fullAuto ? "never" : "on-request",
             ephemeral: false,
           });
           codexThreadId = started?.thread?.id ?? null;
@@ -929,6 +942,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // sent another, and choosing Default lands on the bot's next new
           // thread rather than the current one.
           ...(turn.effort ? { effort: turn.effort } : {}),
+          // a resumed thread keeps the policy it started with; the stop line
+          // must hold on this turn whichever that was
+          ...(turn.stopLine ? { approvalPolicy: "untrusted" } : {}),
         }, 60_000, (result) => {
           awaitingTurnStart = false;
           if (typeof result?.turn?.id !== "string" || !result.turn.id) {

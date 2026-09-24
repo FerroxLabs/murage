@@ -11,12 +11,16 @@ export interface TelegramApproval {
    * shows, answered through the same validated path. Absent for a
    * permission. */
   questions?: QuestionSpec[];
+  /** A stop-line card (server/stop-line.ts): besides "Approve once" it can be
+   * allowed for the rest of this task, for the same kind of action in the
+   * same place. */
+  taskAllow?: boolean;
 }
 /** What the owner decided about a question, in the desktop card's own terms. */
 export type TelegramQuestionReply = { behavior: "answer"; answers: QuestionAnswer[] } | { behavior: "skip" };
 export interface TelegramApprovalActions {
   pending: () => TelegramApproval[];
-  resolve: (approval: TelegramApproval, behavior: "allow" | "deny") => Promise<boolean>;
+  resolve: (approval: TelegramApproval, behavior: "allow" | "deny", forTask?: boolean) => Promise<boolean>;
   /** Deliver a question's answer (or skip). The harness validates it
    * against the persisted card exactly as it does a desktop answer. */
   answer?: (approval: TelegramApproval, reply: TelegramQuestionReply) => Promise<{ ok: true } | { ok: false; error: string }>;

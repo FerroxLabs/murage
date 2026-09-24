@@ -75,6 +75,9 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
+   * records, scoped to the folder, payee or recipient the action touches. */
+  taskAllowKey?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
   /** 0.1.52 ASK2: a provider question's structured questions, persisted
