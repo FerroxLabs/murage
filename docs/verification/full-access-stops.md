@@ -1,5 +1,13 @@
 # Full access stops
 
+The levels are Ask, Auto, Full access and No limits. No limits (the field
+`noLimits`, on top of `fullAccess`) is Full access without the stop line: it
+does anything without asking except reading your keys and passwords. It is
+desktop-only, has its own one-time warning per bot
+(`acknowledgeNoLimits`, recorded as `noLimitsAcknowledgedAt`), covers the same
+turns as Full access, and a bot that had Full access before it existed stays
+at guarded Full access. Choosing Full access, Auto or Ask ends it.
+
 Full access stays fast but stops before three kinds of action. The line is
 drawn by what the action touches, not by which command spells it
 (`server/stop-line.ts`). No setting turns it off; the owner answers it on the
@@ -26,6 +34,8 @@ Trash, `rsync --delete`, `bash -c '…'`, and code deletes (`shutil.rmtree`,
 | Auto | Auto-approved unless destructive or a key | Card |
 | Full access, owner at the desktop | Auto-approved unless a key (`.env`, `.ssh`, shell profiles, API keys) | Card |
 | Full access, routine, webhook, channel | Judged as Auto on an unattended turn | Card (never a grant) |
+| No limits, owner at the desktop | Auto-approved unless a key | Auto-approved |
+| No limits, routine, webhook, channel | As Full access | Card |
 
 Full access approvals fold into one quiet line per run of steps,
 "Approved 12 steps (Full access)", which counts up and opens to list the
@@ -58,7 +68,10 @@ sends its asks to Murage instead of skipping them:
 | ACP `fullAuto` (Grok, Fuigo, Droid, Cursor, …) | run as a normal instance for the turn |
 | Antigravity `fullAuto` | `accept-edits` (print mode cannot ask, so no shell or mounted tools) |
 
-Without Full access, each engine's own setting is unchanged.
+No limits sets the same turn flag: the engines still send their asks to
+Murage, because otherwise the key guard could not hold; everything else is
+answered at once. Without Full access or No limits, each engine's own setting
+is unchanged.
 
 ## Driving it
 

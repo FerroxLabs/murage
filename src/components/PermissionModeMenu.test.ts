@@ -16,8 +16,16 @@ const item = (markup: string, label: string) => {
 };
 
 describe("composer approval-level menu", () => {
-  it("says Full access skips asking before contacting other bots", () => {
-    expect(item(render(true), "Full access")).toContain("contacting other bots");
+  it("says what Full access still stops before", () => {
+    const full = item(render(true), "Full access");
+    expect(full).toContain("stops before deleting outside its folder, paying, messaging someone new, or reading your keys");
+  });
+
+  it("offers No limits with its plain description, on the desktop only", () => {
+    expect(item(render(true), "No limits")).toContain("Does anything without asking, except reading your keys and passwords.");
+    const remote = item(render(false), "No limits");
+    expect(remote).toContain(' disabled=""');
+    expect(remote).toContain("No limits can only be turned on in the Murage desktop app.");
   });
 
   it("does not offer Full access away from the desktop app, and says why", () => {

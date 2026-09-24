@@ -94,7 +94,13 @@ describe("choosing a default", () => {
 
   it("after the warning, Full access asks only about this computer, else saves", () => {
     expect(defaultModeStep(warned, "full", true)).toEqual({ kind: "local-warning", mode: "full" });
-    expect(defaultModeStep(warned, "full", false)).toEqual({ kind: "patch", patch: { autoApprove: true, fullAccess: true } });
+    expect(defaultModeStep(warned, "full", false)).toEqual({ kind: "patch", patch: { autoApprove: true, fullAccess: true, noLimits: false } });
+  });
+
+  it("No limits has its own warning once, then this computer's, else saves", () => {
+    expect(defaultModeStep(warned, "unlimited", false)).toEqual({ kind: "no-limits-warning", onThisComputer: false });
+    expect(defaultModeStep({ ...warned, noLimitsAcknowledgedAt: 1 }, "unlimited", true)).toEqual({ kind: "local-warning", mode: "unlimited" });
+    expect(defaultModeStep({ ...warned, noLimitsAcknowledgedAt: 1 }, "unlimited", false)).toEqual({ kind: "patch", patch: { autoApprove: true, fullAccess: true, noLimits: true } });
   });
 
   it("Auto keeps the local-computer warning; Ask never warns", () => {

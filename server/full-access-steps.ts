@@ -10,25 +10,27 @@ import type { Message } from "./store.ts";
 
 export const FULL_ACCESS_STEPS_KEPT = 200;
 
-export function fullAccessStepsLabel(count: number): string {
-  return `Approved ${count} ${count === 1 ? "step" : "steps"} (Full access)`;
+export type StepLevel = "Full access" | "No limits";
+
+export function fullAccessStepsLabel(count: number, level: StepLevel = "Full access"): string {
+  return `Approved ${count} ${count === 1 ? "step" : "steps"} (${level})`;
 }
 
 /** The tool patch that adds `step` to the current line, or null when a new
  * line must start: the bot said something, a card or another approval chip
  * came in between, or this is another turn. Tool chips in between do not
  * break the run; they are the steps being approved. */
-export function extendStepLine(messages: readonly Message[], lineId: string | undefined, turnId: string | undefined, step: string): NonNullable<Message["tool"]> | null {
+export function extendStepLine(messages: readonly Message[], lineId: string | undefined, turnId: string | undefined, step: string, level: StepLevel = "Full access"): NonNullable<Message["tool"]> | null {
   const at = lineId ? messages.findIndex((message) => message.id === lineId) : -1;
   const line = at >= 0 ? messages[at] : undefined;
-  if (!line?.tool?.steps || line.turnId !== turnId) return null;
+  if (!line?.tool?.steps || line.turnId !== turnId || !line.tool.name.endsWith(`(${level})`)) return null;
   const quiet = messages.slice(at + 1).every((message) =>
     message.kind === "activity" && message.tool?.steps === undefined && !/^auto-approved /.test(message.tool?.name ?? ""));
   if (!quiet) return null;
   const count = (line.tool.stepCount ?? line.tool.steps.length) + 1;
-  return { ...line.tool, name: fullAccessStepsLabel(count), steps: [...line.tool.steps, step].slice(-FULL_ACCESS_STEPS_KEPT), stepCount: count };
+  return { ...line.tool, name: fullAccessStepsLabel(count, level), steps: [...line.tool.steps, step].slice(-FULL_ACCESS_STEPS_KEPT), stepCount: count };
 }
 
-export function newStepLine(step: string): NonNullable<Message["tool"]> {
-  return { name: fullAccessStepsLabel(1), ok: true, steps: [step], stepCount: 1 };
+export function newStepLine(step: string, level: StepLevel = "Full access"): NonNullable<Message["tool"]> {
+  return { name: fullAccessStepsLabel(1, level), ok: true, steps: [step], stepCount: 1 };
 }

@@ -42,7 +42,7 @@ describe("the this-computer warning names the mode being switched on", () => {
   });
 
   it("is told which mode by every caller that can switch on Full access", () => {
-    expect(read("./Composer.tsx")).toMatch(/mode=\{autoWarn === "full" \? "full" : "auto"\}/);
-    expect(read("./SettingsPanel.tsx")).toMatch(/mode=\{localAutoWarning === "full" \? "full" : "auto"\}/);
+    expect(read("./Composer.tsx")).toMatch(/mode=\{autoWarn === false \? "auto" : autoWarn\}/);
+    expect(read("./SettingsPanel.tsx")).toMatch(/mode=\{localAutoWarning === "full" \|\| localAutoWarning === "unlimited" \? localAutoWarning : "auto"\}/);
   });
 });

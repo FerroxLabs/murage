@@ -289,6 +289,8 @@ export interface Task {
   autoApprove?: boolean;
   /** Full access for this task (only while autoApprove is on) */
   fullAccess?: boolean;
+  /** No limits for this task (only while fullAccess is on) */
+  noLimits?: boolean;
   alwaysAllow?: string[];
   unread?: boolean;
   busy?: boolean;
@@ -361,6 +363,10 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
+  /** No limits, above Full access: no stop line; the key guard still asks */
+  noLimits?: boolean;
+  /** set by the server once the owner confirmed the one-time No limits warning */
+  noLimitsAcknowledgedAt?: number;
   /** Full access also covers the owner's own Telegram, Slack and Discord messages */
   fullAccessChannelMessages?: boolean;
   /** Full access also approves setup requests (skills, routines, folder trust) */
@@ -907,7 +913,7 @@ export type Action =
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "setModel"; botId: string; threadId?: string; selection: ModelSelection }
-  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean} }
+  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean;acknowledgeNoLimits?:boolean} }
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
@@ -933,7 +939,7 @@ export type Action =
 export function viewedTaskBot(bot: Bot): Bot {
   const task=bot.tasks?.find(task=>task.threadId===bot.threadId);
   if(!task)return bot;
-  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null};
+  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,noLimits:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null};
 }
 export function withThreadUnread(bot:Bot,threadId:string,unread:boolean):Bot {
   if(!bot.tasks?.length)return {...bot,unread};

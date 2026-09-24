@@ -329,6 +329,10 @@ export interface TaskRecord {
   autoApprove?: boolean;
   /** Full access for this task: above Auto, and only while autoApprove is on. */
   fullAccess?: boolean;
+  /** No limits for this task: above Full access (no stop line), and only
+   * while fullAccess is on. Absent on every older record, which stays at
+   * guarded Full access. */
+  noLimits?: boolean;
   alwaysAllow?: string[];
   unread?: boolean;
   rewound?: boolean;
@@ -634,6 +638,13 @@ export interface BotRecord {
   /** When the owner confirmed this bot's one-time Full access warning, on
    * the desktop. Server-written only; never accepted in a patch body. */
   fullAccessAcknowledgedAt?: number;
+  /** No limits, the level above Full access: no stop line (deleting outside
+   * its folder, paying, messaging someone new all go ahead); the key guard
+   * still asks. Counts only while fullAccess is on. Set only from the
+   * desktop app, after its own one-time warning. Absent = guarded. */
+  noLimits?: boolean;
+  /** When the owner confirmed this bot's one-time No limits warning. */
+  noLimitsAcknowledgedAt?: number;
   /** Full access also covers the owner's own Telegram, Slack and Discord
    * messages. Desktop-set; missing or anything but `true` is off. */
   fullAccessChannelMessages?: boolean;
@@ -2058,7 +2069,7 @@ export class Store {
     Object.assign(bot, patch);
     if(bot.tasks?.length===1){
       const task=bot.tasks[0];
-      for(const key of ["modelSelection","autoApprove","fullAccess","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["modelSelection","autoApprove","fullAccess","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      for(const key of ["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
     }
     this.saveBots();
     this.emit({ type: "bot", botId: id });
@@ -2472,7 +2483,7 @@ export class Store {
 
   projectBotForTask(botId:string,threadId:string):BotRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
-    return {...bot,...(!isWorkspaceOwner(threadHumanPrincipal(threadId))?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:isWorkspaceOwner(threadHumanPrincipal(threadId))&&(task.autoApprove??false),fullAccess:isWorkspaceOwner(threadHumanPrincipal(threadId))&&task.autoApprove===true&&task.fullAccess===true,alwaysAllow:isWorkspaceOwner(threadHumanPrincipal(threadId))?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+    return {...bot,...(!isWorkspaceOwner(threadHumanPrincipal(threadId))?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:isWorkspaceOwner(threadHumanPrincipal(threadId))&&(task.autoApprove??false),fullAccess:isWorkspaceOwner(threadHumanPrincipal(threadId))&&task.autoApprove===true&&task.fullAccess===true,noLimits:isWorkspaceOwner(threadHumanPrincipal(threadId))&&task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:isWorkspaceOwner(threadHumanPrincipal(threadId))?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
   }
   /** Host-only, write-once procedural admission. Never accepted in API patches. */
   pinTaskProcedures(botId:string, threadId:string, pin:ProcedurePin):ProcedurePin {
@@ -2495,7 +2506,7 @@ export class Store {
     return holder.procedurePins[botId]!;
   }
 
-  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>&{pinned?:boolean}):TaskRecord|null {
+  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
     const next:TaskRecord={...task,...structuredClone(rest)};
@@ -2537,7 +2548,7 @@ export class Store {
       title: title?.trim().slice(0,80) || UNTITLED_TASK,
       createdAt: Date.now(),
       resumeCursors: {},
-      modelSelection:structuredClone((activate ? this.activeTask(botId)?.modelSelection : undefined) ?? bot.modelSelection),autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
+      modelSelection:structuredClone((activate ? this.activeTask(botId)?.modelSelection : undefined) ?? bot.modelSelection),autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {

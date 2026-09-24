@@ -116,7 +116,7 @@ import {
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
-import { extendStepLine, newStepLine } from "./full-access-steps.ts";
+import { extendStepLine, newStepLine, type StepLevel } from "./full-access-steps.ts";
 import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
@@ -3895,14 +3895,14 @@ function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
  * collapsing into (server/full-access-steps.ts). */
 const fullAccessStepLine = new Map<string, string>();
 
-function noteFullAccessStep(threadId: string, turnId: string | undefined, step: string, push: (m: Omit<Message, "id" | "at">) => Message): void {
+function noteFullAccessStep(threadId: string, turnId: string | undefined, step: string, push: (m: Omit<Message, "id" | "at">) => Message, level: StepLevel = "Full access"): void {
   const lineId = fullAccessStepLine.get(threadId);
-  const extended = extendStepLine(store.messagesFor(threadId), lineId, turnId, step);
+  const extended = extendStepLine(store.messagesFor(threadId), lineId, turnId, step, level);
   if (extended && lineId) {
     store.patchMessage(threadId, lineId, { tool: extended });
     return;
   }
-  fullAccessStepLine.set(threadId, push({ role: "bot", kind: "activity", turnId, tool: newStepLine(step) }).id);
+  fullAccessStepLine.set(threadId, push({ role: "bot", kind: "activity", turnId, tool: newStepLine(step, level) }).id);
 }
 
 let routines: RoutineManager | null = null;
@@ -4221,7 +4221,7 @@ bus.subscribe((event: RuntimeEvent) => {
             // that counts up and opens to list them. Every other automatic
             // answer keeps its own chip, and the decision log below keeps
             // one row per step either way.
-            if (verdict.source === "full-access") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage);
+            if (verdict.source === "full-access" || verdict.source === "no-limits") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage, verdict.source === "no-limits" ? "No limits" : "Full access");
             else pushMessage({
               role: "bot",
               kind: "activity",
@@ -5300,7 +5300,7 @@ async function startTurn(
   const humanIsOwner=isWorkspaceOwner(humanPrincipal);
   if(!humanIsOwner){
     if(!opts?.automationSource&&!opts?.commsDepth&&!opts?.cardContinuation&&!opts?.memoryRedispatch)throw Object.assign(new Error("This conversation belongs to a channel person. Start a new owner task to chat."),{status:403});
-    bot.autoApprove=false;bot.fullAccess=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
+    bot.autoApprove=false;bot.fullAccess=false;bot.noLimits=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
   }
   if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
@@ -13661,7 +13661,7 @@ const server = createServer(async (req, res) => {
       if(body.settingsScope!==undefined&&body.settingsScope!=="defaults")return json(res,400,{error:"settingsScope must be defaults"});
       const preserveTaskSettings=body.settingsScope==="defaults";
       if(preserveTaskSettings&&requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"not found"});
-      if(!preserveTaskSettings&&(existingBot?.tasks?.length??0)>1&&(body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.alwaysAllow!==undefined))return json(res,409,{error:"Choose a thread or edit bot defaults explicitly"});
+      if(!preserveTaskSettings&&(existingBot?.tasks?.length??0)>1&&(body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.noLimits!==undefined||body.alwaysAllow!==undefined))return json(res,409,{error:"Choose a thread or edit bot defaults explicitly"});
       if(existingBot&&directRuns.forBot(existingBot.id).length>1)return json(res,409,{error:"Stop this bot's threads before changing shared settings"});
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
         return json(res, 400, { error: "requireAvailableModel must be true or false" });
@@ -13862,6 +13862,8 @@ const server = createServer(async (req, res) => {
       if (fullAccess.autoApprove !== undefined) patch.autoApprove = fullAccess.autoApprove;
       if (fullAccess.fullAccess !== undefined) patch.fullAccess = fullAccess.fullAccess;
       if (fullAccess.acknowledgedAt !== undefined) patch.fullAccessAcknowledgedAt = fullAccess.acknowledgedAt;
+      if (fullAccess.noLimits !== undefined) patch.noLimits = fullAccess.noLimits;
+      if (fullAccess.noLimitsAcknowledgedAt !== undefined) patch.noLimitsAcknowledgedAt = fullAccess.noLimitsAcknowledgedAt;
       // Full access's two per-bot options: desktop only (server/full-access.ts).
       const fullAccessOptions = fullAccessOptionsChange(body, requestSurface(req.headers, url.searchParams) === "desktop");
       if (!fullAccessOptions.ok) return json(res, fullAccessOptions.status, { error: fullAccessOptions.error });
@@ -15192,8 +15194,8 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if(!body||typeof body!=="object"||Array.isArray(body))return json(res,400,{error:"body must be an object"});
       const current=store.projectBotForTask(m[1],m[2]);if(!current)return json(res,404,{error:"no such task"});
-      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","fullAccess","acknowledgeFullAccess","cwd","unread","pinned","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
-      const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.cwd!==undefined;
+      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","fullAccess","acknowledgeFullAccess","noLimits","acknowledgeNoLimits","cwd","unread","pinned","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
+      const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.fullAccess!==undefined||body.noLimits!==undefined||body.cwd!==undefined;
       // the working folder is a desktop setting: a paired device answers 404
       // and (FUIGOTRUST2) records no folder trust either way
       const desktopSurface=requestSurface(req.headers,url.searchParams)==="desktop";
@@ -15211,6 +15213,7 @@ const server = createServer(async (req, res) => {
         patch.autoApprove=wantsAuto;
       }
       if(fullAccess.fullAccess!==undefined)patch.fullAccess=fullAccess.fullAccess;
+      if(fullAccess.noLimits!==undefined)patch.noLimits=fullAccess.noLimits;
       if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd,desktopSurface);}
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
@@ -15219,6 +15222,7 @@ const server = createServer(async (req, res) => {
       const task = store.patchTask(m[1],m[2],patch);
       if (!task) return json(res, 404, { error: "no such task" });
       if (fullAccess.acknowledgedAt !== undefined) store.patchBot(m[1], { fullAccessAcknowledgedAt: fullAccess.acknowledgedAt }, { preserveTaskSettings: true });
+      if (fullAccess.noLimitsAcknowledgedAt !== undefined) store.patchBot(m[1], { noLimitsAcknowledgedAt: fullAccess.noLimitsAcknowledgedAt }, { preserveTaskSettings: true });
       // A settings change does not move the transcript, and clients keep
       // theirs on a same-thread frame; one page keeps the frame small.
       broadcast({ kind: "bot", bot: pagedPublicBot(store.bot(m[1])!, SWITCH_FRAME_PAGE) });

@@ -288,6 +288,38 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
   );
 
   it(
+    "No limits: desktop only, its own warning once, and the stop line no longer stops",
+    async () => {
+      const bot = await makeBot("Unlimited deleter", "deleter");
+      const thread = `/api/bots/${bot.id}/tasks/${bot.threadId}`;
+      expect((await api("PATCH", thread, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(404);
+      const unconfirmed = await desktopApi("PATCH", thread, { noLimits: true });
+      expect(unconfirmed.status).toBe(400);
+      expect(unconfirmed.body.error).toContain("acknowledgeNoLimits");
+      const confirmed = await desktopApi("PATCH", thread, { noLimits: true, acknowledgeNoLimits: true });
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body.task).toMatchObject({ autoApprove: true, fullAccess: true, noLimits: true });
+      const record = await botState(bot.id);
+      expect(typeof record.noLimitsAcknowledgedAt).toBe("number");
+      expect(typeof record.fullAccessAcknowledgedAt).toBe("number");
+
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "tidy my documents" })).status).toBe(202);
+      expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      const messages = await threadMessages(bot.threadId);
+      expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+      expect(messages.find((m) => Array.isArray(m.tool?.steps))?.tool?.name).toBe("Approved 1 step (No limits)");
+
+      // choosing Full access again is the guarded level
+      expect((await desktopApi("PATCH", thread, { fullAccess: true })).body.task).toMatchObject({ fullAccess: true, noLimits: false });
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "again" })).status).toBe(202);
+      const card = await poll(() => liveCard(bot.threadId), 20_000);
+      expect(card, "guarded Full access did not stop again").not.toBeNull();
+      await deny(bot.id, bot.threadId, card.card.requestId);
+    },
+    90_000,
+  );
+
+  it(
     "still asks when a webhook starts the turn",
     async () => {
       const bot = await makeBot("Hooked");

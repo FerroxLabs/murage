@@ -5,6 +5,7 @@
 // Decided by what the action TOUCHES, never by which command spelled it.
 import { describe, expect, it } from "vitest";
 
+import { autoVerdict } from "./auto-approve.ts";
 import { classifyStopLine, stopLineKey, stopLineKeyCovers, type StopLinePlace } from "./stop-line.ts";
 
 const HOME = "/Users/ada";
@@ -65,6 +66,24 @@ const rows: Row[] = [
   ["xargs rm has no knowable target", ...shell("ls | xargs rm -rf"), "delete"],
   ["bash -c wraps an outside rm", ...shell("bash -c 'rm -rf ~/Pictures'"), "delete"],
   ["python rmtree outside", ...shell("python3 -c \"import shutil; shutil.rmtree('/Users/ada/Documents')\""), "delete"],
+  // 2026-09-24 live bug: a bot on Auto trashed a Downloads file through Finder
+  ["osascript Finder delete via a variable (live regression)", ...shell(`f="/Users/owner/Downloads/Image - Removed.png"; rtk ls -la "$f" && osascript -e "tell application \\"Finder\\" to delete POSIX file \\"$f\\"" && rtk ls -la "$f" 2>&1`), "delete"],
+  ["osascript Finder delete, literal path", ...shell(`osascript -e 'tell application "Finder" to delete POSIX file "/Users/ada/Desktop/a.txt"'`), "delete"],
+  ["osascript move to trash", ...shell(`osascript -e 'tell application "Finder" to move POSIX file "/Users/ada/Documents/x" to trash'`), "delete"],
+  ["osascript empty the trash", ...shell(`osascript -e 'tell application "Finder" to empty the trash'`), "delete"],
+  ["osascript JXA delete", ...shell(`osascript -l JavaScript -e 'Application("Finder").delete(Path("/Users/ada/Desktop/a"))'`), "delete"],
+  ["osascript Finder delete inside its folder", ...shell(`osascript -e 'tell application "Finder" to delete POSIX file "/Users/ada/Projects/site/tmp.txt"'`), "pass"],
+  ["osascript that deletes nothing", ...shell(`osascript -e 'display notification "done"'`), "pass"],
+  ["swift trashItem", ...shell(`swift -e 'import Foundation; try FileManager.default.trashItem(at: URL(fileURLWithPath: "/Users/ada/Documents/x"), resultingItemURL: nil)'`), "delete"],
+  ["python os.remove through a variable", ...shell(`p=/Users/ada/Documents/x; python3 -c "import os; os.remove('$p')"`), "delete"],
+  ["python send2trash inside", ...shell(`python3 -c "from send2trash import send2trash; send2trash('./old.log')"`), "pass"],
+  ["rm through an assigned variable, outside", ...shell(`f="$HOME/Documents/old"; rm -rf "$f"`), "delete"],
+  ["rm through an assigned variable, inside", ...shell(`d=build; rm -rf "$d"`), "pass"],
+  ["export then rm", ...shell(`export T=/Users/ada/Desktop/x && rm "$T"`), "delete"],
+  ["rtk rm outside", ...shell("rtk rm -rf ~/Documents/old"), "delete"],
+  ["rtk proxy rm outside", ...shell("rtk proxy rm ~/Desktop/x"), "delete"],
+  ["rtk rm inside", ...shell("rtk rm -rf build"), "pass"],
+  ["a variable set from a command is unknown", ...shell(`f=$(mktemp); rm "$f"`), "delete"],
   ["no cwd: relative rm is unknown", "Bash", { command: "rm -rf build" }, "delete"],
   ["delete_file outside", "delete_file", { path: "/Users/ada/Documents/old.txt" }, "delete"],
   ["git push --force", ...shell("git push --force origin main"), "delete"],
@@ -208,5 +227,21 @@ describe("stop line keys", () => {
     expect(stopLineKey(classifyStopLine("mcp__telegram__send_message", { text: "hi" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("mcp__stripe__create_charge", { amount: 1 }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "diskutil eraseDisk APFS X disk4" }, "", place())!)).toBeUndefined();
+  });
+});
+
+describe("the live Finder delete (2026-09-24)", () => {
+  const command = `f="/Users/owner/Downloads/Image - Removed.png"; rtk ls -la "$f" && osascript -e "tell application \\"Finder\\" to delete POSIX file \\"$f\\"" && rtk ls -la "$f" 2>&1`;
+  const home = { ...place(), home: "/Users/owner", cwd: "/Users/owner/.murage/workspaces/b/threads/t", roots: ["/Users/owner/.murage/workspaces/b/threads/t"] };
+
+  it("names the file it would delete", () => {
+    const hit = classifyStopLine("Bash", { command }, "", home)!;
+    expect(hit.what).toBe("Delete 1 item outside its folder: ~/Downloads/Image - Removed.png");
+  });
+
+  it("stops under Auto, where it was auto-approved, and under Full access", () => {
+    const stopLine = classifyStopLine("Bash", { command }, command, home);
+    expect(autoVerdict({ autoApprove: true }, "Bash", command, { stopLine }).source).toBe("stop-line");
+    expect(autoVerdict({ autoApprove: true, fullAccess: true }, "Bash", command, { stopLine }).source).toBe("stop-line");
   });
 });

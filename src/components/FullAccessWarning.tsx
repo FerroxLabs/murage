@@ -3,7 +3,11 @@ import { AlertTriangle } from "lucide-react";
 
 /** Shown once per bot, on the desktop, before Full access is switched on. */
 export const FULL_ACCESS_WARNING =
-  "This bot will not ask before running commands, reading credentials or personal files, or contacting other bots.";
+  "This bot will not ask before running commands, editing files or contacting other bots.";
+
+/** What Full access still stops at (server/stop-line.ts). */
+export const FULL_ACCESS_STOP_LINE =
+  "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
 export const FULL_ACCESS_STILL_ASKS =
   "Turns started by webhooks or routines still ask, as they do in Auto, and image generation still asks before it spends.";
@@ -14,15 +18,22 @@ export const FULL_ACCESS_ASKS_UNLESS_ALLOWED =
 export const FULL_ACCESS_ON_THIS_COMPUTER =
   "On this computer that includes your own screen, mouse and keyboard.";
 
+/** Shown once per bot before No limits is switched on. */
+export const NO_LIMITS_WARNING =
+  "This bot will do anything without asking, except reading your keys and passwords. That includes deleting files anywhere, paying for things, and messaging anyone or posting in public.";
+
 export function FullAccessWarning({
   open,
   botName,
+  level = "full",
   onThisComputer,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   botName: string;
+  /** which level this confirms: Full access, or No limits above it */
+  level?: "full" | "unlimited";
   /** the bot drives this computer, so the Auto-on-this-computer warning is
    * confirmed by this same dialog */
   onThisComputer: boolean;
@@ -63,14 +74,15 @@ export function FullAccessWarning({
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
           <div>
             <h2 id="full-access-warning-title" className="text-[15px] font-semibold text-ink">
-              Give @{botName} full access?
+              {level === "unlimited" ? `Give @${botName} no limits?` : `Give @${botName} full access?`}
             </h2>
             <div id="full-access-warning-body" className="mt-1.5 flex flex-col gap-1.5 text-[13px] leading-relaxed text-ink-secondary">
-              <p className="font-medium text-ink">{FULL_ACCESS_WARNING}</p>
+              <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
+              {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               <p>{FULL_ACCESS_STILL_ASKS}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
-              <p>You are asked this once for this bot. Switch back to Auto or Ask at any time.</p>
+              <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>
             </div>
           </div>
         </div>
@@ -88,7 +100,7 @@ export function FullAccessWarning({
             onClick={onConfirm}
             className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110"
           >
-            Turn on full access
+            {level === "unlimited" ? "Turn on no limits" : "Turn on full access"}
           </button>
         </div>
       </div>

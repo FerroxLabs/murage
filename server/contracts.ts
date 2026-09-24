@@ -324,8 +324,9 @@ export interface SendTurnInput {
    * driver whose instance is set to skip them (Claude `bypassPermissions`,
    * Codex `approvalPolicy: never`, an ACP engine's `fullAuto`, Antigravity's
    * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
-   * answers everything else at once. Absent: the instance's own setting
-   * stands, exactly as before. */
+   * answers everything else at once. Also set on No limits, which drops the
+   * stop line but keeps the key guard: that guard holds only if Murage sees
+   * the asks. Absent: the instance's own setting stands, exactly as before. */
   stopLine?: true;
 }
 

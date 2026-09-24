@@ -9,7 +9,10 @@ export const LOCAL_COMPUTER_AUTO_WARNING =
  * Full access does not, so the Auto sentence would be a promise this mode
  * cannot keep. */
 export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
-  "Full access will let this bot click, type, and run tools on this computer without asking first — including destructive and sensitive actions. Continue only if you are watching.";
+  "Full access will let this bot click, type, and run tools on this computer without asking first. It still asks before deleting outside its folder, paying, messaging someone new, and reading your keys. Continue only if you are watching.";
+
+export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
+  "No limits will let this bot click, type, and run anything on this computer without asking first, except reading your keys and passwords. Continue only if you are watching.";
 
 export function LocalComputerAutoWarning({
   open,
@@ -19,7 +22,7 @@ export function LocalComputerAutoWarning({
   onConfirm,
 }: {
   open: boolean;
-  mode?: "auto" | "full";
+  mode?: "auto" | "full" | "unlimited";
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -56,10 +59,10 @@ export function LocalComputerAutoWarning({
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
           <div>
             <h2 id="local-auto-warning-title" className="text-[15px] font-semibold text-ink">
-              {mode === "full" ? "Allow Full access on this computer?" : "Allow Auto mode on this computer?"}
+              {mode === "unlimited" ? "Allow No limits on this computer?" : mode === "full" ? "Allow Full access on this computer?" : "Allow Auto mode on this computer?"}
             </h2>
             <p id="local-auto-warning-body" className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
-              {mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
+              {mode === "unlimited" ? LOCAL_COMPUTER_NO_LIMITS_WARNING : mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
             </p>
           </div>
         </div>

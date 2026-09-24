@@ -352,8 +352,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
-  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "local" | null>(null);
-  const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean } | null>(null);
+  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "unlimited" | "local" | null>(null);
+  const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean; level: "full" | "unlimited" } | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -373,6 +373,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "avatarCrop"
         | "autoApprove"
         | "fullAccess"
+        | "noLimits"
         | "fullAccessChannelMessages"
         | "fullAccessSetupRequests"
         | "autoReview"
@@ -384,15 +385,16 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "browser"
         | "modelSelection"
       >
-    > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; persona?: string },
-  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined?{settingsScope:"defaults" as const}:{})} });
+    > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; acknowledgeNoLimits?: boolean; persona?: string },
+  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined||p.noLimits!==undefined?{settingsScope:"defaults" as const}:{})} });
   // The bot's default approval level: the same warnings, in the same order,
   // as the composer's switch (defaultModeStep). The platform is the
   // harness's own (announced on /api/config), not this browser's UA.
   const chooseDefaultMode = (mode: PermissionMode) => {
     const needsLocal = autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities, { harness: state.config?.harness }), computer: bot.computer, autoApprove: bot.autoApprove });
     const step = defaultModeStep(bot, mode, needsLocal);
-    if (step.kind === "full-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer });
+    if (step.kind === "full-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer, level: "full" });
+    else if (step.kind === "no-limits-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer, level: "unlimited" });
     else if (step.kind === "local-warning") setLocalAutoWarning(step.mode);
     else patch(step.patch);
   };
@@ -883,11 +885,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
     </aside>
     <LocalComputerAutoWarning
       open={localAutoWarning !== null}
-      mode={localAutoWarning === "full" ? "full" : "auto"}
+      mode={localAutoWarning === "full" || localAutoWarning === "unlimited" ? localAutoWarning : "auto"}
       onCancel={() => setLocalAutoWarning(null)}
       onConfirm={() => {
         if (localAutoWarning === "auto") patch({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
-        if (localAutoWarning === "full") patch({ autoApprove: true, fullAccess: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "full") patch({ autoApprove: true, fullAccess: true, noLimits: false, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "unlimited") patch({ autoApprove: true, fullAccess: true, noLimits: true, acknowledgeLocalAuto: true });
         if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
         setLocalAutoWarning(null);
       }}
@@ -895,10 +898,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
     <FullAccessWarning
       open={fullAccessWarning !== null}
       botName={bot.name}
+      level={fullAccessWarning?.level ?? "full"}
       onThisComputer={fullAccessWarning?.onThisComputer === true}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {
-        if (fullAccessWarning) patch({ autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, ...(fullAccessWarning.onThisComputer ? { acknowledgeLocalAuto: true } : {}) });
+        if (fullAccessWarning) patch({
+          autoApprove: true, fullAccess: true,
+          ...(fullAccessWarning.level === "unlimited" ? { noLimits: true, acknowledgeNoLimits: true } : { noLimits: false, acknowledgeFullAccess: true }),
+          ...(fullAccessWarning.onThisComputer ? { acknowledgeLocalAuto: true } : {}),
+        });
         setFullAccessWarning(null);
       }}
     />

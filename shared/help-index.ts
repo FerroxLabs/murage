@@ -319,14 +319,14 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "When an engine supports approvals, Murage surfaces the request instead of hiding it in terminal output. Read the requested action and scope before approving it. Denying an action sends control back to the agent so it can choose a safer path."
   },
   {
-    "id": "features/approvals-and-inspector#ask-auto-and-full-access",
+    "id": "features/approvals-and-inspector#ask-auto-full-access-and-no-limits",
     "title": "Approvals and inspector",
     "description": "Stay in control when agents ask questions, request access, or perform risky work.",
-    "heading": "Ask, Auto and Full access",
+    "heading": "Ask, Auto, Full access and No limits",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#ask-auto-and-full-access",
-    "text": "Choose how a conversation is approved from the chip beside the composer:\n- Ask shows a card for each action that needs your permission.\n- Auto keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.\n- Full access does not ask before running commands, reading credentials or personal files, or contacting other bots. It can be switched on only in the desktop app, and the first time for each bot you confirm a warning.\n\nSome things still ask under Full access. A turn started by a webhook or a routine asks as it would under Auto, because someone other than you wrote that input or nobody is watching it.…"
+    "url": "https://murage.app/docs/features/approvals-and-inspector#ask-auto-full-access-and-no-limits",
+    "text": "Choose how a conversation is approved from the chip beside the composer:\n- Ask shows a card for each action that needs your permission.\n- Auto keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.\n- Full access does not ask before running commands, editing files or contacting other bots. It still stops before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords. On those cards you can allow it once, allow the same kind of action in the same place for the rest of the task, or always.…"
   },
   {
     "id": "features/approvals-and-inspector#inspector",
