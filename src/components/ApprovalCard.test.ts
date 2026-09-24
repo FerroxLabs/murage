@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
+import { approvalGrants, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
 
@@ -401,5 +401,29 @@ describe("ApprovalCard names a recognised action behind an ACP kind", () => {
     ["agents__list_bots", "Ember wants to use a tool"],
   ])("%s → %s", (subtitle, sentence) => {
     expect(render(subtitle)).toContain(sentence);
+  });
+});
+
+describe("the stop line's grants on a pending approval", () => {
+  const pending = (card: Partial<NonNullable<Message["card"]>>): Pending => ({
+    message: { id: "m", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: "rm -rf ~/Documents/old", options: ["Allow", "Deny"], tool: "Bash", requestId: "r", ...card } },
+    requestId: "r",
+    tool: "Bash",
+    allowKey: card.allowKey,
+    detail: "rm -rf ~/Documents/old",
+  });
+
+  it("offers Allow for this task when the server scoped one, on any surface", () => {
+    const stop = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
+    expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, forTask: true });
+    expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, forTask: true });
+  });
+
+  it("keeps Always allow but offers no task grant on an ordinary card", () => {
+    expect(approvalGrants(pending({ allowKey: "Bash:git" }), { desktop: true, hasBot: true })).toEqual({ always: true, forTask: false });
+  });
+
+  it("offers neither when the stop line could not say where", () => {
+    expect(approvalGrants(pending({}), { desktop: true, hasBot: true })).toEqual({ always: false, forTask: false });
   });
 });

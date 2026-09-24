@@ -8316,6 +8316,27 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("records a chat allowance only for a place the owner's own message names, and says so in the chat", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Chat allowance fixture" })).body.bot;
+    try {
+      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "you can delete anything in ~/Projects/site today\n__fixture_hold_authority__");
+      const allow = async (body: object) => {
+        const response = await fetch(`${BASE}/api/internal/stop-line-allowance`, { method: "POST", headers, body: JSON.stringify(body) });
+        return { status: response.status, body: await response.json() as any };
+      };
+      // a place the owner never said is refused, whatever the bot claims
+      expect((await allow({ kind: "delete", place: "~/Documents" })).status).toBe(400);
+      expect((await allow({ kind: "delete", place: "~" })).status).toBe(400);
+      const allowed = await allow({ kind: "delete", place: "~/Projects/site" });
+      expect(allowed.status).toBe(200);
+      expect(allowed.body.note).toBe("You allowed deleting anything in ~/Projects/site for the rest of this task.");
+      const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as any[];
+      expect(messages.some((m) => m.kind === "activity" && m.tool?.name === allowed.body.note)).toBe(true);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
+    }
+  });
+
   it("registers verified task files through the live agent capability without accepting foreign paths", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Artifact API fixture" })).body.bot;
     try {

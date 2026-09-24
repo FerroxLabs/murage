@@ -10,6 +10,8 @@
 // backstop for the obvious catastrophes. Real containment is the
 // sandbox and the bot's own computer, not a regex.
 
+import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
+
 const DESTRUCTIVE = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
@@ -242,6 +244,12 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The stop line (server/stop-line.ts): deleting outside its folder,
+   * paying, or messaging someone new. Full access stops here too. */
+  | "stop-line"
+  /** The owner allowed this kind of action in this place for the task, from
+   * the card's "Allow for this task" or by saying so in chat. */
+  | "task-allowance"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
@@ -259,12 +267,16 @@ export interface AutoVerdict {
    * the granted key (always-allow, and unattended-block over one). Auto
    * mode has no narrower identity than the mode itself, so it carries none. */
   rule?: string;
+  /** Plain words for the held card: what the bot is about to do and why it
+   * stopped (the stop line's `what`). */
+  note?: string;
 }
 
 /** Presentation only. A held card names the actual guard, never changes it. */
 export function approvalHoldNote(verdict: AutoVerdict | null | undefined): string | undefined {
   if (!verdict || verdict.approve) return undefined;
   switch (verdict.source) {
+    case "stop-line": return verdict.note ?? "This action deletes, pays or messages someone new. Review it before allowing it.";
     case "destructive-guard": return "This action may be destructive. Review it before allowing it.";
     case "sensitive-guard": return "This action may access sensitive data. Review it before allowing it.";
     case "unattended-block": return "This task started outside the desktop. Your approval is required before this action can continue.";
@@ -278,62 +290,101 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
  * autoDecision below — this exists so the decision log can record which
  * rule decided without the call site re-deriving (and eventually
  * mis-deriving) the match. */
+export interface AutoContext {
+  /** the turn was started by an outside event, with nobody at the keyboard */
+  unattended?: boolean;
+  /** the request controls the user's active desktop */
+  scope?: "local-computer";
+  /** the driver's trusted signal that this ask is a question to the owner
+   * even though it is filed as a permission (Pi `select`, whose title is
+   * extension-composed text and so cannot be matched by name) */
+  question?: boolean;
+  /** the turn belongs to a routine run (scheduled, manual, webhook or
+   * channel trigger) rather than to someone typing to the bot */
+  automated?: boolean;
+  /** the turn is the workspace owner's own Telegram, Slack or Discord
+   * message (it is also unattended and automated) */
+  channelOwner?: boolean;
+  /** The caller established — from the engine's STRUCTURED tool
+   * input, never from the card text — that every filesystem path this
+   * request names lies inside the directories Murage manages for THIS bot:
+   * its own workspace folder and its own thread folder under the data dir.
+   * The fact is decided in server/own-workspace-approval.ts, which is where
+   * the boundary (real paths, segment comparison, `..`, symlinks, another
+   * bot's folder) lives; this flag only places it in the order below.
+   *
+   * Why it is not a permission at all: Murage creates those folders, tells
+   * the bot where they are, and shows them in Memory and Files. A bot
+   * writing there is the product doing its own bookkeeping, not an action
+   * taken on the person's behalf. Before this, one question to a bot in Ask
+   * mode raised a card for its own MEMORY.md and another for its own thread
+   * file, and an unattended routine simply stopped until someone woke up. */
+  ownWorkspace?: boolean;
+  /** What the stop line (server/stop-line.ts) found, computed by the caller
+   * from the engine's structured input and the bot's own folders and
+   * recipients. `null` = checked, nothing crosses it; `undefined` = not
+   * checked (a caller with no place facts), which leaves every rule below
+   * exactly as it was. */
+  stopLine?: StopHit | null;
+  /** The task allowance that covers `stopLine`, when the caller holds one:
+   * the owner pressed "Allow for this task" or said so in chat. Honoured
+   * only on a turn the owner is at. */
+  stopAllowedForTask?: string;
+}
+
 export function autoVerdict(
   bot: AutoApprover,
   tool: string,
   summary: string,
-  context?: {
-    /** the turn was started by an outside event, with nobody at the keyboard */
-    unattended?: boolean;
-    /** the request controls the user's active desktop */
-    scope?: "local-computer";
-    /** the driver's trusted signal that this ask is a question to the owner
-     * even though it is filed as a permission (Pi `select`, whose title is
-     * extension-composed text and so cannot be matched by name) */
-    question?: boolean;
-    /** the turn belongs to a routine run (scheduled, manual, webhook or
-     * channel trigger) rather than to someone typing to the bot */
-    automated?: boolean;
-    /** the turn is the workspace owner's own Telegram, Slack or Discord
-     * message (it is also unattended and automated) */
-    channelOwner?: boolean;
-    /** The caller established — from the engine's STRUCTURED tool
-     * input, never from the card text — that every filesystem path this
-     * request names lies inside the directories Murage manages for THIS bot:
-     * its own workspace folder and its own thread folder under the data dir.
-     * The fact is decided in server/own-workspace-approval.ts, which is where
-     * the boundary (real paths, segment comparison, `..`, symlinks, another
-     * bot's folder) lives; this flag only places it in the order below.
-     *
-     * Why it is not a permission at all: Murage creates those folders, tells
-     * the bot where they are, and shows them in Memory and Files. A bot
-     * writing there is the product doing its own bookkeeping, not an action
-     * taken on the person's behalf. Before this, one question to a bot in Ask
-     * mode raised a card for its own MEMORY.md and another for its own thread
-     * file, and an unattended routine simply stopped until someone woke up. */
-    ownWorkspace?: boolean;
-  },
+  context?: AutoContext,
 ): AutoVerdict {
   // A question outranks everything, including the unattended and host
   // blocks: no mode, grant or turn origin lets the machine answer it. It
   // names no rule — no grant was consulted, and none could apply.
   if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
-  // Full access raises no card at all — not the destructive or sensitive
-  // guards, not the host-control guard — for a turn the owner started. A turn
-  // started by a webhook, a channel event or a routine carries input someone
-  // else wrote (or nobody is watching it), so it is judged exactly as Auto
-  // would judge it, below. The owner's own channel message joins the owner's
-  // turns only when the bot's option says so.
+  // Full access raises almost no card — not the destructive guard, not the
+  // host-control guard — for a turn the owner started. It still stops at the
+  // stop line and the key guard (below). A turn started by a webhook, a
+  // channel event or a routine carries input someone else wrote (or nobody is
+  // watching it), so it is judged exactly as Auto would judge it. The owner's
+  // own channel message joins the owner's turns only when the bot's option
+  // says so.
   const origin: FullAccessOrigin = context?.unattended || context?.automated
     ? context.channelOwner === true ? "owner-channel" : "other"
     : "owner";
-  if (fullAccessCovers(bot, origin)) {
-    return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
-  }
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
   const sensitive = destructive ? null : matchFirst(SENSITIVE, summary);
+  // The stop line outranks every mode, Full access included: deleting
+  // outside its folder, paying, and messaging someone new wait for the
+  // owner. Only a grant scoped to the same place answers it — the owner's
+  // "Allow for this task", or an "Always allow" keyed by folder, payee or
+  // recipient (never the bare tool name, which is why an older `Bash:rm` or
+  // `mcp__stripe__create_charge` grant cannot reach it). A turn nobody is
+  // at uses neither: it holds the card, as every other unattended grant does.
+  const stop = context?.stopLine ?? null;
+  if (stop) {
+    const attended = !context?.unattended && !context?.automated;
+    const keyGuard = matchFirst(SENSITIVE, summary);
+    if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
+    if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
+      return { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
+    }
+    const granted = stopLineKey(stop) === undefined ? undefined : bot.alwaysAllow?.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
+    if (granted && context?.scope !== "local-computer") {
+      if (context?.unattended) return { approve: null, source: "unattended-block", rule: granted };
+      return { approve: `auto-approved ${granted} (always allowed)`, source: "always-allow", rule: granted };
+    }
+    return { approve: null, source: "stop-line", rule: stop.kind, note: stop.what };
+  }
+  // Full access raises no card for a turn the owner started, apart from the
+  // stop line above and the key guard: a bot reading your keys is quiet,
+  // permanent and unrecoverable, whichever level it is on.
+  if (fullAccessCovers(bot, origin)) {
+    if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
+    return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
+  }
   // The bot's own bookkeeping, ahead of the unattended and host blocks
   // because those exist to stop a MODE or a GRANT standing in for a person,
   // and this is neither — nobody ever authorized Murage's own folders, and an
@@ -392,18 +443,7 @@ export function autoDecision(
   bot: AutoApprover,
   tool: string,
   summary: string,
-  context?: {
-    /** the turn was started by an outside event, with nobody at the keyboard */
-    unattended?: boolean;
-    /** the request controls the user's active desktop */
-    scope?: "local-computer";
-    /** the driver's trusted signal that this ask is a question */
-    question?: boolean;
-    /** the turn belongs to a routine run */
-    automated?: boolean;
-    /** the owner's own channel message */
-    channelOwner?: boolean;
-  },
+  context?: AutoContext,
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
 }

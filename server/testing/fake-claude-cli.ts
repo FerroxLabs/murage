@@ -351,6 +351,29 @@ const playAskUserQuestion = async (): Promise<void> => {
   finishIfDone();
 };
 
+/** `__fixture_permission_tool__`: ask the permission prompt tool about one
+ * ordinary tool call (FAKE_CLAUDE_PERM_TOOL / FAKE_CLAUDE_PERM_INPUT), the
+ * way the CLI does for anything its permission mode does not cover, and say
+ * what came back. Without a prompt tool the CLI would just run it (bypass). */
+const playPermissionTool = async (): Promise<void> => {
+  const tool = process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash";
+  const input = process.env.FAKE_CLAUDE_PERM_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT) as Record<string, unknown>) : { command: "rm -rf ~/Documents" };
+  const toolUseId = `toolu_fake_perm_${process.pid}_${Date.now()}`;
+  out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: tool, input }] } });
+  let verdict = "ran without asking";
+  try {
+    const reply = await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
+    if (reply !== null) verdict = (JSON.parse(reply) as { behavior?: string }).behavior === "allow" ? "allowed" : "denied";
+  } catch (error) {
+    verdict = `failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: verdict !== "allowed" && verdict !== "ran without asking", content: verdict }] } });
+  out({ type: "assistant", message: { content: [{ type: "text", text: `permission: ${verdict}` }] } });
+  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  turnRunning = false;
+  finishIfDone();
+};
+
 let exitGateTimer: ReturnType<typeof setInterval> | undefined;
 const finishIfDone = () => {
   if (!stdinEnded || turnRunning) return;
@@ -597,6 +620,11 @@ const playTurn = (prompt: JsonValue) => {
 
   if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {
     void playAskUserQuestion();
+    return;
+  }
+
+  if (fixtureRequested(promptText(prompt), "__fixture_permission_tool__")) {
+    void playPermissionTool();
     return;
   }
 

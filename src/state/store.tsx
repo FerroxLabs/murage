@@ -91,6 +91,9 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
+   * records, scoped to the folder, payee or recipient the action touches. */
+  taskAllowKey?: string;
   approvalScope?: "local-computer";
   /** A provider question's structured questions (server/store.ts). */
   questions?: QuestionSpec[];
@@ -166,7 +169,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** Provider turn that produced this message. */
@@ -846,6 +849,9 @@ export type Action =
       reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
+      /** a stop-line card's "Allow for this task": the server records the
+       * card's own scoped grant (taskAllowKey) for this task */
+      allowForTask?: boolean;
       /** Local UI recovery hook for voice flows. Never sent to the server. */
       onError?: (message: string) => void;
     }
@@ -2282,6 +2288,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 behavior: action.behavior,
                 message: action.message,
                 reviewedSha256: action.reviewedSha256,
+                ...(action.allowForTask ? { allowForTask: true } : {}),
               }),
             }).catch((error) => {
               showError(error);

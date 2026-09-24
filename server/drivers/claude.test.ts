@@ -2329,6 +2329,42 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await endTurn("t-auq-mixed", conn);
   });
 
+  // Murage's Full access stops before deleting outside its folder, paying
+  // and messaging someone new (server/stop-line.ts). A bypassPermissions
+  // instance would never ask, so under the stop line it asks for this turn.
+  it("routes a bypassPermissions instance's asks to Murage under the stop line", async () => {
+    await create(undefined, {}, { permissionMode: "bypassPermissions" });
+    const dump = join(scratch, "dump-stop-line.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
+    const composio = { command: process.execPath, args: ["-e", ""], env: {} };
+    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "__fixture_permission_tool__", stopLine: true, integrations: { composio } });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "Bash");
+    expect(opened).toMatchObject({ toolCall: { name: "Bash", input: { command: "rm -rf ~/Documents" } } });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.join(" ")).toContain("--permission-mode acceptEdits");
+    expect(seen.argv).toContain("--permission-prompt-tool");
+    // connected apps are where a bot pays and messages: not pre-allowed
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__composio");
+    await expect(instance.adapter.respondToRequest("t-stop-line", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+    await recorder.until((e) => e.type === "turn.completed");
+    delete process.env.FAKE_CLAUDE_PERM_INPUT;
+  });
+
+  it("leaves a bypassPermissions instance as it was without the stop line", async () => {
+    await create(undefined, {}, { permissionMode: "bypassPermissions" });
+    const dump = join(scratch, "dump-bypass.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-bypass", text: "__fixture_permission_tool__" });
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && /ran without asking/.test(e.text));
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.join(" ")).toContain("--permission-mode bypassPermissions");
+    expect(seen.argv).not.toContain("--permission-prompt-tool");
+    expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
+  });
+
   it("runs a whole AskUserQuestion turn through the real permission host", async () => {
     // The fake CLI spawns the muragebox MCP server from --mcp-config and
     // calls the prompt tool exactly as Claude Code 2.1.268 does, then builds

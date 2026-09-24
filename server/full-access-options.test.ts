@@ -26,9 +26,12 @@ describe("owner channel messages under Full access", () => {
   });
 
   it("run under Full access once the owner allows it", () => {
-    const verdict = autoVerdict(channels, "Bash", "cat ~/.zshrc", ownerChannel);
+    const verdict = autoVerdict(channels, "Bash", "rm -rf build", ownerChannel);
     expect(verdict.source).toBe("full-access");
     expect(verdict.approve).toContain("full access");
+    // the key guard and the stop line still hold there, as at the desktop
+    expect(autoVerdict(channels, "Bash", "cat ~/.zshrc", ownerChannel).source).toBe("sensitive-guard");
+    expect(autoVerdict(channels, "Bash", "x", { ...ownerChannel, stopLine: { kind: "pay", what: "Make a payment" } }).source).toBe("stop-line");
   });
 
   it("the option does nothing without Full access", () => {

@@ -79,6 +79,16 @@ describe("answering in place", () => {
     expect(markup).not.toContain("rm -rf build");
   });
 
+  it("offers Allow for this task only on a stop-line card", () => {
+    expect(render(approval)).not.toContain("Allow for this task");
+    const markup = render({ ...approval, taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
+    expect(markup).toContain("Allow for this task");
+    // outlined, never a second filled button beside Allow once
+    const task = markup.match(/<button[^>]*>\s*Allow for this task/)![0];
+    expect(task).not.toMatch(/\bbg-accent\b/);
+    expect(task).toMatch(/\bbg-transparent\b/);
+  });
+
   it("stays out of the way of a request it must not settle", () => {
     expect(render({ ...approval, skillRequest: {} as never })).toBe("");
   });

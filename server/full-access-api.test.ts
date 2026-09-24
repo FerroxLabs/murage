@@ -5,8 +5,12 @@
 //
 //   - only the desktop app can switch Full access on, and only after its
 //     one-time warning for that bot;
-//   - an attended turn that reads a shell profile and a personal folder
-//     raises no card under Full access, and does again once back on Auto;
+//   - an attended turn that cleans its own build folder raises no card under
+//     Full access, and does again once back on Auto; reading a shell profile
+//     still stops (the key guard);
+//   - the stop line: deleting outside its folder stops even under Full
+//     access, says what and why, and "Allow for this task" covers the same
+//     place for the rest of the task;
 //   - a webhook turn and a routine turn still ask, as they would under Auto.
 //
 // HEADLESS ONLY: the data directory is a throwaway temp HOME and the port is
@@ -24,6 +28,11 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 /** A shell profile (an Auto "sensitive" stop) and a personal folder. */
 const PROTECTED_READ = "cat ~/.zshrc ~/Documents/notes.txt";
+/** Auto's destructive guard stops this; inside its own folder, Full access
+ * does not. */
+const CLEAN_BUILD = "rm -rf build";
+/** Outside its folder: the stop line holds under every level. */
+const DELETE_OUTSIDE = "rm -rf ~/Documents/old";
 
 let base: string;
 let desktopHeaders: Record<string, string>;
@@ -104,6 +113,17 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
             config: { cli: FAKE_CLI, fullAuto: false },
+          },
+          cleaner: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
+            config: { cli: FAKE_CLI, fullAuto: false },
+          },
+          // fullAuto on the engine: under Full access it must still ask
+          deleter: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
+            config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
       }),
@@ -188,29 +208,83 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
   });
 
   it(
-    "raises no card for a protected read in Full access, and Auto's stop returns on switching back",
+    "raises no card for cleaning its own folder in Full access, and Auto's stop returns on switching back",
     async () => {
-      const bot = await makeBot("Full reader");
+      const bot = await makeBot("Full cleaner", "cleaner");
       const thread = `/api/bots/${bot.id}/tasks/${bot.threadId}`;
       expect((await desktopApi("PATCH", thread, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
 
-      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "read my profile" })).status).toBe(202);
-      const chip = await poll(async () =>
-        (await threadMessages(bot.threadId)).find((m) => m.kind === "activity" && String(m.tool?.name ?? "").includes("(full access)")) ?? null, 20_000);
-      expect(chip, `no full-access approval chip. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-      expect(chip.tool.name).toContain(PROTECTED_READ.slice(0, 40));
-      expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean the build" })).status).toBe(202);
+      // answered at once: the turn finishes with no card ever raised, and the
+      // approval shows as one quiet line that lists the step
+      expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect((await threadMessages(bot.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+      const line = (await threadMessages(bot.threadId)).find((m) => m.kind === "activity" && Array.isArray(m.tool?.steps));
+      expect(line?.tool).toMatchObject({ name: "Approved 1 step (Full access)", stepCount: 1 });
+      expect(line.tool.steps[0]).toContain(CLEAN_BUILD);
+      expect((await threadMessages(bot.threadId)).some((m) => /^auto-approved .*\(full access\)/.test(String(m.tool?.name ?? "")))).toBe(false);
 
-      // switching back to Auto restores Auto's stop for the same read
+      // switching back to Auto restores Auto's stop for the same command
       expect((await desktopApi("PATCH", thread, { fullAccess: false })).status).toBe(200);
-      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "read it again" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean it again" })).status).toBe(202);
       const card = await poll(() => liveCard(bot.threadId), 20_000);
-      expect(card, "Auto did not stop at the shell profile after leaving Full access").not.toBeNull();
+      expect(card, "Auto did not stop at rm -rf after leaving Full access").not.toBeNull();
+      expect(card.card.held).toContain("destructive");
+      await deny(bot.id, bot.threadId, card.card.requestId);
+    },
+    60_000,
+  );
+
+  it(
+    "still stops before a key under Full access",
+    async () => {
+      const bot = await makeBot("Full reader");
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "read my profile" })).status).toBe(202);
+      const card = await poll(() => liveCard(bot.threadId), 20_000);
+      expect(card, "Full access read a shell profile without asking").not.toBeNull();
       expect(card.card.held).toContain("sensitive");
       await deny(bot.id, bot.threadId, card.card.requestId);
     },
     60_000,
+  );
+
+  it(
+    "stops before deleting outside its folder under Full access, even on a fullAuto engine, and Allow for this task covers the same place",
+    async () => {
+      const bot = await makeBot("Full deleter", "deleter");
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "tidy my documents" })).status).toBe(202);
+      const card = await poll(() => liveCard(bot.threadId), 20_000);
+      expect(card, `a delete outside its folder ran unasked under Full access. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      expect(card.card.held).toBe("Delete 1 item outside its folder: ~/Documents/old");
+      expect(card.card.taskAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
+      // Always allow is scoped the same way, never the bare tool
+      expect(card.card.allowKey).toBe(card.card.taskAllowKey);
+
+      // a forged key cannot ride along: the server records the card's own
+      const allowed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "allow", allowForTask: true, taskAllowKey: "stop:delete:/" });
+      expect(allowed.body).toMatchObject({ ok: true, outcome: "allowed-once" });
+      expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+
+      // the same delete again in this task: covered, no card
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "and again" })).status).toBe(202);
+      const chip = await poll(async () =>
+        (await threadMessages(bot.threadId)).find((m) => m.kind === "activity" && String(m.tool?.name ?? "").includes("(allowed for this task)")) ?? null, 20_000);
+      expect(chip, "the task allowance did not cover the same place").not.toBeNull();
+      expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+
+      // a different task of the same bot is a different task
+      const other = await desktopApi("POST", `/api/bots/${bot.id}/tasks`, { title: "Another task" });
+      expect(other.status).toBe(201);
+      const otherThread = other.body.task.threadId as string;
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${otherThread}`, { fullAccess: true })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: otherThread, text: "tidy" })).status).toBe(202);
+      const again = await poll(() => liveCard(otherThread), 20_000);
+      expect(again, "a task allowance leaked into another task").not.toBeNull();
+      await deny(bot.id, otherThread, again.card.requestId);
+    },
+    90_000,
   );
 
   it(

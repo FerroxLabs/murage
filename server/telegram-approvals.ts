@@ -11,12 +11,16 @@ export interface TelegramApproval {
    * shows, answered through the same validated path. Absent for a
    * permission. */
   questions?: QuestionSpec[];
+  /** A stop-line card (server/stop-line.ts): besides "Approve once" it can be
+   * allowed for the rest of this task, for the same kind of action in the
+   * same place. */
+  taskAllow?: boolean;
 }
 /** What the owner decided about a question, in the desktop card's own terms. */
 export type TelegramQuestionReply = { behavior: "answer"; answers: QuestionAnswer[] } | { behavior: "skip" };
 export interface TelegramApprovalActions {
   pending: () => TelegramApproval[];
-  resolve: (approval: TelegramApproval, behavior: "allow" | "deny") => Promise<boolean>;
+  resolve: (approval: TelegramApproval, behavior: "allow" | "deny", forTask?: boolean) => Promise<boolean>;
   /** Deliver a question's answer (or skip). The harness validates it
    * against the persisted card exactly as it does a desktop answer. */
   answer?: (approval: TelegramApproval, reply: TelegramQuestionReply) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -104,9 +108,16 @@ export class TelegramApprovals {
       if (!approval.summary || approval.summary.length > 3000) continue;
       const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + PERMISSION_TTL, consumed: false };
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
+      // A stop-line card (deleting outside its folder, paying, messaging
+      // someone new) can also be allowed for the rest of the task, for the
+      // same kind of action in the same place. Nothing wider is offered here.
       const message = await this.transport.sendMessage({ chatId: owner.chatId,
-        text: `${approval.summary}\n\nApprove once or deny this exact action. Expires in 10 minutes.`,
-        buttons: [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Deny", data: `${offer.nonce}:d` }], signal });
+        text: approval.taskAllow
+          ? `${approval.summary}\n\nApprove once, allow the same kind of action in the same place for the rest of this task, or deny. Expires in 10 minutes.`
+          : `${approval.summary}\n\nApprove once or deny this exact action. Expires in 10 minutes.`,
+        buttons: approval.taskAllow
+          ? [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Allow for this task", data: `${offer.nonce}:t` }, { text: "Deny", data: `${offer.nonce}:d` }]
+          : [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Deny", data: `${offer.nonce}:d` }], signal });
       if (active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
     }
   }
@@ -278,7 +289,7 @@ export class TelegramApprovals {
 
   async answer(update: Extract<TelegramUpdate, { kind: "callback" }>, owner: Owner, active: () => boolean, signal: AbortSignal) {
     if (!active() || update.senderId !== owner.senderId || update.chatId !== owner.chatId) return;
-    const permission = /^([a-f0-9]{48}):([ad])$/.exec(update.data);
+    const permission = /^([a-f0-9]{48}):([adt])$/.exec(update.data);
     const question = /^([a-f0-9]{48}):q(\d{1,2}):([ot]\d{1,2}|[swx])$/.exec(update.data);
     const nonce = permission?.[1] ?? question?.[1];
     const offer = nonce ? [...this.offers.values()].find(item => item.nonce === nonce) : undefined;
@@ -287,12 +298,18 @@ export class TelegramApprovals {
     if (offer && !offer.consumed && offer.messageId === update.messageId && this.now() < offer.expires && this.stillPending(offer)) {
       if (question && offer.draft) {
         text = await this.answerQuestion(offer, Number(question[2]), question[3]!, owner, active, signal);
-      } else if (permission && !offer.draft) {
+      } else if (permission && !offer.draft && (permission[2] !== "t" || offer.approval.taskAllow === true)) {
         // Consume before invoking the engine; exceptions never authorize replay.
         offer.consumed = true;
         try {
-          const ok = active() && await this.actions.resolve(offer.approval, permission[2] === "a" ? "allow" : "deny");
-          if (ok) text = permission[2] === "a" ? "Allowed once." : "Denied.";
+          const choice = permission[2];
+          // "t" reaches here only on an offer that carried the button
+          const forTask = choice === "t";
+          const allow = choice === "a" || forTask;
+          const ok = active() && (forTask
+            ? await this.actions.resolve(offer.approval, "allow", true)
+            : await this.actions.resolve(offer.approval, allow ? "allow" : "deny"));
+          if (ok) text = forTask ? "Allowed for this task." : allow ? "Allowed once." : "Denied.";
         } catch { text = "Could not confirm this decision. Review the action in Murage; do not repeat it."; }
         offer.outcome = text;
       }

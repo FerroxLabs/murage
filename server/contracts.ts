@@ -163,6 +163,15 @@ export type RuntimeEvent = RuntimeEventBase &
          * that does not report them is unchanged — the card is raised exactly
          * as it is today, which is the safe direction for this to fail in. */
         filePaths?: string[];
+        /** Additive: the tool call as the ENGINE reported it: its own name
+         * for the tool and its structured input (a shell command, an MCP
+         * tool's arguments, a Composio call's slugs). Read by the stop line
+         * (server/stop-line.ts) to tell where a delete lands, who a message
+         * goes to and whether a call pays. Server-side only: it is stripped
+         * before the event reaches any window. A driver that does not report
+         * it leaves the stop line reading the card text, which for anything
+         * but a shell command means it cannot tell and the card holds. */
+        toolCall?: { name: string; input: unknown };
       }
     | {
         type: "request.resolved";
@@ -295,6 +304,15 @@ export interface SendTurnInput {
    * and the driver raises a question card before the engine starts when
    * `sources` names anything the folder would contribute. */
   folderTrust?: FolderTrustTurnInput;
+  /** The bot is on Murage's Full access, which still stops before deleting
+   * outside its folder, paying and messaging someone new (server/stop-line.ts).
+   * The engine must send its permission asks to Murage for that to hold, so a
+   * driver whose instance is set to skip them (Claude `bypassPermissions`,
+   * Codex `approvalPolicy: never`, an ACP engine's `fullAuto`, Antigravity's
+   * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
+   * answers everything else at once. Absent: the instance's own setting
+   * stands, exactly as before. */
+  stopLine?: true;
 }
 
 /** See `SendTurnInput.folderTrust`. `sources` are display names from the

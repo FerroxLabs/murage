@@ -210,6 +210,26 @@ describe("Antigravity turns (fake CLI)", () => {
     }
   }, 10_000);
 
+  // Print mode cannot ask, so under Murage's Full access stop line
+  // (server/stop-line.ts) this engine never skips permissions: deleting
+  // outside its folder, paying and messaging someone new cannot happen
+  // unasked. Without the stop line the instance's own setting stands.
+  it.each([[true, "accept-edits"], [false, "--dangerously-skip-permissions"]] as const)("never skips permissions under the stop line (stopLine %s)", async (stopLine, expected) => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-stop-line-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    await create();
+    try {
+      await instance.adapter.sendTurn({ threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
+      await recorder.until((event) => event.type === "turn.completed");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.argv).toContain(expected);
+      if (stopLine) expect(seen.argv).not.toContain("--dangerously-skip-permissions");
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
   it("sends a Windows-sized room prompt over stdin instead of argv", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-long-prompt-"));
     const dump = join(scratch, "dump.json");

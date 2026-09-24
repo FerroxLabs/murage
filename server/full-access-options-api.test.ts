@@ -30,7 +30,10 @@ const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href;
 /** A shell profile read: Auto stops at it, Full access does not. */
-const PROTECTED_READ = "cat ~/.zshrc";
+/** Auto stops at this (destructive guard); Full access, inside the bot's own
+ * folder, does not. A shell profile read would stop both: the key guard
+ * holds under Full access too. */
+const PROTECTED_READ = "rm -rf build";
 const TELEGRAM_OWNER = 777;
 const TELEGRAM_TOKEN = "123:abcdefghijklmnopqrstuvwxyz123456";
 
@@ -59,8 +62,10 @@ const storedBot = (botId: string) => (JSON.parse(readFileSync(join(home, ".murag
 const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
 const liveCard = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId && m.card?.answered === undefined) ?? null;
+/** Full access approvals fold into one "Approved N steps (Full access)" line
+ * per run of steps, listing each step (server/full-access-steps.ts). */
 const fullAccessChip = async (threadId: string) =>
-  (await threadMessages(threadId)).find((m) => m.kind === "activity" && String(m.tool?.name ?? "").includes("(full access)")) ?? null;
+  (await threadMessages(threadId)).find((m) => m.kind === "activity" && /^Approved \d+ steps? \(Full access\)$/.test(String(m.tool?.name ?? "")) && Array.isArray(m.tool?.steps)) ?? null;
 const decisions = (): any[] => {
   const path = join(home, ".murage", "decisions.ndjson");
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
@@ -174,7 +179,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         engineDiscovery: "explicit",
         features: { skillRecorder: true },
         instances: {
-          // asks the client to approve reading a shell profile
+          // asks the client to approve cleaning a build folder
           protected: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },

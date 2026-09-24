@@ -482,6 +482,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     });
 
     const sendTurn = async (turn: SendTurnInput) => {
+      // Murage's Full access still stops before deleting outside its folder,
+      // paying and messaging someone new (server/stop-line.ts). Print mode has
+      // no way to ask, so under it this engine never skips permissions: it
+      // runs in accept-edits (file edits only, no shell, no mounted tools)
+      // rather than doing those three without anyone asked.
+      const skipPermissions = config.fullAuto && !turn.stopLine;
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
@@ -574,7 +580,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         // integrations in safe mode. Enforce the same boundary here so a
         // direct adapter caller cannot expose token-bearing tools to a child
         // that has no interactive permission channel.
-        const mountedIntegrations = config.fullAuto ? turn.integrations : undefined;
+        const mountedIntegrations = skipPermissions ? turn.integrations : undefined;
         restoreMcp = ensureAntigravityMcpServers(antigravityMcpServers(mountedIntegrations), env);
       } catch (error) {
         releaseMcpLease();
@@ -600,9 +606,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         "--add-dir", cwd,
         // fullAuto approves everything; otherwise accept-edits allows file
         // edits but auto-denies shell (no interactive channel in print mode)
-        config.fullAuto ? "--dangerously-skip-permissions" : "--mode",
+        skipPermissions ? "--dangerously-skip-permissions" : "--mode",
       ];
-      if (!config.fullAuto) args.push("accept-edits");
+      if (!skipPermissions) args.push("accept-edits");
       if (turn.model) args.push("--model", turn.model);
       if (resumeCursor) args.push("--conversation", resumeCursor);
 

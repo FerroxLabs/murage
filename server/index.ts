@@ -7,7 +7,7 @@ import { createProcedureEvaluator } from "./memory/procedure-evaluator.ts";
 import { readMemoryLearning } from "./memory/learning-policy.ts";
 import { verifyGepaBundle } from "./gepa-resource.ts";
 import { skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, assertSkillProcedureEvidence } from "./skills.ts";
-import { observeVerifiedHuman, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
+import { observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
@@ -45,12 +45,12 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
 import { isIP } from "node:net";
-import { extname, isAbsolute, join, sep } from "node:path";
+import { dirname as pathDirname, extname, isAbsolute, join, sep } from "node:path";
 
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
@@ -111,7 +111,10 @@ import {
 } from "../shared/credential-request.ts";
 
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
-import { isOwnWorkspaceBookkeeping } from "./own-workspace-approval.ts";
+import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
+import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { extendStepLine, newStepLine } from "./full-access-steps.ts";
+import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -450,7 +453,7 @@ import { applyNotificationPreferences, resolveNotificationPreferences } from "..
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService, TelegramTokenRefusal } from "./telegram-service.ts";
-import type { TelegramApprovalActions } from "./telegram-approvals.ts";
+import type { TelegramApproval, TelegramApprovalActions } from "./telegram-approvals.ts";
 import { SlackService } from "./channels/slack/service.ts";
 import { SlackSocketTransport } from "./channels/slack/transport.ts";
 import type { SlackBinding } from "./channels/slack/event.ts";
@@ -3134,6 +3137,9 @@ async function answerRequest(
   decidedFor?: { id: string; name: string },
   /** A question's validated answers (see questionReply). */
   answers?: QuestionAnswer[],
+  /** "Allow for this task" on a stop-line card: record the card's own scoped
+   * grant for this bot and conversation once the engine has taken the answer. */
+  options?: { allowForTask?: boolean },
 ): Promise<RequestOutcome> {
   // Snapshot the card BEFORE delivering the answer: a delivered answer
   // resolves the request synchronously through the fold, which consumes
@@ -3163,6 +3169,13 @@ async function answerRequest(
     }
   }
   const question = isQuestionCard(card) ? card : undefined;
+  const stopHit = stopHitByRequest.get(`${threadId}:${requestId}`);
+  if (outcome !== "unavailable") stopHitByRequest.delete(`${threadId}:${requestId}`);
+  if (!question && behavior === "allow" && outcome === "allowed-once" && decidedFor) {
+    rememberStopRecipients(decidedFor.id, stopHit);
+    // The key comes from the card the server built, never from the client.
+    if (options?.allowForTask && card?.taskAllowKey) taskAllowances.grant(decidedFor.id, threadId, card.taskAllowKey);
+  }
   // A folder-trust answer IS an authorization (unlike an ordinary question):
   // remembered for the folder's workspace once the engine has taken it, and
   // logged. A skip remembers nothing — the next turn asks again.
@@ -3753,6 +3766,102 @@ function isUnattended(threadId?: string | null): boolean {
   unattendedBots.set(threadId, Date.now());
   return true;
 }
+// ── the stop line (server/stop-line.ts) ─────────────────────────────
+// Full access still stops before deleting outside its folder, paying, and
+// messaging someone new. These are the facts the pure classifier needs, and
+// the two things it remembers (server/stop-line-state.ts).
+const taskAllowances = new TaskAllowances();
+/** The folder each conversation's current turn runs in, recorded at dispatch. */
+const turnCwdByThread = new Map<string, string>();
+/** The stop hit behind each open card, so an allowed message can record its
+ * recipients and "Allow for this task" can record its place. */
+const stopHitByRequest = new Map<string, StopHit>();
+
+/** Resolve links through the deepest part of a path that exists, so a link
+ * inside the working folder that points at ~/Documents is seen as ~/Documents. */
+function stopLineRealpath(path: string): string {
+  let head = path;
+  const tail: string[] = [];
+  for (let i = 0; i < 64; i += 1) {
+    try { return join(realpathSync.native(head), ...tail.reverse()); }
+    catch {
+      const parent = pathDirname(head);
+      if (parent === head) return path;
+      tail.push(head.slice(parent.length).replace(/^[\\/]+/, ""));
+      head = parent;
+    }
+  }
+  return path;
+}
+
+/** People a message is never "new" to: the owner's own linked channel
+ * accounts and paired DMs (Telegram, Slack, Discord), and the person this
+ * conversation is with when it is a channel conversation. Each source fails
+ * on its own: a missing one only means that recipient asks once. */
+function ownerAndThreadRecipients(threadId: string): string[] {
+  const ids: string[] = [];
+  const add = (read: () => readonly string[] | string | undefined) => {
+    try { const value = read(); if (typeof value === "string") ids.push(value); else if (value) ids.push(...value); } catch { /* that source is unavailable */ }
+  };
+  add(() => ownerChannelUserIds());
+  add(() => channelHumanIsOwner(telegramHumanBindingId) ? telegram.ownerRecipients() : undefined);
+  add(() => channelHumanIsOwner(slackHumanBindingId) ? slack?.ownerRecipients() : undefined);
+  add(() => channelHumanIsOwner(discordHumanBindingId) ? discord?.ownerRecipients() : undefined);
+  add(() => threadHumanChannelUserId(threadId));
+  return recipientForms(ids);
+}
+
+function stopLinePlace(botId: string, threadId: string, commandCwd?: unknown): StopLinePlace {
+  const cwd = turnCwdByThread.get(threadId);
+  const roots = [cwd, ...ownWorkspaceRoots({ dataDir: DATA_DIR, botId, threadId }), tmpdir(), "/tmp", "/private/tmp", "/var/tmp"]
+    .filter((root): root is string => typeof root === "string" && root.length > 0)
+    .map((root) => { try { return realpathSync.native(root); } catch { return root; } });
+  return {
+    // a command's own folder (Codex reports one per command) places its
+    // relative paths; it never widens what counts as inside
+    cwd: typeof commandCwd === "string" && isAbsolute(commandCwd) ? commandCwd : cwd,
+    roots,
+    home: homedir(),
+    knownRecipients: new Set([...knownRecipients(DATA_DIR, botId), ...ownerAndThreadRecipients(threadId)]),
+    realpath: stopLineRealpath,
+    repoOf: githubRepoOf,
+  };
+}
+
+/** The stop line's verdict on one permission request, or null. Never throws:
+ * a classifier failure is a stop, not a pass. */
+function stopLineFor(botId: string, threadId: string, event: { tool: string; summary: string; toolCall?: { name: string; input: unknown } }): StopHit | null {
+  try {
+    const input = event.toolCall?.input;
+    const commandCwd = input && typeof input === "object" && !Array.isArray(input) ? (input as { cwd?: unknown }).cwd : undefined;
+    return classifyStopLine(event.toolCall?.name ?? event.tool, input, event.summary, stopLinePlace(botId, threadId, commandCwd));
+  } catch {
+    return { kind: "delete", what: "Murage could not check this action, so it is waiting for you." };
+  }
+}
+
+/** A message the owner allowed (or a grant covered) goes to people who are
+ * now known: the next message to them is not "someone new". */
+function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
+  if (hit?.kind !== "message" || !hit.recipients?.length) return;
+  try { rememberRecipients(DATA_DIR, botId, hit.recipients); }
+  catch (error) { console.warn(`[stop-line] could not record recipients: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+/** The line each conversation's current run of Full access approvals is
+ * collapsing into (server/full-access-steps.ts). */
+const fullAccessStepLine = new Map<string, string>();
+
+function noteFullAccessStep(threadId: string, turnId: string | undefined, step: string, push: (m: Omit<Message, "id" | "at">) => Message): void {
+  const lineId = fullAccessStepLine.get(threadId);
+  const extended = extendStepLine(store.messagesFor(threadId), lineId, turnId, step);
+  if (extended && lineId) {
+    store.patchMessage(threadId, lineId, { tool: extended });
+    return;
+  }
+  fullAccessStepLine.set(threadId, push({ role: "bot", kind: "activity", turnId, tool: newStepLine(step) }).id);
+}
+
 let routines: RoutineManager | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
@@ -3888,7 +3997,9 @@ bus.subscribe((event: RuntimeEvent) => {
   const privateImageEvent = event.type === "item.completed" && event.itemType === "assistant_image";
   // The durable message patch below is the public frame. Sending raw base64
   // through runtime SSE would multiply large bytes across every app window.
-  if (!privateImageEvent) broadcast({ kind: "runtime", event });
+  // The engine's raw tool call is for the stop line only: it can be large
+  // (a whole file being written) and never belongs in a window.
+  if (!privateImageEvent) broadcast({ kind: "runtime", event: event.type === "request.opened" && event.toolCall ? { ...event, toolCall: undefined } : event });
   const routineRun = privateImageEvent ? null : (routines?.handleRuntimeEvent(event) ?? null);
   const profileBot = store.botByThread(event.threadId);
   const bot = profileBot ? botForDirectThread(profileBot.id,event.threadId) : null;
@@ -4010,8 +4121,19 @@ bus.subscribe((event: RuntimeEvent) => {
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
       const questionAsk = permission && (event.questionTool === true || isQuestionTool(event.tool));
+      // The stop line: deleting outside its folder, paying, messaging someone
+      // new. Checked on every permission, whatever the mode, from the engine's
+      // structured tool call; a task allowance the owner gave can cover it.
+      const stopHit = permission && asker && event.requestId && !questionAsk ? stopLineFor(asker.id, event.threadId, event) : null;
+      if (stopHit && event.requestId) {
+        // bounded: an ask that times out is never answered here
+        if (stopHitByRequest.size >= 1_000) stopHitByRequest.delete(stopHitByRequest.keys().next().value!);
+        stopHitByRequest.set(`${event.threadId}:${event.requestId}`, stopHit);
+      }
       const verdict = permission && asker && event.requestId
         ? autoVerdict(asker, event.tool, event.summary, {
+            stopLine: questionAsk ? undefined : stopHit,
+            stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
             unattended,
             scope: event.approvalScope,
             question: event.questionTool === true,
@@ -4049,7 +4171,15 @@ bus.subscribe((event: RuntimeEvent) => {
             if (!instance) throw new Error("provider unavailable");
             const outcome = await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
             if (outcome === "unavailable") throw new Error("the ask is no longer open");
-            pushMessage({
+            stopHitByRequest.delete(`${event.threadId}:${requestId}`);
+            rememberStopRecipients(asker.id, stopHit ?? undefined);
+            // Full access answers almost every step now that engines ask it,
+            // so its approvals collapse into one quiet line per run of steps
+            // that counts up and opens to list them. Every other automatic
+            // answer keeps its own chip, and the decision log below keeps
+            // one row per step either way.
+            if (verdict.source === "full-access") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage);
+            else pushMessage({
               role: "bot",
               kind: "activity",
               tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },
@@ -4082,7 +4212,8 @@ bus.subscribe((event: RuntimeEvent) => {
                 tool,
                 allowKey: event.approvalScope
                   ? undefined
-                  : approvalKey(tool, summary, event.approvalScope),
+                  : stopHit ? stopLineKey(stopHit) : approvalKey(tool, summary, event.approvalScope),
+                ...(stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
                 held: "Auto mode couldn't answer this one.",
                 approvalScope: event.approvalScope,
               },
@@ -4132,10 +4263,13 @@ bus.subscribe((event: RuntimeEvent) => {
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
+          // A stop-line card's grants are scoped to the place it touches (the
+          // folder, the payee, the recipient), never the bare tool name.
           allowKey:
             permission && !event.approvalScope && !questionAsk
-              ? approvalKey(event.tool, event.summary, event.approvalScope)
+              ? stopHit ? stopLineKey(stopHit) : approvalKey(event.tool, event.summary, event.approvalScope)
               : undefined,
+          ...(permission && !event.approvalScope && stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
           held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
@@ -5394,6 +5528,7 @@ async function startTurn(
         if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
         await acquireDirectTurnResources(run, [workspaceResource(cwd ?? homedir())], "computer", humanIsOwner);
         cwd = projectTurnLeases.acquire(threadId, dispatchClaimId, cwd ?? homedir()).canonicalPath;
+        turnCwdByThread.set(threadId, cwd);
       }
       // Checkpoint explicit project folders, where a bot can overwrite the
       // user's work. Its private Murage workspace is app-owned and changes
@@ -5913,6 +6048,10 @@ async function startTurn(
         integrations,
         cwd,
         folderTrust,
+        // Full access still stops at the stop line (server/stop-line.ts), so
+        // the engine must send its asks here even when its own instance is
+        // set to skip them; Murage answers the rest at once.
+        ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
@@ -6501,7 +6640,7 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
       if(!channelHumanIsOwner(bindingId?.()))return [];
       const bot = boundBot();
       if (!bot || bot.hidden || store.workspaceChief()?.id !== targetBotId) return [];
-      return store.messagesFor(bot.threadId).flatMap(message => {
+      return store.messagesFor(bot.threadId).flatMap((message): TelegramApproval[] => {
         const card = message.card;
         if (!card?.requestId || card.answered || card.dismissed || card.routineRequest || card.skillRequest
           || askMessageByRequest.get(`${bot.threadId}:${card.requestId}`) !== message.id) return [];
@@ -6517,18 +6656,21 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
         if (!card.tool) return [];
         const summary = redactSecretsInText(`${bot.name} requests approval\nTool: ${card.tool}\n${card.subtitle ?? ""}${card.held ? `\n${card.held}` : ""}`);
         if (summary.length > 3000) return []; // full review stays in-app
-        return [{ id: message.id, fingerprint, summary }];
+        return [{ id: message.id, fingerprint, summary, ...(card.taskAllowKey ? { taskAllow: true } : {}) }];
       });
     };
     // (plain JS on purpose: telegram-permission-wiring.test.ts evaluates this expression as written)
-    return { pending, resolve: async (approval, behavior) => {
+    return { pending, resolve: async (approval, behavior, forTask?: boolean) => {
       const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
       const bot = boundBot();
       if (!current || !bot) return false;
       const card = store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card;
       // a question is never answered with allow/deny
       if (!card?.requestId || isQuestionCard(card)) return false;
-      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name });
+      // "Allow for this task" records the card's own scoped grant
+      const outcome = forTask && behavior === "allow" && card.taskAllowKey
+        ? await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name }, undefined, { allowForTask: true })
+        : await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name });
       return outcome === (behavior === "allow" ? "allowed-once" : "rejected");
     }, answer: async (approval, reply) => {
       const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
@@ -7377,6 +7519,7 @@ async function runGroupMemberTurn(
   if (workspace) {
     try {
       cwd = projectTurnLeases.acquire(threadId, internalGeneration, cwd ?? homedir()).canonicalPath;
+      turnCwdByThread.set(threadId, cwd);
       roomSystem += prepareOutputDestination(bot.id, threadId, internalGeneration, true, Boolean(integrations.agents));
     } catch {
       const message = "This project's files are being restored. Wait for the restore to finish before running this task.";
@@ -7554,6 +7697,8 @@ async function runGroupMemberTurn(
         integrations,
         folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
         ...memberTurnSelection(bot.modelSelection),
+        // Full access still stops at the stop line, so the engine must ask
+        ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
       }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
         // room or a replacement while accepted authority is being withdrawn.
@@ -10284,6 +10429,36 @@ const server = createServer(async (req, res) => {
           if (error instanceof tts.NoVoiceConfigured) return json(res, 409, { error: `No voice is set up for this bot yet (${error.message}) Tell the owner, and answer in text.` });
           return json(res, 502, { error: `The voice note could not be made: ${error instanceof Error ? error.message : String(error)} Answer in text instead.` });
         }
+      }
+
+      // The owner said so in chat: "you can delete anything in ~/Projects/site
+      // today". The bot records it as a task allowance for the stop line
+      // (server/stop-line.ts). Honoured only on a turn the owner started and is
+      // at (never a channel, webhook, routine or another bot's turn), only for
+      // a place the owner's own latest message names, and always with a note
+      // in the chat saying exactly what was allowed.
+      if (path === "/api/internal/stop-line-allowance" && method === "POST") {
+        const body = z.object({ kind: z.enum(["delete", "message", "pay"]), place: z.string().min(1).max(500), app: z.string().min(1).max(60).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        if (fullAccessTurnOrigin(internalClaim.threadId) !== "owner" || internalClaim.depth !== 0 || internalEventId) {
+          return json(res, 403, { error: "Only the owner can allow this, in a conversation they are having with you right now. Ask the owner to confirm it on the card instead." });
+        }
+        const ownerText = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user")?.text ?? "";
+        const decided = chatAllowance(body, ownerText, homedir(), stopLineRealpath);
+        if (!decided.ok) return json(res, 400, { error: decided.error });
+        taskAllowances.grant(internalClaim.botId, internalClaim.threadId, decided.key);
+        store.appendMessage(internalClaim.threadId, { role: "bot", kind: "activity", tool: { name: decided.note, ok: true } });
+        appendDecision(DATA_DIR, {
+          threadId: internalClaim.threadId,
+          botId: internalClaim.botId,
+          botName: store.bot(internalClaim.botId)?.name,
+          tool: "allow_for_task",
+          summary: decided.note,
+          decision: "auto-approved",
+          source: "task-allowance",
+          rule: decided.key,
+        });
+        return json(res, 200, { allowed: true, note: decided.note, until: "the end of this task, at most 12 hours" });
       }
 
       if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
@@ -14716,7 +14891,7 @@ const server = createServer(async (req, res) => {
       if (resolveHostComputerConsent(String(body.requestId), behavior, rememberHostComputerConsent)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed" : "rejected" });
       }
-      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name });
+      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name }, undefined, body.allowForTask === true ? { allowForTask: true } : undefined);
       return json(res, 200, { ok: true, outcome });
     }
     // Answer by THREAD, so a request raised inside a room can be answered
@@ -14788,7 +14963,7 @@ const server = createServer(async (req, res) => {
       }
       const asked = threadRequestOwner(threadId, requestId);
       if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor);
+      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor, undefined, body.allowForTask === true ? { allowForTask: true } : undefined);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
@@ -14954,6 +15129,8 @@ const server = createServer(async (req, res) => {
       const updated = store.deleteTask(m[1], m[2]);
       if (!updated) return json(res, 400, { error: "a bot keeps at least one task" });
       revokeInternalThread(m[2]);
+      taskAllowances.clearThread(m[2]);
+      turnCwdByThread.delete(m[2]);
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       // Deleting the open task moves the bot to another one: a switch frame.
       broadcast({ kind: "bot", bot: pagedPublicBot(updated, SWITCH_FRAME_PAGE) });

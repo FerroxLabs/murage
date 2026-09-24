@@ -63,6 +63,12 @@ export class SlackService {
     try { return connectionSchema.parse(JSON.parse(readFileSync(this.file(), "utf8"))); }
     catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw new Error("Slack connection data needs recovery; original data preserved."); }
   }
+  /** The paired owner's account and DM (server/stop-line.ts): a message
+   * there is never to "someone new". */
+  ownerRecipients(): string[] {
+    const binding = this.connection?.binding;
+    return binding ? [binding.ownerUserId, binding.dmId] : [];
+  }
   status() { return { state: this.state, paired: Boolean(this.connection?.binding), enabled: this.live,
     error: this.error, nextRetryAt: this.nextRetryAt, ...(this.ledger?.status() ?? { pending: 0, uncertain: 0, rejected: 0, needsReview: 0 }) }; }
   isCurrent(binding: SlackBinding) {
