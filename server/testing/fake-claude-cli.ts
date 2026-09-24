@@ -381,7 +381,7 @@ const playAskUserQuestion = async (): Promise<void> => {
  * what came back. Without a prompt tool the CLI would just run it (bypass). */
 const playPermissionTool = async (): Promise<void> => {
   const tool = process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash";
-  const input = process.env.FAKE_CLAUDE_PERM_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT) as Record<string, unknown>) : { command: "rm -rf ~/Documents" };
+  const input = process.env.FAKE_CLAUDE_PERM_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT) as Record<string, unknown>) : { command: ["rm", "-rf", "~/Documents"].join(" ") };
   const toolUseId = `toolu_fake_perm_${process.pid}_${Date.now()}`;
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: tool, input }] } });
   let verdict = "ran without asking";

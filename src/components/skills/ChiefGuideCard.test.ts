@@ -28,7 +28,7 @@ describe("the Chief of Staff guide card", () => {
 
   it("sits at the top of the Skills panel of the workspace Chief only", () => {
     const source = readFileSync(new URL("../BotSkillsPanel.tsx", import.meta.url), "utf8");
-    expect(source).toContain('const isChief = bot.chiefOfStaff === true && bot.chiefScope === "workspace";');
+    expect(source).toContain('const isChief = botRole(bot) === "chief";');
     expect(source.indexOf("<ChiefGuideCard")).toBeLessThan(source.indexOf("<SkillsBody"));
     expect(source).toContain("{isChief && !snapshot.viewing && <ChiefGuideCard");
   });

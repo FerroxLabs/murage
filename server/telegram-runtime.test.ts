@@ -5,13 +5,12 @@ import { expect, it, vi } from "vitest";
 import { TelegramService } from "./telegram-service.ts";
 import { TelegramTransport } from "./telegram-transport.ts";
 import { RoutineManager } from "./routines.ts";
+import { automationPrompt } from "./bot-shapes.ts";
 
 it("actual turn prompt distinguishes owner requests from approval authority", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const start = source.indexOf('(opts?.automationSource === "webhook"', source.indexOf("composio.requiredAppsSystemPrompt"));
-  const end = source.indexOf("(tagged.length", start);
-  const expression = source.slice(start, end).trim().replace(/\+\s*$/, "");
-  const prompt = new Function("opts", `return ${expression};`);
+  // The direct turn's automation layer (bot-shapes.ts), the text a turn from
+  // Telegram, a webhook or nobody at all actually carries.
+  const prompt = (opts: { automationSource?: string }) => automationPrompt(opts.automationSource);
   const channel = prompt({ automationSource: "channel" });
   expect(channel).toContain("Murage verified its paired owner and chat");
   expect(channel).toContain("Respond to the owner's ordinary request");
