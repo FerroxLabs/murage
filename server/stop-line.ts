@@ -86,7 +86,10 @@ const MESSAGE_URLS = /slack\.com\/api\/chat\.|hooks\.slack\.com|api\.telegram\.o
 const SQL_DESTRUCTIVE = /\bDROP\s+(TABLE|DATABASE|SCHEMA|VIEW|COLLECTION)\b|\bTRUNCATE\s+(TABLE\s+)?[`"\w]|\bDELETE\s+FROM\b|\bFLUSH(ALL|DB)\b|\.dropDatabase\s*\(/i;
 
 /** A delete through code rather than a delete command. */
-const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|FileUtils\.rm|File\.delete|Remove-Item|send2trash)\b/;
+const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|fs\.promises\.(rm|unlink)|FileUtils\.rm(_rf|_r|_f)?|File\.delete|Remove-Item|send2trash|trashItem|removeItem|recycleURLs|rimraf|unlink|rmdir)\b|\.unlink\(/;
+/** AppleScript or JXA deleting something: Finder's `delete`, `move … to
+ * trash`, emptying the Trash, System Events' `delete`, JXA `.delete()`. */
+const APPLESCRIPT_DELETE = /\bdelete\b|\bmove\b[\s\S]*\bto\s+(the\s+)?trash\b|\bempty\s+(the\s+)?trash\b|\.delete\s*\(|trashItem|removeItem|recycleURLs/i;
 
 /** Folder names that are never "the folder the bot works in", however it was
  * set: they ARE the owner's own files. */
@@ -245,7 +248,7 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean } {
   return { commands, complex };
 }
 
-const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate"]);
+const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate", "rtk", "stdbuf", "unbuffer", "ionice", "chronic"]);
 
 /** Strip wrappers (`sudo`, `env X=1`, `timeout 5`) down to the real program. */
 function program(cmd: Word[]): { name: string; args: Word[] } | undefined {
@@ -256,6 +259,8 @@ function program(cmd: Word[]): { name: string; args: Word[] } | undefined {
     const base = w.split("/").pop()!;
     if (PREFIXES.has(base)) {
       i += 1;
+      // `rtk proxy <cmd>` is `<cmd>` run through the token proxy
+      if (base === "rtk" && cmd[i]?.text === "proxy") i += 1;
       // their own options and a timeout's duration
       while (i < cmd.length && (cmd[i]!.text.startsWith("-") || (base === "timeout" && /^\d/.test(cmd[i]!.text)))) i += 1;
       continue;
@@ -284,17 +289,57 @@ interface Collected {
   other?: StopHit;
 }
 
+/** Substitute `$NAME` / `${NAME}` from simple assignments seen earlier in
+ * the line. A word stays dynamic while anything unknown is left in it
+ * (another variable, `$(…)`, a backtick). */
+function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
+  if (!word.dynamic) return word;
+  let unknown = false;
+  const text = word.text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, braced: string | undefined, bare: string | undefined) => {
+    const value = vars.get((braced ?? bare)!);
+    if (value === undefined) { unknown = true; return whole; }
+    return value;
+  });
+  return { text, dynamic: unknown || /[$`]/.test(text) };
+}
+
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
   const { commands, complex } = splitShell(line);
   let cwd = place.cwd;
   const found: Collected = { deletes: [] };
   const sql = SQL_DESTRUCTIVE.exec(line);
   if (sql) return { kind: "delete", place: "sql:shell", what: `Delete database data (${sql[0].trim()}): ${short(line)}` };
-  for (const cmd of commands) {
+  // Simple assignments earlier in the same line (`f="…"; rm "$f"`,
+  // `export f=…`) are known values, so a target spelled through one is
+  // placed like a literal. Anything else with a `$` stays unknown.
+  const vars = new Map<string, string>([["HOME", place.home]]);
+  for (const raw of commands) {
+    const cmd = raw.map((word) => expand(word, vars));
+    const assigning = cmd[0]?.text && /^(export|local|declare|readonly|typeset)$/.test(cmd[0].text) ? cmd.slice(1) : cmd;
+    if (assigning.length && assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) {
+      for (const word of assigning) {
+        const eq = word.text.indexOf("=");
+        const name = word.text.slice(0, eq);
+        if (word.dynamic) vars.delete(name);
+        else vars.set(name, word.text.slice(eq + 1));
+      }
+      continue;
+    }
     const prog = program(cmd);
     if (!prog) continue;
     const { name, args } = prog;
     const ops = operands(args);
+    // a delete written as code (python -c, node -e, swift, osascript): judged
+    // by the literal paths it names, and stopped when it names none
+    const script = args.map((word) => word.text).join(" ");
+    if (name === "osascript" ? APPLESCRIPT_DELETE.test(script) : /^(python\d*(\.\d+)?|node|nodejs|deno|bun|ruby|perl|php|swift|pwsh|powershell|lua)$/.test(name) && CODE_DELETE.test(script)) {
+      if (args.some((word) => word.dynamic)) { found.unknownDelete ??= short(line); continue; }
+      const posix = [...script.matchAll(/POSIX\s+file\s+"([^"]+)"/gi)].map((m) => m[1]!);
+      const literals = posix.length ? posix : [...script.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
+      if (!literals.length) found.unknownDelete ??= short(line);
+      for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
+      continue;
+    }
     if (name === "cd") {
       const to = ops[0];
       cwd = !to ? place.home : resolveWord(to, cwd, place.home).path;
@@ -315,7 +360,7 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   if (found.other) return found.other;
   // a delete through code (python -c, node -e): judged by the literal paths
   // it names, and by nothing at all when it names none
-  if (!found.deletes.length && !found.unknownDelete && CODE_DELETE.test(line)) {
+  if (!found.deletes.length && !found.unknownDelete && complex && CODE_DELETE.test(line)) {
     const literals = [...line.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
     if (!literals.length) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
