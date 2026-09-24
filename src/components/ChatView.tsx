@@ -45,6 +45,7 @@ import { TurnPresence } from "./TurnPresence";
 import { LiveThinking } from "./LiveThinking";
 import { LivePlanCard } from "./LivePlanCard";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
+import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { toolFailureSummary } from "../../shared/tool-activity";
@@ -1048,6 +1049,8 @@ const MessagesList = memo(function MessagesList({
               // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
               // plain tool runs stay out unless Settings → Tool calls is on.
+              // Full access approvals, folded into one quiet line per run
+              if (isApprovedStepsLine(m)) return <ApprovedStepsRow message={m} />;
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               // the person's Stop caught a desktop action mid-flight: say to

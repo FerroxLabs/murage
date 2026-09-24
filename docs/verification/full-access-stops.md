@@ -27,6 +27,11 @@ Trash, `rsync --delete`, `bash -c '…'`, and code deletes (`shutil.rmtree`,
 | Full access, owner at the desktop | Auto-approved unless a key (`.env`, `.ssh`, shell profiles, API keys) | Card |
 | Full access, routine, webhook, channel | Judged as Auto on an unattended turn | Card (never a grant) |
 
+Full access approvals fold into one quiet line per run of steps,
+"Approved 12 steps (Full access)", which counts up and opens to list the
+steps. It stays visible with Tool calls off. The decision log keeps one row
+per step.
+
 The card offers **Allow once**, **Allow for this task** (the same kind of action
 in the same place: same folder subtree, same recipient, same payee, until the
 task ends, at most 12 hours, gone on restart) and **Always allow**, whose key is

@@ -113,6 +113,7 @@ import {
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { extendStepLine, newStepLine } from "./full-access-steps.ts";
 import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
@@ -3847,6 +3848,20 @@ function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
   catch (error) { console.warn(`[stop-line] could not record recipients: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
+/** The line each conversation's current run of Full access approvals is
+ * collapsing into (server/full-access-steps.ts). */
+const fullAccessStepLine = new Map<string, string>();
+
+function noteFullAccessStep(threadId: string, turnId: string | undefined, step: string, push: (m: Omit<Message, "id" | "at">) => Message): void {
+  const lineId = fullAccessStepLine.get(threadId);
+  const extended = extendStepLine(store.messagesFor(threadId), lineId, turnId, step);
+  if (extended && lineId) {
+    store.patchMessage(threadId, lineId, { tool: extended });
+    return;
+  }
+  fullAccessStepLine.set(threadId, push({ role: "bot", kind: "activity", turnId, tool: newStepLine(step) }).id);
+}
+
 let routines: RoutineManager | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
@@ -4158,7 +4173,13 @@ bus.subscribe((event: RuntimeEvent) => {
             if (outcome === "unavailable") throw new Error("the ask is no longer open");
             stopHitByRequest.delete(`${event.threadId}:${requestId}`);
             rememberStopRecipients(asker.id, stopHit ?? undefined);
-            pushMessage({
+            // Full access answers almost every step now that engines ask it,
+            // so its approvals collapse into one quiet line per run of steps
+            // that counts up and opens to list them. Every other automatic
+            // answer keeps its own chip, and the decision log below keeps
+            // one row per step either way.
+            if (verdict.source === "full-access") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage);
+            else pushMessage({
               role: "bot",
               kind: "activity",
               tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },

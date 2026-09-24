@@ -215,9 +215,14 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       expect((await desktopApi("PATCH", thread, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
 
       expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean the build" })).status).toBe(202);
-      // answered at once: the turn finishes with no card ever raised
+      // answered at once: the turn finishes with no card ever raised, and the
+      // approval shows as one quiet line that lists the step
       expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect((await threadMessages(bot.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+      const line = (await threadMessages(bot.threadId)).find((m) => m.kind === "activity" && Array.isArray(m.tool?.steps));
+      expect(line?.tool).toMatchObject({ name: "Approved 1 step (Full access)", stepCount: 1 });
+      expect(line.tool.steps[0]).toContain(CLEAN_BUILD);
+      expect((await threadMessages(bot.threadId)).some((m) => /^auto-approved .*\(full access\)/.test(String(m.tool?.name ?? "")))).toBe(false);
 
       // switching back to Auto restores Auto's stop for the same command
       expect((await desktopApi("PATCH", thread, { fullAccess: false })).status).toBe(200);

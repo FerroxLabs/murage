@@ -2,6 +2,7 @@
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
+import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Target, Trash2, X } from "lucide-react";
 import {
@@ -275,7 +276,9 @@ const Transcript = memo(function Transcript({
               />
             </div>
           ) : m.kind === "activity" && m.tool ? (
-            hostStoppedReason(m.tool.name) ? (
+            isApprovedStepsLine(m) ? (
+              <ApprovedStepsRow message={m} />
+            ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (
               <StoppedMidActionRow />

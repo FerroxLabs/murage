@@ -62,8 +62,10 @@ const storedBot = (botId: string) => (JSON.parse(readFileSync(join(home, ".murag
 const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
 const liveCard = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId && m.card?.answered === undefined) ?? null;
+/** Full access approvals fold into one "Approved N steps (Full access)" line
+ * per run of steps, listing each step (server/full-access-steps.ts). */
 const fullAccessChip = async (threadId: string) =>
-  (await threadMessages(threadId)).find((m) => m.kind === "activity" && String(m.tool?.name ?? "").includes("(full access)")) ?? null;
+  (await threadMessages(threadId)).find((m) => m.kind === "activity" && /^Approved \d+ steps? \(Full access\)$/.test(String(m.tool?.name ?? "")) && Array.isArray(m.tool?.steps)) ?? null;
 const decisions = (): any[] => {
   const path = join(home, ".murage", "decisions.ndjson");
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
