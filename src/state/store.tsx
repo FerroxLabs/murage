@@ -849,6 +849,9 @@ export type Action =
       reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
+      /** a stop-line card's "Allow for this task": the server records the
+       * card's own scoped grant (taskAllowKey) for this task */
+      allowForTask?: boolean;
       /** Local UI recovery hook for voice flows. Never sent to the server. */
       onError?: (message: string) => void;
     }
@@ -2285,6 +2288,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 behavior: action.behavior,
                 message: action.message,
                 reviewedSha256: action.reviewedSha256,
+                ...(action.allowForTask ? { allowForTask: true } : {}),
               }),
             }).catch((error) => {
               showError(error);

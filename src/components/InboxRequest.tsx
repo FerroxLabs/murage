@@ -79,10 +79,12 @@ const buttonPrimary = `${button} border-accent bg-accent text-accent-ink hover:b
  *  side make the person choose between two shouts. */
 const buttonDanger = `${button} border-danger/50 bg-transparent text-danger hover:bg-danger/10`;
 
-// No quiet variant is declared here on purpose: this panel has exactly two
-// answers and both of them are decisions. If a third, neutral control is ever
-// added, give it its own full set rather than appending a colour to `button`,
-// which is the mistake above.
+/** The third answer a stop-line card offers (deleting outside its folder,
+ *  paying, messaging someone new): allow the same kind of action in the same
+ *  place for the rest of the task. Outlined and neutral, with its own full
+ *  set of colours rather than a colour appended to `button`, which is the
+ *  mistake above. */
+const buttonQuiet = `${button} border-hairline/60 bg-transparent text-ink hover:bg-control`;
 
 /** Answer a waiting request without leaving the Inbox. `onSettled` lets the
  * list refresh from the server rather than guess the new state. */
@@ -146,6 +148,16 @@ export function InboxRequestAnswer({
         >
           Allow once
         </button>
+        {card.taskAllowKey && (
+          <button
+            className={buttonQuiet}
+            disabled={busy}
+            title="Allow the same kind of action in the same place until this task ends"
+            onClick={() => void respond({ behavior: "allow", allowForTask: true })}
+          >
+            Allow for this task
+          </button>
+        )}
         <button
           className={buttonDanger}
           disabled={busy}

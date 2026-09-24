@@ -64,6 +64,33 @@ it("card edit failure does not undo or repeat an allowed decision", async () => 
   expect(f.answerCallbackQuery.mock.calls.at(-1)![0].text).toBe("Allowed once.");
 });
 
+// ── the stop line: Allow for this task ─────────────────────────────────
+it("offers Allow for this task only on a stop-line card, and passes it through", async () => {
+  const resolve = vi.fn(async () => true);
+  const sendMessage = vi.fn(async (_input: any) => ({ chatId: "7", messageId: 19 }));
+  const answerCallbackQuery = vi.fn(async (_input: any) => {});
+  const pending: TelegramApproval[] = [{ id: "stop-card", fingerprint: "exact", summary: "Delete 1 item outside its folder: ~/Documents/old", taskAllow: true }];
+  const manager = new TelegramApprovals({ pending: () => pending, resolve }, { sendMessage, answerCallbackQuery }, () => 1);
+  const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
+  await manager.publish(owner, () => true, signal);
+  const sent = sendMessage.mock.calls[0][0];
+  expect(sent.buttons.map((b: { text: string }) => b.text)).toEqual(["Approve once", "Allow for this task", "Deny"]);
+  expect(sent.text).toContain("for the rest of this task");
+  await manager.answer({ updateId: 2, kind: "callback", callbackId: "cb", senderId: "7", chatId: "7", messageId: 19, data: sent.buttons[1].data }, owner, () => true, signal);
+  expect(resolve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "stop-card" }), "allow", true);
+  expect(answerCallbackQuery.mock.calls.at(-1)![0].text).toBe("Allowed for this task.");
+});
+it("refuses a forged task tap on a card that never offered it", async () => {
+  const f = fixture(); await f.publish();
+  expect(f.sendMessage.mock.calls[0][0].buttons).toHaveLength(2);
+  const nonce = String(f.sendMessage.mock.calls[0][0].buttons[0].data).split(":")[0];
+  await f.callback({ data: `${nonce}:t` });
+  expect(f.resolve).not.toHaveBeenCalled();
+  // and it did not use up the real buttons
+  await f.callback();
+  expect(f.resolve).toHaveBeenCalledExactlyOnceWith(expect.anything(), "allow");
+});
+
 // ── questions (0.1.52 ASK3) ──────────────────────────────────────────────
 
 function questionFixture(questions: NonNullable<TelegramApproval["questions"]>) {

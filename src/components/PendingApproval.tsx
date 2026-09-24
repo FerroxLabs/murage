@@ -197,6 +197,20 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   );
 });
 
+/** Which grants a card offers besides Allow once and Deny, decided from what
+ * the SERVER put on the card, so a client can never offer a wider grant than
+ * the one it would record. A stop-line card (deleting outside its folder,
+ * paying, messaging someone new) also offers "Allow for this task": the same
+ * kind of action in the same place until the task ends. */
+export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; forTask: boolean } {
+  const durable = isRoutineApproval(pending) || isSkillApproval(pending);
+  if (durable || isHostConsentApproval(pending)) return { always: false, forTask: false };
+  return {
+    always: opts.desktop === true && opts.hasBot && Boolean(pending.allowKey),
+    forTask: opts.hasBot && Boolean(pending.message.card?.taskAllowKey),
+  };
+}
+
 export function PendingApprovalActions({
   pending,
   threadId,
@@ -218,7 +232,8 @@ export function PendingApprovalActions({
   const reviewedSha256 = pending.message.card?.skillRequest
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
-  const decide = (behavior: "allow" | "deny", always = false) =>
+  const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot) });
+  const decide = (behavior: "allow" | "deny", always = false, forTask = false) =>
     dispatch({
       type: "decideRequest",
       threadId,
@@ -227,6 +242,7 @@ export function PendingApprovalActions({
       message: behavior === "deny" ? "Denied by the user." : undefined,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
       alwaysAllow: desktop === true && always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
+      ...(behavior === "allow" && forTask && grants.forTask ? { allowForTask: true } : {}),
     });
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
@@ -243,13 +259,22 @@ export function PendingApprovalActions({
       >
         {isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : "Deny"}
       </button>
-      {desktop === true && !durableRequest && bot && pending.allowKey && (
+      {grants.always && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}
           className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
         >
           Always allow
+        </button>
+      )}
+      {grants.forTask && (
+        <button
+          onClick={() => decide("allow", false, true)}
+          title="Allow the same kind of action in the same place until this task ends"
+          className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
+        >
+          Allow for this task
         </button>
       )}
       <button
