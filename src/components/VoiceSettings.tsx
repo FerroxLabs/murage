@@ -4,14 +4,15 @@
 // The voice list comes from the harness, which holds the key; the
 // renderer never talks to ElevenLabs itself.
 import { useEffect, useState } from "react";
-import { Check, Loader2, Volume2 } from "lucide-react";
+import { Check, Loader2, Square, Volume2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
+import { useSpeech } from "@/lib/tts/useSpeech";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
-import { VoiceOptions, type PickerVoice } from "./VoiceOptions";
+import { tryButtonState, VoiceOptions, type PickerVoice } from "./VoiceOptions";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 
@@ -114,6 +115,15 @@ export function VoiceSettings({
 
   const selectedVoice = bot.voice ?? "";
   const ready = configured && Boolean(selectedVoice || tts.voice);
+  // Try gives feedback: Loading while the clip is made, Stop while it plays.
+  const speech = useSpeech();
+  const previewId = `voice-preview:${bot.id}`;
+  const [tried, setTried] = useState(false);
+  const previewStatus = speech.messageId === previewId ? speech.status : "idle";
+  const previewing = previewStatus !== "idle";
+  // A failed clip resets the speaker without saying whose it was, so the
+  // error shows only after this button was the last thing pressed.
+  const previewError = tried && speech.status === "idle" ? speech.error : undefined;
 
   return (
     <div className="rounded-xl bg-card p-4">
@@ -237,15 +247,22 @@ export function VoiceSettings({
               <VoiceOptions voices={voices} />
             </select>
             <button
-              onClick={() => void speaker.speak(SAMPLE, { voiceId: bot.voice, botId: bot.id })}
+              onClick={() => { if (previewing) { speaker.stop(); return; } setTried(true); void speaker.speak(SAMPLE, { voiceId: bot.voice, botId: bot.id, messageId: previewId }); }}
               disabled={!ready}
-              title={ready ? "Hear this voice" : "Pick a voice first"}
-              aria-label="Hear this voice"
-              className="flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
+              title={!ready ? "Pick a voice first" : previewing ? "Stop" : "Hear this voice"}
+              aria-label={tryButtonState(previewStatus).label}
+              aria-busy={previewStatus === "preparing"}
+              className={cn(
+                "flex w-[84px] shrink-0 items-center justify-center gap-1.5 rounded-lg py-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-50",
+                previewing ? "bg-accent/15 text-accent-text hover:bg-accent/25" : "bg-control text-ink hover:bg-raised-hover",
+              )}
             >
-              <Volume2 size={14} /> Try
+              {previewStatus === "preparing" ? <><Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> {tryButtonState(previewStatus).text}</>
+                : previewStatus === "speaking" ? <><Square size={12} fill="currentColor" /> {tryButtonState(previewStatus).text}</>
+                : <><Volume2 size={14} /> {tryButtonState(previewStatus).text}</>}
             </button>
           </div>
+          {previewError && <div role="alert" className="mt-1.5 text-[11.5px] text-danger">{previewError}</div>}
           {voices.some((v) => v.gender) && (
             <div className="mt-1.5 text-[11.5px] text-ink-secondary">Grouped by how each voice sounds.</div>
           )}

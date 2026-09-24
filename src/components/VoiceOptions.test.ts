@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FLUX_VOICES } from "../../server/tts/flux-speech.ts";
 import { XAI_VOICES } from "../../server/tts/xai-speech.ts";
-import { VoiceOptions, voiceGroups, voiceOptionText } from "./VoiceOptions";
+import { tryButtonState, VoiceOptions, voiceGroups, voiceOptionText } from "./VoiceOptions";
 
 const all = [...FLUX_VOICES, ...XAI_VOICES];
 const render = (voices: typeof all) => renderToStaticMarkup(createElement("select", null, createElement(VoiceOptions, { voices })));
@@ -59,5 +59,18 @@ describe("the Voice & alerts copy", () => {
 
   it("shows the xAI engine only to an owner with an xAI key of their own", () => {
     expect(voice).toContain("tts?.xaiKey");
+  });
+});
+
+describe("the Try button", () => {
+  it("says Loading while the sample is made, Stop while it plays, and Try otherwise", () => {
+    expect(tryButtonState("preparing")).toEqual({ text: "Loading", label: "Loading this voice" });
+    expect(tryButtonState("speaking")).toEqual({ text: "Stop", label: "Stop playing this voice" });
+    expect(tryButtonState("idle")).toEqual({ text: "Try", label: "Hear this voice" });
+  });
+  it("is wired to the speaker's state for this bot's own preview", () => {
+    const source = readFileSync(new URL("./VoiceSettings.tsx", import.meta.url), "utf8");
+    expect(source).toContain("speech.messageId === previewId");
+    expect(source).toContain("speaker.stop()");
   });
 });

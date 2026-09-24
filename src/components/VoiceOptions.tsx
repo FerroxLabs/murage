@@ -56,3 +56,10 @@ export function VoiceOptions({ voices }: { voices: PickerVoice[] }) {
     </>
   );
 }
+
+/** What the Try button says while a voice sample is made and played. */
+export function tryButtonState(status: "idle" | "preparing" | "speaking"): { text: string; label: string } {
+  if (status === "preparing") return { text: "Loading", label: "Loading this voice" };
+  if (status === "speaking") return { text: "Stop", label: "Stop playing this voice" };
+  return { text: "Try", label: "Hear this voice" };
+}
