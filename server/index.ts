@@ -24,7 +24,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
-import { botShapeRows, directTurnLayers, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
+import { botShapeRows, directTurnLayers, nowPrompt, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
 import { engineCommandInText } from "../shared/engine-commands.ts";
@@ -6074,6 +6074,7 @@ async function startTurn(
         outputFolder: outputInstructions,
         automationSource: opts?.automationSource,
         tagged,
+        now: nowPrompt(new Date(), routineTimeZone()),
       });
       recordTurnShapes(bot.id, { where: "chat", threadId, layers: systemLayers });
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
@@ -7748,7 +7749,7 @@ async function runGroupMemberTurn(
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
-      const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];
+      const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt), shapeLayer("now", nowPrompt(new Date(), routineTimeZone()))];
       recordTurnShapes(bot.id, { where: "room", threadId, layers: roomSystemLayers });
       return guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {

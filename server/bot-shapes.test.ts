@@ -11,6 +11,7 @@ import {
   botShapeRows,
   directTurnLayers,
   joinShapeLayers,
+  nowPrompt,
   lastTurnShapes,
   lineLayers,
   recordTurnShapes,
@@ -273,5 +274,24 @@ describe("the last turn's record and the rows the panel shows", () => {
   it("lists the Chief guide for the workspace Chief with its switch", () => {
     const rows = botShapeRows({ ...current, chiefGuide: { on: false, text: "GUIDE" } }, null);
     expect(rows.find((row) => row.id === "chief-guide")).toMatchObject({ switchable: true, on: false, text: "GUIDE" });
+  });
+});
+
+describe("the date and time a turn starts at", () => {
+  it("names the day, both clock forms and the owner's zone with its offset", () => {
+    // 01:03 UTC is 8:03 am in Bangkok: the run a bot once logged as 20:03.
+    const text = nowPrompt(new Date("2026-09-24T01:03:00Z"), "Asia/Bangkok");
+    expect(text).toBe(" It is now Thursday, 24 September 2026, 8:03 am (08:03) in the owner's time zone, Asia/Bangkok (UTC+07:00).");
+  });
+  it("reads UTC as UTC", () => {
+    expect(nowPrompt(new Date("2026-09-24T13:30:00Z"), "UTC")).toContain("1:30 pm (13:30) in the owner's time zone, UTC (UTC+00:00)");
+  });
+  it("comes last in a direct turn, where changing every turn costs nothing cached", () => {
+    const layers = directTurnLayers({
+      houseRules: "", persona: "", computerKind: undefined, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
+      coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: "", memory: "",
+      primer: "", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [], now: " It is now X.",
+    } as DirectTurnShapeInput);
+    expect(layers.at(-1)).toMatchObject({ id: "now", text: " It is now X." });
   });
 });

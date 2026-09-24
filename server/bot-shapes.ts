@@ -67,6 +67,7 @@ export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "output-folder": { group: "turn", label: "Output folder", what: "Where to save the files it makes.", locked: true },
   automation: { group: "turn", label: "Unattended run", what: "Notes for a run nobody is watching: a routine, a webhook or a Telegram message.", locked: true },
   tagged: { group: "turn", label: "Tagged bots", what: "The bots you tagged in your message.", locked: true },
+  now: { group: "turn", label: "Date and time", what: "Today's date, the time and your time zone, so it never has to guess.", locked: true },
 };
 
 // "skill:<id>" rows, and any id this list does not know, read as a built-in skill.
@@ -147,6 +148,8 @@ export interface DirectTurnShapeInput {
   outputFolder: string;
   automationSource?: string;
   tagged: ReadonlyArray<{ name: string; id: string }>;
+  /** nowPrompt(): the date, time and zone this turn starts at. */
+  now?: string;
 }
 
 /** The direct turn's system prompt, in the order the model reads it. The
@@ -185,7 +188,18 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     shapeLayer("tagged", v.tagged.length
       ? ` The user tagged ${v.tagged.map((t) => `@${t.name} (bot_id ${t.id})`).join(" and ")} in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.`
       : ""),
+    shapeLayer("now", v.now ?? ""),
   ];
+}
+
+/** The date, time and zone a turn starts at. Last in the prompt, because it
+ *  changes every turn and anything after it would lose its cache. Bots had
+ *  no clock at all before this, and one logged an 8:03 am run as 20:03. */
+export function nowPrompt(at: Date, timeZone: string): string {
+  const parts = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...options }).format(at);
+  const offset = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
+  const time = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hour12: true }).format(at).toLowerCase();
+  return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${offset.replace("GMT", "UTC") || "UTC"}).`;
 }
 
 // ── the last turn, per bot, in memory ──────────────────────────────────────
@@ -236,9 +250,9 @@ export interface CurrentShapes {
 // The direct turn's order, with a room turn's own layers where they fit.
 const ORDER = ["house-rules", "persona", "room", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "speak-as",
   "credential", "images", "web-search", "routines", "learn", "goal", "skills-index", "own-skills", "team-brief", "memory", "capabilities", "skill:*", "chief-guide",
-  "playbooks", "output-folder", "automation", "tagged"];
+  "playbooks", "output-folder", "automation", "tagged", "now"];
 // Shown before the first turn as "decided when a message arrives".
-const PENDING = new Set(["computer", "connected-apps", "browser", "credential", "web-search", "routines", "capabilities", "output-folder"]);
+const PENDING = new Set(["computer", "connected-apps", "browser", "credential", "web-search", "routines", "capabilities", "output-folder", "now"]);
 
 function row(id: string, text: string | null, extra: Partial<ShapeRow> = {}): ShapeRow {
   const entry = entryFor(id);
