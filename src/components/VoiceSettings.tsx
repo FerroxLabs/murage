@@ -1,7 +1,7 @@
-// Per-agent voice profile. The key is shared; the voice and autoplay choice
+// Per-bot voice profile. The key is shared; the voice and autoplay choice
 // belong to the selected bot.
 //
-// The voice list comes from the harness, which holds the key — the
+// The voice list comes from the harness, which holds the key; the
 // renderer never talks to ElevenLabs itself.
 import { useEffect, useState } from "react";
 import { Check, Loader2, Volume2 } from "lucide-react";
@@ -11,6 +11,7 @@ import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
+import { VoiceOptions, type PickerVoice } from "./VoiceOptions";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 
@@ -30,21 +31,24 @@ export function VoiceSettings({
   const [saving, setSaving] = useState(false);
   const switching = false;
   const [error, setError] = useState<string | null>(null);
-  const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
+  const [voices, setVoices] = useState<PickerVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
   useBotSettingsDraft("Voice settings", Boolean(key.trim()), saving || switching);
 
   const { capabilities } = useDesktopCapabilities();
-  // Built-in voices are offered where the desktop contract says they exist —
+  // Built-in voices are offered where the desktop contract says they exist,
   // never inferred from a user agent. The list of such platforms is shared
   // with the harness (shared/system-voices.ts): this gate said "darwin" while
   // the harness had been driving Windows' System.Speech for releases, so a
   // Windows owner could not switch on an engine that already worked.
   const hostPlatform = capabilities.host.platform;
-  // Each agent picks its own voice service; without a choice it uses the
-  // workspace's. So a room of agents can mix xAI, OpenAI and ElevenLabs.
+  // Each bot picks its own voice service; without a choice it uses the
+  // workspace's. So a room of bots can mix xAI, OpenAI and ElevenLabs.
   const provider = bot.voiceProvider ?? tts?.provider ?? "elevenlabs";
   const xaiAvailable = Boolean(tts?.available?.xai);
+  // xAI's voices are in the Flux list; their own engine is for an owner
+  // with an xAI key of their own, or a bot already saved on it.
+  const xaiKey = Boolean(tts?.xaiKey);
   // Hosted voices: Flux, or the owner's own OpenAI key (same voices).
   const hostedVia = tts?.routes?.speech ?? null;
   const fluxAvailable = Boolean(hostedVia);
@@ -55,7 +59,7 @@ export function VoiceSettings({
   // file for a string. shared/system-voices.test.ts runs this instead.
   const offer = systemVoiceOffer(hostPlatform, provider);
   const systemVoicesAvailable = offer.available;
-  // whether THIS agent's service can speak (the workspace's `configured`
+  // whether THIS bot's service can speak (the workspace's `configured`
   // describes the workspace's own service)
   const configured =
     provider === "flux" ? fluxAvailable : provider === "xai" ? xaiAvailable : provider === "system" ? systemVoicesAvailable : Boolean(tts?.available?.elevenlabs ?? tts?.configured);
@@ -83,7 +87,7 @@ export function VoiceSettings({
   const setProvider = (next: "flux" | "xai" | "elevenlabs" | "system") => {
     if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable) || (next === "xai" && !xaiAvailable)) return;
     setError(null);
-    // this agent's choice, saved on the agent; its old voice belonged to
+    // this bot's choice, saved on the bot; its old voice belonged to
     // the other service, so it is cleared and the new service's default
     // speaks until one is picked
     onPatch({ voiceProvider: next, voice: "" });
@@ -115,7 +119,7 @@ export function VoiceSettings({
     <div className="rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
-        Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent;
+        Give this bot a voice for calls and spoken replies. Each bot has its own voice;
         {offer.sentence}
       </div>
 
@@ -129,7 +133,7 @@ export function VoiceSettings({
               { value: "elevenlabs", label: "ElevenLabs", available: true, hint: undefined },
               { value: "system", label: offer.label, available: offer.available, hint: offer.unavailableHint },
             ] as const)
-              .filter((option) => (option.value !== "system" || systemVoicesAvailable || provider === "system") && (option.value !== "xai" || xaiAvailable || provider === "xai"))
+              .filter((option) => (option.value !== "system" || systemVoicesAvailable || provider === "system") && (option.value !== "xai" || xaiKey || provider === "xai"))
               .map((option) => (
               <button
                 key={option.value}
@@ -163,9 +167,11 @@ export function VoiceSettings({
 
       {provider === "xai" && (
         <div className="mt-3 text-[12.5px] text-ink-secondary">
-          {xaiAvailable
+          {xaiKey
             ? "Speaks with xAI's voices through your own xAI key, billed by xAI. 28 voices."
-            : "Connect an xAI key in Settings, Models, to use xAI's voices."}
+            : xaiAvailable
+              ? "Speaks with xAI's voices through your Flux account. They are also in the Flux list."
+              : "Connect an xAI key in Settings, Models, to use xAI's voices."}
         </div>
       )}
 
@@ -226,14 +232,9 @@ export function VoiceSettings({
                     : "Pick a voice"}
               </option>
               {selectedVoice && !voices.some((voice) => voice.id === selectedVoice) && (
-                <option value={selectedVoice}>Current agent voice</option>
+                <option value={selectedVoice}>Current voice</option>
               )}
-              {voices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                  {v.description ? ` — ${v.description}` : ""}
-                </option>
-              ))}
+              <VoiceOptions voices={voices} />
             </select>
             <button
               onClick={() => void speaker.speak(SAMPLE, { voiceId: bot.voice, botId: bot.id })}
@@ -245,6 +246,9 @@ export function VoiceSettings({
               <Volume2 size={14} /> Try
             </button>
           </div>
+          {voices.some((v) => v.gender) && (
+            <div className="mt-1.5 text-[11.5px] text-ink-secondary">Grouped by how each voice sounds.</div>
+          )}
         </div>
       )}
 
@@ -252,7 +256,7 @@ export function VoiceSettings({
         <div>
           <div className="text-[13px] font-medium text-ink">Read replies aloud</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-            Speak this agent's answers as they arrive, even from another chat.
+            Speak this bot's answers as they arrive, even from another chat.
           </div>
         </div>
         <Switch

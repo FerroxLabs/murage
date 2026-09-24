@@ -19,6 +19,11 @@ export interface Voice {
   id: string;
   label: string;
   description?: string;
+  /** How the voice sounds, for grouping the picker. xAI publishes this;
+   *  OpenAI does not, so theirs is the common reading of how each sounds. */
+  gender?: "female" | "male" | "neutral";
+  /** Whose voice it is, where one list mixes two (Flux: OpenAI and Grok). */
+  provider?: "openai" | "grok";
 }
 
 export interface Audio {

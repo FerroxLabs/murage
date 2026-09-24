@@ -855,7 +855,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 Notifications
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Get notified when this agent finishes or needs input
+                Get notified when this bot finishes or needs input
               </div>
             </div>
             <Switch
