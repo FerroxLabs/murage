@@ -104,6 +104,14 @@ export function registerUpdaterIpc(ipcMain = electronIpcMain) {
 
 // Windows come and go while the process-owned updater remains alive.
 // Reattach broadcasts without re-registering listeners or polling timers.
+/** "Check for updates" from the tray menu: the same manual check the app's
+ * own button runs. False when no updater runs in this build. */
+export function checkForUpdatesNow() {
+  if (!updaterCoordinator) return false;
+  void Promise.resolve(updaterCoordinator.check(true)).catch(() => {});
+  return true;
+}
+
 export function attachUpdaterWindow(mainWindow) {
   win = mainWindow;
 }

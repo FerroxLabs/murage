@@ -31,7 +31,7 @@ test("one native cue per request and a click navigates once without approval act
   assert.deepEqual(await f.show(payload), { accepted: true });
   assert.deepEqual(f.show({ ...payload, body: "new text", messageId: "other-card" }), { accepted: false });
   f.notices[0].emit("click"); f.notices[0].emit("click");
-  assert.deepEqual(f.opened, [{ botId: "bot", threadId: "task" }]);
+  assert.deepEqual(f.opened, [{ botId: "bot", threadId: "task", messageId: "card" }]);
   await f.show({ ...payload, threadId: "other-task" });
   await f.show({ ...payload, requestTurnId: "next-turn" });
   assert.equal(f.notices.length, 3);
@@ -81,7 +81,7 @@ const launchOf=notice=>/ launch="([^"]+)"/.exec(notice.options.toastXml)?.[1];
 test("Windows lazily registers public activation and retains exact opaque target after close",()=>{
  const f=windowsFixture();assert.equal(f.registrations(),0);assert.deepEqual(f.show({...payload,botId:"bad/path"}),{accepted:false});assert.equal(f.registrations(),0);
  assert.deepEqual(f.show(payload),{accepted:true});assert.equal(f.registrations(),1);const token=launchOf(f.notices[0]);assert.match(token,/^murage-approval:[a-f0-9]{32}$/);assert(!token.includes(payload.botId));
- f.notices[0].emit("close",{reason:"timedOut"});f.activate({type:"click",arguments:token});assert.deepEqual(f.opened,[{botId:"bot",threadId:"task"}]);f.activate({type:"click",arguments:token});f.notices[0].emit("click");assert.equal(f.opened.length,1);
+ f.notices[0].emit("close",{reason:"timedOut"});f.activate({type:"click",arguments:token});assert.deepEqual(f.opened,[{botId:"bot",threadId:"task",messageId:"card"}]);f.activate({type:"click",arguments:token});f.notices[0].emit("click");assert.equal(f.opened.length,1);
  f.show({...payload,requestId:"second"});assert.equal(f.registrations(),1);assert.notEqual(launchOf(f.notices[1]),token);
 });
 test("Windows instance and global callbacks share the same once-open gate in either order",()=>{
@@ -94,9 +94,9 @@ test("Windows malformed unknown nonclick and failed tokens never navigate",()=>{
  const g=windowsFixture();g.failShow();assert.deepEqual(g.show(payload),{accepted:false});g.activate({type:"click",arguments:launchOf(g.notices[0])});g.notices[0].emit("click");assert.equal(g.opened.length,0);
 });
 test("Windows historical routing stays bounded and evicted tokens fail from both callbacks",()=>{
- const f=windowsFixture(1);f.show(payload);const old=f.notices[0];old.emit("close");f.show({...payload,requestId:"next",threadId:"next-task"});f.activate({type:"click",arguments:launchOf(old)});old.emit("click");assert.equal(f.opened.length,0);f.activate({type:"click",arguments:launchOf(f.notices[1])});assert.deepEqual(f.opened,[{botId:"bot",threadId:"next-task"}]);
+ const f=windowsFixture(1);f.show(payload);const old=f.notices[0];old.emit("close");f.show({...payload,requestId:"next",threadId:"next-task"});f.activate({type:"click",arguments:launchOf(old)});old.emit("click");assert.equal(f.opened.length,0);f.activate({type:"click",arguments:launchOf(f.notices[1])});assert.deepEqual(f.opened,[{botId:"bot",threadId:"next-task",messageId:"card"}]);
  // A late event from an evicted old object cannot invalidate a newly minted token for the same request key.
- f.show(payload);const fresh=f.notices.at(-1);old.emit("close");old.emit("failed");f.activate({type:"click",arguments:launchOf(fresh)});assert.deepEqual(f.opened.at(-1),{botId:"bot",threadId:"task"});
+ f.show(payload);const fresh=f.notices.at(-1);old.emit("close");old.emit("failed");f.activate({type:"click",arguments:launchOf(fresh)});assert.deepEqual(f.opened.at(-1),{botId:"bot",threadId:"task",messageId:"card"});
 });
 test("Windows disposed and previous-controller tokens expire without replacing a later global handler",()=>{
  const f=windowsFixture();f.show(payload);const token=launchOf(f.notices[0]);let external=0;f.replace(()=>external++);const registrations=f.registrations();f.show.dispose();assert.equal(f.registrations(),registrations);f.activate({type:"click",arguments:token});assert.equal(external,1);f.notices[0].emit("click");assert.equal(f.opened.length,0);assert.deepEqual(f.show({...payload,requestId:"late"}),{accepted:false});

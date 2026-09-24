@@ -1,4 +1,5 @@
 import { track } from "@/lib/analytics";
+import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Terminal, Users, X } from "lucide-react";
@@ -328,6 +329,18 @@ export function Composer({
   // the latest caret, readable from callbacks without re-creating them
   const caretRef = useRef(0);
   caretRef.current = caret;
+  // "New message to…" in the menu bar / tray menu opens this chat ready to type.
+  useEffect(() => {
+    const focus = (event: Event) => {
+      const wanted = (event as CustomEvent<{ botId?: string }>).detail?.botId;
+      const input = inputRef.current;
+      if (!input || input.disabled || (wanted && bot && bot.id !== wanted)) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    };
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focus);
+    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, focus);
+  }, [bot]);
   /** Returns keyboard focus to the draft, keeping the caret where it was. */
   const refocusInput = useCallback(() => {
     requestAnimationFrame(() => {

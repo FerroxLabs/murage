@@ -39,6 +39,17 @@ ipcRenderer.on("startup-background:open-inbox",()=>{
   for(const listener of startupInboxListeners)listener();
 });
 
+// Menu bar / tray menu: open an approval card, a running conversation or a
+// bot's composer. Buffered like the Inbox intent, because the click can land
+// before the renderer has mounted its listener.
+let pendingTrayTarget=null;
+const trayListeners=new Set();
+ipcRenderer.on("tray:open",(_event,target)=>{
+  if(!target||typeof target!=="object")return;
+  if(!trayListeners.size){pendingTrayTarget=target;return;}
+  for(const listener of trayListeners)listener(target);
+});
+
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
 ipcRenderer.on("package:install", (_event, url) => {
@@ -117,6 +128,9 @@ contextBridge.exposeInMainWorld("muragebox", {
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
     onChange:cb=>{const handler=(_event,state)=>cb(state);ipcRenderer.on("startup-background:changed",handler);return()=>ipcRenderer.removeListener("startup-background:changed",handler);},
     onOpenInbox:cb=>{startupInboxListeners.add(cb);if(pendingStartupInbox){pendingStartupInbox=false;queueMicrotask(cb);}return()=>startupInboxListeners.delete(cb);},
+  },
+  tray: {
+    onOpen:cb=>{trayListeners.add(cb);if(pendingTrayTarget){const target=pendingTrayTarget;pendingTrayTarget=null;queueMicrotask(()=>cb(target));}return()=>trayListeners.delete(cb);},
   },
   /** Proof, to this launch's harness, that this really is the renderer. */
   desktopSurfaceSecret,

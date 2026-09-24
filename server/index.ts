@@ -61,10 +61,11 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
+import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
-import type { InboxView } from "../shared/inbox.ts";
+import type { InboxPage, InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema } from "./claude-accounts.ts";
@@ -10331,6 +10332,25 @@ const server = createServer(async (req, res) => {
         body: method === "POST" ? await readBody(req) : undefined,
       }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
       return json(res, result.status, result.body);
+    }
+    // The menu bar / system tray menu (electron/background-lifecycle.mjs).
+    // Desktop only: it lists the Inbox. Read-only; the menu answers an
+    // ordinary approval through /api/threads/:id/respond like the app does.
+    if (method === "GET" && path === "/api/desktop/tray") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
+      const threads = [
+        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
+        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
+      ];
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads });
+      if (result.status !== 200) return json(res, result.status, result.body);
+      return json(res, 200, traySummary({
+        page: result.body as InboxPage,
+        bots: store.bots,
+        chiefId: store.workspaceChief()?.id,
+        messagesFor: threadId => store.messagesFor(threadId),
+        stopHit: (threadId, requestId) => stopHitByRequest.has(`${threadId}:${requestId}`),
+      }));
     }
     if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {
       try {
