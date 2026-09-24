@@ -56,6 +56,15 @@ describe("traySummary", () => {
     expect(summary.items[0]).toMatchObject({ botName: "Zed", summary: "Read the weekly report draft", requestId: "r1", quick: true, threadId: "t-zed", messageId: "m1" });
     expect(summary.items[1]).toMatchObject({ quick: false, requestId: "r2" });
   });
+  // The sidebar's "Needs you" adds engines nobody is signed in to (they have
+  // no Inbox row, so the renderer folds them in). The 0.1.59 customer pass
+  // saw the tray say 1 while the sidebar said 4. Same number, both places.
+  it("counts signed-out engines the way the sidebar badge does", () => {
+    const withEngines = traySummary({ page: { decisions: 1, items: [item(1)] }, bots, chiefId: "b-chief",
+      messagesFor: id => messages[id] ?? [], stopHit: () => false, signedOutEngines: 3 });
+    expect(withEngines.needsYou).toBe(4);
+    expect(withEngines.items).toHaveLength(1);
+  });
   it("lists working bots with what they are doing, never ones waiting on the owner", () => {
     expect(summary.working).toEqual([{ botId: "b-zed", botName: "Zed", threadId: "t-zed", doing: "reading a file", startedAt: 1000 }]);
   });

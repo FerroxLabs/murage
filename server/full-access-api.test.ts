@@ -249,6 +249,32 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
     60_000,
   );
 
+  // The tray menu says the sidebar's number: the Inbox's decisions plus the
+  // engines nobody is signed in to (none while the first run owns the view).
+  it(
+    "the tray's Needs you count matches the sidebar's",
+    async () => {
+      const bot = await makeBot("Tray counter", "deleter");
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "tidy my documents" })).status).toBe(202);
+      const card = await poll(() => liveCard(bot.threadId), 20_000);
+      expect(card).not.toBeNull();
+      const inbox = (await desktopApi("GET", "/api/inbox?view=decisions&pageSize=1")).body;
+      const view = (await desktopApi("GET", "/api/setup")).body;
+      const owned = view.conversationLive === true && view.next !== null;
+      const signedOut = owned ? 0 : view.signedOutAgents.length;
+      const tray = await desktopApi("GET", "/api/desktop/tray");
+      expect(tray.status).toBe(200);
+      expect(inbox.decisions).toBeGreaterThan(0);
+      // the fake grok instances have no key in this server's env, so they
+      // are the signed-out engines the sidebar folds in
+      expect(signedOut).toBeGreaterThan(0);
+      expect(tray.body.needsYou).toBe(inbox.decisions + signedOut);
+      await deny(bot.id, bot.threadId, card.card.requestId);
+    },
+    60_000,
+  );
+
   it(
     "stops before deleting outside its folder under Full access, even on a fullAuto engine, and Allow for this task covers the same place",
     async () => {

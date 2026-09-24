@@ -2236,6 +2236,45 @@ async function driveSetup(view: SetupView): Promise<void> {
   // Told to the client AFTER the cards are appended, so a view that carries
   // `conversationLive` is a view whose thread is already up to date.
   view.conversationLive = conversationLive(view, setupCardKeysInChiefThread(view));
+  noteSignedOutEngines(view);
+}
+
+// ── the tray's share of the sidebar count ──────────────────────────────
+//
+// The sidebar's "Needs you" adds the engines nobody is signed in to, and
+// hides them while the first run owns the main view (src/lib/
+// signed-out-engines.ts, `firstRunOwnsMainView`). The tray shows the same
+// number. The reading comes from the last setup view the app built (the
+// renderer reads it on a poll); with no recent one, the tray builds it.
+let signedOutReading: { at: number; count: number } | undefined;
+let signedOutPending: Promise<number> | undefined;
+const SIGNED_OUT_FRESH_MS = 60_000;
+
+function signedOutCountOf(view: SetupView): number {
+  const firstRunOwnsView = view.conversationLive === true && view.next !== null;
+  return firstRunOwnsView ? 0 : view.signedOutAgents.length;
+}
+
+function noteSignedOutEngines(view: SetupView): void {
+  signedOutReading = { at: Date.now(), count: signedOutCountOf(view) };
+}
+
+async function traySignedOutEngines(): Promise<number> {
+  if (signedOutReading && Date.now() - signedOutReading.at < SIGNED_OUT_FRESH_MS) return signedOutReading.count;
+  signedOutPending ??= (async () => {
+    try {
+      const live = await setupLiveState();
+      const view = setupView(setup.read(live), live);
+      view.conversationLive = conversationLive(view, setupCardKeysInChiefThread(view));
+      noteSignedOutEngines(view);
+      return signedOutCountOf(view);
+    } catch {
+      return signedOutReading?.count ?? 0;
+    } finally {
+      signedOutPending = undefined;
+    }
+  })();
+  return signedOutPending;
 }
 
 // ── the routines the first run creates ─────────────────────────────────
@@ -10351,6 +10390,7 @@ const server = createServer(async (req, res) => {
         chiefId: store.workspaceChief()?.id,
         messagesFor: threadId => store.messagesFor(threadId),
         stopHit: (threadId, requestId) => stopHitByRequest.has(`${threadId}:${requestId}`),
+        signedOutEngines: await traySignedOutEngines(),
       }));
     }
     if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {

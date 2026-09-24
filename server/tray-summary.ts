@@ -35,7 +35,10 @@ export interface TrayItem {
 export interface TrayWorking { botId: string; botName: string; threadId: string; doing: string; startedAt?: number }
 export interface TrayBot { id: string; name: string; chief: boolean }
 export interface TraySummary {
-  /** The Inbox's "Needs you" number: the same count the sidebar badge reads. */
+  /** The sidebar badge's "Needs you" number: the Inbox's decisions (approvals,
+   * questions, connections and the rest) plus the engines nobody is signed in
+   * to, which have no Inbox row and are folded in by the renderer
+   * (src/lib/signed-out-engines.ts). `items` lists the Inbox rows only. */
   needsYou: number;
   items: TrayItem[];
   working: TrayWorking[];
@@ -68,6 +71,9 @@ export interface TraySummaryDeps {
   chiefId?: string;
   messagesFor(threadId: string): readonly Message[];
   stopHit(threadId: string, requestId: string): boolean;
+  /** Engines present and signed out of, as the sidebar counts them: none
+   * while the first run owns the main view. */
+  signedOutEngines?: number;
 }
 
 export function traySummary(deps: TraySummaryDeps): TraySummary {
@@ -107,7 +113,7 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
   const others = visible.filter(bot => bot !== chief).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const ordered = [...(chief ? [chief] : []), ...others];
   return {
-    needsYou: deps.page.decisions,
+    needsYou: deps.page.decisions + Math.max(0, deps.signedOutEngines ?? 0),
     items,
     working,
     bots: ordered.slice(0, BOT_LIMIT).map(bot => ({ id: bot.id, name: bot.name, chief: bot === chief })),
