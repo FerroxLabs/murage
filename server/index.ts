@@ -7,7 +7,7 @@ import { createProcedureEvaluator } from "./memory/procedure-evaluator.ts";
 import { readMemoryLearning } from "./memory/learning-policy.ts";
 import { verifyGepaBundle } from "./gepa-resource.ts";
 import { skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, assertSkillProcedureEvidence } from "./skills.ts";
-import { observeVerifiedHuman, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
+import { observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
@@ -113,7 +113,7 @@ import {
 import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
-import { TaskAllowances, chatAllowance, knownRecipients, rememberRecipients } from "./stop-line-state.ts";
+import { TaskAllowances, chatAllowance, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -3793,6 +3793,23 @@ function stopLineRealpath(path: string): string {
   return path;
 }
 
+/** People a message is never "new" to: the owner's own linked channel
+ * accounts and paired DMs (Telegram, Slack, Discord), and the person this
+ * conversation is with when it is a channel conversation. Each source fails
+ * on its own: a missing one only means that recipient asks once. */
+function ownerAndThreadRecipients(threadId: string): string[] {
+  const ids: string[] = [];
+  const add = (read: () => readonly string[] | string | undefined) => {
+    try { const value = read(); if (typeof value === "string") ids.push(value); else if (value) ids.push(...value); } catch { /* that source is unavailable */ }
+  };
+  add(() => ownerChannelUserIds());
+  add(() => channelHumanIsOwner(telegramHumanBindingId) ? telegram.ownerRecipients() : undefined);
+  add(() => channelHumanIsOwner(slackHumanBindingId) ? slack?.ownerRecipients() : undefined);
+  add(() => channelHumanIsOwner(discordHumanBindingId) ? discord?.ownerRecipients() : undefined);
+  add(() => threadHumanChannelUserId(threadId));
+  return recipientForms(ids);
+}
+
 function stopLinePlace(botId: string, threadId: string, commandCwd?: unknown): StopLinePlace {
   const cwd = turnCwdByThread.get(threadId);
   const roots = [cwd, ...ownWorkspaceRoots({ dataDir: DATA_DIR, botId, threadId }), tmpdir(), "/tmp", "/private/tmp", "/var/tmp"]
@@ -3804,7 +3821,7 @@ function stopLinePlace(botId: string, threadId: string, commandCwd?: unknown): S
     cwd: typeof commandCwd === "string" && isAbsolute(commandCwd) ? commandCwd : cwd,
     roots,
     home: homedir(),
-    knownRecipients: knownRecipients(DATA_DIR, botId),
+    knownRecipients: new Set([...knownRecipients(DATA_DIR, botId), ...ownerAndThreadRecipients(threadId)]),
     realpath: stopLineRealpath,
   };
 }

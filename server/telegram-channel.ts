@@ -89,6 +89,11 @@ export class TelegramChannel {
     if (this.state.targetBotId !== this.options.targetBotId) return "target-changed";
     return this.state.binding ? "paired" : "pending";
   }
+  /** The paired owner's chat and account: a message there is never to
+   * "someone new" (server/stop-line.ts). */
+  ownerRecipients(): string[] {
+    return this.state.binding ? [this.state.binding.chatId, this.state.binding.senderId] : [];
+  }
   status() {
     const delivery = [...this.state.records].reverse().find(record => record.deliveryError !== undefined);
     const deliveryRetryAt = this.state.records.reduce<number | null>((earliest, record) => record.retryAt === undefined ? earliest : earliest === null ? record.retryAt : Math.min(earliest, record.retryAt), null);

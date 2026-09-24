@@ -10,7 +10,7 @@ import { writeBotIdentity } from "./memory/identity.ts";
 import { hydrateMemoryRecord } from "./memory/bundle.ts";
 import { searchMemory } from "./memory/search.ts";
 import { getOrCreateChannel, mirrorExchange } from "./comms-visibility.ts";
-import { observeVerifiedHuman, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
+import { observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"fixture",model:"fixture"}));
@@ -95,4 +95,14 @@ it("freezes refused and admitted deliveries so retries cannot change human after
   linkHumanBinding(ownerMemoryTicket(),{bindingId:id,expectedRevision:principal.revision,as:"person"});
   expect(()=>resolveHumanDelivery(id,"admitted")).toThrow("HUMAN_BINDING_REVOKED");
   expect(resolveHumanDelivery(id,"fresh").personId).not.toBe(principal.personId);
+});
+it("names the owner's own channel accounts and a channel thread's human for the stop line",()=>{
+  const store=fresh(),bot=store.createBot();
+  const owner=observeVerifiedHuman({platform:"slack",authorityId:"TEAM",connectionId:"c-owner",userId:"UOWNER"});
+  linkHumanBinding(ownerMemoryTicket(),{bindingId:owner,expectedRevision:1,as:"owner"});
+  const principal=person("UPERSON");
+  expect(ownerChannelUserIds()).toEqual(["UOWNER"]);
+  expect(threadHumanChannelUserId(bot.threadId)).toBeUndefined();
+  const task=humanTask(store,bot.id,principal)!;
+  expect(threadHumanChannelUserId(task.threadId)).toBe("UPERSON");
 });

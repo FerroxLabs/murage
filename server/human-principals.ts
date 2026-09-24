@@ -141,3 +141,20 @@ export function resolveHumanDelivery(bindingId:string,deliveryId:string):HumanPr
   if(!principal)throw new Error("HUMAN_LINK_REQUIRED");
   assertHumanPrincipal(principal);return Object.freeze(principal);
 }
+/** Channel user ids of the workspace owner's own linked accounts (Telegram,
+ * Slack, Discord). Read by the stop line (server/stop-line.ts): a message to
+ * the owner is never "someone new". Only active bindings linked to the owner. */
+export function ownerChannelUserIds(db = database()): string[] {
+  return db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='human-binding'").all()
+    .map((row) => JSON.parse(String(row.intent)) as Binding)
+    .filter((value) => value.active && value.personId === WORKSPACE_OWNER)
+    .map((value) => value.origin.userId);
+}
+/** The channel user id of the person this thread is with, when it is a
+ * channel conversation with someone verified (undefined for the desktop). */
+export function threadHumanChannelUserId(threadId: string, db = database()): string | undefined {
+  const principal = threadHumanPrincipal(threadId, db);
+  if (principal.bindingId === "local") return undefined;
+  const value = binding(principal.bindingId, db);
+  return value?.active ? value.origin.userId : undefined;
+}

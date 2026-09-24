@@ -555,6 +555,8 @@ function toolCalls(tool: string, input: unknown): ToolCall[] {
 
 function stringValues(value: unknown, depth = 0): string[] {
   if (typeof value === "string") return [value];
+  // chat ids are often numbers (Telegram)
+  if (typeof value === "number" && Number.isFinite(value)) return [String(value)];
   if (depth > 2 || !value || typeof value !== "object") return [];
   if (Array.isArray(value)) return value.flatMap((v) => stringValues(v, depth + 1));
   const obj = value as Record<string, unknown>;

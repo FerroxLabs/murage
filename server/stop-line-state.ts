@@ -140,3 +140,12 @@ export function chatAllowance(
   if (!app || !/^[a-z0-9_-]{1,60}$/.test(app)) return { ok: false, error: "Say which payment app, such as stripe." };
   return { ok: true, key: `stop:pay:${app}:${who}`, note: `You allowed payments to ${place} through ${app} for the rest of this task.` };
 }
+
+/** Every spelling a channel id is addressed by in a tool call: bare, and as a
+ * mention (`U123`, `@U123`, `<@U123>` all name the same person). */
+export function recipientForms(ids: readonly string[]): string[] {
+  return ids.flatMap((id) => {
+    const bare = normalizeRecipient(id).replace(/^[@#]/, "");
+    return bare ? [bare, `@${bare}`] : [];
+  });
+}

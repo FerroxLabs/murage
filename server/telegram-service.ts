@@ -51,6 +51,8 @@ export class TelegramService {
   private tokenRejected = false;
   private readonly options: TelegramServiceOptions;
   constructor(options: TelegramServiceOptions) { this.options = options; }
+  /** The paired owner's chat and account (server/stop-line.ts). */
+  ownerRecipients(): string[] { return this.channel?.ownerRecipients() ?? []; }
   private connectionFile() { return join(this.options.dataDir, "telegram", "connection.json"); }
   private readConnection(): Connection | undefined {
     try {

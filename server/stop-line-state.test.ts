@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, knownRecipients, rememberRecipients } from "./stop-line-state.ts";
+import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
+import { classifyStopLine } from "./stop-line.ts";
 
 describe("task allowances", () => {
   const outside = { kind: "delete" as const, place: "/Users/ada/Projects/other/build", what: "x" };
@@ -76,5 +77,20 @@ describe("chat allowances", () => {
     expect(chatAllowance({ kind: "message", place: "@newperson" }, "you can DM @newperson", home)).toMatchObject({ ok: true, key: "stop:message:@newperson" });
     expect(chatAllowance({ kind: "pay", place: "cus_1", app: "Stripe" }, "charge cus_1 again if it fails", home)).toMatchObject({ ok: true, key: "stop:pay:stripe:cus_1" });
     expect(chatAllowance({ kind: "pay", place: "cus_1" }, "charge cus_1", home).ok).toBe(false);
+  });
+});
+
+describe("the owner and the thread are known recipients", () => {
+  it("covers every spelling of a channel id", () => {
+    expect(recipientForms(["U0OWNER", "<@D123>", ""])).toEqual(["u0owner", "@u0owner", "d123", "@d123"]);
+  });
+
+  it("so a message to the owner's account or DM never stops", () => {
+    const known = new Set(recipientForms(["U0OWNER", "D0DM", "7777"]));
+    const place = { cwd: "/w", roots: ["/w"], home: "/Users/ada", knownRecipients: known };
+    expect(classifyStopLine("mcp__slack__send_message", { channel: "D0DM", text: "done" }, "", place)).toBeNull();
+    expect(classifyStopLine("mcp__slack__send_message", { channel: "<@U0OWNER>", text: "done" }, "", place)).toBeNull();
+    expect(classifyStopLine("mcp__telegram__send_message", { chat_id: 7777, text: "done" }, "", place)).toBeNull();
+    expect(classifyStopLine("mcp__slack__send_message", { channel: "@someone-else" }, "", place)?.kind).toBe("message");
   });
 });
