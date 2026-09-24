@@ -60,8 +60,9 @@ const SUPPORTED = new Set<string>(SUPPORTED_MARKDOWN_TOKEN_CLASSES);
  * Tables stay registered so pasted tables keep their structure, but a file
  * containing one opens in Source mode because 3.31.3 re-pads table cells and
  * adds blank lines around them. There is no image extension: rich mode never
- * fetches a local or remote image. */
-export function createMarkdownExtensions(): AnyExtension[] {
+ * fetches a local or remote image. `resizableTables` only adds the column
+ * drag handles of the live editor; the schema and the Markdown are the same. */
+export function createMarkdownExtensions(options: { resizableTables?: boolean } = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       underline: false,
@@ -70,7 +71,7 @@ export function createMarkdownExtensions(): AnyExtension[] {
     }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    TableKit.configure({ table: { resizable: false } }),
+    TableKit.configure({ table: { resizable: options.resizableTables === true } }),
     Markdown,
   ];
 }

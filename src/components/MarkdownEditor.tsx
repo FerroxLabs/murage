@@ -20,7 +20,8 @@
 // F4-T3 mounts this inside the workspace pane and supplies the transport.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Editor } from "@tiptap/core";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { useEditor } from "@tiptap/react";
+import { RichEditorFrame, richEditorContent, useRichEditorKit } from "./editor/RichMarkdownEditor";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import type { FileRevision, SaveReceipt, WorkspaceReadResult, WorkspaceWriteRequest } from "../../shared/workspace-files";
@@ -54,11 +55,9 @@ import {
   type StoredDraftStamp,
 } from "@/lib/markdown-drafts";
 import {
-  EMPTY_MARKDOWN_DOC,
   MARKDOWN_RICH_EDIT_MAX_BYTES,
   analyzeMarkdownFidelity,
   composeMarkdownDocument,
-  createMarkdownExtensions,
   type MarkdownDocumentParts,
   type MarkdownFidelityReason,
   type MarkdownFidelityReport,
@@ -139,11 +138,7 @@ function sameViewValue(a: unknown, b: unknown): boolean {
   return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
-/** Editor content for a rich body. Tiptap parses an empty string as HTML
- * (not Markdown), so an empty body loads the empty document instead. */
-export function richEditorContent(body: string): { content: string; contentType: "markdown" } | { content: typeof EMPTY_MARKDOWN_DOC } {
-  return body === "" ? { content: EMPTY_MARKDOWN_DOC } : { content: body, contentType: "markdown" };
-}
+export { richEditorContent };
 
 export type SaveResult =
   | { status: "saved"; stillDirty: boolean }
@@ -714,9 +709,13 @@ function RichSurface({ controller, documentKey, readOnly }: { controller: Markdo
   // Computed once per mount: later changes arrive through the controller as
   // `setContent(..., { emitUpdate: false })`, never by recreating the editor.
   const initialContent = useMemo(() => richEditorContent(controller.richBody() ?? ""), [controller, documentKey]);
+  // The Markdown extension set the fidelity check proved, plus the toolbar,
+  // bubble menu, "/" menu and drag handle of the shared rich editor. None of
+  // those change the schema or the Markdown.
+  const kit = useRichEditorKit();
   const editor = useEditor({
     immediatelyRender: typeof window !== "undefined",
-    extensions: createMarkdownExtensions(),
+    extensions: kit.extensions,
     ...initialContent,
     injectCSS: false,
     editable: !readOnly,
@@ -725,7 +724,7 @@ function RichSurface({ controller, documentKey, readOnly }: { controller: Markdo
         role: "textbox",
         "aria-multiline": "true",
         "aria-label": t("markdownEditor.richLabel"),
-        class: "min-h-64 px-4 py-3 text-[14px] leading-relaxed text-ink outline-none",
+        class: "rme-prose min-h-64 text-[14px] leading-relaxed text-ink outline-none",
       },
     },
     onCreate: ({ editor: created }) => controller.attachRichEditor(created),
@@ -740,21 +739,7 @@ function RichSurface({ controller, documentKey, readOnly }: { controller: Markdo
     // `setEditable(value, false)` does not emit an update, so it is not an edit.
     if (editor && editor.isEditable === readOnly) editor.setEditable(!readOnly, false);
   }, [editor, readOnly]);
-  return (
-    <EditorContent
-      editor={editor}
-      className={[
-        "min-h-64 rounded-lg border border-hairline/50 bg-inset",
-        "[&_h1]:mb-3 [&_h1]:text-[22px] [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-[18px] [&_h2]:font-semibold",
-        "[&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-[15px] [&_h3]:font-semibold [&_p]:my-2",
-        "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6",
-        "[&_ul[data-type=taskList]]:list-none [&_ul[data-type=taskList]]:pl-1 [&_li[data-checked]]:flex [&_li[data-checked]]:gap-2",
-        "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-hairline [&_blockquote]:pl-3 [&_blockquote]:text-ink-secondary",
-        "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-panel [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-[12.5px]",
-        "[&_code]:font-mono [&_a]:text-accent-text [&_a]:underline [&_hr]:my-4 [&_hr]:border-hairline",
-      ].join(" ")}
-    />
-  );
+  return <RichEditorFrame editor={editor} kit={kit} editable={!readOnly} className="min-h-64" />;
 }
 
 export function MarkdownEditor({ controller, title }: { controller: MarkdownEditorController; title?: string }) {

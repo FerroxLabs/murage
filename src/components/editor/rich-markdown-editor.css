@@ -1,0 +1,277 @@
+/* Copyright 2026 Ferrox Labs
+   SPDX-License-Identifier: AGPL-3.0-or-later
+
+   The rich Markdown editor (ported from Wayland's TipTap editor). Colours
+   are Murage's skin tokens, so dark and light follow data-skin. */
+
+.rme {
+  --rme-edge: color-mix(in srgb, var(--color-hairline) 50%, transparent);
+  position: relative;
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--rme-edge);
+  border-radius: 0.5rem;
+  background: var(--color-inset);
+  color: var(--color-ink);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.rme .rme-prose {
+  min-height: 12rem;
+  /* Extra left padding leaves room for the drag handle column. */
+  padding: 14px 18px 18px 48px;
+  outline: none;
+}
+
+/* Sticky top toolbar */
+.rme-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 8px;
+  background: var(--color-inset);
+  border-bottom: 1px solid var(--rme-edge);
+}
+
+.rme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.rme-btn:hover:not(:disabled) { background: var(--color-control); color: var(--color-ink); }
+.rme-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.rme-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.rme-btn-active,
+.rme-btn-active:hover:not(:disabled) { background: var(--color-control); color: var(--color-accent-text); }
+
+.rme-divider {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--rme-edge);
+}
+
+/* Inline link field */
+.rme-link { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+.rme-link-input {
+  width: 15rem;
+  max-width: 50vw;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--rme-edge);
+  border-radius: 6px;
+  background: var(--color-raised);
+  color: var(--color-ink);
+  font-size: 12.5px;
+}
+.rme-link-input:focus { outline: 2px solid var(--color-focus); outline-offset: 0; }
+
+/* Bubble menu on a selection */
+.rme-bubble {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--color-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.rme-bubble .rme-btn:hover:not(:disabled),
+.rme-bubble .rme-btn-active { background: var(--color-raised-hover); }
+
+/* Drag handle and add-block controls */
+.rme-handle { display: inline-flex; align-items: center; gap: 1px; margin-top: 1px; opacity: 0; transition: opacity 120ms ease; }
+.rme:hover .rme-handle { opacity: 0.7; }
+.rme-handle:hover { opacity: 1 !important; }
+.rme-handle-btn,
+.rme-handle-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-ink-secondary);
+}
+.rme-handle-btn { cursor: pointer; }
+.rme-handle-grip { cursor: grab; user-select: none; }
+.rme-handle-btn:hover,
+.rme-handle-grip:hover { background: var(--color-control); color: var(--color-ink); }
+.rme-handle-grip:active { cursor: grabbing; }
+
+/* Streaming */
+.rme-streaming-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 6;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Slash menu (portaled to body) */
+.rme-slash-portal { position: fixed; z-index: 1000; pointer-events: none; }
+.rme-slash {
+  pointer-events: auto;
+  width: 280px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  color: var(--color-ink);
+}
+.rme-slash-empty { padding: 12px; text-align: center; color: var(--color-ink-secondary); font-size: 13px; }
+.rme-slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rme-slash-item-active { background: var(--color-raised-hover); }
+.rme-slash-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--color-inset);
+  border: 1px solid var(--rme-edge, transparent);
+  color: var(--color-ink-secondary);
+}
+.rme-slash-item-active .rme-slash-icon { color: var(--color-accent-text); }
+.rme-slash-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.rme-slash-label { font-weight: 500; line-height: 1.2; }
+.rme-slash-desc { font-size: 11.5px; line-height: 1.2; color: var(--color-ink-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Placeholder on the current empty line */
+.rme .ProseMirror p.is-empty::before,
+.rme .ProseMirror h1.is-empty::before,
+.rme .ProseMirror h2.is-empty::before,
+.rme .ProseMirror h3.is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-ink-secondary);
+  opacity: 0.8;
+}
+
+/* Prose */
+.rme .ProseMirror > * + * { margin-top: 0.75em; }
+.rme .ProseMirror h1 { font-size: 1.6em; font-weight: 650; line-height: 1.25; margin-top: 1em; }
+.rme .ProseMirror h2 { font-size: 1.3em; font-weight: 650; line-height: 1.3; margin-top: 1em; }
+.rme .ProseMirror h3 { font-size: 1.1em; font-weight: 600; line-height: 1.35; margin-top: 0.9em; }
+.rme .ProseMirror h4, .rme .ProseMirror h5, .rme .ProseMirror h6 { font-size: 1em; font-weight: 600; margin-top: 0.8em; }
+.rme .ProseMirror > :first-child { margin-top: 0; }
+.rme .ProseMirror p { margin: 0; }
+.rme .ProseMirror a { color: var(--color-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.rme .ProseMirror strong { font-weight: 650; }
+.rme .ProseMirror em { font-style: italic; }
+.rme .ProseMirror code {
+  padding: 1px 5px;
+  border: 1px solid var(--rme-edge);
+  border-radius: 4px;
+  background: var(--color-panel);
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+}
+.rme .ProseMirror pre {
+  padding: 10px 12px;
+  border: 1px solid var(--rme-edge);
+  border-radius: 8px;
+  background: var(--color-panel);
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.rme .ProseMirror pre code { padding: 0; border: 0; background: transparent; font-size: inherit; }
+.rme .ProseMirror blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--color-accent); color: var(--color-ink-secondary); }
+.rme .ProseMirror ul, .rme .ProseMirror ol { margin: 0; padding-left: 1.5em; }
+.rme .ProseMirror ul { list-style-type: disc; }
+.rme .ProseMirror ol { list-style-type: decimal; }
+.rme .ProseMirror li { margin: 0.2em 0; }
+.rme .ProseMirror li > p { margin: 0; }
+.rme .ProseMirror hr { margin: 1.25em 0; border: 0; border-top: 1px solid var(--color-hairline); }
+
+/* Tables */
+.rme .ProseMirror .tableWrapper { margin: 0; overflow-x: auto; }
+.rme .ProseMirror table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; overflow: hidden; }
+.rme .ProseMirror td, .rme .ProseMirror th {
+  position: relative;
+  min-width: 1em;
+  padding: 6px 10px;
+  border: 1px solid var(--color-hairline);
+  vertical-align: top;
+}
+.rme .ProseMirror th { background: var(--color-panel); font-weight: 600; text-align: left; }
+.rme .ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.rme .ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+.rme .ProseMirror.resize-cursor { cursor: col-resize; }
+
+/* Task lists, nested */
+.rme .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0.2em; }
+.rme .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"] { padding-left: 1.4em; }
+.rme .ProseMirror ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
+.rme .ProseMirror ul[data-type="taskList"] li > label { flex: 0 0 auto; margin-top: 0.2em; user-select: none; }
+.rme .ProseMirror ul[data-type="taskList"] li > label input { accent-color: var(--color-accent); width: 14px; height: 14px; }
+.rme .ProseMirror ul[data-type="taskList"] li > div { flex: 1 1 auto; min-width: 0; }
+.rme .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--color-ink-secondary); text-decoration: line-through; }
+
+.rme .ProseMirror ::selection { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+.rme .ProseMirror-selectednode { outline: 2px solid color-mix(in srgb, var(--color-accent) 50%, transparent); border-radius: 4px; }
