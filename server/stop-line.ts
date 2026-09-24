@@ -95,6 +95,9 @@ const APPLESCRIPT_DELETE = /\bdelete\b|\bmove\b[\s\S]*\bto\s+(the\s+)?trash\b|\b
  * set: they ARE the owner's own files. */
 const PERSONAL_TOP = new Set(["Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Library", "Public", "iCloud Drive", "OneDrive", "Dropbox"]);
 
+/** The same on Windows, compared without case, plus its own personal folders. */
+const WIN_PERSONAL_TOP = new Set([...PERSONAL_TOP, "AppData", "Videos", "Favorites", "Contacts", "Links", "Saved Games", "Searches", "3D Objects"].map((name) => name.toLowerCase()));
+
 const words = (name: string): string[] =>
   name
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
@@ -106,25 +109,57 @@ const READ_VERBS = new Set(["list", "get", "retrieve", "search", "read", "fetch"
 
 // ── paths ─────────────────────────────────────────────────────────────
 
-const clean = (path: string) => posix.normalize(path).replace(/(.)\/+$/, "$1");
+// Windows paths are read in one canonical form, so the rest of this file can
+// stay POSIX: `C:\Users\ada` is `/C:/Users/ada` and `\\server\share` is
+// `/UNC/server/share`. Keys keep this form; the card shows the Windows one.
+const WIN_ABS = /^[A-Za-z]:(?:[\\/]|$)/;
+const WIN_CANON = /^\/(?:[A-Z]:|UNC)(?:\/|$)/;
+
+function canonPath(path: string): string {
+  if (WIN_ABS.test(path)) return `/${path[0]!.toUpperCase()}:${path.slice(2).replace(/\\/g, "/")}`;
+  if (/^\\\\[^\\]/.test(path)) return `/UNC/${path.slice(2).replace(/\\/g, "/")}`;
+  return path;
+}
+
+/** The machine's own spelling of a canonical path, for a resolver that
+ * touches the disk. POSIX paths are returned unchanged. */
+function nativePath(path: string): string {
+  if (/^\/[A-Z]:(\/|$)/.test(path)) return `${path.slice(1, 3)}\\${path.slice(4).replace(/\//g, "\\")}`;
+  if (/^\/UNC\//.test(path)) return `\\\\${path.slice(5).replace(/\//g, "\\")}`;
+  return path;
+}
+
+const clean = (path: string) => posix.normalize(canonPath(path)).replace(/(.)\/+$/, "$1");
+/** Windows paths compare without regard to letter case. */
+const same = (path: string) => (WIN_CANON.test(path) ? path.toLowerCase() : path);
 
 function isTooBroad(root: string, home: string): boolean {
   const r = clean(root);
-  if (r === "/" || r === clean(home)) return true;
+  if (r === "/" || same(r) === same(clean(home))) return true;
   if (/^\/(Users|home|Volumes|mnt|media|private|var|System|Applications|opt|usr|etc)$/.test(r)) return true;
   if (/^\/Volumes\/[^/]+$/.test(r)) return true;
-  const rel = r.startsWith(`${clean(home)}/`) ? r.slice(clean(home).length + 1) : undefined;
-  return rel !== undefined && !rel.includes("/") && PERSONAL_TOP.has(rel);
+  if (/^\/[A-Z]:$/.test(r) || /^\/UNC(\/[^/]+){0,2}$/.test(r)) return true;
+  if (/^\/[A-Z]:\/(Users|Windows|Program Files|Program Files \(x86\)|ProgramData)$/i.test(r)) return true;
+  const h = same(clean(home));
+  const rel = same(r).startsWith(`${h}/`) ? r.slice(h.length + 1) : undefined;
+  return rel !== undefined && !rel.includes("/") && (PERSONAL_TOP.has(rel) || (WIN_CANON.test(r) && WIN_PERSONAL_TOP.has(rel.toLowerCase())));
 }
 
 function within(root: string, target: string): boolean {
-  const r = clean(root), t = clean(target);
+  const r = same(clean(root)), t = same(clean(target));
   return t.startsWith(r === "/" ? "/" : `${r}/`) && t !== r;
 }
 
 function tildeOf(path: string, home: string): string {
   const h = clean(home);
-  return path === h ? "~" : path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path;
+  return same(path) === same(h) ? "~" : same(path).startsWith(`${same(h)}/`) ? `~${path.slice(h.length)}` : path;
+}
+
+/** A path as the owner would write it on this machine, for the card. */
+function shownPath(path: string, home: string): string {
+  const shown = tildeOf(path, home);
+  if (!WIN_CANON.test(clean(home)) && !WIN_CANON.test(path)) return shown;
+  return shown.startsWith("~") ? shown.replace(/\//g, "\\") : nativePath(shown);
 }
 
 interface Target {
@@ -147,9 +182,22 @@ function resolveWord(word: Word, cwd: string | undefined, home: string): Target 
     if (pwd && cwd && !/[$`]/.test(pwd[1] ?? "")) return globTarget(`${cwd}${pwd[1] ?? ""}`, text);
     return { text };
   }
+  const windows = WIN_CANON.test(home);
   let raw = text;
-  if (raw === "~" || raw.startsWith("~/")) raw = `${home}${raw.slice(1)}`;
+  if (raw === "~" || raw.startsWith("~/") || (windows && raw.startsWith("~\\"))) raw = `${home}${raw.slice(1)}`;
   else if (raw.startsWith("~")) return { text }; // ~otheruser
+  if (windows) {
+    // a drive-relative path (`C:notes.txt`) depends on that drive's own
+    // current folder, which is not known here
+    if (/^[A-Za-z]:(?![\\/])/.test(raw)) return { text };
+    raw = canonPath(raw).replace(/\\/g, "/");
+    // `\temp\x` is on the current folder's drive
+    if (raw.startsWith("/") && !WIN_CANON.test(raw)) {
+      const drive = cwd && /^\/[A-Z]:/.exec(cwd)?.[0];
+      if (!drive) return { text };
+      raw = `${drive}${raw}`;
+    }
+  }
   if (!posix.isAbsolute(raw)) {
     if (!cwd) return { text };
     raw = posix.join(cwd, raw);
@@ -371,6 +419,363 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   return deleteHit(found, place);
 }
 
+// ── PowerShell and cmd (Windows) ───────────────────────────────────────
+//
+// A Windows engine runs its commands in PowerShell, where a backslash is a
+// path separator and the backtick is the escape. Read as POSIX shell, a
+// `C:\Users\…` path loses its separators and `$p` is never resolved, so the
+// card could not say where a delete lands. Same rule as the POSIX reader:
+// what it cannot know it marks unknown, and an unknown delete still stops.
+
+/** A `$` from a single-quoted string or an escape: literal, never expanded. */
+const LITERAL_DOLLAR = "\u0000";
+
+interface PsCommand {
+  words: Word[];
+  /** fed by the previous command through `|` */
+  piped: boolean;
+}
+
+function splitPowerShell(line: string): { commands: PsCommand[]; complex: boolean } {
+  const commands: PsCommand[] = [];
+  let current: Word[] = [];
+  let word = "";
+  let dynamic = false;
+  let inWord = false;
+  let complex = false;
+  let quote: "'" | '"' | undefined;
+  let skipNext = false;
+  let piped = false;
+  /** inside a .NET call's argument list: `[IO.File]::Delete(…)` */
+  let call = 0;
+  let opaqueCall = false;
+  const endWord = () => {
+    if (inWord) {
+      if (skipNext) skipNext = false;
+      else current.push({ text: word, dynamic: dynamic || opaqueCall });
+    }
+    word = "";
+    dynamic = false;
+    inWord = false;
+  };
+  const endCommand = (pipeNext: boolean) => {
+    endWord();
+    skipNext = false;
+    if (current.length) commands.push({ words: current, piped });
+    piped = current.length ? pipeNext : piped && pipeNext;
+    current = [];
+  };
+  /** `$(…)` taken whole: its value is never known here. */
+  const subexpression = (at: number): number => {
+    let depth = 0;
+    for (let j = at; j < line.length; j += 1) {
+      if (line[j] === "(") depth += 1;
+      else if (line[j] === ")" && --depth === 0) { word += line.slice(at, j + 1); return j; }
+    }
+    complex = true;
+    word += line.slice(at);
+    return line.length;
+  };
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i]!;
+    if (quote === "'") {
+      if (ch === "'" && line[i + 1] === "'") { word += "'"; i += 1; }
+      else if (ch === "'") quote = undefined;
+      else word += ch === "$" ? LITERAL_DOLLAR : ch;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"' && line[i + 1] === '"') { word += '"'; i += 1; }
+      else if (ch === '"') quote = undefined;
+      else if (ch === "`" && i + 1 < line.length) { i += 1; word += line[i] === "$" ? LITERAL_DOLLAR : line[i]; }
+      else if (ch === "$" && line[i + 1] === "(") { dynamic = true; word += "$"; i = subexpression(i + 1); }
+      else { if (ch === "$") dynamic = true; word += ch; }
+      continue;
+    }
+    if (ch === "@" && (line[i + 1] === '"' || line[i + 1] === "'") && (line[i + 2] === "\n" || line[i + 2] === "\r")) { complex = true; }
+    if (ch === "'" || ch === '"') { quote = ch; inWord = true; continue; }
+    if (ch === "`" && i + 1 < line.length) { i += 1; word += line[i] === "$" ? LITERAL_DOLLAR : line[i]; inWord = true; continue; }
+    if (ch === "#" && !inWord) { while (i + 1 < line.length && line[i + 1] !== "\n") i += 1; continue; }
+    if (ch === " " || ch === "\t" || ch === ",") { endWord(); continue; }
+    if (ch === "\n" || ch === "\r" || ch === ";") { endCommand(false); continue; }
+    if (ch === "|") { if (line[i + 1] === "|") { i += 1; endCommand(false); } else endCommand(true); continue; }
+    if (ch === "&") { if (line[i + 1] === "&") i += 1; endCommand(false); continue; }
+    if (ch === "$" && line[i + 1] === "(") { dynamic = true; inWord = true; word += "$"; i = subexpression(i + 1); continue; }
+    if (ch === "$" && line[i + 1] === "{") {
+      const close = line.indexOf("}", i);
+      if (close === -1) { complex = true; word += line.slice(i); break; }
+      dynamic = true; inWord = true; word += line.slice(i, close + 1); i = close; continue;
+    }
+    if (ch === "=" && inWord && /^(\[[\w.]+\])?\$[\w:]+$/.test(word)) { endWord(); current.push({ text: "=", dynamic: false }); continue; }
+    if (ch === "(") {
+      if (call) { call += 1; opaqueCall = true; endWord(); continue; }
+      if (inWord && /::\w+$/.test(word)) { endWord(); call = 1; continue; }
+      endCommand(false);
+      continue;
+    }
+    if (ch === ")") {
+      if (call) { endWord(); call -= 1; if (!call) opaqueCall = false; continue; }
+      endCommand(false);
+      continue;
+    }
+    if (ch === "{" || ch === "}") { endCommand(false); continue; }
+    if (ch === "<" || ch === ">") {
+      if (inWord && /^[\d*]$/.test(word)) { word = ""; inWord = false; }
+      endWord();
+      while (line[i + 1] === ">" || line[i + 1] === "&") i += 1;
+      if (line[i] === "&" && /\d/.test(line[i + 1] ?? "")) { while (/\d/.test(line[i + 1] ?? "")) i += 1; continue; }
+      while (line[i + 1] === " " || line[i + 1] === "\t") i += 1;
+      skipNext = true;
+      continue;
+    }
+    if (ch === "$") dynamic = true;
+    word += ch;
+    inWord = true;
+  }
+  if (quote || call) complex = true;
+  endCommand(false);
+  return { commands, complex };
+}
+
+const PS_VAR = /\$(?:\{([^}]*)\}|(?:(env|global|script|local|private):)?([A-Za-z_]\w*))/gi;
+
+/** Substitute PowerShell variables: ones assigned earlier in the line, the
+ * home folder (`$HOME`, `$env:USERPROFILE`, `$env:HOME`) and `$PWD`. A word
+ * stays dynamic while anything unknown is left in it. */
+function expandPs(word: Word, vars: ReadonlyMap<string, string>, home: string, cwd: string | undefined): Word {
+  const restore = (text: string) => text.split(LITERAL_DOLLAR).join("$");
+  if (!word.dynamic) return { text: restore(word.text), dynamic: false };
+  let unknown = /\$\(/.test(word.text);
+  const text = word.text.replace(PS_VAR, (whole, braced: string | undefined, scope: string | undefined, bare: string | undefined) => {
+    let name = bare ?? "";
+    let env = scope?.toLowerCase() === "env";
+    if (braced !== undefined) {
+      const m = /^(?:(env|global|script|local|private):)?(.+)$/i.exec(braced);
+      env = m?.[1]?.toLowerCase() === "env";
+      name = m?.[2] ?? braced;
+    }
+    const key = name.toLowerCase();
+    let value: string | undefined;
+    if (env) value = key === "userprofile" || key === "home" ? home : undefined;
+    else if (key === "home") value = home;
+    else if (key === "pwd") value = cwd;
+    else value = vars.get(key);
+    if (value === undefined) { unknown = true; return whole; }
+    return value;
+  });
+  return { text: restore(text), dynamic: unknown };
+}
+
+const PS_DELETE = new Set(["remove-item", "rm", "del", "erase", "rd", "rmdir", "ri"]);
+const PS_PATH_PARAMS = /^-(path|literalpath|lp|pspath|p)$/i;
+/** Parameters that take a value that is not a place. */
+const PS_VALUE_PARAMS = /^-(filter|include|exclude|erroraction|ea|errorvariable|ev|warningaction|wa|warningvariable|wv|informationaction|infa|informationvariable|iv|outvariable|ov|outbuffer|ob|pipelinevariable|pv|credential|stream|progressaction|proga|depth|attributes|childpath|additionalchildpath)$/i;
+const PS_LIST = new Set(["get-childitem", "gci", "ls", "dir", "get-item", "gi"]);
+const PS_CD = new Set(["set-location", "sl", "cd", "chdir", "push-location", "pushd"]);
+const DOTNET_DELETE = /^\[(system\.)?io\.(file|directory)\]::delete$|^\[(microsoft\.visualbasic\.)?(fileio\.)?filesystem\]::delete(file|directory)$/i;
+
+/** The places a cmdlet names: `-Path`/`-LiteralPath` (also `-Path:x`) and
+ * every positional word. An unknown parameter is taken as a switch, so the
+ * word after it still counts as a place: a wrong guess stops, never passes. */
+function psPaths(args: Word[]): Word[] {
+  const out: Word[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (!a.dynamic && /^-[A-Za-z]/.test(a.text)) {
+      const colon = a.text.indexOf(":");
+      if (colon !== -1) {
+        const name = a.text.slice(0, colon);
+        if (PS_PATH_PARAMS.test(name)) out.push({ text: a.text.slice(colon + 1), dynamic: a.dynamic });
+        continue;
+      }
+      if (PS_PATH_PARAMS.test(a.text)) { if (args[i + 1]) out.push(args[i + 1]!); i += 1; continue; }
+      if (PS_VALUE_PARAMS.test(a.text)) { i += 1; continue; }
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+function psValue(args: Word[], names: RegExp): Word[] {
+  const out: Word[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (!names.test(args[i]!.text)) continue;
+    for (let j = i + 1; j < args.length && !/^-[A-Za-z]/.test(args[j]!.text); j += 1) out.push(args[j]!);
+  }
+  return out;
+}
+
+/** `%NAME%` in a cmd line: the home folder and the current folder only. */
+function expandCmd(word: Word, home: string, cwd: string | undefined): Word {
+  let unknown = word.dynamic;
+  const text = word.text.replace(/%([^%\s]+)%/g, (whole, name: string) => {
+    const key = name.toLowerCase();
+    const value = key === "userprofile" || key === "home" ? home : key === "cd" ? cwd : undefined;
+    if (value === undefined) { unknown = true; return whole; }
+    return value;
+  });
+  return { text, dynamic: unknown };
+}
+
+/** Split a cmd line: `&`, `&&`, `||`, `|` separate; double quotes group; `^`
+ * escapes. */
+function splitCmd(line: string): Word[][] {
+  const commands: Word[][] = [];
+  let current: Word[] = [];
+  let word = "";
+  let inWord = false;
+  let quoted = false;
+  const endWord = () => { if (inWord) current.push({ text: word, dynamic: false }); word = ""; inWord = false; };
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i]!;
+    if (quoted) { if (ch === '"') quoted = false; else word += ch; continue; }
+    if (ch === '"') { quoted = true; inWord = true; continue; }
+    if (ch === "^" && i + 1 < line.length) { word += line[++i]; inWord = true; continue; }
+    if (ch === " " || ch === "\t") { endWord(); continue; }
+    if (ch === "&" || ch === "|" || ch === "\n" || ch === "\r") {
+      endWord();
+      if (current.length) commands.push(current);
+      current = [];
+      if (line[i + 1] === ch) i += 1;
+      continue;
+    }
+    word += ch;
+    inWord = true;
+  }
+  endWord();
+  if (current.length) commands.push(current);
+  return commands;
+}
+
+/** One cmd command (`del /f /q x`, `rd /s /q x`). */
+function cmdHit(words: Word[], cwd: string | undefined, place: StopLinePlace, found: Collected, line: string): StopHit | null {
+  const cmd = words.map((w) => expandCmd(w, place.home, cwd));
+  const name = (cmd[0]?.text ?? "").split(/[\\/]/).pop()!.replace(/\.exe$/i, "").toLowerCase();
+  const args = cmd.slice(1);
+  if (/^(del|erase|rd|rmdir)$/.test(name)) {
+    const targets = args.filter((w) => !/^\/[A-Za-z?]$/.test(w.text));
+    if (!targets.length) found.unknownDelete ??= short(line);
+    for (const t of targets) {
+      if (t.dynamic) found.unknownDelete ??= short(line);
+      else found.deletes.push(resolveWord(t, cwd, place.home));
+    }
+    return null;
+  }
+  if (!name) return null;
+  return commandHit(name, args, operands(args), cwd, place, found, line);
+}
+
+function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
+  const sql = SQL_DESTRUCTIVE.exec(line);
+  if (sql) return { kind: "delete", place: "sql:shell", what: `Delete database data (${sql[0].trim()}): ${short(line)}` };
+  const { commands, complex } = splitPowerShell(line);
+  let cwd = place.cwd;
+  const found: Collected = { deletes: [] };
+  const vars = new Map<string, string>();
+  const expandAll = (ws: Word[]) => ws.map((w) => expandPs(w, vars, place.home, cwd));
+  const addDeletes = (targets: Word[]) => {
+    if (!targets.length) { found.unknownDelete ??= short(line); return; }
+    for (const t of targets) {
+      // an unknown value (a variable never set here, `$_`, `$(…)`) is not a
+      // place: the card says so instead of showing the variable's name
+      if (t.dynamic) found.unknownDelete ??= short(line);
+      else found.deletes.push(resolveWord(t, cwd, place.home));
+    }
+  };
+  let previous: { name: string; paths: Word[] } | undefined;
+  for (const { words: raw, piped } of commands) {
+    const first = raw[0]?.text.replace(/^\[[\w.]+\]/, "") ?? "";
+    const variable = /^\$(?:\{(?:(?:global|script|local|private):)?([^}]+)\}|(?:(?:global|script|local|private):)?([A-Za-z_]\w*))$/i.exec(first);
+    if (variable) {
+      const name = (variable[1] ?? variable[2]!).toLowerCase();
+      vars.delete(name);
+      if (raw[1]?.text === "=") {
+        const value = expandAll(raw.slice(2));
+        if (value.length === 1 && !value[0]!.dynamic) vars.set(name, value[0]!.text);
+        else if (/^join-path$/i.test(value[0]?.text ?? "")) {
+          const parts = psPaths(value.slice(1)).length ? value.slice(1).filter((w) => !/^-[A-Za-z]/.test(w.text)) : [];
+          if (parts.length >= 2 && parts.every((w) => !w.dynamic)) vars.set(name, parts.map((w) => w.text).join("\\"));
+        }
+      }
+      previous = undefined;
+      continue;
+    }
+    const cmd = expandAll(raw);
+    let at = 0;
+    while (at < cmd.length && (cmd[at]!.text === "." || cmd[at]!.text === "&")) at += 1;
+    const head = cmd[at];
+    if (!head) continue;
+    const name = head.text.split(/[\\/]/).pop()!.replace(/\.exe$/i, "").toLowerCase();
+    const args = cmd.slice(at + 1);
+    if (/^(set-variable|sv|new-variable|nv|clear-variable|clv|remove-variable|rv)$/.test(name)) { vars.clear(); continue; }
+    if (PS_DELETE.has(name)) {
+      const paths = psPaths(args);
+      if (!paths.length && piped && previous && PS_LIST.has(previous.name)) {
+        // `Get-ChildItem <dir> | Remove-Item`: the items under that folder
+        const listed = previous.paths.length ? previous.paths : [{ text: ".", dynamic: false }];
+        for (const p of listed) {
+          if (p.dynamic) { found.unknownDelete ??= short(line); continue; }
+          const t = resolveWord(p, cwd, place.home);
+          found.deletes.push(/^(get-item|gi)$/.test(previous.name) ? t : { ...t, glob: true });
+        }
+      } else addDeletes(paths);
+    } else if (DOTNET_DELETE.test(name)) {
+      addDeletes(args.slice(0, 1));
+    } else if (PS_CD.has(name)) {
+      const to = psPaths(args)[0];
+      cwd = !to ? cwd : to.dynamic ? undefined : resolveWord(to, cwd, place.home).path;
+    } else if (name === "cmd") {
+      const c = args.findIndex((a) => /^\/[ck]$/i.test(a.text));
+      if (c !== -1) {
+        const rest = args.slice(c + 1);
+        const lines = rest.length === 1 ? splitCmd(rest[0]!.text) : [rest];
+        for (const words of lines) {
+          const hit = cmdHit(words, cwd, place, found, line);
+          if (hit) return hit;
+        }
+      }
+    } else if (/^(powershell|pwsh)$/.test(name)) {
+      const c = args.findIndex((a) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(a.text));
+      if (c !== -1 && args[c + 1] && depth < 3) {
+        const inner = psHit(args.slice(c + 1).map((a) => a.text).join(" "), { ...place, cwd }, depth + 1);
+        if (inner) return inner;
+      }
+    } else if (/^(ba|z|da|k|fi)?sh$/.test(name)) {
+      const c = args.findIndex((a) => /^-\w*c$/.test(a.text));
+      if (c !== -1 && args[c + 1] && depth < 3) {
+        const inner = shellHit(args[c + 1]!.text, { ...place, cwd }, depth + 1);
+        if (inner) return inner;
+      }
+    } else if (/^(invoke-restmethod|irm|invoke-webrequest|iwr)$/.test(name)) {
+      const method = psValue(args, /^-method$/i)[0]?.text.toUpperCase() ?? "GET";
+      const uri = psValue(args, /^-uri$/i)[0]?.text ?? args.find((a) => /^https?:\/\//i.test(a.text))?.text;
+      if (uri) found.other ??= httpHit("curl", [{ text: "-X", dynamic: false }, { text: method, dynamic: false }, { text: uri, dynamic: false }]) ?? undefined;
+    } else if (name === "send-mailmessage") {
+      const recipients = psValue(args, /^-(to|cc|bcc)$/i).map((w) => normalizeRecipient(w.text)).filter((r) => r.includes("@"));
+      const hit = messageHit("email", recipients, place, false, `Send an email: ${short(line)}`);
+      if (hit) return hit;
+    } else if (name === "clear-recyclebin") {
+      return { kind: "delete", what: `Empty the Recycle Bin: ${short(line)}` };
+    } else if (/^(format-volume|clear-disk|remove-partition|initialize-disk)$/.test(name)) {
+      return { kind: "delete", what: `Erase a disk: ${short(line)}` };
+    } else {
+      const hit = commandHit(name, args, operands(args), cwd, place, found, line);
+      if (hit) return hit;
+    }
+    previous = { name, paths: psPaths(args) };
+  }
+  if (found.other) return found.other;
+  // a delete this reader did not follow: a method on an object
+  // (`(Get-Item x).Delete()`), a here-string, text run through Invoke-Expression
+  if (!found.deletes.length && !found.unknownDelete) {
+    const methodDelete = /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(line);
+    const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(line)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(line);
+    if (methodDelete || hidden) found.unknownDelete = short(line);
+  }
+  return deleteHit(found, place);
+}
+
 function short(text: string, max = 140): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -498,7 +903,7 @@ function gitHit(args: Word[], cwd: string | undefined, place: StopLinePlace, fou
   const rest = args.slice(i + 1);
   const has = (re: RegExp) => rest.some((a) => re.test(a.text));
   const where = repo ? `git:${repo}` : undefined;
-  const repoName = repo ? tildeOf(repo, place.home) : "this repository";
+  const repoName = repo ? shownPath(repo, place.home) : "this repository";
   switch (sub) {
     case "push":
       if (has(/^(--force|-f|--force-with-lease(=.*)?|--force-if-includes|--mirror|--prune)$/) || rest.some((a) => /^-[a-z]*f[a-z]*$/.test(a.text)) || has(/^\+/)) {
@@ -537,7 +942,7 @@ function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
   // /private/var) must not make ~/Documents look like an ordinary folder
   const realHome = real(clean(place.home));
   const tooBroad = (path: string) => isTooBroad(path, place.home) || isTooBroad(path, realHome);
-  const roots = place.roots.filter((root) => root && posix.isAbsolute(root) && !tooBroad(root)).map(clean);
+  const roots = place.roots.filter((root) => root).map(clean).filter((root) => posix.isAbsolute(root) && !tooBroad(root));
   const inside = (t: Target) => {
     if (!t.path) return false;
     const p = real(t.path);
@@ -548,7 +953,8 @@ function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
     return { kind: "delete", what: `Delete something Murage cannot place, so it may be outside its folder: ${found.unknownDelete}` };
   }
   if (!outside.length) return null;
-  const shown = outside.map((t) => (t.path ? tildeOf(t.path, place.home) + (t.glob ? "/…" : "") : t.text));
+  const glob = WIN_CANON.test(clean(place.home)) ? "\\…" : "/…";
+  const shown = outside.map((t) => (t.path ? shownPath(t.path, place.home) + (t.glob ? glob : "") : t.text));
   const list = shown.slice(0, 3).join(", ") + (shown.length > 3 ? ` and ${shown.length - 3} more` : "");
   const count = outside.length === 1 ? "1 item" : `${outside.length} items`;
   // the place a "for this task" grant would cover: the folder that holds
@@ -565,7 +971,9 @@ function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
     });
     let common = parents[0]!;
     for (const p of parents.slice(1)) while (!(p === common || p.startsWith(`${common}/`))) common = posix.dirname(common);
-    if (!tooBroad(common) && common !== "/" && common.split("/").length > 2) scope = common;
+    // at least two folders deep, not counting a Windows drive
+    const depth = common.split("/").filter(Boolean).length - (WIN_CANON.test(common) ? 1 : 0);
+    if (!tooBroad(common) && common !== "/" && depth >= 2) scope = common;
   }
   const unknown = found.unknownDelete ? " (and more Murage cannot place)" : "";
   return { kind: "delete", place: scope, what: `Delete ${count} outside its folder: ${list}${unknown}` };
@@ -758,6 +1166,9 @@ function commandText(tool: string, input: unknown, summary: string): string | un
     // ["bash", "-lc", "…"] is a shell line; anything else is argv
     const argv = raw as string[];
     if (argv.length >= 3 && /(^|\/)(ba|z)?sh$/.test(argv[0]!) && /^-\w*c$/.test(argv[1]!)) return argv.slice(2).join(" ");
+    // ["powershell.exe", "-NoProfile", "-Command", "…"] is a PowerShell line
+    const ps = /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(argv[0]!) ? argv.findIndex((part) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(part)) : -1;
+    if (ps !== -1 && argv[ps + 1] !== undefined) return argv.slice(ps + 1).join(" ");
     return argv.map((part) => (/[\s'"$`]/.test(part) ? `'${part.replace(/'/g, "'\\''")}'` : part)).join(" ");
   }
   // a shell tool that reported no command: the card text is the command
@@ -782,12 +1193,28 @@ function deleteToolPaths(tool: string, input: unknown): string[] | undefined {
   return out;
 }
 
+/** The place with its folders in the canonical form this file reads; the
+ * resolvers still get the machine's own spelling. */
+function canonPlace(place: StopLinePlace): StopLinePlace {
+  const { realpath, repoOf } = place;
+  return {
+    ...place,
+    cwd: place.cwd ? clean(place.cwd) : place.cwd,
+    home: clean(place.home),
+    roots: place.roots.map((root) => (root ? clean(root) : root)),
+    ...(realpath ? { realpath: (path: string) => canonPath(realpath(nativePath(path))) } : {}),
+    ...(repoOf ? { repoOf: (dir: string) => repoOf(nativePath(dir)) } : {}),
+  };
+}
+
 /** Does this permission request cross the stop line? Null means it does not
  * and Full access may approve it; a hit says which kind, where, and in plain
  * words what the bot is about to do. */
-export function classifyStopLine(tool: string, input: unknown, summary: string, place: StopLinePlace): StopHit | null {
+export function classifyStopLine(tool: string, input: unknown, summary: string, given: StopLinePlace): StopHit | null {
+  const place = canonPlace(given);
   const command = commandText(tool, input, summary);
-  if (command !== undefined) return shellHit(command, place);
+  // a Windows engine's commands run in PowerShell
+  if (command !== undefined) return WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {
     const found: Collected = { deletes: [] };
@@ -820,7 +1247,8 @@ export function stopLineKeyCovers(key: string, hit: StopHit): boolean {
   if (!m || m[1] !== hit.kind) return false;
   const granted = m[2]!;
   if (granted === hit.place) return true;
-  return hit.kind === "delete" && granted.startsWith("/") && hit.place.startsWith(`${granted}/`);
+  // a Windows folder (`/C:/Users/…`) is the same folder in any letter case
+  return hit.kind === "delete" && granted.startsWith("/") && (same(hit.place) === same(granted) || same(hit.place).startsWith(`${same(granted)}/`));
 }
 
 export function isStopLineKey(key: string): boolean {

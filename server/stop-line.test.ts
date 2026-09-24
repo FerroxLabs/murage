@@ -245,3 +245,122 @@ describe("the live Finder delete (2026-09-24)", () => {
     expect(autoVerdict({ autoApprove: true, fullAccess: true }, "Bash", command, { stopLine }).source).toBe("stop-line");
   });
 });
+
+// Windows engines run commands in PowerShell (or cmd), where a backslash is a
+// path separator, not an escape. The customer pass on 0.1.59 sent these two
+// and got "$p" and a mangled "…/C:UsersownerDocuments…" instead of the file,
+// so the card could only offer "Allow once".
+describe("PowerShell and cmd on Windows", () => {
+  const WIN_HOME = "C:\\Users\\owner";
+  const WIN_CWD = "C:\\app\\data\\workspaces\\ws-1\\threads\\t-1";
+  const win = (extra: Partial<StopLinePlace> = {}): StopLinePlace => ({
+    cwd: WIN_CWD,
+    roots: [WIN_CWD, "C:\\app\\data\\workspaces\\ws-1", "C:\\Users\\owner\\AppData\\Local\\Temp"],
+    home: WIN_HOME,
+    knownRecipients: new Set(),
+    ...extra,
+  });
+  const run = (command: string, extra?: Partial<StopLinePlace>) => classifyStopLine("shell", { command }, command, win(extra));
+  // a file straight in Documents is scoped to itself, never to Documents
+  const DOCS = "/C:/Users/owner/Documents/throwaway-0159.txt";
+  const SITE = "/C:/Users/owner/Projects/site";
+
+  it("places the variable delete the Windows run sent", () => {
+    const hit = run(`$p = "C:\\Users\\owner\\Documents\\throwaway-0159.txt"; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force; if (Test-Path -LiteralPath $p) { "STILL_EXISTS" } else { "DELETED" } } else { "NOT_FOUND" }`);
+    expect(hit).toMatchObject({ kind: "delete", place: DOCS, what: "Delete 1 item outside its folder: ~\\Documents\\throwaway-0159.txt" });
+    expect(stopLineKey(hit!)).toBe(`stop:delete:${DOCS}`);
+  });
+
+  it("places the literal delete the Windows run sent", () => {
+    const hit = run(`Remove-Item -LiteralPath "C:\\Users\\owner\\Documents\\throwaway-0159.txt"`);
+    expect(hit).toMatchObject({ kind: "delete", place: DOCS, what: "Delete 1 item outside its folder: ~\\Documents\\throwaway-0159.txt" });
+    // Allow for this task covers the same folder, and only that folder
+    const key = stopLineKey(hit!)!;
+    expect(stopLineKeyCovers(key, run(`Remove-Item C:\\Users\\owner\\Documents\\throwaway-0159.txt`)!)).toBe(true);
+    expect(stopLineKeyCovers(key, run(`Remove-Item "C:\\Users\\owner\\Documents\\other.txt"`)!)).toBe(false);
+    const folder = stopLineKey(run(`Remove-Item -Recurse "C:\\Users\\owner\\Projects\\site\\build"`)!)!;
+    expect(folder).toBe(`stop:delete:${SITE}`);
+    expect(stopLineKeyCovers(folder, run(`del C:\\Users\\owner\\Projects\\site\\sub\\b.txt`)!)).toBe(true);
+    expect(stopLineKeyCovers(folder, run(`del C:\\Users\\owner\\Projects\\other\\b.txt`)!)).toBe(false);
+    expect(stopLineKeyCovers(folder, run(`del c:\\users\\OWNER\\projects\\site\\b.txt`)!)).toBe(true);
+  });
+
+  const places: Array<[label: string, command: string, place: string]> = [
+    ["-Path with spaces in quotes", `Remove-Item -Path "C:\\Users\\owner\\My Files\\old notes.txt"`, "/C:/Users/owner/My Files"],
+    ["single quotes", `Remove-Item 'C:\\Users\\owner\\Projects\\site\\a.txt' -Force`, SITE],
+    ["colon-bound -LiteralPath", `Remove-Item -LiteralPath:"C:\\Users\\owner\\Projects\\site\\a.txt"`, SITE],
+    ["del alias with ~", `del ~\\Projects\\site\\x.txt`, SITE],
+    ["rm alias -Recurse", `rm C:\\Users\\owner\\Projects\\site\\old -Recurse -Force`, SITE],
+    ["ri alias", `ri C:\\Users\\owner\\Projects\\site\\x.txt`, SITE],
+    ["erase alias", `erase C:\\Users\\owner\\Projects\\site\\x.txt`, SITE],
+    ["rmdir alias", `rmdir C:\\Users\\owner\\Projects\\site\\old -Recurse`, SITE],
+    ["rd alias", `rd C:\\Users\\owner\\Projects\\site\\old`, SITE],
+    ["$env:USERPROFILE", `Remove-Item "$env:USERPROFILE\\Projects\\site\\setup.exe"`, SITE],
+    ["$HOME", `Remove-Item $HOME\\Projects\\site\\setup.exe`, SITE],
+    ["-ErrorAction takes a value, not a path", `Remove-Item -ErrorAction SilentlyContinue C:\\Users\\owner\\Projects\\site\\a.txt`, SITE],
+    ["cmd del with %USERPROFILE%", `cmd /c del /f /q "%USERPROFILE%\\Projects\\site\\a.txt"`, SITE],
+    ["cmd rd /s", `cmd.exe /c rd /s /q C:\\Users\\owner\\Projects\\site\\old`, SITE],
+    ["cmd /c with a quoted line", `cmd /c "rd /s /q C:\\Users\\owner\\Projects\\site\\old"`, SITE],
+    ["[System.IO.File]::Delete", `[System.IO.File]::Delete("C:\\Users\\owner\\Projects\\site\\a.txt")`, SITE],
+    ["[IO.Directory]::Delete through a variable", `$d = 'C:\\Users\\owner\\Projects\\site\\old'; [IO.Directory]::Delete($d, $true)`, SITE],
+    ["Join-Path assignment", `$p = Join-Path $env:USERPROFILE "Projects\\site\\a.txt"; Remove-Item $p`, SITE],
+    ["Set-Location then relative", `Set-Location C:\\Users\\owner; Remove-Item Projects\\site\\a.txt`, SITE],
+    ["gci piped to Remove-Item", `Get-ChildItem "C:\\Users\\owner\\Projects\\site" -Filter *.tmp | Remove-Item`, SITE],
+    ["powershell -Command", `powershell -NoProfile -Command "Remove-Item 'C:\\Users\\owner\\Projects\\site\\a.txt'"`, SITE],
+    ["forward slashes", `Remove-Item C:/Users/owner/Projects/site/a.txt`, SITE],
+    ["lower-case drive letter", `Remove-Item c:\\Users\\owner\\Projects\\site\\a.txt`, SITE],
+  ];
+  it.each(places)("places a delete outside: %s", (_label, command, expected) => {
+    const hit = run(command);
+    expect(hit?.kind).toBe("delete");
+    expect(hit?.place).toBe(expected);
+    expect(stopLineKey(hit!)).toBe(`stop:delete:${expected}`);
+  });
+
+  const passes: Array<[label: string, command: string]> = [
+    ["relative inside its folder", "Remove-Item -Recurse -Force build"],
+    ["dot-relative inside", "rm .\\dist -Recurse -Force"],
+    ["absolute inside its thread folder", `Remove-Item -LiteralPath "C:\\app\\data\\workspaces\\ws-1\\threads\\t-1\\out.log"`],
+    ["inside temp", `Remove-Item "C:\\Users\\owner\\AppData\\Local\\Temp\\murage-123" -Recurse`],
+    ["inside, different letter case", `Remove-Item "c:\\APP\\data\\workspaces\\ws-1\\scratch.txt"`],
+    ["cmd rd inside", `cmd /c "rd /s /q build"`],
+    ["reading is not deleting", `Get-ChildItem -Path C:\\Users\\owner\\Documents -Recurse`],
+    ["a string that mentions a delete", `Write-Output "Remove-Item C:\\Users\\owner\\Documents\\a.txt"`],
+  ];
+  it.each(passes)("passes: %s", (_label, command) => {
+    expect(run(command)).toBeNull();
+  });
+
+  const unknown: Array<[label: string, command: string]> = [
+    ["a variable it never saw set", "Remove-Item $target -Recurse"],
+    ["a pipeline of unknown items", "Get-Content list.txt | ForEach-Object { Remove-Item $_ }"],
+    ["an unknown environment variable", `Remove-Item "$env:APPDATA\\Old"`],
+    ["a .Delete() method on an object", `(Get-Item "x").Delete()`],
+    ["a subexpression", `Remove-Item "$(Get-Location)\\..\\x"`],
+  ];
+  it.each(unknown)("stops without a place when it cannot read the target: %s", (_label, command) => {
+    const hit = run(command);
+    expect(hit?.kind).toBe("delete");
+    expect(hit?.place).toBeUndefined();
+  });
+
+  it("still stops outside its folder through ..", () => {
+    expect(run("Remove-Item ..\\..\\..\\other -Recurse")).toMatchObject({ kind: "delete", place: "/C:/app/data/workspaces" });
+    expect(run("Remove-Item ..\\..\\build -Recurse")).toBeNull();
+  });
+
+  it("reads a PowerShell argv the engine sent as a list", () => {
+    const hit = classifyStopLine("shell", { command: ["powershell.exe", "-Command", `Remove-Item "C:\\Users\\owner\\Projects\\site\\a.txt"`] }, "", win());
+    expect(hit?.place).toBe(SITE);
+  });
+
+  it("keeps git, payment and message checks in PowerShell", () => {
+    expect(run("git push --force origin main")?.kind).toBe("delete");
+    expect(run("Invoke-RestMethod -Method Post -Uri https://api.stripe.com/v1/charges -Body @{ amount = 500 }")?.kind).toBe("pay");
+    expect(run("Send-MailMessage -To stranger@example.com -Subject hi -SmtpServer smtp.example.com")?.kind).toBe("message");
+  });
+
+  it("leaves a POSIX machine's reading unchanged", () => {
+    expect(classifyStopLine("Bash", { command: "rm -rf ~/Documents/old" }, "", place())).toMatchObject({ place: "/Users/ada/Documents/old", what: "Delete 1 item outside its folder: ~/Documents/old" });
+  });
+});
