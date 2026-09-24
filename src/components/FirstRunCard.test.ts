@@ -450,8 +450,9 @@ describe("card three: the key", () => {
   // would be the shipped false claim arriving through the exemption door.
   it("shows the coming soon row as coming soon", () => {
     const markup = render("flux", "key");
+    // None today (voice shipped in 0.1.59); the pill is still owed to the
+    // next row that is not ready.
     const soon = copy.features.filter((row) => row.state === "coming-soon");
-    expect(soon.length).toBeGreaterThan(0);
     for (const row of soon) {
       expect.soft(markup, `${row.title} is not marked`).toContain(row.title);
       expect.soft(markup).toContain(copy.comingSoon);

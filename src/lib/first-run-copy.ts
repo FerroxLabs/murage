@@ -14,9 +14,10 @@
 //   Never name the connected-app broker. It is "500+ apps", named by
 //     example: Gmail, Slack, Notion, GitHub.
 //   Never a model count. "All the latest models" is the claim.
-//   Flux Router leads with routing, then the apps, then pictures and
-//     transcription. NOT voice: the key transcribes and does not speak, and
-//     the only row allowed to mention speaking is one marked "Coming soon".
+//   Flux Router leads with routing, then the apps, then pictures,
+//     transcription and voice. A row may mention speaking only when it says
+//     which half of speech it is (you talk, or the bot talks back) or is
+//     marked "Coming soon".
 //   Never describe a capability as a limit. Sending email is graduated
 //     trust: you approve, I send, and you can raise how much I do on my own.
 //   Never promise a grant the approval system cannot key. A remembered
@@ -85,11 +86,12 @@ export interface FirstRunFluxFeature {
   /**
    * Set on a live row that mentions speech, naming WHICH half of speech is
    * true of it. `transcription` is you talking and Murage typing, which the
-   * Flux key really does at POST /v1/audio/transcriptions. There is no
-   * `synthesis` member on purpose: the key has no synthesis endpoint, so a row
-   * that wanted one would have nothing honest to declare.
+   * Flux key does at POST /v1/audio/transcriptions (server/voice/flux-voice.ts).
+   * `synthesis` is the bot talking back, which it does at POST
+   * /v1/audio/speech (server/tts/flux-speech.ts), for calls and replies read
+   * out loud.
    */
-  speech?: "transcription";
+  speech?: "transcription" | "synthesis";
 }
 
 /** One thing the closing card can offer to do. `say` is the sentence that
@@ -430,14 +432,15 @@ export const FIRST_RUN_COPY = {
           speech: "transcription",
         },
         {
-          // NOT TODAY, AND SAYING SO IS THE WHOLE POINT OF THE ROW. Selling
-          // speech on this key is a false claim that has already shipped once
-          // and was then ENFORCED by a test. It arrives marked, or it does not
-          // arrive.
+          // LIVE SINCE 0.1.59, AND IT SAYS WHICH HALF OF SPEECH IT IS. The
+          // bot's side of a call and a reply read out loud go through the
+          // Flux key's speech route (server/tts/flux-speech.ts). It was
+          // "Coming soon" until that shipped.
           id: "voice",
           title: "Voice mode",
-          body: "a real back and forth, out loud",
-          state: "coming-soon",
+          body: "call a bot and talk it through out loud. It answers in its own voice",
+          state: "live",
+          speech: "synthesis",
         },
       ] as readonly FirstRunFluxFeature[],
       keyCaveat: "Your key stays in this computer's keychain. It never appears in our conversation.",
@@ -612,7 +615,7 @@ export const FIRST_RUN_COPY = {
         {
           id: "research",
           title: "Look into something for me",
-          sub: "I search the web and read what comes back, then tell you where each thing came from.",
+          sub: "I search the live web and read what comes back, then tell you what I found.",
         },
         {
           id: "business",
@@ -779,7 +782,7 @@ export const FIRST_RUN_COPY = {
          * the screen that follows, which does have the reading.
          */
         businessBuilt: "Your crew and one review, and no plumbing for you to do.",
-        topicSourced: "Keeping what has a source, flagging what does not.",
+        topicSourced: "Checking what I find, and flagging what I am not sure of.",
         /** Wrapped around the first words of what they typed, so they can
          *  see it is their topic and not a generic one. */
         topicPrefix: "Reading around",

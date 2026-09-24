@@ -24,6 +24,17 @@ const render = (index: number) => renderToStaticMarkup(createElement(WhatsNewCar
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ");
 
 describe("what's new cards", () => {
+  // Flux Router's web search returns no source links yet, so nothing here
+  // may promise them until it does.
+  it("does not promise sources for web search", async () => {
+    const { WHATS_NEW_TILES, WHATS_NEW_MORE } = await import("./WhatsNewDialog");
+    const search = WHATS_NEW_TILES.find((tile) => tile.action === "search")!;
+    expect(search.body).toBe("Bots search the live web for current answers, in chat and while you talk on a call.");
+    for (const line of [...WHATS_NEW_TILES.map((tile) => tile.body), ...WHATS_NEW_MORE.map((pair) => pair.join(""))]) {
+      expect.soft(line).not.toMatch(/\b(sources?|citations?|cites?|links)\b/i);
+    }
+  });
+
   it("renders the four approved cards in order", () => {
     expect(WHATS_NEW_CARD_COUNT).toBe(4);
     expect(text(render(0))).toContain("Just talk to your bots");

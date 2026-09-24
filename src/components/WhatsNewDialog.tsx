@@ -35,7 +35,7 @@ const VOICE_POINTS: Array<[string, string]> = [
 ];
 
 export const WHATS_NEW_TILES: Array<{ action: WhatsNewAction; img: string; alt: string; dot: string; title: string; body: string }> = [
-  { action: "search", img: tileSearch, alt: "A glass globe with a pulse of light", dot: "bg-[var(--wn-dot-search)]", title: "Real-time search", body: "Bots search the live web and answer with their sources. On a call, they look it up as you talk." },
+  { action: "search", img: tileSearch, alt: "A glass globe with a pulse of light", dot: "bg-[var(--wn-dot-search)]", title: "Real-time search", body: "Bots search the live web for current answers, in chat and while you talk on a call." },
   { action: "skills", img: tileSkills, alt: "Glass cards behind a glowing shield", dot: "bg-[var(--wn-accent)]", title: "Skills, checked first", body: "Every skill in one place. Skill Guard checks each one before a bot can use it." },
   { action: "houseRules", img: tileHouseRules, alt: "An open notebook with a fountain pen", dot: "bg-[var(--wn-dot-rules)]", title: "House Rules", body: "Write how your bots should work once. Every bot reads it first." },
   { action: "fullAccess", img: tileFullAccess, alt: "A trail of light passing through three arches", dot: "bg-[var(--wn-dot-access)]", title: "Full access, with brakes", body: "Fast on everything, but it stops before deleting, paying or messaging someone new." },

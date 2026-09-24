@@ -248,11 +248,20 @@ describe("first run copy: the things the flow promises", () => {
   const features = FIRST_RUN_COPY.flux.key.features;
   const declared = new Set(
     features.flatMap((row, index) =>
-      row.state === "coming-soon" || row.speech === "transcription"
+      row.state === "coming-soon" || row.speech !== undefined
         ? [`FIRST_RUN_COPY.flux.key.features[${index}].title`, `FIRST_RUN_COPY.flux.key.features[${index}].body`]
         : [],
     ),
   );
+
+  // Flux Router's web search comes back without source links for now, so
+  // the research job may not promise where each thing came from.
+  it("does not promise sources for a web search", () => {
+    for (const { path, text } of everything) {
+      const hit = /\b(sources?|citations?|cites?|where each thing came from)\b/i.exec(text);
+      expect.soft(hit ? `${path}: "${text}"` : null, "promises sources Flux search does not return yet").toBeNull();
+    }
+  });
 
   it("never sells speech anywhere in the first run", () => {
     for (const { path, text } of everything) {
@@ -274,10 +283,18 @@ describe("first run copy: the things the flow promises", () => {
     expect(speaking.length).toBeGreaterThan(0);
     for (const row of speaking) {
       expect.soft(
-        row.state === "coming-soon" || row.speech === "transcription",
-        `"${row.title}" mentions speech without saying whether it is transcription or not built yet`,
+        row.state === "coming-soon" || row.speech !== undefined,
+        `"${row.title}" mentions speech without saying which half it is or that it is not built yet`,
       ).toBe(true);
     }
+  });
+
+  it("says voice mode works now, the bot talking back, and not coming soon", () => {
+    // 0.1.59 ships the Flux speech route (server/tts/flux-speech.ts), so the
+    // row that said "Coming soon" was selling short something that works.
+    const voice = features.find((row) => row.id === "voice");
+    expect(voice).toMatchObject({ state: "live", speech: "synthesis" });
+    expect(voice!.body).not.toMatch(/soon/i);
   });
 
   it("will not let a transcription row promise an answer out loud", () => {
