@@ -288,7 +288,7 @@ describe("the date and time a turn starts at", () => {
   });
   it("comes last in a direct turn, where changing every turn costs nothing cached", () => {
     const layers = directTurnLayers({
-      houseRules: "", persona: "", computerKind: undefined, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
+      houseRules: "", persona: "", computerKind: null, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
       coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: "", memory: "",
       primer: "", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [], now: " It is now X.",
     } as DirectTurnShapeInput);
