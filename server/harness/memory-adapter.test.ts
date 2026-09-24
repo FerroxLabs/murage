@@ -346,3 +346,18 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
     }
   }, 40_000);
 });
+
+// An engine command ("/compact") must reach the engine as the command alone,
+// and a bundle it never carried must not be recorded as delivered: the next
+// ordinary turn in the same session gets the reference again.
+it("leaves an engine command turn unprefixed and delivers the bundle on the next turn", async () => {
+  const f = await fixture();
+  try {
+    f.emit("session-1");
+    await f.live.adapter.sendTurn({ threadId: "thread", text: "/compact", memoryContext: bundle, resumeCursor: "session-1", engineCommand: { name: "compact", args: "" } });
+    expect(f.captured[0].text).toBe("/compact");
+    expect(f.captured[0].memoryContext).toBeUndefined();
+    await f.live.adapter.sendTurn({ threadId: "thread", text: "next", memoryContext: bundle, resumeCursor: "session-1" });
+    expect(f.captured[1].text).toBe(memoryRequestPrefix(bundle.text) + "next");
+  } finally { await f.registry.disposeAll(); }
+});

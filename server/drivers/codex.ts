@@ -49,6 +49,7 @@ import {
   type QuestionSpec,
 } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
+import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -343,6 +344,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Set just before turn/start is written. From then on the engine may
       // have accepted the turn, so a crash is never replayed (U-17).
       let turnStartSent = false;
+      // thread/compact/start answers `{}`: its turn is named only by the
+      // notifications that follow, so the first one on this thread names it.
+      let adoptFirstTurn = false;
       let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
       let nextId = 1;
@@ -582,6 +586,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (!scopedMethods.includes(msg.method)) return;
           const eventTurnId = msg.method === "turn/completed" ? p.turn?.id : p.turnId;
           if (!codexThreadId || p.threadId !== codexThreadId || typeof eventTurnId !== "string" || !eventTurnId) return;
+          if (!codexTurnId && awaitingTurnStart && adoptFirstTurn) {
+            codexTurnId = eventTurnId;
+            awaitingTurnStart = false;
+          }
           if (!codexTurnId) {
             if (!awaitingTurnStart) return;
             // Ordering is not promised by the protocol. Retain only bounded,
@@ -632,7 +640,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "item/completed": {
             const item = p.item ?? {};
-            if (item.type === "agentMessage") {
+            if (item.type === "exitedReviewMode") {
+              // A /review turn's findings arrive as the review item, not as
+              // an agent message; they are this turn's answer.
+              const review = typeof item.review === "string" ? item.review : "";
+              if (review.trim()) {
+                state.lastText = review;
+                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: review });
+                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: review });
+              }
+            } else if (item.type === "contextCompaction") {
+              // /compact: the only visible trace is a finished step.
+              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", itemId: item.id, title: "compact" });
+              emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: item.id, ok: true });
+            } else if (item.type === "agentMessage") {
               if (item.text?.trim()) {
                 state.lastText = item.text;
                 if (!state.sawStreamDelta) {
@@ -916,9 +937,61 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         if (typeof codexThreadId !== "string" || !codexThreadId) throw new Error("codex did not return a thread identity");
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
+        // Codex has no command list of its own to report. Its skills are the
+        // live part of the "/" menu (skills/list, codex-cli 0.156); the
+        // built-in pair is fixed. Reported only on a real answer, and never
+        // waited on unless this turn IS a skill.
+        const skills = request("skills/list", { cwds: [turn.cwd ?? homedir()] }, 10_000).then(
+          (result) => Array.isArray(result?.data)
+            ? result.data.flatMap((entry: any) => Array.isArray(entry?.skills) ? entry.skills : [])
+              .filter((skill: any) => skill && skill.enabled !== false && typeof skill.name === "string")
+            : null,
+          () => null,
+        );
+        void skills.then((found) => {
+          if (!found || state.settled || abandoned) return;
+          emit({
+            ...base(threadId, turnId),
+            type: "engine.commands",
+            commands: normalizeEngineCommands([
+              ...CODEX_BUILTIN_COMMANDS,
+              ...found.map((skill: any) => ({
+                name: skill.name,
+                description: skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description,
+              })),
+            ]),
+          });
+        });
+        // A command turn becomes the app-server call it names: /review is
+        // review/start (inline, on this thread), /compact is
+        // thread/compact/start, and a skill is turn/start carrying the skill
+        // as a `skill` input beside "$name args", the way Codex's own
+        // composer sends one. Anything else is an ordinary turn.
+        const command = turn.engineCommand;
+        let method = "turn/start";
+        let commandParams: Record<string, unknown> | null = null;
+        let skillInput: { type: "skill"; name: string; path: string } | null = null;
+        if (command?.name === "review") {
+          method = "review/start";
+          commandParams = {
+            threadId: codexThreadId,
+            target: command.args ? { type: "custom", instructions: command.args } : { type: "uncommittedChanges" },
+            delivery: "inline",
+          };
+        } else if (command?.name === "compact") {
+          method = "thread/compact/start";
+          commandParams = { threadId: codexThreadId };
+          adoptFirstTurn = true;
+        } else if (command) {
+          const skill = (await skills)?.find((candidate: any) => candidate.name.toLowerCase() === command.name.toLowerCase());
+          if (skill && typeof skill.path === "string") skillInput = { type: "skill", name: skill.name, path: skill.path };
+        }
+        const turnText = skillInput
+          ? `$${skillInput.name}${command?.args ? ` ${command.args}` : ""}`
+          : turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
         awaitingTurnStart = true;
         turnStartSent = true;
-        await request("turn/start", {
+        await request(method, commandParams ?? {
           threadId: codexThreadId,
           // `{type:"image", url}` is the app-server's own UserInput variant,
           // read out of codex-cli 0.154.0's generated protocol schema
@@ -929,7 +1002,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a path to re-open under its own sandbox, which is the read-tool
           // detour this change exists to remove.
           input: [
-            { type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text },
+            { type: "text", text: turnText },
+            ...(skillInput ? [skillInput] : []),
             ...(turn.images ?? []).map((image) => ({ type: "image", url: `data:${image.mimeType};base64,${image.data}` })),
           ],
           // Spread, not `effort: turn.effort ?? null`. Probed against
@@ -946,6 +1020,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // must hold on this turn whichever that was
           ...(turn.stopLine ? { approvalPolicy: "untrusted" } : {}),
         }, 60_000, (result) => {
+          // compaction answers `{}`; its first notification names the turn
+          if (adoptFirstTurn) return;
           awaitingTurnStart = false;
           if (typeof result?.turn?.id !== "string" || !result.turn.id) {
             earlyNotifications.length = 0;

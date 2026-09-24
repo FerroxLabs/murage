@@ -223,6 +223,8 @@ function isRuntimeEvent(value: unknown): value is RuntimeEvent {
       return (value.streamKind === "assistant_text" || value.streamKind === "reasoning_text") && typeof value.delta === "string";
     case "plan.updated":
       return Array.isArray(value.entries);
+    case "engine.commands":
+      return Array.isArray(value.commands);
     case "request.opened":
       return (
         (value.requestType === "permission" || value.requestType === "question") &&

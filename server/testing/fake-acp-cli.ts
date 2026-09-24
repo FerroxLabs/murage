@@ -709,6 +709,19 @@ function handle(msg: any) {
         ...(mdls ? { models: mdls } : {}),
       });
       announceMcpReady("fake-acp-session", servers);
+      // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
+      // session/new, before any prompt (session_setup.rs
+      // send_available_commands_update). JSON array of ACP AvailableCommand.
+      if (process.env.FAKE_ACP_COMMANDS) {
+        out({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "fake-acp-session",
+            update: { sessionUpdate: "available_commands_update", availableCommands: JSON.parse(process.env.FAKE_ACP_COMMANDS) },
+          },
+        });
+      }
       afterSessionBuilt();
       break;
     }

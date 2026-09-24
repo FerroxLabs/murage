@@ -122,6 +122,10 @@ process.stdin.on("data", (d) => {
       if (hasMcp && mcpMode === "before") mcpReady(SID);
       ok({ sessionId: SID });
       order("new-response");
+      // 1.0.x advertises its "/" commands right after session/new
+      // (session_setup.rs send_available_commands_update), before any prompt.
+      if (process.env.FUIGO_FAKE_COMMANDS) send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
+        update: { sessionUpdate: "available_commands_update", availableCommands: JSON.parse(process.env.FUIGO_FAKE_COMMANDS) } } });
       if (hasMcp && mcpMode === "ready") {
         // Another session's readiness must not release this one.
         mcpReady("some-other-session");
@@ -159,7 +163,7 @@ function dump(kind: "models" | "version" | "agent"): { argv: string[]; env: Reco
 
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function runTurn(
-  options: { images?: Array<{ mimeType: string; data: string }>; model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"] } = {},
+  options: { images?: Array<{ mimeType: string; data: string }>; model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"]; text?: string; system?: string; engineCommand?: SendTurnInput["engineCommand"] } = {},
 ): Promise<EventRecorder> {
   instance = await FuigoAgentDriver.create({
     instanceId: "fuigo-test",
@@ -171,7 +175,9 @@ async function runTurn(
   recorder = recordEvents(instance.adapter);
   await instance.adapter.sendTurn({
     threadId: "t-fuigo",
-    text: "hi",
+    text: options.text ?? "hi",
+    ...(options.system ? { system: options.system } : {}),
+    ...(options.engineCommand ? { engineCommand: options.engineCommand } : {}),
     ...("images" in options ? { images: options.images } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.effort ? { effort: options.effort } : {}),
@@ -205,6 +211,42 @@ afterEach(async () => {
   instance = undefined;
   recorder = undefined;
   await removeTempDir(root);
+});
+
+describe("engine commands", () => {
+  // Verbatim shape of fuigo-shell's AvailableCommandsUpdate (agent-client-
+  // protocol AvailableCommand: name, description, optional input.hint).
+  const COMMANDS = [
+    { name: "compact", description: "Compact the conversation", input: { hint: "optional focus" } },
+    { name: "always-approve", description: "Approve every tool call without asking" },
+    { name: "context", description: "Show context usage" },
+  ];
+
+  it("reports the commands Fuigo advertises before the prompt, minus the ones Murage keeps out", async () => {
+    const events = await runTurn({ environment: { FUIGO_FAKE_COMMANDS: JSON.stringify(COMMANDS) } });
+    const reported = events.events.filter((e) => e.type === "engine.commands");
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({
+      provider: "fuigoAgent",
+      threadId: "t-fuigo",
+      commands: [
+        { name: "compact", description: "Compact the conversation", hint: "optional focus" },
+        { name: "context", description: "Show context usage" },
+      ],
+    });
+  });
+
+  it("sends a command turn as the command alone, so Fuigo reads it as one", async () => {
+    await runTurn({ text: "/compact keep the plan", system: "You are Moss.", engineCommand: { name: "compact", args: "keep the plan" } });
+    const prompt = JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ type: string; text?: string }>;
+    expect(prompt[0]).toEqual({ type: "text", text: "/compact keep the plan" });
+  });
+
+  it("still puts the persona in front of an ordinary turn", async () => {
+    await runTurn({ text: "/not-a-command", system: "You are Moss." });
+    const prompt = JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ type: string; text?: string }>;
+    expect(prompt[0]!.text).toBe("You are Moss.\n\n/not-a-command");
+  });
 });
 
 describe("incoming image transport", () => {

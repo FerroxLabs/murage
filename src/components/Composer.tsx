@@ -1,7 +1,7 @@
 import { track } from "@/lib/analytics";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Terminal, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
@@ -34,6 +34,8 @@ import {
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
 import { openFirstRun } from "@/lib/first-run";
+import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/lib/engine-commands-menu";
+import type { EngineCommand, EngineCommandsView } from "../../shared/engine-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu } from "./PermissionModeMenu";
@@ -80,6 +82,12 @@ function mentionQueryAt(text: string, caret: number): { start: number; query: st
 }
 
 type MentionChoice = { id: string; name: string; bot?: Bot };
+
+/** One row of the "/" menu: Murage's own commands first, then the addressed
+ * bot's engine commands (shared/engine-commands.ts). */
+type SlashEntry =
+  | { kind: "murage"; command: ComposerSlashCommand }
+  | { kind: "engine"; command: EngineCommand };
 
 const GOAL_COMMAND: ComposerSlashCommand = {
   id: "goal",
@@ -330,6 +338,7 @@ export function Composer({
     });
   }, []);
   const mentionListRef = useRef<HTMLDivElement>(null);
+  const commandListRef = useRef<HTMLDivElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
 
@@ -384,7 +393,33 @@ export function Composer({
         command.description.toLowerCase().includes(query),
     );
   }, [slash, dismissedSlashAt, group, members, bot, state.config, state.instances]);
-  const commandPickerOpen = commandCandidates.length > 0;
+  // The addressed bot's engine commands, read from the harness each time the
+  // menu opens (it caches what the engine last reported). One-to-one chats
+  // only: in a room the message can go to several bots on different engines.
+  const slashActive = Boolean(slash && slash.start !== dismissedSlashAt);
+  const engineBotId = group ? undefined : bot?.id;
+  const engineInstanceId = group ? undefined : bot?.modelSelection.instanceId;
+  const [engineCommands, setEngineCommands] = useState<{ key: string; view: EngineCommandsView } | null>(null);
+  useEffect(() => {
+    if (!slashActive || !engineBotId) return;
+    const key = `${engineBotId}:${engineInstanceId ?? ""}`;
+    let cancelled = false;
+    api(`/api/bots/${engineBotId}/engine-commands`)
+      .then((view: EngineCommandsView) => { if (!cancelled) setEngineCommands({ key, view }); })
+      .catch(() => { /* no engine group: Murage's own commands still work */ });
+    return () => { cancelled = true; };
+  }, [slashActive, engineBotId, engineInstanceId]);
+  const engineView = engineBotId && engineCommands?.key === `${engineBotId}:${engineInstanceId ?? ""}` ? engineCommands.view : null;
+  const engineCandidates = useMemo(
+    () => (slashActive && slash && engineView?.status === "ready" ? matchEngineCommands(engineView.commands, slash.query) : []),
+    [slashActive, slash, engineView],
+  );
+  const engineNote = slashActive ? engineCommandsNote(engineView) : null;
+  const slashEntries: SlashEntry[] = [
+    ...commandCandidates.map((command) => ({ kind: "murage" as const, command })),
+    ...engineCandidates.map((command) => ({ kind: "engine" as const, command })),
+  ];
+  const commandPickerOpen = slashEntries.length > 0 || engineNote !== null;
 
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
@@ -410,6 +445,13 @@ export function Composer({
     () => setHighlight(0),
     [mention?.start, mention?.query, slash?.start, slash?.query],
   );
+
+  useEffect(() => {
+    if (!commandPickerOpen) return;
+    commandListRef.current
+      ?.querySelector<HTMLElement>(`[data-command-index="${highlight}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlight, commandPickerOpen]);
 
   useEffect(() => {
     if (!mentionPickerOpen) return;
@@ -462,6 +504,43 @@ export function Composer({
       inputRef.current?.setSelectionRange(next.caret, next.caret);
     });
   };
+
+  // An engine command goes to the bot's engine as typed. One that takes
+  // input is left in the draft for the owner to finish; one that takes none
+  // is sent now, unless the draft already holds more after it.
+  const pickEngineCommand = (command: EngineCommand) => {
+    if (!slash || !bot) return;
+    const pick = engineCommandPick(command);
+    if (pick.kind === "send" && !text.slice(slash.end).trim() && !locked) {
+      const sent = pick.text;
+      dispatch({
+        type: "send",
+        botId: bot.id,
+        text: sent,
+        sendId: newSendId(),
+        threadId,
+        onError: () => {
+          editText(sent);
+          return false;
+        },
+      });
+      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer, engineCommand: true });
+      editText("");
+      setCaret(0);
+      setDismissedSlashAt(null);
+      return;
+    }
+    const next = replaceComposerSlashTrigger(text, slash, pick.text.trimEnd() + " ");
+    editText(next.text);
+    setCaret(next.caret);
+    setDismissedSlashAt(slash.start);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  const pickSlashEntry = (entry: SlashEntry) =>
+    entry.kind === "murage" ? pickCommand(entry.command) : pickEngineCommand(entry.command);
 
   // Busy sends are owned by the harness immediately for both channels and
   // 1:1 chats. Keeping a channel follow-up in this component used to lose its
@@ -799,44 +878,63 @@ export function Composer({
         <ComposerSendNotice id={sendNoticeId} notice={sendNotice} onDismiss={() => setSendNotice(null)} />
         {commandPickerOpen && (
           <div
+            ref={commandListRef}
             role="listbox"
             aria-label="Composer commands"
-            className="absolute bottom-full left-2 z-20 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
+            className="absolute bottom-full left-2 z-20 mb-2 max-h-96 w-80 overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-hairline/40 bg-raised shadow-lg"
           >
-            <div className="border-b border-hairline/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
-              Commands
-            </div>
-            {commandCandidates.map((command, index) => (
-              <button
-                key={command.id}
-                type="button"
-                role="option"
-                aria-selected={index === highlight}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => pickCommand(command)}
-                onMouseEnter={() => setHighlight(index)}
-                className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2.5 text-left",
-                  index === highlight ? "bg-raised-hover" : "",
-                )}
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                  {command.id === "goal" ? (
-                    <Target size={15} aria-hidden="true" />
-                  ) : command.id === "setup" ? (
-                    <ListChecks size={15} aria-hidden="true" />
-                  ) : (
-                    <BookOpen size={15} aria-hidden="true" />
-                  )}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[14px] font-medium text-accent">{command.label}</span>
-                  <span className="block truncate text-xs text-ink-secondary">
-                    {command.description}
-                  </span>
-                </span>
-              </button>
-            ))}
+            {[
+              { name: "Murage", entries: slashEntries.filter((entry) => entry.kind === "murage"), note: null },
+              { name: engineView?.engine ?? "", entries: slashEntries.filter((entry) => entry.kind === "engine"), note: engineNote },
+            ]
+              .filter((section) => section.entries.length > 0 || section.note)
+              .map((section) => (
+                <div key={section.name} role="group" aria-label={section.name}>
+                  <div aria-hidden="true" className="border-b border-hairline/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
+                    {section.name}
+                  </div>
+                  {section.note && <div className="px-3 py-2.5 text-xs text-ink-secondary">{section.note}</div>}
+                  {section.entries.map((entry) => {
+                    const index = slashEntries.indexOf(entry);
+                    const label = entry.kind === "murage" ? entry.command.label : `/${entry.command.name}`;
+                    const description = entry.kind === "murage" ? entry.command.description : entry.command.description ?? entry.command.hint;
+                    return (
+                      <button
+                        key={`${entry.kind}:${entry.kind === "murage" ? entry.command.id : entry.command.name}`}
+                        type="button"
+                        role="option"
+                        aria-selected={index === highlight}
+                        data-command-index={index}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => pickSlashEntry(entry)}
+                        onMouseEnter={() => setHighlight(index)}
+                        className={cn(
+                          "flex w-full items-center gap-3 px-3 py-2.5 text-left",
+                          index === highlight ? "bg-raised-hover" : "",
+                        )}
+                      >
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                          {entry.kind === "engine" ? (
+                            <Terminal size={15} aria-hidden="true" />
+                          ) : entry.command.id === "goal" ? (
+                            <Target size={15} aria-hidden="true" />
+                          ) : entry.command.id === "setup" ? (
+                            <ListChecks size={15} aria-hidden="true" />
+                          ) : (
+                            <BookOpen size={15} aria-hidden="true" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[14px] font-medium text-accent">{label}</span>
+                          {description && (
+                            <span className="block truncate text-xs text-ink-secondary">{description}</span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
           </div>
         )}
         {mentionPickerOpen && (
@@ -1005,17 +1103,17 @@ export function Composer({
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
             if (commandPickerOpen) {
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              if (slashEntries.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
                 const delta = e.key === "ArrowDown" ? 1 : -1;
                 setHighlight((current) =>
-                  (current + delta + commandCandidates.length) % commandCandidates.length,
+                  (current + delta + slashEntries.length) % slashEntries.length,
                 );
                 return;
               }
-              if (e.key === "Enter" || e.key === "Tab") {
+              if (slashEntries.length && (e.key === "Enter" || e.key === "Tab")) {
                 e.preventDefault();
-                pickCommand(commandCandidates[highlight]);
+                pickSlashEntry(slashEntries[Math.min(highlight, slashEntries.length - 1)]!);
                 return;
               }
               if (e.key === "Escape") {

@@ -26,6 +26,8 @@ import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memo
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
 import { botShapeRows, directTurnLayers, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
+import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
+import { engineCommandInText } from "../shared/engine-commands.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { hasPendingBotDelegations } from "./delegations.ts";
 import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
@@ -5004,6 +5006,25 @@ bus.subscribe((event: RuntimeEvent) => {
   drainQueuedSends();
 });
 
+// ── engine "/" commands (server/engine-commands.ts) ─────────────────────
+// A driver reports its engine's command list on `engine.commands`; it is
+// filed under the bot that ran the turn (a direct task, or the member
+// speaking in a room) so the composer's menu is full on the next visit
+// without waiting for the engine to start again.
+const engineCommandCache = new EngineCommandCache();
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type !== "engine.commands" || shouldIgnoreProviderEvent(event)) return;
+  const botId = store.botByThread(event.threadId)?.id ?? groupSpeakers.get(event.threadId)?.botId;
+  if (botId) engineCommandCache.record(botId, event.provider, event.commands);
+});
+
+/** The owner's typed "/name args" when `name` is one of this bot's engine
+ * commands on `driver`; null for everything else, which stays chat. */
+function engineCommandForTurn(botId: string, driver: string, text: string) {
+  if (!engineReportsCommands(driver)) return null;
+  return engineCommandInText(text, engineCommandsView(engineCommandCache, botId, driver).commands);
+}
+
 /** How a room member turn that never started gives the room and the bot
  * back (server/room-turn-release.ts): the same steps everywhere, bound to
  * the store, the speaker records, the browser capabilities and the queues. */
@@ -5341,6 +5362,14 @@ async function startTurn(
   // to the ENGINE'S own host — api.openai.com for codex — and 400s there.
   const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);
   if (fluxRefusal) throw Object.assign(new Error(fluxRefusal), { status: 409 });
+  // One of the engine's own "/" commands, typed or picked by the owner in
+  // this chat. Only the owner's own words qualify: a routine, a channel
+  // message, a peer bot, a card continuation or a quoted reply never runs an
+  // engine command, it stays chat.
+  const engineCommand = humanIsOwner && opts?.automationSource === undefined && !opts?.unattended && !commsDepth
+    && !opts?.cardContinuation && !opts?.replyTo && opts?.runOn !== "cloud"
+    ? engineCommandForTurn(bot.id, instance.driverKind, text)
+    : null;
 
   // Every refusal that can reject this turn outright has now passed, so the
   // text is about to be recorded and naming the task from it is safe.
@@ -6057,6 +6086,7 @@ async function startTurn(
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text: turnText,
+        ...(engineCommand ? { engineCommand } : {}),
         model,
         effort,
         // a rewound thread never resumes the abandoned branch's session
@@ -6099,15 +6129,21 @@ async function startTurn(
       }
       directRuns.accepted(run,dispatch.value.turnId);
       clearDirectTurnDispatch(threadId, dispatchClaimId);
-      // dispatched: the rewind is spent, and the old cursors are dead
-      if (rewound) store.patchTask(bot.id,threadId, { rewound: false, resumeCursors: {} });
-      // and this engine now owns the thread's most recent turn
-      store.markTaskDispatched(bot.id, threadId, instanceId);
-      // Delivery accounting: drop exactly the externally appended messages
-      // this turn carried. A delegated result that landed while this turn was
-      // being set up is not in that list, so it stays owed and the next turn
-      // delivers it instead of being silently swallowed by this one.
-      store.consumeTaskExternalUpdates(bot.id, threadId, externalDelivery.consumedIds);
+      // An engine command carried the command alone: no replayed branch and
+      // no owed messages reached the engine. The rewind, the engine switch
+      // and the owed messages all stay pending for the next ordinary turn,
+      // which rebuilds exactly as it would have without the command.
+      if (!engineCommand) {
+        // dispatched: the rewind is spent, and the old cursors are dead
+        if (rewound) store.patchTask(bot.id,threadId, { rewound: false, resumeCursors: {} });
+        // and this engine now owns the thread's most recent turn
+        store.markTaskDispatched(bot.id, threadId, instanceId);
+        // Delivery accounting: drop exactly the externally appended messages
+        // this turn carried. A delegated result that landed while this turn was
+        // being set up is not in that list, so it stays owed and the next turn
+        // delivers it instead of being silently swallowed by this one.
+        store.consumeTaskExternalUpdates(bot.id, threadId, externalDelivery.consumedIds);
+      }
       // a turn can settle before dispatch returns, and a poller started
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
@@ -14135,6 +14171,7 @@ const server = createServer(async (req, res) => {
         localVmIdles.get(target.key)?.cancel();
         localVmIdles.delete(target.key);
         store.deleteBot(bot.id);
+        engineCommandCache.forget(bot.id);
       } catch (error) {
         if (browserCleanupRequest) browserCleanup.abort(browserCleanupRequest);
         throw error;
@@ -14457,6 +14494,20 @@ const server = createServer(async (req, res) => {
     // workspace); these routes only make them visible without a trip to
     // the filesystem. Reads never create the workspace — a bot that has
     // not run yet simply has nothing to show.
+    // The bot's own engine commands for the composer's "/" menu
+    // (server/engine-commands.ts): what the engine last reported for this
+    // bot, cached, or `unknown` until it has run once.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/engine-commands$/);
+    if (m && method === "GET") {
+      const bot = store.bot(m[1]);
+      if (!bot || (requestSurface(req.headers, url.searchParams) !== "desktop" && !visibleToCompanion(store, { scope: "bot", botId: m[1] }))) {
+        return json(res, 404, { error: "no such bot" });
+      }
+      const selection = store.projectBotForTask(bot.id, bot.threadId)?.modelSelection ?? bot.modelSelection;
+      const instance = registry.get(selection.instanceId);
+      if (!instance) return json(res, 200, { engine: "", driver: "", status: "unsupported", commands: [] });
+      return json(res, 200, engineCommandsView(engineCommandCache, bot.id, instance.driverKind, instance.displayName));
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/memory$/);
     if (m && method === "GET") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
@@ -14785,7 +14836,10 @@ const server = createServer(async (req, res) => {
           if (currentAtStart.busy) {
             const instance = registry.get(currentAtStart.modelSelection.instanceId);
             let steered = false;
-            if (instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+            // An engine command waits for its own turn: folded into the
+            // running one it would reach the engine as chat.
+            const isEngineCommand = Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
+            if (!isEngineCommand && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
                 .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
                 .catch(() => false);

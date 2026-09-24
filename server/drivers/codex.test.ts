@@ -73,9 +73,79 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.BOX_TOKEN;
     delete process.env.MURAGE_TTS_KEY;
+    delete process.env.FAKE_CODEX_SKILLS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  // Codex's app-server has no command list; the built-in pair is mapped to
+  // its calls and the skills come live from skills/list (codex-cli 0.156).
+  describe("engine commands", () => {
+    const SKILL = { name: "release-notes", description: "Write release notes", interface: { shortDescription: "Draft the notes" }, path: "/skills/release-notes/SKILL.md", scope: "user", enabled: true, pluginId: null };
+    const calls = () => JSON.parse(readFileSync(process.env.FAKE_CODEX_DUMP!, "utf8")).calls as Array<{ method: string; params: any }>;
+
+    it("reports the built-in commands and the skills Codex lists", async () => {
+      process.env.FAKE_CODEX_SKILLS = JSON.stringify([SKILL, { ...SKILL, name: "off", enabled: false }]);
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-skills", text: "hi", cwd: scratch });
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
+        provider: "codex",
+        commands: [
+          { name: "review", hint: "[what to review]" },
+          { name: "compact" },
+          { name: "release-notes", description: "Draft the notes" },
+        ],
+      });
+    });
+
+    it("reports nothing when skills/list gives no list, so the older event sequence holds", async () => {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-no-skills", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(recorder.events.some((e) => e.type === "engine.commands")).toBe(false);
+    });
+
+    it("runs /review as review/start and shows the review", async () => {
+      process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-review", text: "/review the auth change", system: "You are Moss.", engineCommand: { name: "review", args: "the auth change" } });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      const review = calls().find((call) => call.method === "review/start");
+      expect(review?.params).toEqual({ threadId: "codex-thread-1", target: { type: "custom", instructions: "the auth change" }, delivery: "inline" });
+      expect(calls().some((call) => call.method === "turn/start")).toBe(false);
+      expect(recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")).toMatchObject({ text: "FAKE_REVIEW no issues found" });
+    });
+
+    it("reviews uncommitted changes when /review has nothing after it", async () => {
+      process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-review-bare", text: "/review", engineCommand: { name: "review", args: "" } });
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(calls().find((call) => call.method === "review/start")?.params.target).toEqual({ type: "uncommittedChanges" });
+    });
+
+    it("runs /compact as thread/compact/start and settles on its turn", async () => {
+      process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-compact", text: "/compact", engineCommand: { name: "compact", args: "" } });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(calls().find((call) => call.method === "thread/compact/start")?.params).toEqual({ threadId: "codex-thread-1" });
+      expect(recorder.events.filter((e) => e.type === "item.started")).toMatchObject([{ itemType: "tool", title: "compact" }]);
+    });
+
+    it("runs a skill as turn/start carrying the skill", async () => {
+      process.env.FAKE_CODEX_SKILLS = JSON.stringify([SKILL]);
+      process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-skill", text: "/release-notes v2", system: "You are Moss.", engineCommand: { name: "release-notes", args: "v2" } });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(calls().find((call) => call.method === "turn/start")?.params.input).toEqual([
+        { type: "text", text: "$release-notes v2" },
+        { type: "skill", name: "release-notes", path: "/skills/release-notes/SKILL.md" },
+      ]);
+    });
   });
 
   it.each(["parent-isolation", "parent-early"])("isolates parent native events (%s)", async (mode) => {
@@ -187,7 +257,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.BOX_TOKEN).toBeUndefined();
     expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
     const methods = seen.calls.map((c: { method: string }) => c.method);
-    expect(methods).toEqual(["initialize", "initialized", "thread/start", "turn/start"]);
+    // skills/list feeds the composer's "/" menu; nothing waits on it
+    expect(methods).toEqual(["initialize", "initialized", "thread/start", "skills/list", "turn/start"]);
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);
     expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");

@@ -247,10 +247,67 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_LOAD_ERROR;
     delete process.env.FAKE_ACP_RPC_DUMP;
     delete process.env.FAKE_ACP_PROMPT_DUMP;
+    delete process.env.FAKE_ACP_COMMANDS;
     delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  // Grok Build sends available_commands_update right after session/new; the
+  // prompt gate used to drop it with every other pre-prompt update.
+  it("reports Grok Build's own commands, and sends a command turn bare", async () => {
+    process.env.FAKE_ACP_COMMANDS = JSON.stringify([
+      { name: "compact", description: "Compact the conversation" },
+      { name: "login", description: "Sign in" },
+      { name: "web", description: "Search the web", input: { hint: "query" } },
+    ]);
+    const promptDump = join(scratch, "command-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-commands", text: "/web cats", system: "You are Moss.", engineCommand: { name: "web", args: "cats" } });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
+      provider: "grokAgent",
+      commands: [{ name: "compact", description: "Compact the conversation" }, { name: "web", description: "Search the web", hint: "query" }],
+    });
+    expect(JSON.parse(readFileSync(promptDump, "utf8"))[0]).toEqual({ type: "text", text: "/web cats" });
+  });
+
+  // Every ACP engine shares the capture and the bare command turn. OpenCode
+  // 1.15.11 advertises its command.list after session/new (with a hint-less
+  // `{name, description}` shape) and runs a prompt whose text starts with "/";
+  // its persona prefix (buildPromptText) must not reach a command turn.
+  it.each([
+    ["OpenCode", async () => (await import("./opencode-go.ts")).createOpenCodeDriver(async () => ({
+      default: "opencode/x-preview-f-free", options: [{ id: "opencode/x-preview-f-free", label: "x" }],
+    }))],
+    ["Gemini", async () => GeminiAgentDriver],
+  ])("%s reports its own commands and gets a command turn bare", async (name, load) => {
+    process.env.FAKE_ACP_COMMANDS = JSON.stringify([
+      { name: "init", description: "create/update AGENTS.md" },
+      { name: "compact", description: "compact the session" },
+    ]);
+    const promptDump = join(scratch, "command-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    if (name === "OpenCode") {
+      // a synthetic key passes OpenCode's pre-spawn sign-in gate; the fake
+      // accepts the model slug the turn selects
+      process.env.OPENCODE_API_KEY = "opencode-fixture";
+      process.env.FAKE_ACP_MODELS = "opencode/x-preview-f-free";
+    }
+    const driver = await load();
+    await create(driver as typeof GrokAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-commands-each", text: "/init", system: "You are Moss.", engineCommand: { name: "init", args: "" },
+      ...(name === "OpenCode" ? { model: "opencode/x-preview-f-free" } : {}),
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
+      commands: [{ name: "init", description: "create/update AGENTS.md" }, { name: "compact", description: "compact the session" }],
+    });
+    expect(JSON.parse(readFileSync(promptDump, "utf8"))[0]).toEqual({ type: "text", text: "/init" });
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
-import type { ProviderInstance } from "../contracts.ts";
+import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, createPermissionBroker, permissionSocketPath, type ClaudeConfig } from "./claude.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
@@ -288,9 +288,43 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FLUX_API_KEY;
     delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MS;
     delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS;
+    delete process.env.FAKE_CLAUDE_COMMANDS;
+    delete process.env.FAKE_CLAUDE_CONTROL_LOG;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  // Claude Code names its "/" commands on every init and describes them in
+  // the answer to the SDK's `initialize` control request (2.1.x). Both halves
+  // are read; terminal-bound commands and the ones Murage keeps out are not
+  // offered.
+  it("reports Claude Code's own commands with their descriptions", async () => {
+    process.env.FAKE_CLAUDE_COMMANDS = "1";
+    const controlLog = join(scratch, "control.log");
+    process.env.FAKE_CLAUDE_CONTROL_LOG = controlLog;
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-commands", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(readFileSync(controlLog, "utf8")).toContain('"subtype":"initialize"');
+    const reports = recorder.events.filter((e) => e.type === "engine.commands") as Array<Extract<RuntimeEvent, { type: "engine.commands" }>>;
+    expect(reports.length).toBeGreaterThan(0);
+    expect(reports.at(-1)!.commands).toEqual([
+      { name: "compact", description: "Clear conversation history but keep a summary in context", hint: "<optional custom summarization instructions>" },
+      { name: "context", description: "Show current context usage" },
+      { name: "review", description: "Review a pull request" },
+    ]);
+  });
+
+  it("sends a command turn as the command alone and shows a local command's answer", async () => {
+    process.env.FAKE_CLAUDE_COMMANDS = "1";
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-context", text: "/context", engineCommand: { name: "context", args: "" }, system: "You are Moss." });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(dump, "utf8")).prompt.message.content).toBe("/context");
+    expect(recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")).toMatchObject({ text: "FAKE_CONTEXT 12k of 200k tokens used" });
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
