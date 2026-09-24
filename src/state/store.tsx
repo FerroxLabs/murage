@@ -589,6 +589,7 @@ export type AppSettingsSection =
   | "companion"
   | "computer"
   | "skills"
+  | "houseRules"
   | "usage";
 
 export interface AppState {

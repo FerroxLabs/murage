@@ -12,6 +12,7 @@
 // transcript are exactly the ones a typed message gets.
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { houseRulesPrompt } from "../house-rules.ts";
 import type { Message } from "../store.ts";
 import { handDownResult, handDownStatus, parseHandDowns } from "./hand-downs.ts";
 import {
@@ -100,6 +101,7 @@ export function voiceHostState(
   const current = tasks.find((t) => t.threadId === threadId);
   return {
     botName: bot.name,
+    houseRules: houseRulesPrompt(),
     persona: bot.persona,
     description: bot.description,
     now,

@@ -49,7 +49,9 @@ async function roomTurn(text: string) {
   await api("POST", `/api/groups/${room.id}/messages`, { text: `${text} ${tag}` });
   return captured(tag);
 }
-const speaker = (system: string) => /^You are ([^,]+), a bot in the room/.exec(system)?.[1];
+// The owner's House Rules open every prompt (server/house-rules.ts); the
+// speaker line comes right after them.
+const speaker = (system: string) => /^(?:<house-rules>[\s\S]*?<\/house-rules>\s*)?You are ([^,]+), a bot in the room/.exec(system)?.[1];
 
 posixOnly("a bot carries its own notebook, memory, skills and team brief into every turn", () => {
   beforeAll(async () => {

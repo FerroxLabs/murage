@@ -44,6 +44,9 @@ const BRIEF_TURN_TIMEOUT_MS = 60_000;
 
 export interface VoiceHostState {
   botName: string;
+  /** The owner's House Rules block (house-rules.ts), "" when off. It opens
+   *  the host's brief exactly as it opens every other prompt of the bot. */
+  houseRules?: string;
   /** The bot's personality text, as the owner wrote it. */
   persona?: string;
   description?: string;
@@ -136,6 +139,7 @@ function clip(text: string, max: number): string {
  */
 export function voiceHostPrompt(state: VoiceHostState): string {
   const lines: string[] = [];
+  if (state.houseRules?.trim()) lines.push(state.houseRules.trim(), "");
   lines.push(`You are ${state.botName}, on a live voice call with the person you work for.`);
   // The profile sets HOW the bot sounds, never what it may take on: a
   // description like "runs my calendar" made the model turn an ordinary

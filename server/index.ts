@@ -24,6 +24,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextPrompt, standingContextSourceIds } from "./standing-context.ts";
+import { handleHouseRulesApi, houseRulesPrompt } from "./house-rules.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { hasPendingBotDelegations } from "./delegations.ts";
 import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
@@ -5836,6 +5837,8 @@ async function startTurn(
         sessionReset,
         transcript,
         system:
+          // The owner's House Rules open every bot's prompt (house-rules.ts).
+          houseRulesPrompt() +
           persona +
           (computerKind === "vm"
             ? localVmMode(cfg) === "per-bot"
@@ -7304,6 +7307,9 @@ async function runGroupMemberTurn(
   let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
   const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId));
   let roomSystem =
+    // The owner's House Rules open every bot's prompt, rooms included
+    // (house-rules.ts).
+    houseRulesPrompt() +
     system +
     // The same connector paragraph the 1:1 turn gets, from the same builder.
     // A room turn mounts connectors on exactly the gating above (the bot's
@@ -12251,6 +12257,13 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
       }
+    }
+    // Settings → House Rules (server/house-rules.ts). Desktop only, like
+    // Skills below: the text rides into every bot's prompt.
+    if (path === "/api/house-rules" || path === "/api/house-rules/reset") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const answer = await handleHouseRulesApi({ method, path, readBody: () => readBody(req, 256 * 1024) });
+      if (answer) return json(res, answer.status, answer.body);
     }
     // Settings → Skills (server/skills-api.ts). Desktop only: these routes
     // import skills and switch them on for bots.
