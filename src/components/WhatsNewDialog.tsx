@@ -30,12 +30,12 @@ const VOICE_POINTS: Array<[string, string]> = [
   ["Live answers", " from the web, mid-call"],
   ["Approve out loud", ", in plain words"],
   ["Voice notes", " in chat, Telegram, Slack, Discord"],
-  ["41 voices", ", one for each bot"],
-  ["No extra keys", ", it runs through Flux"],
+  ["41 voices", " through Flux, one per bot"],
+  ["No extra keys", ", your Flux key covers it"],
 ];
 
 export const WHATS_NEW_TILES: Array<{ action: WhatsNewAction; img: string; alt: string; dot: string; title: string; body: string }> = [
-  { action: "search", img: tileSearch, alt: "A glass globe with a pulse of light", dot: "bg-[var(--wn-dot-search)]", title: "Real-time search", body: "Bots search the live web and answer with their sources, in chat and mid-call." },
+  { action: "search", img: tileSearch, alt: "A glass globe with a pulse of light", dot: "bg-[var(--wn-dot-search)]", title: "Real-time search", body: "Bots search the live web and answer with their sources. On a call, they look it up as you talk." },
   { action: "skills", img: tileSkills, alt: "Glass cards behind a glowing shield", dot: "bg-[var(--wn-accent)]", title: "Skills, checked first", body: "Every skill in one place. Skill Guard checks each one before a bot can use it." },
   { action: "houseRules", img: tileHouseRules, alt: "An open notebook with a fountain pen", dot: "bg-[var(--wn-dot-rules)]", title: "House Rules", body: "Write how your bots should work once. Every bot reads it first." },
   { action: "fullAccess", img: tileFullAccess, alt: "A trail of light passing through three arches", dot: "bg-[var(--wn-dot-access)]", title: "Full access, with brakes", body: "Fast on everything, but it stops before deleting, paying or messaging someone new." },
@@ -146,9 +146,9 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
           <ol className="m-0 mt-0.5 list-decimal pl-[22px] text-[14.5px] leading-[1.8] text-[var(--wn-paper-ink-list)]">
             <li>Click <strong>+</strong> and choose <strong>New Project</strong></li>
             <li>Say what it's about. That becomes the brief every bot in it follows</li>
-            <li>Pick the team and the bots, and get going</li>
+            <li>Add the bots that should work on it, and get going</li>
           </ol>
-          <p className="m-0 text-[13px] leading-normal text-[var(--wn-paper-ink-muted)]">Its home shows the goal and progress, with a chat beside it. Members, files and memory are one click away.</p>
+          <p className="m-0 text-[13px] leading-normal text-[var(--wn-paper-ink-muted)]">Its home keeps the goal and progress, with its chat, members, files and memory close by.</p>
           <span className="grow" />
           <div className="flex items-center gap-2.5">
             <button type="button" onClick={() => onAction("project")} className={cn("min-h-11 cursor-pointer rounded-xl border-0 bg-[var(--wn-paper-ink)] px-5 text-[14px] font-semibold text-[var(--wn-paper-on-ink)] hover:opacity-90", paperFocus)}>Start a project</button>
@@ -165,7 +165,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
       <section aria-labelledby={titleId} data-whats-new-card="highlights" className="whats-new-card box-border flex max-h-[calc(100dvh-32px)] w-[min(1040px,calc(100vw-32px))] flex-col gap-5 overflow-y-auto rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] px-8 pb-[26px] pt-[30px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND THERE'S MORE</span>
-          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Smarter, safer, more yours</h2>
+          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Smarter, sharper, more yours</h2>
         </div>
         <ul className="m-0 grid list-none grid-cols-3 gap-3.5 p-0 max-[820px]:grid-cols-2 max-sm:grid-cols-1">
           {WHATS_NEW_TILES.map((tile) => (

@@ -28,7 +28,7 @@ describe("what's new cards", () => {
     expect(WHATS_NEW_CARD_COUNT).toBe(4);
     expect(text(render(0))).toContain("Just talk to your bots");
     expect(text(render(1))).toContain("One goal. The right bots. Their own space.");
-    expect(text(render(2))).toContain("Smarter, safer, more yours");
+    expect(text(render(2))).toContain("Smarter, sharper, more yours");
     expect(text(render(3))).toContain("Plus a long list of small wins");
   });
 
