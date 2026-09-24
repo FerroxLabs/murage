@@ -71,7 +71,7 @@ const md = (name: string, body: string) => `---\nname: ${name}\ndescription: ${n
 test("a library skill can be found and read, and says what it tells the bot", async ({ page }, info) => {
   await page.goto(origin + "/__skills");
   await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
-  await expect(page.getByText("Search, or pick a topic above.")).toBeVisible();
+  await expect(page.getByText("Search, or choose a topic.")).toBeVisible();
   await page.getByLabel("Search skills").fill("invoice");
   const first = page.getByRole("list").last().getByRole("button").first();
   await expect(first).toBeVisible();
@@ -126,8 +126,25 @@ test("a Blocked skill can be read and deleted but never switched on", async ({ p
   await expect(page.getByRole("switch")).toHaveCount(0);
   await page.screenshot({ path: info.outputPath("blocked.png"), fullPage: true });
   await page.getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByText("Search, or pick a topic above.")).toBeVisible();
+  await expect(page.getByText("Search, or choose a topic.")).toBeVisible();
   await expect(page.getByText("key-thief")).toHaveCount(0);
+});
+
+test("one Topic dropdown lists a topic, and it and the search clear each other", async ({ page }, info) => {
+  await page.goto(origin + "/__skills");
+  const topic = page.getByLabel("Topic");
+  await expect(topic).toBeVisible();
+  await expect(topic.locator("option").first()).toHaveText("All topics");
+  const second = await topic.locator("option").nth(1).getAttribute("value");
+  expect(second).toBeTruthy();
+  await expect(topic.locator("option").nth(1)).not.toContainText("-");
+  await page.getByLabel("Search skills").fill("invoice");
+  await topic.selectOption(second!);
+  await expect(page.getByLabel("Search skills")).toHaveValue("");
+  await expect(page.getByRole("list").last().getByRole("button").first()).toBeVisible();
+  await page.screenshot({ path: info.outputPath("topic.png"), fullPage: true });
+  await page.getByLabel("Search skills").fill("invoice");
+  await expect(topic).toHaveValue("");
 });
 
 test("a search with no results says so", async ({ page }) => {

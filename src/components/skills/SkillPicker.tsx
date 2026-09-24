@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SkillReader } from "./SkillReader";
+import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
 import { listSkills, type SkillSummary, type SkillsPage } from "@/lib/skills-api";
 
@@ -63,17 +64,22 @@ export function SkillPicker({ botId, botName, onDone }: { botId: string; botName
         {botName}'s skills
       </button>
       <h3 className="mt-2 text-[14px] font-medium text-ink">Add a skill to {botName}</h3>
-      <label className="mt-2 flex items-center gap-2 rounded-lg border border-hairline/50 bg-inset px-3">
-        <Search size={14} className="text-ink-secondary" aria-hidden="true" />
-        <input
-          autoFocus
-          value={query}
-          onChange={(event) => { setQuery(event.target.value); setCategory(""); }}
-          placeholder="What should it know how to do?"
-          aria-label="Search skills to add"
-          className="min-h-10 min-w-0 flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
-        />
-      </label>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-hairline/50 bg-inset px-3">
+          <Search size={14} className="text-ink-secondary" aria-hidden="true" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); setCategory(""); }}
+            placeholder="What should it know how to do?"
+            aria-label="Search skills to add"
+            className="min-h-10 min-w-0 flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
+          />
+        </label>
+        {page && page.libraryReady && page.categories.length > 0 && (
+          <TopicSelect topics={page.categories} value={category} onChange={(topic) => { setCategory(topic); setQuery(""); }} />
+        )}
+      </div>
       {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
       {!page && !error && <p className="mt-3 text-[12px] text-ink-secondary">Loading…</p>}
       {page && (
@@ -84,23 +90,15 @@ export function SkillPicker({ botId, botName, onDone }: { botId: string; botName
               <ul className="mt-1">{page.yours.map((skill) => <Row key={skill.ref} skill={skill} botId={botId} onOpen={open} />)}</ul>
             </>
           )}
-          <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 px-2">
-            <h4 className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Library</h4>
-            {!query.trim() && page.categories.map((facet) => (
-              <button key={facet.name} type="button" aria-pressed={category === facet.name} onClick={() => setCategory(category === facet.name ? "" : facet.name)}
-                className={`rounded px-1 text-[12px] ${category === facet.name ? "bg-accent/15 text-accent" : "text-ink-secondary hover:text-ink"}`}>
-                {facet.name} {facet.count}
-              </button>
-            ))}
-          </div>
+          <h4 className="mt-3 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Library</h4>
           {!page.libraryReady ? (
             <p className="mt-1 px-2 text-[12px] text-ink-secondary">The library is still loading.</p>
           ) : !searching ? (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">Search, or pick a topic above.</p>
+            <p className="mt-1 px-2 text-[12px] text-ink-secondary">Search, or choose a topic.</p>
           ) : page.library.length ? (
             <ul className="mt-1">{page.library.map((skill) => <Row key={skill.ref} skill={skill} botId={botId} onOpen={open} />)}</ul>
           ) : (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">No skills match “{query.trim() || category}”.</p>
+            <p className="mt-1 px-2 text-[12px] text-ink-secondary">No skills match “{query.trim() || topicLabel(category)}”.</p>
           )}
         </>
       )}
