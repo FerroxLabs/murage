@@ -1,8 +1,8 @@
 // INLINE1 browser proof: a "Saved file" card in the chat shows the thing.
 //
 // A real fake-engine harness (launchVerificationServer) owns a bot, its
-// workspace and six registered saved versions — a PNG, a WAV, a Markdown
-// report, a JSON file, an HTML report and a PDF. A Vite fixture renders the
+// workspace and seven registered saved versions — a PNG, a WAV, a Markdown
+// report, a JSON file, a plain .txt note, an HTML report and a PDF. A Vite fixture renders the
 // real ArtifactCards inside the real StoreProvider against that harness, so
 // the image and the player read their bytes through the real capability
 // route (F5-T1, U-03) and the documents through the real preview route.
@@ -59,6 +59,7 @@ function wav(seconds: number, hz: number): Buffer {
 const REPORT_TAIL = "INLINE1_TAIL_SENTENCE: this line is only reachable after Show more.";
 const REPORT = ["# Weekly report", "", "INLINE1_HEAD_SENTENCE: three verified findings.", "",
   ...Array.from({ length: 160 }, (_, index) => `- Finding ${index + 1}: ${"detail ".repeat(6)}`), "", REPORT_TAIL, ""].join("\n");
+const TEXT = "INLINE1_PLAIN_TEXT: Aaron Becker, notes from the call.\nSecond line of the saved note.\n";
 const DATA = JSON.stringify({ inline1Key: "INLINE1_JSON_VALUE", rows: [1, 2, 3] }, null, 2);
 const HTML = "<!doctype html><style>body{font:18px system-ui;padding:24px;color:#173047}</style><h1>Nightly report</h1><p>INLINE1_HTML_RESULT: rendered inside the card.</p>";
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
@@ -89,6 +90,7 @@ test.beforeAll(async () => {
       audio: ["outputs/narration.wav", wav(2, 440)],
       markdown: ["outputs/weekly-report.md", REPORT],
       code: ["outputs/data.json", DATA],
+      text: ["outputs/Aaron_Becker.txt", TEXT],
       html: ["outputs/nightly.html", HTML],
       pdf: ["outputs/deck.pdf", PDF],
     };
@@ -124,7 +126,7 @@ async function open(page: Page, width: number, skin: string) {
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
   await page.goto(origin + "/__cards");
   await page.evaluate(value => { document.documentElement.dataset.skin = value; }, skin);
-  await expect(page.locator("[data-artifact-id]")).toHaveCount(6);
+  await expect(page.locator("[data-artifact-id]")).toHaveCount(7);
   await expect(page.locator('[data-artifact-inline="loading"]')).toHaveCount(0, { timeout: 15_000 });
 }
 
@@ -165,6 +167,20 @@ for (const width of [390, 1200]) for (const skin of ["light", "dark"]) test(`eve
 
   // The JSON is a code block; the HTML report is a protected frame in the card.
   await expect(card(page, "code").locator('[data-artifact-inline="code"] pre')).toContainText("INLINE1_JSON_VALUE");
+  // A plain .txt file is the "text" language: its Shiki colours follow the
+  // skin, so the words read as body text, not near-black on the dark panel.
+  const text = card(page, "text");
+  await expect(text.locator('[data-artifact-inline="code"] .shiki')).toContainText("INLINE1_PLAIN_TEXT");
+  await expect(text.locator(".shiki")).toHaveCSS("color-scheme", skin);
+  const [inkLuminance, wordLuminance] = await text.evaluate(node => {
+    const luminance = (color: string) => { const [r, g, b] = color.match(/[\d.]+/g)!.map(Number); return (0.2126 * r! + 0.7152 * g! + 0.0722 * b!) / 255; };
+    const word = [...node.querySelectorAll(".shiki span")].find(span => span.textContent?.includes("INLINE1_PLAIN_TEXT"))!;
+    const probe = document.createElement("i"); probe.style.color = "var(--color-ink)"; node.append(probe);
+    const ink = getComputedStyle(probe).color; probe.remove();
+    return [luminance(ink), luminance(getComputedStyle(word).color)];
+  });
+  expect(Math.abs(inkLuminance - wordLuminance)).toBeLessThan(0.2);
+  await text.screenshot({ path: testInfo.outputPath(`text-card-${width}-${skin}.png`) });
   await expect(page.frameLocator('iframe[title="Preview Saved html"]').getByText("INLINE1_HTML_RESULT: rendered inside the card.", { exact: true })).toBeVisible();
   await expect(card(page, "html")).toContainText("Protected preview: scripts, external resources and app access are blocked.");
 
@@ -176,8 +192,8 @@ for (const width of [390, 1200]) for (const skin of ["light", "dark"]) test(`eve
 
   // No card offers a Preview that leaves the chat; every card keeps Download and Open here.
   await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Download", exact: true })).toHaveCount(6);
-  await expect(page.getByRole("button", { name: /^Open the working file / })).toHaveCount(6);
+  await expect(page.getByRole("button", { name: "Download", exact: true })).toHaveCount(7);
+  await expect(page.getByRole("button", { name: /^Open the working file / })).toHaveCount(7);
 
   await page.screenshot({ path: testInfo.outputPath(`cards-${width}-${skin}.png`), fullPage: true });
   // A full-page capture does not always paint a sandboxed frame below the

@@ -378,8 +378,11 @@ select.procedure-history-audience:focus-visible {
 }
 
 /* Dual Shiki palettes follow the nearest application skin, including cached
-   blocks, without changing the color scheme of native controls. */
-.chat-md .shiki {
+   blocks, without changing the color scheme of native controls. Unscoped on
+   purpose: a saved text file's card renders the same code block outside
+   `.chat-md`, and there the light-dark() token colours fell back to the light
+   palette, so plain text was near-black on the dark skin. */
+.shiki {
   color-scheme: var(--code-color-scheme);
 }
 

@@ -253,3 +253,23 @@ describe("wiring the browser proof depends on", () => {
     expect(files).toContain('{onPreview && artifact.kind !== "other" && <button className={button} disabled={busy || !available} onClick={onPreview}>Preview</button>}');
   });
 });
+
+describe("a plain text file reads as body text in both skins", () => {
+  it("renders the text language with the normal ink colour, never a dimmed one", async () => {
+    const { CodeBlock } = await import("./ChatMarkdown");
+    const html = renderToStaticMarkup(createElement(CodeBlock, { code: "Aaron Becker\nnotes", lang: artifactCodeLanguage("Aaron_Becker.txt"), streaming: false }));
+    const pre = /<pre class="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(pre.split(/\s+/)).toContain("text-ink");
+    expect(pre).not.toMatch(/text-ink-(secondary|tertiary|muted)|opacity-/);
+  });
+
+  it("lets every Shiki block, not only chat markdown, follow the skin's colour scheme", () => {
+    // The saved-file card renders CodeBlock outside `.chat-md`. Shiki's
+    // light-dark() colours resolve against color-scheme, so a rule scoped to
+    // `.chat-md` left card text on the light palette: near-black on dark.
+    const css = readFileSync(fileURLToPath(new URL("../styles.css", import.meta.url)), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = /(^|\})\s*([^{}]*)\{[^}]*color-scheme:\s*var\(--code-color-scheme\)/m.exec(css);
+    expect(rule?.[2]?.trim()).toBe(".shiki");
+    for (const skin of ["dark", "light"]) expect(css).toMatch(new RegExp(`\\[data-skin="${skin}"\\]\\s*\\{[^}]*--code-color-scheme:\\s*${skin};`));
+  });
+});
