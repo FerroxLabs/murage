@@ -26,6 +26,7 @@ import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memo
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
 import { botShapeRows, directTurnLayers, nowPrompt, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
+import { handleWhatsNewApi } from "./whats-new.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
 import { engineCommandInText } from "../shared/engine-commands.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
@@ -12527,6 +12528,22 @@ const server = createServer(async (req, res) => {
     if (path === "/api/house-rules" || path === "/api/house-rules/reset") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
       const answer = await handleHouseRulesApi({ method, path, readBody: () => readBody(req, 256 * 1024) });
+      if (answer) return json(res, answer.status, answer.body);
+    }
+    // What's new (server/whats-new.ts): which release pages this install has
+    // been shown. Desktop only; the page is for the person at the computer.
+    // "Fresh install" is the first run's own answer: never set up, or the
+    // guided setup still going.
+    if (path === "/api/whats-new" || path === "/api/whats-new/seen") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const answer = await handleWhatsNewApi({
+        method, path, version: url.searchParams.get("version"), readBody: () => readBody(req, 4 * 1024),
+        isFreshInstall: async () => {
+          const live = await setupLiveState();
+          const view = setupView(setup.read(live), live);
+          return view.firstRun || (view.next !== null && conversationLive(view, setupCardKeysInChiefThread(view)));
+        },
+      });
       if (answer) return json(res, answer.status, answer.body);
     }
     // "What shapes <bot>" (server/bot-shapes.ts). Desktop only, like Skills

@@ -21,6 +21,7 @@ import {
   FolderMinus,
   FolderPlus,
   Loader2,
+  Megaphone,
   MoreHorizontal,
   Network,
   Pencil,
@@ -114,6 +115,8 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { SidebarNeedsYou } from "./SidebarNeedsYou";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
+import { WhatsNewHost } from "./WhatsNewHost";
+import { useWhatsNew } from "@/lib/whats-new";
 import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
 import { useTrayIntents } from "./useTrayIntents";
@@ -1927,6 +1930,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const approvals = usePendingApprovals(desktop === true, state.connected);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
+  // What's new: opens by itself once after an update (desktop only), and
+  // again from Tools whenever the person asks.
+  const whatsNew = useWhatsNew(desktop, api);
   const [filesOpen, setFilesOpen] = useState<FilesOpenDetail | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
@@ -2822,6 +2828,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 onSelect: () => dispatch({ type: "togglePlugins", open: true }),
               },
               { key: "keyboard-shortcuts", label: "Keyboard shortcuts", icon: <BookOpen size={18} />, onSelect: () => setShortcutsOpen(true) },
+              ...(whatsNew.available ? [{ key: "whats-new", label: "What's new", icon: <Megaphone size={18} />, onSelect: whatsNew.reopen }] : []),
             ]}
           />
         )}
@@ -2924,6 +2931,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {newRoom && <NewRoomPanel kind={newRoom} onClose={() => setNewRoom(null)} />}
+      <WhatsNewHost whatsNew={whatsNew} onNewProject={() => setNewRoom("project")} onNavigate={onNavigate} />
       {archivedChannelsOpen && (
         <ArchivedChannelsPanel
           groups={archivedChannels}

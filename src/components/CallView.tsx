@@ -33,7 +33,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
-import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
+import { currentCall, deferCallCleanup, endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
 import { unheardMessages } from "@/lib/scrollback";
 import { speaker } from "@/lib/tts";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
@@ -131,6 +131,11 @@ export function CallTargetButton({
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const helpId = useId();
+  // "Call a bot" from What's new: press this button once it can answer.
+  const callRequest = useCallRequest();
+  useEffect(() => {
+    if (callRequest === targetId && capabilitiesReady && takeCallRequest(targetId)) buttonRef.current?.click();
+  }, [callRequest, targetId, capabilitiesReady]);
   const label = active
     ? t("calls.hangUpOn", { name: targetName })
     : !capabilitiesReady

@@ -395,6 +395,13 @@ Skill scanning patterns (server/skill-guard/spector-patterns.generated.ts)
 
 --------------------------------------------------------------------------
 
+The Instrument Serif font (src/assets/fonts/instrument-serif-latin-400-normal.woff2)
+  is Copyright 2022 The Instrument Serif Project Authors
+  (https://github.com/Instrument/instrument-serif), licensed under the SIL
+  Open Font License, Version 1.1. See third_party/instrument-serif/.
+
+--------------------------------------------------------------------------
+
 This distribution also includes third-party components under third_party/,
 each retaining its own license and notices. See the LICENSE and NOTICE files
 within those directories for details.
