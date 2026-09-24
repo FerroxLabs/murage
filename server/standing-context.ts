@@ -18,12 +18,24 @@ import { loadMemory, memorySystemPrompt } from "./workspace.ts";
 // A turn nobody is watching (a routine, a webhook, a goal run) reads the
 // notebook but is not invited to edit it: each edit waits for the owner's
 // approval, so the run would stall on a note nobody asked for.
-export function standingContextPrompt(
-  bot: { id: string; section?: string },
-  opts: { ownerAudience: boolean; fileTools: boolean; unattended?: boolean },
-): string {
-  if (!opts.ownerAudience) return "";
-  return sectionContextSystemPrompt(bot.section) + memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended });
+//
+// The owner can switch the team brief off for one bot (`teamBrief: false`,
+// from "What shapes <bot>"); its own notebook always rides.
+type StandingBot = { id: string; section?: string; teamBrief?: boolean };
+type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean };
+
+/** The two blocks apart, for the labelled prompt (bot-shapes.ts). */
+export function standingContextParts(bot: StandingBot, opts: StandingOptions): { teamBrief: string; memory: string } {
+  if (!opts.ownerAudience) return { teamBrief: "", memory: "" };
+  return {
+    teamBrief: bot.teamBrief === false ? "" : sectionContextSystemPrompt(bot.section),
+    memory: memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended }),
+  };
+}
+
+export function standingContextPrompt(bot: StandingBot, opts: StandingOptions): string {
+  const parts = standingContextParts(bot, opts);
+  return parts.teamBrief + parts.memory;
 }
 
 /** Structured-memory sources the standing context already carries whole.
@@ -31,8 +43,9 @@ export function standingContextPrompt(
  * recall skips chunks resting only on these so a fact is not sent twice.
  * A notebook over its load budget is only partly in the prompt, so its
  * chunks stay recallable. Empty when the standing context is withheld. */
-export function standingContextSourceIds(bot: { id: string; section?: string }, ownerAudience: boolean): string[] {
+export function standingContextSourceIds(bot: StandingBot, ownerAudience: boolean): string[] {
   if (!ownerAudience) return [];
   const { notebook, brief } = notebookSourceIds(bot.id, bot.section);
-  return [...(notebook && !loadMemory(bot.id)?.truncated ? [notebook] : []), ...(brief ? [brief] : [])];
+  // A brief switched off for this bot is not in its prompt: recall may bring it.
+  return [...(notebook && !loadMemory(bot.id)?.truncated ? [notebook] : []), ...(brief && bot.teamBrief !== false ? [brief] : [])];
 }

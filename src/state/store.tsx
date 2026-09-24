@@ -394,6 +394,8 @@ export interface Bot {
   /** Whether this bot may use the workspace's connected apps. Unset means
    * allowed for existing bots; imported bots start with this disabled. */
   composio?: boolean;
+  /** false when the owner switched its team's brief off for this bot. */
+  teamBrief?: false;
   /** Set on bots that arrived from a bot package. `wireBot` (server/index.ts)
    * spreads the whole record, so this reaches the renderer on GET /api/bots,
    * on the import response and on every SSE bot frame; without it declared
@@ -592,6 +594,12 @@ export type AppSettingsSection =
   | "houseRules"
   | "usage";
 
+/** Where the bot window opens: Skills with or without its picker open, or
+ *  another section an Edit link in "What shapes <bot>" points at. */
+export type BotSettingsIntent =
+  | { section: "skills"; addSkill: boolean }
+  | { section: "shapes" | "identity" | "memory"; addSkill?: undefined };
+
 export interface AppState {
   bots: Bot[];
   groups: Group[];
@@ -609,7 +617,7 @@ export interface AppState {
   settingsOpen: boolean;
   /** Where the bot window opens next: a section, and for Skills whether the
    *  picker starts open ("Add a skill" from the sidebar). Read once. */
-  botSettingsIntent?: { section: "skills"; addSkill: boolean } | null;
+  botSettingsIntent?: BotSettingsIntent | null;
   pluginsOpen: boolean;
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
@@ -897,7 +905,7 @@ export type Action =
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
-  | { type: "toggleSettings"; open?: boolean; intent?: { section: "skills"; addSkill: boolean } }
+  | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }

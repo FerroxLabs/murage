@@ -17,6 +17,7 @@ import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
 import { BotSetupAction } from "./BotIntakeCard";
 import { BotSkillsPanel } from "./BotSkillsPanel";
+import { BotShapesPanel } from "./BotShapesPanel";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
@@ -779,6 +780,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
           </section>
           <MemoryCard key={bot.id} bot={bot} />
+          </SettingsSection>
+
+
+          {/* Everything that goes into this bot's instructions, in the order it
+              reads it (server/bot-shapes.ts). The route is desktop only: it
+              shows the bot's notes and its team's brief. Read again each
+              time the section is shown. */}
+          <SettingsSection id="shapes" active={section}>
+          {desktop === true && <BotShapesPanel key={`shapes-${bot.id}`} bot={bot} active={section === undefined || section === "shapes"} />}
           </SettingsSection>
 
 

@@ -136,17 +136,18 @@ describe("persona — the micro field", () => {
 // edit that "helpfully" adds it to the roster line must fail here.
 const readSource = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
-const DIRECT_TURN_PERSONA = `  const persona = [
+// directTurnPersona(), shared by the direct turn and "What shapes <bot>".
+const DIRECT_TURN_PERSONA = `  return [
     \`You are \${bot.name}, a personal bot in Murage.\`,
     bot.title && \`Role: \${bot.title}.\`,
     bot.description && \`About: \${bot.description}\`,
     \`Personality: \${personalityImprint(bot.persona)}\`,
   ]`;
 
-const ROOM_TURN_PERSONA = `    \`You are \${bot.name}, a bot in the room "\${group.name}" in Murage.\`,
-    bot.title && \`Role: \${bot.title}.\`,
-    bot.description && \`About: \${bot.description}\`,
-    \`Personality: \${personalityImprint(bot.persona)}\`,`;
+const ROOM_TURN_PERSONA = `      \`You are \${bot.name}, a bot in the room "\${group.name}" in Murage.\`,
+      bot.title && \`Role: \${bot.title}.\`,
+      bot.description && \`About: \${bot.description}\`,
+      \`Personality: \${personalityImprint(bot.persona)}\`,`;
 
 describe("persona is spoken to the bot and read by nothing that routes", () => {
   const index = readSource("./index.ts");
@@ -165,7 +166,7 @@ describe("persona is spoken to the bot and read by nothing that routes", () => {
       // Every bot now carries a personality imprint, defaulted by
       // personalityImprint (shared/bot-identity.ts, covered in memory/identity.test.ts).
       "    `Personality: ${personalityImprint(bot.persona)}`,",
-      "    `Personality: ${personalityImprint(bot.persona)}`,",
+      "      `Personality: ${personalityImprint(bot.persona)}`,",
     ]);
   });
 

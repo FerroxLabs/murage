@@ -3,6 +3,7 @@ import { botRole, BOT_ROLE_TITLE, type BotRole, type RoleBot } from "@/lib/bot-r
 export const BOT_SETTINGS_SECTIONS = [
   { id: "overview", label: "Overview", keywords: "profile avatar role chief leader individual imported team setup" },
   { id: "identity", label: "Identity & instructions", keywords: "name title description personality persona job" },
+  { id: "shapes", label: "What shapes this bot", keywords: "what it reads house rules team brief guide prompt system instructions order locked" },
   { id: "skills", label: "Skills", keywords: "library learned tools knowledge skill enable review" },
   { id: "memory", label: "Memory", keywords: "notebook managed recall sources notes" },
   { id: "routines", label: "Routines", keywords: "schedule calendar automation recurring" },
@@ -14,6 +15,10 @@ export const BOT_SETTINGS_SECTIONS = [
   { id: "usage", label: "Usage", keywords: "cost tokens turns billing spend" },
 ] as const;
 export type BotSettingsSection = typeof BOT_SETTINGS_SECTIONS[number]["id"];
+/** A section's name in this bot's window: "What shapes" names the bot. */
+export function botSettingsSectionLabel(section: typeof BOT_SETTINGS_SECTIONS[number], botName: string): string {
+  return section.id === "shapes" ? `What shapes ${botName}` : section.label;
+}
 export function filterBotSettingsSections(query: string) {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return BOT_SETTINGS_SECTIONS.filter(section => words.every(word => `${section.label} ${section.keywords}`.toLowerCase().includes(word)));

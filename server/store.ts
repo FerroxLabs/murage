@@ -702,6 +702,9 @@ export interface BotRecord {
    * Only the workspace Chief has one today ("chief-of-staff", the Chief of
    * Staff guide); absent means on (skill-library.ts attachedSkillOn). */
   builtinSkills?: { "chief-of-staff"?: boolean };
+  /** Whether its team's brief reaches this bot's turns. Absent means on;
+   * the owner switches it off in "What shapes <bot>" (standing-context.ts). */
+  teamBrief?: false;
   /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
   connectedAppAccess?: ConnectedAppAccess;
   /** Monotonic identity fence; returning to an old role never revives requests. */
@@ -1021,6 +1024,11 @@ export class Store {
       }
       if (b.autoStartVps !== undefined && b.autoStartVps !== true && b.autoStartVps !== false) {
         delete b.autoStartVps;
+        botsMigrated = true;
+      }
+      // Only an exact false is stored; anything else reads as on.
+      if (b.teamBrief !== undefined && b.teamBrief !== false) {
+        delete b.teamBrief;
         botsMigrated = true;
       }
       // One shape for "no voice note": absent. A blank or whitespace-only
