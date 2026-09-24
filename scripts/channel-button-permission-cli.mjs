@@ -50,7 +50,10 @@ async function permission() {
 const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
   if (!line.trim()) continue;
-  JSON.parse(line);
+  const message = JSON.parse(line);
+  // The Claude driver opens with an `initialize` control request (it reads the
+  // engine's slash commands from the answer); it is not a user turn.
+  if (message.type === "control_request") { out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } }); continue; }
   out({ type: "system", subtype: "init", session_id: `channel-button-${process.pid}`, model: arg("--model") });
   await permission();
 }
