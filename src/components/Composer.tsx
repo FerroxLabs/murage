@@ -115,8 +115,9 @@ interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
 }
 
-/** Composer chip for the approval level: Ask, Auto or Full access. The same
- * `autoApprove` bit as the profile switch, plus `fullAccess` above it. The
+/** Composer chip for the approval level: Ask, Auto, Full access or No
+ * limits. The same `autoApprove` bit as the profile switch, plus
+ * `fullAccess` and `noLimits` above it. The
  * chip only changes its name, not its color. */
 function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode: PermissionMode) => void }) {
   const [open, setOpen] = useState(false);
@@ -560,9 +561,9 @@ export function Composer({
   };
   const fileInput = useRef<HTMLInputElement>(null);
   // which level the Auto-on-this-computer warning is confirming, if open
-  const [autoWarn, setAutoWarn] = useState<false | "auto" | "full">(false);
+  const [autoWarn, setAutoWarn] = useState<false | "auto" | "full" | "unlimited">(false);
   // the one-time Full access warning, and whether it also covers this computer
-  const [fullWarn, setFullWarn] = useState<false | { onThisComputer: boolean }>(false);
+  const [fullWarn, setFullWarn] = useState<false | { onThisComputer: boolean; level: "full" | "unlimited" }>(false);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const audioFileRef = useRef<File | null>(null);
@@ -598,19 +599,21 @@ export function Composer({
     // /api/config), not this browser's UA (FOLLOW5).
     const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
     const needsLocal = mode !== "ask" && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove });
-    if (mode === "full") {
-      // Full access has its own warning, once per bot; the server refuses the
-      // switch without it (server/full-access.ts). When it is shown it also
-      // covers this computer, so the owner is never asked twice in a row.
-      if (autoBot.fullAccessAcknowledgedAt === undefined) {
-        setFullWarn({ onThisComputer: needsLocal });
+    if (mode === "full" || mode === "unlimited") {
+      // Full access and No limits each have their own warning, once per bot;
+      // the server refuses the switch without it (server/full-access.ts).
+      // When it is shown it also covers this computer, so the owner is never
+      // asked twice in a row.
+      const acknowledged = mode === "unlimited" ? autoBot.noLimitsAcknowledgedAt : autoBot.fullAccessAcknowledgedAt;
+      if (acknowledged === undefined) {
+        setFullWarn({ onThisComputer: needsLocal, level: mode });
         return;
       }
       if (needsLocal) {
-        setAutoWarn("full");
+        setAutoWarn(mode);
         return;
       }
-      dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: { fullAccess: true } });
+      dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: mode === "unlimited" ? { noLimits: true } : { fullAccess: true } });
       return;
     }
     if (needsLocal) {
@@ -1328,7 +1331,7 @@ export function Composer({
       <div className="pointer-events-auto">
       <LocalComputerAutoWarning
         open={autoWarn !== false}
-        mode={autoWarn === "full" ? "full" : "auto"}
+        mode={autoWarn === false ? "auto" : autoWarn}
         onCancel={() => setAutoWarn(false)}
         onConfirm={() => {
           if (autoBot) {
@@ -1336,7 +1339,7 @@ export function Composer({
               type: "updateTask",
               botId: autoBot.id,
               threadId,
-              patch: autoWarn === "full" ? { fullAccess: true, acknowledgeLocalAuto: true } : { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true },
+              patch: autoWarn === "unlimited" ? { noLimits: true, acknowledgeLocalAuto: true } : autoWarn === "full" ? { fullAccess: true, acknowledgeLocalAuto: true } : { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true },
             });
           }
           setAutoWarn(false);
@@ -1345,6 +1348,7 @@ export function Composer({
       <FullAccessWarning
         open={fullWarn !== false}
         botName={autoBot?.name ?? ""}
+        level={fullWarn === false ? "full" : fullWarn.level}
         onThisComputer={fullWarn !== false && fullWarn.onThisComputer}
         onCancel={() => setFullWarn(false)}
         onConfirm={() => {
@@ -1353,7 +1357,7 @@ export function Composer({
               type: "updateTask",
               botId: autoBot.id,
               threadId,
-              patch: { fullAccess: true, acknowledgeFullAccess: true, ...(fullWarn.onThisComputer ? { acknowledgeLocalAuto: true } : {}) },
+              patch: { ...(fullWarn.level === "unlimited" ? { noLimits: true, acknowledgeNoLimits: true } : { fullAccess: true, acknowledgeFullAccess: true }), ...(fullWarn.onThisComputer ? { acknowledgeLocalAuto: true } : {}) },
             });
           }
           setFullWarn(false);

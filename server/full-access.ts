@@ -27,8 +27,11 @@ import { fullAccessCovers, type AutoApprover, type FullAccessOrigin } from "./au
 export const FULL_ACCESS_ACK_REQUIRED =
   "Full access requires confirming the warning first (acknowledgeFullAccess)";
 
+export const NO_LIMITS_ACK_REQUIRED =
+  "No limits requires confirming the warning first (acknowledgeNoLimits)";
+
 export type FullAccessChange =
-  | { ok: true; autoApprove?: boolean; fullAccess?: boolean; acknowledgedAt?: number }
+  | { ok: true; autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean; acknowledgedAt?: number; noLimitsAcknowledgedAt?: number }
   | { ok: false; status: number; error: string };
 
 /** What a settings PATCH does to the approval level.
@@ -46,15 +49,30 @@ export type FullAccessChange =
  */
 export function fullAccessChange(
   body: Record<string, unknown>,
-  bot: { fullAccessAcknowledgedAt?: number } | null | undefined,
+  bot: { fullAccessAcknowledgedAt?: number; noLimitsAcknowledgedAt?: number } | null | undefined,
   desktop: boolean,
   now: number = Date.now(),
 ): FullAccessChange {
-  if (body.fullAccess !== undefined && typeof body.fullAccess !== "boolean") {
-    return { ok: false, status: 400, error: "fullAccess must be true or false" };
+  for (const key of ["fullAccess", "acknowledgeFullAccess", "noLimits", "acknowledgeNoLimits"] as const) {
+    if (body[key] !== undefined && typeof body[key] !== "boolean") {
+      return { ok: false, status: 400, error: `${key} must be true or false` };
+    }
   }
-  if (body.acknowledgeFullAccess !== undefined && typeof body.acknowledgeFullAccess !== "boolean") {
-    return { ok: false, status: 400, error: "acknowledgeFullAccess must be true or false" };
+  // No limits: Full access without the stop line. The same desktop-only rule
+  // and its own one-time warning; its confirmation also covers Full access's
+  // (it says more), so a bot is never asked twice in a row.
+  if (body.noLimits === true) {
+    if (!desktop) return { ok: false, status: 404, error: "not found" };
+    if (body.autoApprove === false || body.fullAccess === false) return { ok: false, status: 400, error: "No limits needs Full access on" };
+    const acknowledged = typeof bot?.noLimitsAcknowledgedAt === "number";
+    if (!acknowledged && body.acknowledgeNoLimits !== true) {
+      return { ok: false, status: 400, error: NO_LIMITS_ACK_REQUIRED };
+    }
+    return {
+      ok: true, autoApprove: true, fullAccess: true, noLimits: true,
+      ...(typeof bot?.fullAccessAcknowledgedAt === "number" ? {} : { acknowledgedAt: now }),
+      ...(acknowledged ? {} : { noLimitsAcknowledgedAt: now }),
+    };
   }
   if (body.fullAccess === true) {
     if (!desktop) return { ok: false, status: 404, error: "not found" };
@@ -63,9 +81,11 @@ export function fullAccessChange(
     if (!acknowledged && body.acknowledgeFullAccess !== true) {
       return { ok: false, status: 400, error: FULL_ACCESS_ACK_REQUIRED };
     }
-    return { ok: true, autoApprove: true, fullAccess: true, ...(acknowledged ? {} : { acknowledgedAt: now }) };
+    // choosing Full access is choosing the guarded level
+    return { ok: true, autoApprove: true, fullAccess: true, noLimits: false, ...(acknowledged ? {} : { acknowledgedAt: now }) };
   }
-  if (body.fullAccess === false || body.autoApprove !== undefined) return { ok: true, fullAccess: false };
+  if (body.fullAccess === false || body.autoApprove !== undefined) return { ok: true, fullAccess: false, noLimits: false };
+  if (body.noLimits === false) return { ok: true, noLimits: false };
   return { ok: true };
 }
 

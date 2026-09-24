@@ -211,12 +211,20 @@ export interface AutoApprover {
   /** Full access also covers the owner's own messages from Telegram, Slack
    * and Discord. Off unless it is exactly `true`. */
   fullAccessChannelMessages?: boolean;
+  /** No limits, the level above Full access: no stop line. Counts only
+   * while Full access does; the key guard still asks. */
+  noLimits?: boolean;
   alwaysAllow?: string[];
 }
 
 /** Is this bot (or task) on Full access? */
 export function hasFullAccess(bot: AutoApprover | null | undefined): boolean {
   return bot?.autoApprove === true && bot.fullAccess === true;
+}
+
+/** Is this bot (or task) on No limits? Only on top of Full access. */
+export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
+  return hasFullAccess(bot) && bot?.noLimits === true;
 }
 
 /** Who started the turn, as Full access reads it: the owner at the desktop
@@ -240,6 +248,8 @@ export type AutoVerdictSource =
   | "always-allow"
   | "auto-mode"
   | "full-access"
+  /** No limits: Full access without the stop line (the key guard holds). */
+  | "no-limits"
   /** The bot writing inside its OWN managed workspace or thread
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
@@ -363,7 +373,9 @@ export function autoVerdict(
   // recipient (never the bare tool name, which is why an older `Bash:rm` or
   // `mcp__stripe__create_charge` grant cannot reach it). A turn nobody is
   // at uses neither: it holds the card, as every other unattended grant does.
-  const stop = context?.stopLine ?? null;
+  // No limits lifts the stop line for exactly the turns Full access covers;
+  // a webhook, routine or someone else's turn is judged as before.
+  const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
   if (stop) {
     const attended = !context?.unattended && !context?.automated;
     const keyGuard = matchFirst(SENSITIVE, summary);
@@ -382,7 +394,10 @@ export function autoVerdict(
   // stop line above and the key guard: a bot reading your keys is quiet,
   // permanent and unrecoverable, whichever level it is on.
   if (fullAccessCovers(bot, origin)) {
-    if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
+    // the key guard is the one stop No limits keeps too
+    const keyGuard = sensitive ?? (destructive ? matchFirst(SENSITIVE, summary) : null);
+    if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
+    if (hasNoLimits(bot)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
     return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
   }
   // The bot's own bookkeeping, ahead of the unattended and host blocks

@@ -1,5 +1,5 @@
-import { Check, Hand, ShieldCheck, ShieldOff } from "lucide-react";
-import { FULL_ACCESS_DESKTOP_ONLY, type PermissionMode } from "@/lib/permission-mode";
+import { Check, Hand, ShieldCheck, ShieldOff, Zap } from "lucide-react";
+import { FULL_ACCESS_DESKTOP_ONLY, NO_LIMITS_DESKTOP_ONLY, isDesktopOnlyMode, type PermissionMode } from "@/lib/permission-mode";
 
 export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: string; chip: string; detail: string }> = [
   { mode: "ask", label: "Ask for approval", chip: "Ask", detail: "Ask before actions that need your permission" },
@@ -8,12 +8,18 @@ export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: stri
     mode: "full",
     label: "Full access",
     chip: "Full access",
-    detail: "Never stops to ask, including before contacting other bots. Webhook and routine turns still ask; image generation still asks before it spends",
+    detail: "Keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys",
+  },
+  {
+    mode: "unlimited",
+    label: "No limits",
+    chip: "No limits",
+    detail: "Does anything without asking, except reading your keys and passwords.",
   },
 ];
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
-  mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
+  mode === "unlimited" ? <Zap size={size} className={className} /> : mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
 
 /** The composer chip's menu. Full access is the desktop app's decision alone
  * (server/full-access.ts), so away from it the choice is shown but not
@@ -41,7 +47,7 @@ export function PermissionModeMenu({
       </div>
       <div className="flex flex-col py-1">
         {PERMISSION_MODES.map((entry) => {
-          const unavailable = desktop === false && entry.mode === "full";
+          const unavailable = desktop === false && isDesktopOnlyMode(entry.mode);
           return (
             <button
               key={entry.mode}
@@ -58,7 +64,7 @@ export function PermissionModeMenu({
                   {entry.label}
                   {current === entry.mode && <Check size={14} />}
                 </div>
-                <div className="text-[13px] text-ink-secondary">{unavailable ? FULL_ACCESS_DESKTOP_ONLY : entry.detail}</div>
+                <div className="text-[13px] text-ink-secondary">{unavailable ? (entry.mode === "unlimited" ? NO_LIMITS_DESKTOP_ONLY : FULL_ACCESS_DESKTOP_ONLY) : entry.detail}</div>
               </div>
             </button>
           );

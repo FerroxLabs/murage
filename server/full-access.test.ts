@@ -3,8 +3,8 @@
 // full-access-api.test.ts; these pin the rules themselves.
 import { describe, expect, it } from "vitest";
 
-import { approvalHoldNote, autoVerdict, hasFullAccess } from "./auto-approve.ts";
-import { FULL_ACCESS_ACK_REQUIRED, fullAccessChange } from "./full-access.ts";
+import { approvalHoldNote, autoVerdict, hasFullAccess, hasNoLimits } from "./auto-approve.ts";
+import { FULL_ACCESS_ACK_REQUIRED, NO_LIMITS_ACK_REQUIRED, fullAccessChange } from "./full-access.ts";
 
 const full = { autoApprove: true, fullAccess: true, alwaysAllow: [] };
 const auto = { autoApprove: true, fullAccess: false, alwaysAllow: [] };
@@ -130,18 +130,18 @@ describe("switching Full access on", () => {
   it("needs the warning the first time for a bot, and records it", () => {
     expect(fullAccessChange({ fullAccess: true }, fresh, true)).toEqual({ ok: false, status: 400, error: FULL_ACCESS_ACK_REQUIRED });
     expect(fullAccessChange({ fullAccess: true, acknowledgeFullAccess: true }, fresh, true, 42)).toEqual({
-      ok: true, autoApprove: true, fullAccess: true, acknowledgedAt: 42,
+      ok: true, autoApprove: true, fullAccess: true, noLimits: false, acknowledgedAt: 42,
     });
   });
 
   it("does not ask again once the bot's warning was confirmed", () => {
-    expect(fullAccessChange({ fullAccess: true }, warned, true)).toEqual({ ok: true, autoApprove: true, fullAccess: true });
+    expect(fullAccessChange({ fullAccess: true }, warned, true)).toEqual({ ok: true, autoApprove: true, fullAccess: true, noLimits: false });
   });
 
   it("ends with any other Auto change, so a stale flag cannot come back", () => {
-    expect(fullAccessChange({ autoApprove: true }, warned, true)).toEqual({ ok: true, fullAccess: false });
-    expect(fullAccessChange({ autoApprove: false }, warned, false)).toEqual({ ok: true, fullAccess: false });
-    expect(fullAccessChange({ fullAccess: false }, warned, false)).toEqual({ ok: true, fullAccess: false });
+    expect(fullAccessChange({ autoApprove: true }, warned, true)).toEqual({ ok: true, fullAccess: false, noLimits: false });
+    expect(fullAccessChange({ autoApprove: false }, warned, false)).toEqual({ ok: true, fullAccess: false, noLimits: false });
+    expect(fullAccessChange({ fullAccess: false }, warned, false)).toEqual({ ok: true, fullAccess: false, noLimits: false });
     expect(fullAccessChange({ title: "x" }, warned, true)).toEqual({ ok: true });
   });
 
@@ -149,5 +149,63 @@ describe("switching Full access on", () => {
     expect(fullAccessChange({ fullAccess: true, autoApprove: false, acknowledgeFullAccess: true }, warned, true)).toMatchObject({ ok: false, status: 400 });
     expect(fullAccessChange({ fullAccess: "yes" }, warned, true)).toMatchObject({ ok: false, status: 400 });
     expect(fullAccessChange({ fullAccess: true, acknowledgeFullAccess: "yes" }, fresh, true)).toMatchObject({ ok: false, status: 400 });
+  });
+});
+
+describe("No limits, the level above Full access", () => {
+  const unlimited = { autoApprove: true, fullAccess: true, noLimits: true, alwaysAllow: [] };
+  const outside = { kind: "delete" as const, place: "/Users/ada/Documents/old", what: "Delete 1 item outside its folder: ~/Documents/old" };
+  const pay = { kind: "pay" as const, what: "Make a payment" };
+
+  it("lets the stop line go on a turn the owner is at", () => {
+    for (const stop of [outside, pay]) {
+      expect(autoVerdict(unlimited, "Bash", "x", { stopLine: stop })).toMatchObject({ source: "no-limits", approve: "auto-approved Bash (no limits)" });
+    }
+    expect(autoVerdict(unlimited, "Bash", "rm -rf build", { stopLine: null }).source).toBe("no-limits");
+  });
+
+  it("still stops before a key", () => {
+    expect(autoVerdict(unlimited, "Bash", "cat ~/.zshrc", { stopLine: null }).source).toBe("sensitive-guard");
+    expect(autoVerdict(unlimited, "Bash", "rm ~/.ssh/id_rsa", { stopLine: outside }).source).toBe("sensitive-guard");
+  });
+
+  it("covers the same turns as Full access and no others", () => {
+    expect(autoVerdict(unlimited, "Bash", "x", { stopLine: outside, automated: true }).source).toBe("stop-line");
+    expect(autoVerdict(unlimited, "Bash", "x", { stopLine: outside, unattended: true }).approve).toBeNull();
+    expect(autoVerdict({ ...unlimited, fullAccessChannelMessages: true }, "Bash", "x", { stopLine: outside, unattended: true, automated: true, channelOwner: true }).source).toBe("no-limits");
+    expect(autoVerdict(unlimited, "AskUserQuestion", "Which?").source).toBe("question-tool");
+  });
+
+  it("counts only on top of Full access, so an older Full access bot stays guarded", () => {
+    expect(hasNoLimits(unlimited)).toBe(true);
+    expect(hasNoLimits({ autoApprove: true, fullAccess: false, noLimits: true })).toBe(false);
+    expect(autoVerdict({ autoApprove: true, fullAccess: false, noLimits: true }, "Bash", "x", { stopLine: outside }).source).toBe("stop-line");
+    expect(autoVerdict(full, "Bash", "x", { stopLine: outside }).source).toBe("stop-line");
+  });
+});
+
+describe("switching No limits on", () => {
+  it("is refused away from the desktop", () => {
+    expect(fullAccessChange({ noLimits: true, acknowledgeNoLimits: true }, { noLimitsAcknowledgedAt: 1 }, false)).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("needs its own warning once per bot, and it covers Full access's too", () => {
+    expect(fullAccessChange({ noLimits: true }, { fullAccessAcknowledgedAt: 1 }, true)).toEqual({ ok: false, status: 400, error: NO_LIMITS_ACK_REQUIRED });
+    expect(fullAccessChange({ noLimits: true, acknowledgeNoLimits: true }, {}, true, 7)).toEqual({
+      ok: true, autoApprove: true, fullAccess: true, noLimits: true, acknowledgedAt: 7, noLimitsAcknowledgedAt: 7,
+    });
+    expect(fullAccessChange({ noLimits: true }, { fullAccessAcknowledgedAt: 1, noLimitsAcknowledgedAt: 2 }, true)).toEqual({ ok: true, autoApprove: true, fullAccess: true, noLimits: true });
+  });
+
+  it("choosing Full access, Auto or Ask ends it", () => {
+    expect(fullAccessChange({ fullAccess: true }, { fullAccessAcknowledgedAt: 1 }, true)).toMatchObject({ fullAccess: true, noLimits: false });
+    expect(fullAccessChange({ fullAccess: false }, {}, true)).toEqual({ ok: true, fullAccess: false, noLimits: false });
+    expect(fullAccessChange({ autoApprove: false }, {}, false)).toEqual({ ok: true, fullAccess: false, noLimits: false });
+    expect(fullAccessChange({ noLimits: false }, {}, false)).toEqual({ ok: true, noLimits: false });
+  });
+
+  it("rejects contradictions and non-booleans", () => {
+    expect(fullAccessChange({ noLimits: true, fullAccess: false, acknowledgeNoLimits: true }, {}, true)).toMatchObject({ ok: false, status: 400 });
+    expect(fullAccessChange({ noLimits: "yes" }, {}, true)).toMatchObject({ ok: false, status: 400 });
   });
 });

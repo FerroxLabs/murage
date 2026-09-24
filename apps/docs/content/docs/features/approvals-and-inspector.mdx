@@ -12,15 +12,18 @@ When an engine supports approvals, Murage surfaces the request instead of hiding
 
 <ProductScreenshot name="approval-card" alt="An Murage approval card shown inside a conversation" caption="Approvals stay in context with the request and the agent's explanation." />
 
-## Ask, Auto and Full access
+## Ask, Auto, Full access and No limits
 
 Choose how a conversation is approved from the chip beside the composer:
 
 - **Ask** shows a card for each action that needs your permission.
 - **Auto** keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.
-- **Full access** does not ask before running commands, reading credentials or personal files, or contacting other bots. It can be switched on only in the desktop app, and the first time for each bot you confirm a warning.
+- **Full access** does not ask before running commands, editing files or contacting other bots. It still stops before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords. On those cards you can allow it once, allow the same kind of action in the same place for the rest of the task, or always.
+- **No limits** does anything without asking, except reading your keys and passwords.
 
-Some things still ask under Full access. A turn started by a webhook or a routine asks as it would under Auto, because someone other than you wrote that input or nobody is watching it. Image generation still asks before it spends. Questions your bot asks you still reach you, and a bot on Auto still asks once before it first uses your screen. Switch back to Auto or Ask at any time.
+Full access and No limits can be switched on only in the desktop app, and the first time for each bot you confirm a warning for each.
+
+Some things still ask under Full access and No limits. A turn started by a webhook or a routine asks as it would under Auto, because someone other than you wrote that input or nobody is watching it. Image generation still asks before it spends. Questions your bot asks you still reach you, and a bot on Auto still asks once before it first uses your screen. Switch back to Auto or Ask at any time.
 
 ## Inspector
 
