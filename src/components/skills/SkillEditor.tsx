@@ -15,6 +15,15 @@ import { richEditorContent } from "../MarkdownEditor";
 import { analyzeMarkdownFidelity, createMarkdownExtensions } from "@/lib/markdown-fidelity";
 import { refusalOf, saveSkill, skillBody, type SkillDetail } from "@/lib/skills-api";
 
+/** Whether the instructions open in the rich editor. Unlike a workspace
+ *  file, a skill is saved through its fields rather than byte for byte, so
+ *  a round trip that only tidies the Markdown (list markers, spacing, line
+ *  endings) is fine; formatting the editor would drop is not. */
+export function richEditable(body: string): boolean {
+  const { reasons } = analyzeMarkdownFidelity(body);
+  return reasons.every((reason) => reason === "round-trip-changed" || reason === "mixed-newlines");
+}
+
 export const BUILT_IN_COPY_NOTE = "Built-in skills can't be changed, so this edits your own copy.";
 
 const FIELD = "w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
@@ -55,7 +64,7 @@ export interface SkillEditorProps {
 
 export function SkillEditor({ skill, note, onCancel, onSaved }: SkillEditorProps) {
   const initialBody = useMemo(() => skillBody(skill.text), [skill.text]);
-  const rich = useMemo(() => analyzeMarkdownFidelity(initialBody).richEditable, [initialBody]);
+  const rich = useMemo(() => richEditable(initialBody), [initialBody]);
   const [name, setName] = useState(skill.name);
   const [description, setDescription] = useState(skill.description);
   const body = useRef(initialBody);
@@ -92,7 +101,7 @@ export function SkillEditor({ skill, note, onCancel, onSaved }: SkillEditorProps
       </label>
       <label className="mt-3 block">
         <span className={LABEL}>What it's for</span>
-        <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} maxLength={1024} className={`${FIELD} mt-1 resize-y`} />
+        <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} maxLength={1024} className={`${FIELD} mt-1 resize-y`} />
       </label>
       <div className="mt-3">
         <div className={LABEL} id="skill-editor-instructions">What it tells the bot</div>

@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { BUILT_IN_COPY_NOTE, SkillEditor } from "./SkillEditor";
+import { BUILT_IN_COPY_NOTE, richEditable, SkillEditor } from "./SkillEditor";
 import type { SkillDetail } from "@/lib/skills-api";
 
 const skill: SkillDetail = {
@@ -31,3 +31,13 @@ describe("the skill editor", () => {
     expect(html).toContain("Built-in skills can&#x27;t be changed, so this edits your own copy.");
   });
 });
+
+describe("which instructions open in the rich editor", () => {
+  it("opens ordinary skill Markdown rich, even when saving would tidy its spacing or list markers", () => {
+    expect(richEditable("# Invoice Creator\n\nYou help.\n\n\n## When to Use\n\n**Use this skill when:**\n* User asks\n* User needs\n")).toBe(true);
+  });
+  it("falls back to plain text for a skill too big for the rich editor", () => {
+    expect(richEditable("A line of instructions.\n".repeat(3000))).toBe(false);
+  });
+});
+
