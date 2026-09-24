@@ -13,6 +13,9 @@ export interface SkillManifest {
   defaultEnabled: boolean;
   triggerTerms: string[];
   requiredCapabilities: string[];
+  /** A built-in that belongs to one bot rather than to any message: it is
+   *  never chosen by trigger terms, only by `attachedSkillsFor`. */
+  attachedTo?: "workspace-chief";
 }
 
 export interface BundledSkill {
@@ -42,6 +45,7 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
   if (typeof raw.defaultEnabled !== "boolean") throw new Error(`${directory}/manifest.json has no defaultEnabled flag`);
   if (!triggerTerms?.length) throw new Error(`${directory}/manifest.json has no trigger terms`);
   if (!requiredCapabilities) throw new Error(`${directory}/manifest.json has invalid capabilities`);
+  if (raw.attachedTo !== undefined && raw.attachedTo !== "workspace-chief") throw new Error(`${directory}/manifest.json has an invalid attachedTo`);
   return {
     id,
     name: raw.name.trim(),
@@ -50,6 +54,7 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
     defaultEnabled: raw.defaultEnabled,
     triggerTerms,
     requiredCapabilities,
+    ...(raw.attachedTo === "workspace-chief" ? { attachedTo: "workspace-chief" as const } : {}),
   };
 }
 
@@ -124,6 +129,7 @@ export function selectBundledSkills(
   const available = new Set(capabilities);
   return skills.filter(({ manifest }) =>
     manifest.defaultEnabled &&
+    !isAttached(manifest) &&
     manifest.requiredCapabilities.every((capability) => available.has(capability)) &&
     manifest.triggerTerms.some((term) => haystack.includes(term.toLowerCase())),
   );
@@ -137,4 +143,41 @@ export function renderSkillInstructions(
   return selected.map(({ manifest, instructions, directory }) =>
     `\n\n<murage-skill id=${JSON.stringify(manifest.id)} version=${JSON.stringify(manifest.version)}${includeRoot ? ` root=${JSON.stringify(directory)}` : ""}>\n${instructions}\n</murage-skill>`,
   ).join("");
+}
+
+/** The id of the Chief of Staff guide, the built-in attached to the
+ *  workspace Chief. */
+export const CHIEF_GUIDE_ID = "chief-of-staff";
+
+/** The fields of a bot record this reads: who the Chief is, and whether
+ *  the owner switched a built-in off for it. */
+export interface AttachedSkillBot {
+  chiefOfStaff?: boolean;
+  chiefScope?: "workspace";
+  builtinSkills?: Partial<Record<string, boolean>>;
+}
+
+/** Whether a built-in attached to the workspace Chief is on for this bot:
+ *  only ever the Chief, and on unless the owner switched it off. */
+export function attachedSkillOn(bot: AttachedSkillBot, id: string): boolean {
+  return isChiefForAttached(bot) && bot.builtinSkills?.[id] !== false;
+}
+
+/** The one Chief above the team leaders (store.ts isWorkspaceChief, restated
+ *  here so this module stays free of the store). */
+export function isChiefForAttached(bot: AttachedSkillBot): boolean {
+  return bot.chiefOfStaff === true && bot.chiefScope === "workspace";
+}
+
+/** The built-ins attached to this bot that are on, every turn, whatever the
+ *  message says. Any other bot gets none of them. */
+export function attachedSkillsFor(bot: AttachedSkillBot, skills: readonly BundledSkill[]): BundledSkill[] {
+  return skills.filter(({ manifest }) => isAttached(manifest) && attachedSkillOn(bot, manifest.id));
+}
+
+/** The guide is matched by id as well as by flag: a task's procedure pin
+ *  freezes the catalogue's manifests, and a pin made before `attachedTo`
+ *  existed must not hand the guide to every bot by trigger terms. */
+function isAttached(manifest: SkillManifest): boolean {
+  return manifest.attachedTo === "workspace-chief" || manifest.id === CHIEF_GUIDE_ID;
 }

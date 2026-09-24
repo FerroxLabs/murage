@@ -68,8 +68,8 @@ export function SkillReaderView(props: SkillReaderViewProps) {
           <h3 className="truncate text-[15px] font-medium text-ink">{skill.name}</h3>
           <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{skill.description}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} />
-            {skill.kind !== "library" && <span className="text-[11.5px] text-ink-secondary">{skill.source}</span>}
+            <VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} />
+            {skill.kind === "collection" && <span className="text-[11.5px] text-ink-secondary">{skill.source}</span>}
           </div>
           {(props.onEdit || props.onDuplicate) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -156,7 +156,7 @@ export function SkillReaderView(props: SkillReaderViewProps) {
         <div className="mt-4">
           <div className="text-[12px] font-medium text-ink">Use with</div>
           {skill.bots.length === 0 ? (
-            <p className="mt-1 text-[12px] text-ink-secondary">You have no bots yet.</p>
+            <p className="mt-1 text-[12px] text-ink-secondary">{skill.kind === "builtin" ? "Only your Chief of Staff uses this, and you don't have one yet." : "You have no bots yet."}</p>
           ) : (
             <ul className="mt-1 divide-y divide-hairline/40">
               {skill.bots.map((bot) => (

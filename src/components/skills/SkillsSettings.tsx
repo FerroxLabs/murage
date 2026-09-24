@@ -14,12 +14,15 @@ import { listSkills, type SkillSummary, type SkillsPage } from "@/lib/skills-api
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
-export function usedByLine(skill: Pick<SkillSummary, "usedBy">): string {
+export function usedByLine(skill: Pick<SkillSummary, "usedBy"> & Partial<Pick<SkillSummary, "kind">>): string {
   const on = skill.usedBy.filter((use) => use.enabled).map((use) => use.botName);
-  return on.length ? `Used by ${on.join(", ")}` : "Not used yet";
+  if (on.length) return `Used by ${on.join(", ")}`;
+  return skill.kind === "builtin" && !skill.usedBy.length ? "For your Chief of Staff" : "Not used yet";
 }
 
-function SkillRow({ skill, onOpen }: { skill: SkillSummary; onOpen(ref: string): void }) {
+/** `browsing`: a row in the Library list, where "Not used yet" is every row
+ *  (a skill a bot uses is listed under Your skills instead), so it is left out. */
+function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref: string): void; browsing?: boolean }) {
   return (
     <li>
       <button type="button" onClick={() => onOpen(skill.ref)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-control">
@@ -28,8 +31,8 @@ function SkillRow({ skill, onOpen }: { skill: SkillSummary; onOpen(ref: string):
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
         </div>
         <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-          <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} />
-          <span className="text-[11px] text-ink-secondary">{usedByLine(skill)}</span>
+          <VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} />
+          {!(browsing && !skill.usedBy.some((use) => use.enabled)) && <span className="text-[11px] text-ink-secondary">{usedByLine(skill)}</span>}
         </div>
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
       </button>
@@ -110,13 +113,20 @@ export function SkillsSettings() {
             <p className="mt-1 px-2 text-[12px] text-ink-secondary">{searching ? `None of your skills match “${query.trim() || topicLabel(category)}”.` : "None yet. Import a skill, or switch on one from the library for a bot."}</p>
           )}
 
+          {!!page.builtins?.length && (
+            <>
+              <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Built-in</h3>
+              <ul className="mt-1">{page.builtins.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
+            </>
+          )}
+
           <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Library</h3>
           {!page.libraryReady ? (
             <p className="mt-1 px-2 text-[12px] text-ink-secondary">The library is still loading.</p>
           ) : !searching ? (
             <p className="mt-1 px-2 text-[12px] text-ink-secondary">Search, or choose a topic.</p>
           ) : page.library.length ? (
-            <ul className="mt-1">{page.library.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
+            <ul className="mt-1">{page.library.map((skill) => <SkillRow key={skill.ref} skill={skill} browsing onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
           ) : (
             <p className="mt-1 px-2 text-[12px] text-ink-secondary">No skills match “{query.trim() || topicLabel(category)}”.</p>
           )}

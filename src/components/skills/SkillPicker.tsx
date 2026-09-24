@@ -21,7 +21,7 @@ function Row({ skill, botId, onOpen }: { skill: SkillSummary; botId: string; onO
           <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
         </div>
-        {added ? <span className="shrink-0 text-[11.5px] text-success">Added</span> : <VerdictBadge verdict={skill.verdict} builtIn={skill.kind === "library"} className="shrink-0" />}
+        {added ? <span className="shrink-0 text-[11.5px] text-success">Added</span> : <VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} className="shrink-0" />}
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
       </button>
     </li>

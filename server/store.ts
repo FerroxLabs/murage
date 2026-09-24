@@ -698,6 +698,10 @@ export interface BotRecord {
    * start false — a shared persona must not reach the user's Gmail on
    * turn one. */
   composio?: boolean;
+  /** Built-in skills attached to this bot that the owner switched off or on.
+   * Only the workspace Chief has one today ("chief-of-staff", the Chief of
+   * Staff guide); absent means on (skill-library.ts attachedSkillOn). */
+  builtinSkills?: { "chief-of-staff"?: boolean };
   /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
   connectedAppAccess?: ConnectedAppAccess;
   /** Monotonic identity fence; returning to an old role never revives requests. */

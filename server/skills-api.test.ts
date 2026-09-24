@@ -150,6 +150,30 @@ it("editing a built-in skill edits the owner's own copy and leaves the built-in 
   expect((await api("PUT", `/api/skills/library/${slug}`, { description: "x", body: "y" })).status).toBe(404);
 }, 60_000);
 
+it("the Chief of Staff guide is a built-in for the workspace Chief only: listed, readable, on by default, and switched per Chief", async () => {
+  const chief = (await api("POST", "/api/bots", { name: "Chief", modelSelection: { instanceId: "verification", model: "fake" } })).body.bot;
+  const other = (await api("POST", "/api/bots", { name: "Helper", modelSelection: { instanceId: "verification", model: "fake" } })).body.bot;
+  const elected = await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+  expect(elected.status).toBe(200);
+
+  const list = await api("GET", "/api/skills");
+  const guide = list.body.builtins.find((s: { ref: string }) => s.ref === "builtin:chief-of-staff");
+  expect(guide).toMatchObject({ name: "Chief of Staff guide", kind: "builtin", source: "Built-in", usedBy: [{ botId: chief.id, botName: "Chief", enabled: true }] });
+
+  const read = await api("GET", "/api/skills/builtin:chief-of-staff");
+  expect(read.body.bots).toEqual([{ botId: chief.id, botName: "Chief", canUseSkills: true, enabled: true }]);
+  expect(read.body.text).toContain("morning brief");
+
+  expect(await api("PUT", `/api/skills/builtin:chief-of-staff/bots/${other.id}`, { on: true })).toMatchObject({ status: 409, body: { code: "not-chief" } });
+  const off = await api("PUT", `/api/skills/builtin:chief-of-staff/bots/${chief.id}`, { on: false });
+  expect(off.body.skill.usedBy).toEqual([{ botId: chief.id, botName: "Chief", enabled: false }]);
+  const bots = (await api("GET", "/api/bots")).body;
+  const record = (Array.isArray(bots) ? bots : bots.bots).find((b: { id: string }) => b.id === chief.id);
+  expect(record.builtinSkills).toEqual({ "chief-of-staff": false });
+  await api("PUT", `/api/skills/builtin:chief-of-staff/bots/${chief.id}`, { on: true });
+  expect((await api("GET", "/api/skills/builtin:chief-of-staff")).body.bots[0].enabled).toBe(true);
+}, 60_000);
+
 it("is refused to anything but the desktop", async () => {
   expect((await api("GET", "/api/skills", undefined, { "content-type": "application/json" })).status).toBe(404);
 });

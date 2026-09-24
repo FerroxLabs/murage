@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { BRIEF_SECTIONS } from "../shared/brief.ts";
-import { loadBundledSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { attachedSkillsFor, loadBundledSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
 
 const SKILLS_ROOT = join(process.cwd(), "skills");
 const bundled = loadBundledSkills(SKILLS_ROOT);
@@ -93,57 +93,40 @@ describe("the Chief of Staff ships as a bundled skill", () => {
   });
 });
 
-describe("it mounts on the work the Chief is actually given", () => {
-  /** The morning brief routine, read out of the server source rather than
-   *  imported: the template lives in server/index.ts, which boots a server on
-   *  import. Comments stripped for the same reason as above. */
-  const routinePrompts = () => {
+describe("it is attached to the workspace Chief, not to what a message says", () => {
+  const workspaceChief = { chiefOfStaff: true, chiefScope: "workspace" as const };
+  const ids = (skills: Array<{ manifest: { id: string } }>) => skills.map((skill) => skill.manifest.id);
+
+  it("is on for the Chief by default, every turn, whatever the owner says", () => {
+    expect(chief!.manifest.attachedTo).toBe("workspace-chief");
+    for (const say of [...firstRunOffers, "write me a poem about the sea", "hi"]) {
+      expect(ids(attachedSkillsFor(workspaceChief, bundled)), `the Chief lost the guide on "${say}"`).toEqual(["chief-of-staff"]);
+    }
+  });
+
+  it("is not given to the Chief once the owner switches it off", () => {
+    expect(attachedSkillsFor({ ...workspaceChief, builtinSkills: { "chief-of-staff": false } }, bundled)).toEqual([]);
+    expect(ids(attachedSkillsFor({ ...workspaceChief, builtinSkills: { "chief-of-staff": true } }, bundled))).toEqual(["chief-of-staff"]);
+  });
+
+  it("is never given to any other bot, a team leader included", () => {
+    for (const bot of [{}, { chiefOfStaff: true }, { chiefOfStaff: false, chiefScope: "workspace" as const }]) {
+      expect(attachedSkillsFor(bot, bundled)).toEqual([]);
+    }
+  });
+
+  it("no longer mounts on trigger words for anyone, even from a catalogue frozen before it was attached", () => {
+    const frozen = bundled.map((skill) => ({ ...skill, manifest: { ...skill.manifest, attachedTo: undefined } }));
+    for (const say of ["Go through my calendar", "Sort the inbox", "Keep an eye on", ...firstRunOffers]) {
+      expect(ids(selectBundledSkills(say, [], bundled))).not.toContain("chief-of-staff");
+      expect(ids(selectBundledSkills(say, [], frozen))).not.toContain("chief-of-staff");
+    }
+    expect(ids(attachedSkillsFor(workspaceChief, frozen))).toEqual(["chief-of-staff"]);
+  });
+
+  it("is added on both turn paths in the server, for the turn's own bot", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    const at = source.indexOf("const SETUP_ROUTINE_TEMPLATES = {");
-    expect(at, "the first run's routine templates have moved or been renamed").toBeGreaterThan(-1);
-    const block = source.slice(at, source.indexOf("\n} as const;", at));
-    return block
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/.*$/gm, "")
-      .split("\n")
-      .filter((line) => /^\s*\+?\s*["`]/.test(line))
-      .join(" ");
-  };
-
-  it("mounts on the morning brief, the inbox sort and the watch the first run creates", () => {
-    const prompts = routinePrompts();
-    for (const phrase of ["Go through my calendar", "Sort the inbox", "Keep an eye on"]) {
-      expect(prompts, `the routine templates no longer say "${phrase}"`).toContain(phrase);
-      expect(
-        selectBundledSkills(phrase, [], bundled).map((skill) => skill.manifest.id),
-        `the Chief of Staff skill does not mount on "${phrase}"`,
-      ).toContain("chief-of-staff");
-    }
-  });
-
-  it("mounts on the jobs the closing card offers in the owner's own words", () => {
-    expect(firstRunOffers.length, "the closing card offers nothing").toBeGreaterThan(3);
-    const mounted = firstRunOffers.filter((say) => selectBundledSkills(say, [], bundled)
-      .some((skill) => skill.manifest.id === "chief-of-staff"));
-    expect(mounted).toEqual([
-      "Help me run my business.",
-      "I would like you to look into something for me.",
-      "Organise my day for me.",
-    ]);
-  });
-
-  it("stays out of work that is not the Chief's", () => {
-    for (const text of [
-      "write me a poem about the sea",
-      "fix the type error in this file",
-      "open Uber on my Android",
-      "/create-verification-skill for my notes app",
-    ]) {
-      expect(
-        selectBundledSkills(text, ["skillAuthoring", "phoneMcp"], bundled).map((skill) => skill.manifest.id),
-        `the Chief of Staff skill mounts on "${text}"`,
-      ).not.toContain("chief-of-staff");
-    }
+    expect(source.match(/attachedSkillsFor\(bot, /g)?.length).toBe(2);
   });
 });
 

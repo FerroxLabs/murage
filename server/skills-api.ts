@@ -12,17 +12,30 @@ import { z } from "zod";
 
 import { deleteCollectionSkill, duplicateIntoCollection, getCollectionSkill, importCollectionSkill, listCollection, updateCollectionSkill, type CollectionSkill } from "./skill-collection.ts";
 import { fetchSkillFromLink, readSkillZip } from "./skill-import-sources.ts";
+import { attachedSkillOn, isChiefForAttached, loadBundledSkills, type BundledSkill } from "./skill-library.ts";
+import { scanSkill } from "./skill-guard/scan.ts";
 import { browseFacets, searchSkills, skillIndexStats, skillsByFacet } from "./skill-search.ts";
 import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
 import type { SkillScan, SkillVerdict } from "./skill-guard/types.ts";
 
-export interface SkillsApiBot { id: string; name: string; canUseSkills: boolean }
+export interface SkillsApiBot {
+  id: string;
+  name: string;
+  canUseSkills: boolean;
+  /** The workspace Chief of Staff and its built-in switches, for the
+   *  built-ins attached to it (skill-library.ts attachedSkillOn). */
+  chiefOfStaff?: boolean;
+  chiefScope?: "workspace";
+  builtinSkills?: Partial<Record<string, boolean>>;
+}
 export interface SkillsApiRequest {
   method: string;
   path: string;
   url: URL;
   readBody: () => Promise<unknown>;
   bots: () => SkillsApiBot[];
+  /** Persist a built-in's switch on a bot record. */
+  setBuiltinSkill?: (botId: string, id: string, on: boolean) => void;
   fetcher?: typeof fetch;
 }
 export type SkillsApiResponse = { status: number; body: unknown };
@@ -31,13 +44,14 @@ interface SkillSummary {
   ref: string;
   name: string;
   description: string;
-  kind: "collection" | "library";
+  kind: "collection" | "library" | "builtin";
   verdict: SkillVerdict;
   source: string;
   usedBy: Array<{ botId: string; botName: string; enabled: boolean }>;
 }
 
 const LIBRARY = "library:";
+const BUILTIN = "builtin:";
 const COLLECTION = "collection:";
 const SOURCE_LABEL: Record<Exclude<CollectionSkill["source"]["kind"], "copy">, string> = { file: "Imported from a file", folder: "Imported from a folder", zip: "Imported from a zip", link: "Imported from a link" };
 /** Where one of the owner's skills came from, in words. */
@@ -79,6 +93,34 @@ function libraryScan(id: string): { text: string; description: string; scan: Ski
   return { text: checked.prepared.files[0]!.content, description: checked.prepared.parsed.description, scan: checked.prepared.scan };
 }
 
+/** The built-ins that belong to one bot (today the Chief of Staff guide),
+ *  in the owner's words. Their instructions ship in skills/. */
+const BUILTIN_WORDS: Record<string, { name: string; description: string }> = {
+  "chief-of-staff": { name: "Chief of Staff guide", description: "How your Chief of Staff runs the morning brief, your day, your notes, research and the business." },
+};
+let builtinCache: { skills: Map<string, { skill: BundledSkill; scan: SkillScan }> } | null = null;
+function builtin(id: string): { skill: BundledSkill; scan: SkillScan } | null {
+  if (!builtinCache) {
+    const skills = new Map<string, { skill: BundledSkill; scan: SkillScan }>();
+    for (const skill of loadBundledSkills()) {
+      if (!BUILTIN_WORDS[skill.manifest.id]) continue;
+      const scan = scanSkill({ name: skill.manifest.id, description: skill.manifest.description, triggerTerms: [], files: [{ path: "SKILL.md", content: skill.instructions }] });
+      skills.set(skill.manifest.id, { skill, scan });
+    }
+    builtinCache = { skills };
+  }
+  return builtinCache.skills.get(id) ?? null;
+}
+const isChief = (bot: SkillsApiBot) => isChiefForAttached(bot);
+
+function builtinSummary(id: string, bots: SkillsApiBot[]): SkillSummary | null {
+  const found = builtin(id);
+  if (!found) return null;
+  const words = BUILTIN_WORDS[id]!;
+  const usedBy = bots.filter(isChief).map((bot) => ({ botId: bot.id, botName: bot.name, enabled: attachedSkillOn(bot, id) }));
+  return { ref: `${BUILTIN}${id}`, name: words.name, description: words.description, kind: "builtin", verdict: found.scan.verdict, source: "Built-in", usedBy };
+}
+
 /** Which bots have this skill installed, and whether it is on. */
 function usedBy(ref: string, bots: SkillsApiBot[]): SkillSummary["usedBy"] {
   const matches = (listing: SkillListing) =>
@@ -115,11 +157,11 @@ function libraryInUse(bots: SkillsApiBot[]): Array<{ id: string; name: string; d
   return [...seen.values()];
 }
 
-const refPattern = /^(collection|library):([a-z0-9][a-z0-9-]{0,127})$/;
-function parseRef(raw: string): { kind: "collection" | "library"; name: string; ref: string } | null {
+const refPattern = /^(collection|library|builtin):([a-z0-9][a-z0-9-]{0,127})$/;
+function parseRef(raw: string): { kind: "collection" | "library" | "builtin"; name: string; ref: string } | null {
   const match = refPattern.exec(decodeURIComponent(raw));
   if (!match || !isSkillName(match[2]!)) return null;
-  return { kind: match[1] as "collection" | "library", name: match[2]!, ref: `${match[1]}:${match[2]}` };
+  return { kind: match[1] as "collection" | "library" | "builtin", name: match[2]!, ref: `${match[1]}:${match[2]}` };
 }
 
 const importBody = z.union([
@@ -148,6 +190,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       body: {
         yours: [...yoursCollection, ...yoursLibrary].sort((a, b) => a.name.localeCompare(b.name)),
         library: hits.map((hit) => librarySummary(hit, bots)).filter((s) => !yoursRefs.has(s.ref)),
+        builtins: category ? [] : Object.keys(BUILTIN_WORDS).map((id) => builtinSummary(id, bots)).filter((s): s is SkillSummary => Boolean(s) && matchesQuery(s!)),
         categories: facets.slice(0, 12).map((facet) => ({ name: facet.term, count: facet.count })),
         libraryReady: stats.available,
       },
@@ -195,6 +238,11 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       files = skill.contents;
       original = { name: skill.name, displayName: skill.displayName || skill.name, description: skill.description };
+    } else if (ref.kind === "builtin") {
+      const found = builtin(ref.name);
+      if (!found) return { status: 404, body: { error: "No such skill." } };
+      files = [{ path: "SKILL.md", content: found.skill.instructions }];
+      original = { name: ref.name, displayName: BUILTIN_WORDS[ref.name]!.name, description: BUILTIN_WORDS[ref.name]!.description };
     } else {
       const library = libraryScan(ref.name);
       if (!library) return { status: 404, body: { error: "No such skill." } };
@@ -263,6 +311,13 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if (!bot) return { status: 404, body: { error: "No such bot." } };
     const input = z.object({ on: z.boolean(), acknowledged: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().safeParse(await request.readBody());
     if (!input.success) return { status: 400, body: { error: "on must be true or false" } };
+    if (ref.kind === "builtin") {
+      if (!builtin(ref.name)) return { status: 404, body: { error: "No such skill." } };
+      if (!isChief(bot)) return { status: 409, body: { error: "Only your Chief of Staff uses this guide.", code: "not-chief" } };
+      if (!request.setBuiltinSkill) return { status: 404, body: { error: "no such route" } };
+      request.setBuiltinSkill(bot.id, ref.name, input.data.on);
+      return { status: 200, body: { skill: builtinSummary(ref.name, request.bots()) } };
+    }
     const existing = listSkills(bot.id).find((listing) => listing.name === ref.name);
     const ours = existing && (ref.kind === "collection" ? existing.source === ref.ref : existing.source.startsWith(`${ref.ref}@`));
     if (!input.data.on) {
@@ -309,6 +364,13 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       const summary = collectionSummary(skill, bots);
       return { status: 200, body: { ...summary, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) } };
+    }
+    if (ref.kind === "builtin") {
+      const found = builtin(ref.name);
+      const summary = builtinSummary(ref.name, bots);
+      if (!found || !summary) return { status: 404, body: { error: "No such skill." } };
+      const chiefs = bots.filter(isChief).map((bot) => ({ botId: bot.id, botName: bot.name, canUseSkills: true, enabled: attachedSkillOn(bot, ref.name) }));
+      return { status: 200, body: { ...summary, text: found.skill.instructions, files: ["SKILL.md"], skipped: [], scan: found.scan, bots: chiefs } };
     }
     const library = libraryScan(ref.name);
     if (!library) return { status: 404, body: { error: "No such skill." } };

@@ -8,6 +8,9 @@ import { cn } from "@/lib/cn";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { SkillPicker } from "./skills/SkillPicker";
+import { SkillReader } from "./skills/SkillReader";
+import { ChiefGuideCard } from "./skills/ChiefGuideCard";
+import { CHIEF_GUIDE_REF } from "@/lib/skills-api";
 import { Switch } from "./SettingsPrimitives";
 
 /** Mirrors SkillListing in server/skills.ts — the exact shape
@@ -703,6 +706,10 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
   const canEditHistory = useDesktopSurface() === true;
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(SKILL_PAGE_SIZE);
+  // The Chief of Staff guide belongs to the workspace Chief only.
+  const isChief = bot.chiefOfStaff === true && bot.chiefScope === "workspace";
+  const [readingGuide, setReadingGuide] = useState(false);
+  useEffect(() => setReadingGuide(false), [bot.id]);
 
   // One store per bot: switching bots builds a new one, so a slow answer for
   // the bot you left can never land in the panel for the bot you are on.
@@ -724,7 +731,9 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
       <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
         What {bot.name} knows how to do. Open one to read its instructions before you switch it on.
       </div>
-      {adding ? (
+      {isChief && readingGuide ? (
+        <SkillReader skillRef={CHIEF_GUIDE_REF} mode={{ kind: "bot", botId: bot.id }} onBack={() => setReadingGuide(false)} />
+      ) : adding ? (
         <SkillPicker
           botId={bot.id}
           botName={bot.name}
@@ -735,6 +744,8 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
           }}
         />
       ) : (
+      <>
+      {isChief && !snapshot.viewing && <ChiefGuideCard botId={bot.id} onRead={() => setReadingGuide(true)} />}
       <SkillsBody
         botName={bot.name}
         phase={snapshot.phase}
@@ -778,6 +789,7 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
         // and it arrives switched on" — and the row says so on the control.
         onRemove={(skill) => void store.remove(skill)}
       />
+      </>
       )}
       {snapshot.viewing&&<SkillVersionHistory botId={bot.id} name={snapshot.viewing.name} threadId={bot.threadId} canEdit={canEditHistory} onRestored={()=>{
         void store.load({silent:true});

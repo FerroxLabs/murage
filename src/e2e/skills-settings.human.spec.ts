@@ -35,7 +35,7 @@ test.beforeAll(async () => {
       load(id) {
         // The real api() contract: JSON in and out, and a refusal carries its status and body.
         if (id === "\0skills-store") return "export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStore(){return {state:{config:{},botSettingsIntent:null},dispatch(){}};}";
-        if (id === "\0bot-skills") return "import React from 'react';import {createRoot} from 'react-dom/client';import {BotSkillsPanel} from '/src/components/BotSkillsPanel.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';createRoot(document.getElementById('root')).render(React.createElement(BotSkillsPanel,{bot:{id:q.get('id'),name:q.get('name'),threadId:q.get('thread')}}));";
+        if (id === "\0bot-skills") return "import React from 'react';import {createRoot} from 'react-dom/client';import {BotSkillsPanel} from '/src/components/BotSkillsPanel.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';createRoot(document.getElementById('root')).render(React.createElement(BotSkillsPanel,{bot:{id:q.get('id'),name:q.get('name'),threadId:q.get('thread'),...(q.get('chief')==='1'?{chiefOfStaff:true,chiefScope:'workspace'}:{})}}));";
         if (id !== "\0skills-settings") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {SkillsSettings} from '/src/components/skills/SkillsSettings.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';createRoot(document.getElementById('root')).render(React.createElement(SkillsSettings));";
       },
@@ -73,6 +73,8 @@ test("a library skill can be found and read, and says what it tells the bot", as
   await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
   await expect(page.getByText("Search, or choose a topic.")).toBeVisible();
   await page.getByLabel("Search skills").fill("invoice");
+  // wait for the search, not the lists it replaces
+  await expect(page.getByRole("heading", { name: "Built-in" })).toHaveCount(0);
   const first = page.getByRole("list").last().getByRole("button").first();
   await expect(first).toBeVisible();
   await first.click();
@@ -205,4 +207,32 @@ test("Add a skill works inside the bot's own window, with nothing to close", asy
   await page.getByRole("button", { name: "Sable's skills" }).click();
   await expect(page.getByRole("button", { name: "Add a skill to Sable" })).toBeVisible();
   await expect(page.getByRole("switch", { checked: true }).first()).toBeVisible();
+});
+
+test("the Chief of Staff guide sits at the top of the Chief's skills, switched on, and is listed as Built-in", async ({ page }, info) => {
+  const created = await page.request.post(origin + "/api/bots", { data: { name: "Juniper", modelSelection: { instanceId: "verification", model: "fake" } } });
+  const chief = (await created.json()).bot as { id: string; name: string; threadId: string };
+  expect((await page.request.patch(origin + `/api/bots/${chief.id}`, { data: { chiefOfStaff: true, chiefScope: "workspace" } })).ok()).toBe(true);
+
+  await page.goto(`${origin}/__botskills?id=${chief.id}&name=Juniper&thread=${chief.threadId}&chief=1`);
+  const card = page.getByRole("region", { name: "Chief of Staff guide" });
+  await expect(card).toBeVisible();
+  const toggle = card.getByRole("switch");
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await page.screenshot({ path: info.outputPath("chief-guide-card.png"), fullPage: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await card.getByRole("button", { name: "Read it" }).click();
+  await expect(page.getByText("What it tells the bot")).toBeVisible();
+  await page.getByRole("button", { name: "All skills" }).click();
+  await card.getByRole("switch").click();
+  await expect(card.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+
+  await page.goto(`${origin}/__botskills?id=${sable.id}&name=Sable&thread=${sable.threadId}`);
+  await expect(page.getByRole("button", { name: "Add a skill to Sable" })).toBeVisible();
+  await expect(page.getByText("Chief of Staff guide")).toHaveCount(0);
+
+  await page.goto(origin + "/__skills");
+  await expect(page.getByRole("button", { name: /Chief of Staff guide.*Used by Juniper/ })).toBeVisible();
+  await page.screenshot({ path: info.outputPath("settings-list.png"), fullPage: true });
 });

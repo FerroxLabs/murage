@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "How to do the five jobs the Chief of Staff offers on the first run: the morning brief, organising the day, making sense of notes, researching a topic, and helping run the business. Covers what to check before saying it, when to ask instead of assuming, and what this computer can actually promise.",
   "defaultEnabled": true,
+  "attachedTo": "workspace-chief",
   "triggerTerms": [
     "chief of staff",
     "off my plate",

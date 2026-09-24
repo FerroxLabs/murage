@@ -11,9 +11,9 @@ export interface SkillSummary {
   ref: string;
   name: string;
   description: string;
-  kind: "collection" | "library";
+  kind: "collection" | "library" | "builtin";
   verdict: SkillVerdict;
-  /** "Library", or where an imported skill came from. */
+  /** "Library", "Built-in", or where an imported skill came from. */
   source: string;
   usedBy: Array<{ botId: string; botName: string; enabled: boolean }>;
 }
@@ -25,7 +25,17 @@ export interface SkillDetail extends SkillSummary {
   /** Every bot, and whether this skill is on for it. */
   bots: Array<{ botId: string; botName: string; canUseSkills: boolean; enabled: boolean }>;
 }
-export interface SkillsPage { yours: SkillSummary[]; library: SkillSummary[]; categories: Array<{ name: string; count: number }>; libraryReady: boolean }
+export interface SkillsPage {
+  yours: SkillSummary[];
+  library: SkillSummary[];
+  /** Built-ins that belong to one bot, e.g. the Chief of Staff guide. */
+  builtins?: SkillSummary[];
+  categories: Array<{ name: string; count: number }>;
+  libraryReady: boolean;
+}
+
+/** The Chief of Staff guide: a built-in attached to the workspace Chief. */
+export const CHIEF_GUIDE_REF = "builtin:chief-of-staff";
 export type ImportInput =
   | { link: string; replace?: boolean }
   | { files: Array<{ path: string; content: string }>; kind: "file" | "folder"; label?: string; skipped?: string[]; replace?: boolean }

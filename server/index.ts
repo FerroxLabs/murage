@@ -433,7 +433,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { attachedSkillsFor, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
@@ -5297,14 +5297,16 @@ async function startTurn(
       const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
         createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
-      const selectedSkills = selectBundledSkills(
+      // The Chief of Staff guide rides every turn of the workspace Chief
+      // while it is switched on, and no other bot's (skill-library.ts).
+      const selectedSkills = [...selectBundledSkills(
         text,
         [
           ...(instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : []),
           ...(skillAuthoring ? ["skillAuthoring"] : []),
         ],
         pinnedProcedures.catalogue,
-      );
+      ), ...attachedSkillsFor(bot, pinnedProcedures.catalogue)];
       if (humanIsOwner && selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration();
       }
@@ -7111,11 +7113,11 @@ async function runGroupMemberTurn(
       instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
       skills,
     ),
-    selectBundledSkills(
+    [...selectBundledSkills(
       latestUser?.text ?? "",
       skillAuthoring ? ["skillAuthoring"] : [],
       skills,
-    ),
+    ), ...attachedSkillsFor(bot, skills)],
   );
   if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
     integrations.phone = phoneIntegration();
@@ -12259,8 +12261,12 @@ const server = createServer(async (req, res) => {
         readBody: () => readBody(req, 12 * 1024 * 1024),
         bots: () => store.bots.map(bot => {
           const driver = registry.get(bot.modelSelection.instanceId)?.driverKind;
-          return { id: bot.id, name: bot.name, canUseSkills: driver !== "grok" && driver !== "boxAgent" };
+          return { id: bot.id, name: bot.name, canUseSkills: driver !== "grok" && driver !== "boxAgent", chiefOfStaff: bot.chiefOfStaff, chiefScope: bot.chiefScope, builtinSkills: bot.builtinSkills };
         }),
+        setBuiltinSkill: (botId, id, on) => {
+          const bot = store.bot(botId);
+          if (bot && id === "chief-of-staff") store.patchBot(botId, { builtinSkills: { ...bot.builtinSkills, [id]: on } });
+        },
       });
       if (answer) return json(res, answer.status, answer.body);
     }
