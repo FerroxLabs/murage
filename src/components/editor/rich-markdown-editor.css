@@ -203,7 +203,6 @@
 .rme .ProseMirror h3 { font-size: 1.1em; font-weight: 600; line-height: 1.35; margin-top: 0.9em; }
 .rme .ProseMirror h4, .rme .ProseMirror h5, .rme .ProseMirror h6 { font-size: 1em; font-weight: 600; margin-top: 0.8em; }
 .rme .ProseMirror > :first-child { margin-top: 0; }
-.rme .ProseMirror p { margin: 0; }
 .rme .ProseMirror a { color: var(--color-accent-text); text-decoration: underline; text-underline-offset: 2px; }
 .rme .ProseMirror strong { font-weight: 650; }
 .rme .ProseMirror em { font-style: italic; }
@@ -226,8 +225,9 @@
   overflow-x: auto;
 }
 .rme .ProseMirror pre code { padding: 0; border: 0; background: transparent; font-size: inherit; }
-.rme .ProseMirror blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--color-accent); color: var(--color-ink-secondary); }
-.rme .ProseMirror ul, .rme .ProseMirror ol { margin: 0; padding-left: 1.5em; }
+.rme .ProseMirror blockquote { margin-left: 0; margin-right: 0; padding-left: 12px; border-left: 3px solid var(--color-accent); color: var(--color-ink-secondary); }
+/* No `margin` here: the sibling rule above spaces top-level blocks. */
+.rme .ProseMirror ul, .rme .ProseMirror ol { padding-left: 1.5em; }
 .rme .ProseMirror ul { list-style-type: disc; }
 .rme .ProseMirror ol { list-style-type: decimal; }
 .rme .ProseMirror li { margin: 0.2em 0; }
@@ -235,8 +235,8 @@
 .rme .ProseMirror hr { margin: 1.25em 0; border: 0; border-top: 1px solid var(--color-hairline); }
 
 /* Tables */
-.rme .ProseMirror .tableWrapper { margin: 0; overflow-x: auto; }
-.rme .ProseMirror table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; overflow: hidden; }
+.rme .ProseMirror .tableWrapper { overflow-x: auto; }
+.rme .ProseMirror table { width: 100%; border-collapse: collapse; table-layout: fixed; overflow: hidden; }
 .rme .ProseMirror td, .rme .ProseMirror th {
   position: relative;
   min-width: 1em;
