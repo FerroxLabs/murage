@@ -391,6 +391,10 @@ export async function createPermissionBroker(opts: {
   timeoutMs?: number;
   /** How long a question waits for the owner (default 30 min). */
   questionTimeoutMs?: number;
+  /** Read when a permission ask arrives: true for a routine run's turn,
+   * whose cards wait until answered or the turn stops instead of the
+   * timeoutMs deny (SendTurnInput.holdPermissionAsks). */
+  holdPermissionAsks?: () => boolean;
 }) {
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
   const questionTimeoutMs = questionTimeoutFor(opts.questionTimeoutMs);
@@ -502,14 +506,14 @@ export async function createPermissionBroker(opts: {
       // A question left unanswered gets an honest non-answer: Claude sees a
       // deny whose note says nobody answered, never a guess in the owner's
       // name. The card stays behind as Expired with "Send as a message".
-      const timer = setTimeout(
+      const timer = kind === "permission" && opts.holdPermissionAsks?.() ? undefined : setTimeout(
         () =>
           kind === "question"
             ? finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout")
             : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
         kind === "question" ? questionTimeoutMs : timeoutMs,
       );
-      timer.unref?.();
+      timer?.unref?.();
       pending.set(askId, { ask, finish });
       opts.onAsk(ask);
     };
@@ -773,6 +777,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * so that text is shown when the turn produced none of its own. */
       engineCommand?: boolean;
       answered?: boolean;
+      /** A routine run: its permission cards wait for the owner. */
+      holdPermissionAsks?: boolean;
     }
     interface Session {
       child: ReturnType<typeof spawnCli>;
@@ -1130,6 +1136,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           boundary: createAttemptBoundary(),
           submission: null,
           engineCommand: Boolean(turn.engineCommand),
+          holdPermissionAsks: turn.holdPermissionAsks === true,
         };
         live.turn = liveTurn;
         active.set(threadId, activeTurn(turnId, live.broker, () => {
@@ -1200,6 +1207,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           broker = await createPermissionBroker({
             socketPaths: brokerSocketCandidates(threadId),
             isActive: () => Boolean(sessions.get(threadId)?.turn),
+            holdPermissionAsks: () => sessions.get(threadId)?.turn?.holdPermissionAsks === true,
             questionTimeoutMs: config.questionTimeoutMs,
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
@@ -1295,6 +1303,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         boundary: createAttemptBoundary(),
         submission: null,
         engineCommand: Boolean(turn.engineCommand),
+        holdPermissionAsks: turn.holdPermissionAsks === true,
       };
       const session: Session = {
         child,

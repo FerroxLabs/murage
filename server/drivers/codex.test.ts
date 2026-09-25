@@ -205,6 +205,24 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: true }]);
   });
 
+  it("a turn that holds its permission asks never arms the 15-minute deny (routine runs)", async () => {
+    await create({ mode: "parent-approval" });
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+    const originalTimeout = globalThis.setTimeout;
+    const armed: number[] = [];
+    const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
+      if (delay === 15 * 60_000) armed.push(delay);
+      return originalTimeout(callback, delay, ...args);
+    }) as typeof setTimeout);
+    try {
+      await instance.adapter.sendTurn({ threadId: "held-approval", text: "one parent action", holdPermissionAsks: true });
+      const ask = await recorder.until((e) => e.type === "request.opened");
+      expect(armed).toEqual([]);
+      await instance.adapter.respondToRequest("held-approval", String(ask.requestId), { behavior: "allow" });
+      await recorder.until((e) => e.type === "turn.completed");
+    } finally { timerSpy.mockRestore(); }
+  });
+
   it("runs the handshake and normalizes a full turn", async () => {
     await create();
     const dump = join(scratch, "dump.json");

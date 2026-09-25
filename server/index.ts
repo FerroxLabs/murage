@@ -6295,6 +6295,11 @@ async function startTurn(
         // the engine must send its asks here even when its own instance is
         // set to skip them; Murage answers the rest at once.
         ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
+        // A scheduled or manual routine run: its cards wait for the owner
+        // instead of the engine's 15-minute deny. At its run limit the run
+        // ends as waiting on you (RoutineManager.enforceRunLimits) and the
+        // card still carries the run on when answered.
+        ...(routineLevel ? { holdPermissionAsks: true as const } : {}),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {

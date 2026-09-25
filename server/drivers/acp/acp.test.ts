@@ -934,10 +934,66 @@ createInterface({ input: process.stdin }).on("line", line => {
         if (scenario === "deny") {
           expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } });
           expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+        } else if (scenario === "timeout") {
+          // An unanswered card is not an engine failure: no error card (whose
+          // copy points at Provider settings), and Fuigo is told to carry on
+          // without the action instead of treating the deny as a Stop.
+          expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped." } });
+          expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "timeout" });
+          expect(recorder.events.filter(event => event.type === "runtime.error" && /answered/i.test(event.message))).toEqual([]);
         } else expect(observed.decision).toEqual(scenario === "reject-always" ? { outcome: { outcome: "cancelled" } } : expected);
       } finally { timerSpy?.mockRestore(); }
     },
   );
+
+  it("a turn that holds its permission asks keeps the card open past 15 minutes (routine runs)", async () => {
+    const dump = join(scratch, "hold-asks.json");
+    const cli = join(scratch, "hold-asks-cli.mjs");
+    writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+const send = message => process.stdout.write(JSON.stringify(message) + "\\n");
+let promptId;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === "permission" && message.result) {
+    writeFileSync(${JSON.stringify(dump)}, JSON.stringify(message.result));
+    send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+  } else if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "synthetic" } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id;
+    send({ jsonrpc: "2.0", id: "permission", method: "session/request_permission", params: {
+      toolCall: { kind: "execute", title: "synthetic write" },
+      options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }]
+    } });
+  }
+});
+`);
+    chmodSync(cli, 0o755);
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined });
+    instance = await driver.create({ instanceId: "hold-test", displayName: "Hold Test", environment: {}, enabled: true, config: { cli, fullAuto: false } });
+    recorder = recordEvents(instance.adapter);
+    // The production deadline would fire within 100 ms here; a held ask must
+    // never arm it.
+    const originalTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
+      if (delay === 15 * 60_000) delays.push(delay);
+      return originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args);
+    }) as typeof setTimeout);
+    try {
+      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go", holdPermissionAsks: true });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      await new Promise(resolve => originalTimeout(resolve, 400));
+      expect(delays).toEqual([]);
+      expect(recorder.events.some(event => event.type === "request.resolved")).toBe(false);
+      await instance.adapter.respondToRequest("hold-wire", (opened as any).requestId, { behavior: "allow" });
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ behavior: "allow", source: "user" });
+      await recorder.until(event => event.type === "turn.completed");
+      expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
+    } finally { timerSpy.mockRestore(); }
+  });
 
   it("never lets fullAuto answer a question tool routed through request_permission (ASK1)", async () => {
     process.env.FAKE_ACP_MODE = "question-tool";
