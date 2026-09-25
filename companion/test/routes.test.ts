@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, type Surface } from "../src/routes.ts";
+import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -531,5 +531,41 @@ describe("a call reaches the browser door", () => {
     ] as const) {
       expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
     }
+  });
+});
+
+describe("the Inbox reaches the browser door", () => {
+  it("allows the list and the read/snooze/clear marks to a signed-in browser", () => {
+    expect(askBrowser("GET", "/api/inbox")).toBeNull();
+    expect(askBrowser("POST", "/api/inbox/state")).toBeNull();
+  });
+
+  it("sends a browser that has not signed in to /enter", () => {
+    expect(askBrowser("GET", "/api/inbox", false)).toEqual({ status: 401, error: "sign in", signIn: "/enter" });
+  });
+
+  it("opens exactly two routes, not a family", () => {
+    for (const [method, path] of [
+      ["POST", "/api/inbox"],
+      ["GET", "/api/inbox/state"],
+      ["DELETE", "/api/inbox/state"],
+      ["GET", "/api/inbox/state/extra"],
+      ["GET", "/api/inboxes"],
+      ["GET", "/api/inbox/../config"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+
+  it("stays off the device door, which the new app does not use", () => {
+    expect(ask("GET", "/api/inbox")).not.toBeNull();
+    expect(ask("POST", "/api/inbox/state")).not.toBeNull();
+  });
+
+  it("names the routes that carry the launch proof, and only those", () => {
+    expect(isInboxRoute("GET", "/api/inbox")).toBe(true);
+    expect(isInboxRoute("POST", "/api/inbox/state")).toBe(true);
+    expect(isInboxRoute("POST", "/api/inbox")).toBe(false);
+    expect(isInboxRoute("GET", "/api/bots")).toBe(false);
   });
 });

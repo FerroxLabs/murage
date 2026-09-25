@@ -63,6 +63,14 @@ export function isCloudDesktopJoin(method: string, path: string): boolean {
   return method === CLOUD_DESKTOP_JOIN_ROUTE.method && CLOUD_DESKTOP_JOIN_ROUTE.path.test(path);
 }
 
+/** The two Inbox routes. The harness scopes them to the threads a companion
+ * can see, and only believes the companion is asking when the private launch
+ * proof comes with the request — so the browser door adds its own proof to
+ * exactly these, alongside the cloud-desktop join (`browser.ts`). */
+export function isInboxRoute(method: string, path: string): boolean {
+  return (method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state");
+}
+
 /** The two routine routes that can carry a `runOn` field.
  *
  * Creating or amending a routine is an ordinary thing to do from a phone, but
@@ -338,6 +346,13 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
+
+  // The Inbox: what is waiting on you, and read, snooze and clear marks. The
+  // harness hands a proven companion only the threads its sidebar shows, and
+  // a mark can only find an item inside that list (server/inbox-access.ts).
+  // Answering stays on /respond above; a mark never answers anything.
+  { method: "GET", path: /^\/api\/inbox$/ },
+  { method: "POST", path: /^\/api\/inbox\/state$/ },
 
   // attachments and share-sheet documents
   { method: "POST", path: /^\/api\/attachments$/ },

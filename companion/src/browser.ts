@@ -31,7 +31,7 @@ import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders,
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
+import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isInboxRoute, isRoutineWrite } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
@@ -1542,8 +1542,13 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         error: "cloud desktop access is off for this device — enable it in Murage → Settings → Phone",
       });
     }
-    if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
-      return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
+    const carriesProof = isCloudDesktopJoin(method, path) || isInboxRoute(method, path);
+    if (carriesProof && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+      return sendJson(res, 503, {
+        error: isInboxRoute(method, path)
+          ? "the Inbox requires Murage and its companion to be started together by the desktop app or murage start"
+          : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
+      });
     }
 
     // What this browser can decode, decided once. `forwardedHeaders` never
@@ -1563,7 +1568,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           method,
           headers: {
             ...forwardedHeaders(req, body),
-            ...(isCloudDesktopJoin(method, path) ? { "x-murage-companion-token": options.companionToken! } : {}),
+            ...(carriesProof ? { "x-murage-companion-token": options.companionToken! } : {}),
           },
         },
         (harness) => {
