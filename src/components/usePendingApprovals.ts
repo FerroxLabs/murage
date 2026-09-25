@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { signedOutEngineRows } from "@/lib/signed-out-engines";
 import { useSetupView } from "./FirstRunChrome";
+import { refreshThreadSnoozes, setQuestionThreads } from "@/lib/thread-attention";
 
 /** A snapshot of canonical cards, never notification history. Failed reads retain
  * the last count; reconnect and foregrounding request a fresh snapshot. */
@@ -22,7 +23,10 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
       running = true;
       try {
         const result = await api("/api/inbox?view=decisions&pageSize=1", { signal: controller.signal });
-        if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); }
+        if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); setQuestionThreads(result.questionThreads); }
+        // The same beat reads conversation snoozes, and that read is what
+        // wakes a snooze whose time has come (server/thread-snooze.ts).
+        if (!disposed) await refreshThreadSnoozes(api, controller.signal).catch(() => undefined);
       } catch { if (!disposed) setStale(true); }
       finally { running = false; }
     };
