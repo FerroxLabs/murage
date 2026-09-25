@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
@@ -174,6 +175,31 @@ export function owedWaitingLine(item: InboxItem, now: number): string {
   return `Waiting ${waited} for your answer.`;
 }
 
+/** "3 items" / "3 items, 1 unread". The line that said "While you were away:
+ *  0 unread on this page. 0 matching items." read like a log, and it spoke
+ *  even when there was nothing to say. Nothing to count says nothing. */
+export function inboxTally(total: number, unread: number): string {
+  if (total <= 0) return "";
+  return `${total} ${total === 1 ? "item" : "items"}${unread > 0 ? `, ${unread} unread` : ""}`;
+}
+
+/** "Sep 18, 1:01 PM". The seconds and the full year said nothing a person
+ *  uses, and made every card's first line the longest thing on it. */
+const shortWhen = (at: number) => new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+const sectionHeading = "text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary";
+
+function InboxSection({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }) {
+  const id = `inbox-section-${label.toLowerCase().replaceAll(/[^a-z]+/g, "-")}`;
+  return <section aria-labelledby={id} className="mt-5 first:mt-0">
+    <div className="mb-2 flex min-h-8 flex-wrap items-center justify-between gap-2">
+      <h2 id={id} className={sectionHeading}>{label}</h2>
+      {aside && <div className="flex flex-wrap items-center gap-2">{aside}</div>}
+    </div>
+    {children}
+  </section>;
+}
+
 export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
@@ -181,19 +207,35 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   const [page, setPage] = useState(0);
   const [includeSnoozed, setIncludeSnoozed] = useState(false);
   const [result, setResult] = useState<InboxPage | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // TWO KINDS OF BUSY, BECAUSE ONE MADE THE INBOX UNUSABLE.
+  //
+  // Needs you re-reads itself every five seconds, and every read used to set
+  // the same `busy` a change sets. So for part of every five seconds each
+  // button was disabled and its click thrown away ("I don't use Qwen" did
+  // nothing, "Dismiss all" did nothing, one at a time sometimes worked), and
+  // an "Updating Inbox…" line appeared above the list and pushed it down, so
+  // the whole page jumped on the beat. A read now changes nothing on screen
+  // until it has an answer; only a change the person made holds the buttons.
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  // What the person has already answered here: item ids, and `engine:<id>`.
+  // Hidden the moment they click, so the row goes when they say so and not
+  // when the next read happens to land, and a read already in flight when
+  // they clicked cannot bring it back. Put back only if the change failed.
+  const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   const changing = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
-    setBusy(true); setError(null);
+    setLoading(true);
     const params = new URLSearchParams({ view, query, page: String(page), pageSize: "25", includeSnoozed: String(includeSnoozed) });
     void api(`/api/inbox?${params}`, { signal: controller.signal }).then(value => {
-      if (!controller.signal.aborted) setResult(value as InboxPage);
+      if (!controller.signal.aborted) { setResult(value as InboxPage); setReadError(null); }
     }).catch(reason => {
-      if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "Inbox could not load."); }
-    }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
+      if (!controller.signal.aborted) setReadError(reason instanceof Error ? reason.message : "Inbox could not load.");
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [view, query, page, includeSnoozed, revision, refreshKey]);
 
@@ -203,66 +245,56 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     return () => window.clearInterval(timer);
   }, [view]);
 
-  const update = async (item: InboxItem, change: Omit<InboxStateUpdate, "id" | "version">) => {
-    if (changing.current || busy) return;
-    changing.current = true; setBusy(true); setError(null);
+  /** One change at a time. `hide` goes at once and comes back on failure. */
+  const act = async (hide: readonly string[], work: () => Promise<unknown>, failure: string) => {
+    if (changing.current) return;
+    changing.current = true; setSaving(true); setActionError(null);
+    if (hide.length) setGone(current => new Set([...current, ...hide]));
     try {
-      await api("/api/inbox/state", { method: "POST", body: JSON.stringify({ id: item.id, version: item.version, ...change }) });
+      await work();
       setRevision(current => current + 1);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Inbox state could not be saved.");
-      setBusy(false);
-    } finally { changing.current = false; }
+      if (hide.length) setGone(current => new Set([...current].filter(id => !hide.includes(id))));
+      setActionError(reason instanceof Error ? reason.message : failure);
+    } finally { changing.current = false; setSaving(false); }
   };
-  const chooseView = (next: InboxView) => { setView(next); setPage(0); };
+  const saveState = (item: InboxItem, change: Omit<InboxStateUpdate, "id" | "version">) =>
+    api("/api/inbox/state", { method: "POST", body: JSON.stringify({ id: item.id, version: item.version, ...change }) });
+  const update = (item: InboxItem, change: Omit<InboxStateUpdate, "id" | "version">) =>
+    act(change.cleared ? [item.id] : [], () => saveState(item, change), "Inbox state could not be saved.");
+  // A new list: what was on screen belongs to the old one, so it goes rather
+  // than sitting there under the new tab's name until the read lands.
+  const reset = () => { setResult(null); setPage(0); };
+  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); } };
   // Setting aside a request to connect an app: the same call as the card's
   // own "Not now" in the chat, one card or every one on this page.
-  const dismiss = async (items: InboxItem[]) => {
-    if (changing.current || busy || !items.length) return;
-    changing.current = true; setBusy(true); setError(null);
-    try {
-      for (const item of items) {
-        await api(`/api/bots/${encodeURIComponent(item.botId!)}/connector-cards/${encodeURIComponent(item.link.messageId)}/dismiss`, {
-          method: "POST", body: JSON.stringify({ threadId: item.link.threadId }),
-        });
-      }
-      setRevision(current => current + 1);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That request could not be dismissed.");
-      setBusy(false);
-    } finally { changing.current = false; }
-  };
+  const dismiss = (items: InboxItem[]) => act(items.map(item => item.id), async () => {
+    for (const item of items) {
+      await api(`/api/bots/${encodeURIComponent(item.botId!)}/connector-cards/${encodeURIComponent(item.link.messageId)}/dismiss`, {
+        method: "POST", body: JSON.stringify({ threadId: item.link.threadId }),
+      });
+    }
+  }, "That request could not be dismissed.");
   // Clearing what owes nothing (a failed sign-in, a missed request): gone
-  // until it happens again. One by one through `update`, all on the page here.
-  const clearAll = async (items: InboxItem[]) => {
-    if (changing.current || busy || !items.length) return;
-    changing.current = true; setBusy(true); setError(null);
-    try {
-      for (const item of items) await api("/api/inbox/state", { method: "POST", body: JSON.stringify({ id: item.id, version: item.version, cleared: true }) });
-      setRevision(current => current + 1);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Those items could not be cleared.");
-      setBusy(false);
-    } finally { changing.current = false; }
-  };
+  // until it happens again.
+  const clearAll = (items: InboxItem[]) => act(items.map(item => item.id), async () => {
+    for (const item of items) await saveState(item, { cleared: true });
+  }, "Those items could not be cleared.");
   // An engine the owner does not use: turned off, exactly as Settings >
   // Engines does, so it stops asking to be signed in to. Confirmed first,
   // because a bot set to that engine stops working with it.
   const [turningOff, setTurningOff] = useState<string | null>(null);
-  const turnOff = async (engineId: string) => {
-    if (changing.current) return;
-    changing.current = true; setBusy(true); setError(null);
-    try {
-      await api(`/api/instances/${encodeURIComponent(engineId)}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
-      setTurningOff(null);
-      refreshSetup();
-      setRevision(current => current + 1);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That engine could not be turned off.");
-      setBusy(false);
-    } finally { changing.current = false; }
+  const turnOff = (engineId: string) => act([`engine:${engineId}`], async () => {
+    await api(`/api/instances/${encodeURIComponent(engineId)}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
+    setTurningOff(null);
+    refreshSetup();
+  }, "That engine could not be turned off.");
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (engineId: string, command: string) => {
+    try { await navigator.clipboard.writeText(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
+    catch { setActionError("Copying did not work. Select the command and copy it yourself."); }
   };
-  const list = inboxCardItems(view, result?.items ?? []);
+  const list = inboxCardItems(view, result?.items ?? []).filter(item => !gone.has(item.id));
   const routineRows = result?.routines ?? [];
   const restoreRows = result?.restore ?? [];
   // A LIVE READING, NOT A MESSAGE. See src/lib/signed-out-engines.ts: the
@@ -270,11 +302,14 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   // component ever read it, so a login that expires on day two was reported
   // nowhere at all.
   const { view: setupView, refresh: refreshSetup } = useSetupView();
-  const signedOut = view === "connections" || view === "decisions" ? signedOutEngineRows(setupView) : [];
+  const signedOut = (view === "connections" || view === "decisions" ? signedOutEngineRows(setupView) : [])
+    .filter(engine => !gone.has(`engine:${engine.id}`));
   // The counts the tabs read, with the live rows folded in. Both numbers or
   // neither: the three segments sum to the umbrella.
   const shown = result ? withSignedOutEngines(result, signedOut) : null;
   const ownRows = [...restoreRows, ...signedOut];
+  const dismissible = list.filter(item => item.dismissible);
+  const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
@@ -298,9 +333,17 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     // `waitingKey` is the identity of everything `waiting` holds; depending on
     // the array itself would re-fetch on every render.
   }, [waitingKey]);
-  return <section aria-labelledby="inbox-title" className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
+  const owed = INBOX_OWED_VIEWS.includes(view);
+  const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
+  const sections = signedOut.length + restoreRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
-      <div className="flex gap-2"><button className={button} disabled={busy} onClick={() => setRevision(current => current + 1)}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Inbox</button>}</div>
+      <div className="flex gap-2">
+        <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
+          <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
+        </button>
+        {onClose && <button className={button} onClick={onClose}>Close Inbox</button>}
+      </div>
     </header>
     <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
@@ -316,28 +359,50 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         {label}{shown && count ? ` (${count(shown)})` : ""}
       </button>)}
     </nav>
-    <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setPage(0); }}>
+    <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
-      <button className={button} disabled={busy}>Search</button>
+      <button className={button}>Search</button>
     </form>
-    {!INBOX_OWED_VIEWS.includes(view) && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); setPage(0); }} />Show snoozed items</label>}
-    {/* Routines counts the ROWS a person sees, not the runs behind them:
-        "36 matching items" over four lines is the number this tab exists to
-        stop showing him. */}
-    {result && <p className="mb-3 text-[12px] text-ink-secondary">{view === "routines"
-      ? `${routineRows.length} ${routineRows.length === 1 ? "routine" : "routines"}, covering ${result.total} ${result.total === 1 ? "run" : "runs"}.`
-      : `While you were away: ${result.unread} unread on this page. ${result.total} matching items.`}</p>}
-    {busy && <p role="status" className="mb-3 text-[13px] text-ink-secondary">Updating Inbox…</p>}
-    {error && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{error} Displayed items may be stale. Use Refresh to check the current source.</p>}
+    {!owed && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); reset(); }} />Show snoozed items</label>}
+    <div className="mt-5 flex-1">
+    {actionError && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{actionError}</p>}
+    {readError && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{readError} What is shown may be out of date. Use Refresh to try again.</p>}
+    {!result && !readError && <p className="py-10 text-center text-[13px] text-ink-secondary">Loading…</p>}
     {/* Routines draws its own list, so its emptiness is the rollup's, not
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
-    {!busy && result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-hairline/50 p-6 text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
-    {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
-        The owner's thirty six rows were four routines. A run that failed and
-        then ran again fine says "Recovered" and asks for nothing; a routine
-        that is still down says so and names why. Nothing here is counted:
-        see INBOX_VIEWS. */}
+    {result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-dashed border-hairline/60 p-8 text-center text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {/* AN ENGINE THAT IS HERE AND SIGNED OUT OF.
+        The driver was asked and said nobody is signed in. It is a live
+        reading re-read on a poll, so it empties itself the moment they sign
+        in, which is why it is allowed to count when the failed-turn log row
+        underneath it is not. */}
+    {signedOut.length > 0 && (
+      <InboxSection label="Engines to sign in to">
+        <ul className="space-y-2" aria-label="Engines to sign in to">
+          {signedOut.map(engine => (
+            <li key={engine.id} className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-ink">{engine.name} is here, and nobody is signed in to it.</p>
+                  <p className="mt-1 text-ink-secondary">Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}</p>
+                </div>
+                {turningOff !== engine.id && <button className={button} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
+              </div>
+              {engine.signInCommand && <div className="mt-2 flex items-center gap-2 rounded-lg bg-control py-1 pl-3 pr-1">
+                <code className="min-w-0 flex-1 break-all text-[12px] text-ink">{engine.signInCommand}</code>
+                <button type="button" className="min-h-8 rounded-md px-2 text-[12px] text-ink-secondary hover:bg-raised-hover hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" aria-label={`Copy the ${engine.name} sign-in command`} onClick={() => void copy(engine.id, engine.signInCommand!)}>{copied === engine.id ? "Copied" : "Copy"}</button>
+              </div>}
+              {turningOff === engine.id && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
+                <span className="mr-auto text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
+                <button className={button} disabled={saving} onClick={() => setTurningOff(null)}>Keep it</button>
+                <button className={`${button} border-warning/50`} disabled={saving} onClick={() => void turnOff(engine.id)}>Turn it off</button>
+              </div>}
+            </li>
+          ))}
+        </ul>
+      </InboxSection>
+    )}
     {/* A CONNECTION THAT ONLY THE RUNS KNOW IS DEAD.
         Nothing re-checks a connector once it is connected, so a token that
         expires between uses is invisible everywhere else in the product.
@@ -345,108 +410,109 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         rather than an item: there is no message under it to open, read or
         snooze. The run carrying the error is the only evidence there is, so
         that is what it offers. */}
-    {/* AN ENGINE THAT IS HERE AND SIGNED OUT OF.
-        The driver was asked and said nobody is signed in. It is a live
-        reading re-read on a poll, so it empties itself the moment they sign
-        in, which is why it is allowed to count when the failed-turn log row
-        underneath it is not. */}
-    {signedOut.length > 0 && (
-      <ul className="mb-3 space-y-2" aria-label="Engines to sign in to">
-        {signedOut.map(engine => (
-          <li key={engine.id} className="rounded-xl border border-warning/40 bg-warning/5 p-3 text-[13px]">
-            <p className="font-medium text-ink">{engine.name} is here, and nobody is signed in to it.</p>
-            <p className="mt-1 text-ink-secondary">
-              Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}
-            </p>
-            {engine.signInCommand && <code className="mt-2 block break-all rounded bg-control px-2 py-1 text-[12px] text-ink">{engine.signInCommand}</code>}
-            {turningOff === engine.id
-              ? <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
-                  <button className={button} disabled={busy} onClick={() => void turnOff(engine.id)}>Turn it off</button>
-                  <button className={button} disabled={busy} onClick={() => setTurningOff(null)}>Keep it</button>
-                </div>
-              : <button className={`${button} mt-2`} disabled={busy} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
-          </li>
-        ))}
-      </ul>
-    )}
     {restoreRows.length > 0 && (
-      <ul className="mb-3 space-y-2" aria-label="Connections to restore">
-        {restoreRows.map(row => (
-          <li key={row.id} className="rounded-xl border border-warning/40 bg-warning/5 p-3 text-[13px]">
-            <p className="font-medium text-ink">{row.detail}</p>
-            <p className="mt-1 text-ink-secondary">
-              Stopped: {row.routines.join(", ")}. {row.bots.length === 1 ? row.bots[0] : `${row.bots.length} bots`} cannot carry on until it is reconnected.
-            </p>
-            {row.link && <button className={`${button} mt-2`} onClick={() => onOpen(row.link!)}>Open the run that failed</button>}
-          </li>
-        ))}
-      </ul>
+      <InboxSection label="Connections to restore">
+        <ul className="space-y-2" aria-label="Connections to restore">
+          {restoreRows.map(row => (
+            <li key={row.id} className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
+              <p className="font-medium text-ink">{row.detail}</p>
+              <p className="mt-1 text-ink-secondary">
+                Stopped: {row.routines.join(", ")}. {row.bots.length === 1 ? row.bots[0] : `${row.bots.length} bots`} cannot carry on until it is reconnected.
+              </p>
+              {row.link && <button className={`${button} mt-3`} onClick={() => onOpen(row.link!)}>Open the run that failed</button>}
+            </li>
+          ))}
+        </ul>
+      </InboxSection>
     )}
-    {view === "routines" && routineRows.length > 0 && (
-      <ul className="mb-3 space-y-2" aria-label="Routines">
-        {routineRows.map(routine => (
-          <li key={routine.routineKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-hairline/50 p-3 text-[13px]">
-            <span className="font-medium text-ink">{routine.routineName}</span>
-            <span className="text-ink-secondary">{routine.botLabel}</span>
-            <span className="flex-1 text-ink-secondary">{routineRunLine(routine)}</span>
-            <span className={routine.verdict === "stuck" ? "font-medium text-danger" : routine.verdict === "waiting" ? "font-medium text-warning" : "text-ink-secondary"}>{routineVerdictLine(routine)}</span>
-            {/* Without this the summary is a dead end: collapsing thirty six
-                rows into four is only an improvement if the four still lead
-                back to the run they summarise. */}
-            {routine.link && <button className={button} onClick={() => onOpen(routine.link!)}>Open latest run</button>}
-          </li>
-        ))}
-      </ul>
+    {/* ONE LINE PER ROUTINE, WHICH IS THE PROMISE THE TAB MAKES IN WORDS.
+        The owner's thirty six rows were four routines. A run that failed and
+        then ran again fine says "Recovered" and asks for nothing; a routine
+        that is still down says so and names why. Nothing here is counted:
+        see INBOX_VIEWS. Routines counts the ROWS a person sees, not the runs
+        behind them. */}
+    {view === "routines" && routineRows.length > 0 && result && (
+      <InboxSection label="Routines" aside={<span className="text-[12px] text-ink-secondary">{`${routineRows.length} ${routineRows.length === 1 ? "routine" : "routines"}, covering ${result.total} ${result.total === 1 ? "run" : "runs"}`}</span>}>
+        <ul className="space-y-2" aria-label="Routines">
+          {routineRows.map(routine => (
+            <li key={routine.routineKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-hairline/50 bg-inset p-3 text-[13px]">
+              <span className="font-medium text-ink">{routine.routineName}</span>
+              <span className="text-ink-secondary">{routine.botLabel}</span>
+              <span className="flex-1 text-ink-secondary">{routineRunLine(routine)}</span>
+              <span className={routine.verdict === "stuck" ? "font-medium text-danger" : routine.verdict === "waiting" ? "font-medium text-warning" : "text-ink-secondary"}>{routineVerdictLine(routine)}</span>
+              {/* Without this the summary is a dead end: collapsing thirty six
+                  rows into four is only an improvement if the four still lead
+                  back to the run they summarise. */}
+              {routine.link && <button className={button} onClick={() => onOpen(routine.link!)}>Open latest run</button>}
+            </li>
+          ))}
+        </ul>
+      </InboxSection>
     )}
-    {(list.filter(item => item.dismissible).length > 1 || list.filter(item => item.clearable).length > 1) && (
-      <div className="mb-3 flex flex-wrap justify-end gap-2">
-        {list.filter(item => item.dismissible).length > 1 && <button className={button} disabled={busy} onClick={() => void dismiss(list.filter(item => item.dismissible))}>
-          Dismiss all {list.filter(item => item.dismissible).length} connection requests
-        </button>}
-        {list.filter(item => item.clearable).length > 1 && <button className={button} disabled={busy} onClick={() => void clearAll(list.filter(item => item.clearable))}>
-          Clear all {list.filter(item => item.clearable).length} that need nothing from you
-        </button>}
-      </div>
+    {list.length > 0 && (
+      <InboxSection
+        label={sections ? "From your bots" : "Items"}
+        aside={<>
+          {tally && <span className="text-[12px] text-ink-secondary">{tally}</span>}
+          {/* Beside the requests it acts on, and named for them. Under the
+              engine rows it read as though it dismissed THEM. */}
+          {dismissible.length > 1 && <button className={button} disabled={saving} aria-label={`Dismiss all ${dismissible.length} connection requests`} onClick={() => void dismiss(dismissible)}>Dismiss all {dismissible.length}</button>}
+          {clearable.length > 1 && <button className={button} disabled={saving} aria-label={`Clear all ${clearable.length} that need nothing from you`} onClick={() => void clearAll(clearable)}>Clear all {clearable.length}</button>}
+        </>}
+      >
+        <ul className="space-y-2" aria-label="Inbox items">
+          {list.map(item => {
+            // The bot's own words head the card whenever the live request can be
+            // read; `item.title` is the kind of thing it is, and stays as the
+            // line above it rather than as the headline.
+            const card = cards[item.link.messageId];
+            const headline = requestHeadline(card);
+            const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
+            const snoozed = item.snoozedUntil !== null && item.snoozedUntil > Date.now();
+            return <li key={item.id} className={`rounded-xl border bg-inset p-4 ${item.read ? "border-hairline/50" : "border-hairline"}`} data-inbox-id={item.id}>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-secondary">
+                {!item.read && <span className="size-2 shrink-0 rounded-full bg-accent" aria-hidden />}
+                {!item.read && <span className="sr-only">Unread.</span>}
+                <span className="font-medium text-ink/80">{item.sourceLabel}</span>
+                <span aria-hidden>·</span>
+                <time dateTime={new Date(item.at).toISOString()}>{shortWhen(item.at)}</time>
+                {headline && <><span aria-hidden>·</span><span>{item.title}</span></>}
+              </div>
+              <h3 className="mt-1.5 break-words text-[15px] font-medium leading-snug">{headline || item.title}</h3>
+              {owed && <p className="mt-1 text-[12.5px] text-ink-secondary">{owedWaitingLine(item, Date.now())}</p>}
+              {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
+              {/* Only what adds something. "Pending" on a card in a list
+                  called Needs you, and "Read" on every card, said nothing. */}
+              {(item.status !== "pending" || item.duplicates > 1 || (view !== "decisions" && snoozed)) && <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
+                {item.status !== "pending" && <span className="rounded-md bg-control px-2 py-0.5">{statusLabel(item.status)}</span>}
+                {/* "Receipts" is the right word for the same request delivered
+                    twice. It is the wrong word for an engine that failed to sign in
+                    twenty times, which now arrives as one row carrying the count. */}
+                {item.duplicates > 1 && <span className="py-0.5 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
+                {view !== "decisions" && snoozed && <span className="py-0.5 text-ink-secondary">Snoozed until {shortWhen(item.snoozedUntil!)}</span>}
+              </div>}
+              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => setRevision(current => current + 1)} />}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
+                <button className={button} disabled={saving} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
+                {item.dismissible && <button className={button} disabled={saving} onClick={() => void dismiss([item])}>Dismiss</button>}
+                {item.clearable && <button className={button} disabled={saving} onClick={() => void update(item, { cleared: true })}>Clear</button>}
+                {view !== "decisions" && (snoozed
+                  ? <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
+                  : <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
+              </div>
+            </li>;
+          })}
+        </ul>
+      </InboxSection>
     )}
-    <ul className="space-y-3" aria-label="Inbox items">
-      {list.map(item => {
-        // The bot's own words head the card whenever the live request can be
-        // read; `item.title` is the kind of thing it is, and stays as the
-        // line above it rather than as the headline.
-        const card = cards[item.link.messageId];
-        const headline = requestHeadline(card);
-        const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
-        return <li key={item.id} className="rounded-xl border border-hairline/50 bg-inset p-4" data-inbox-id={item.id}>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-secondary"><span>{item.sourceLabel}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time></div>
-        {INBOX_OWED_VIEWS.includes(view) && <p className="mt-2 text-[12px] text-ink-secondary">{owedWaitingLine(item, Date.now())}</p>}
-        {headline && <p className="mt-2 text-[12px] text-ink-secondary">{item.title}</p>}
-        <h2 className="mt-1 break-words text-[15px] font-medium">{headline || item.title}</h2>
-        <div className="mt-2 flex flex-wrap gap-2 text-[12px]"><span className="rounded bg-control px-2 py-1">{statusLabel(item.status)}</span><span className="rounded bg-control px-2 py-1">{item.read ? "Read" : "Unread"}</span>
-          {/* "Receipts" is the right word for the same request delivered
-              twice. It is the wrong word for an engine that failed to sign in
-              twenty times, which now arrives as one row carrying the count. */}
-          {item.duplicates > 1 && <span className="px-1 py-1 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
-          {view !== "decisions" && item.snoozedUntil !== null && item.snoozedUntil > Date.now() && <span className="px-1 py-1 text-ink-secondary">Snoozed until {new Date(item.snoozedUntil).toLocaleString()}</span>}
-        </div>
-        {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
-        {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => setRevision(current => current + 1)} />}
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
-          <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
-          {item.dismissible && <button className={button} disabled={busy} onClick={() => void dismiss([item])}>Dismiss</button>}
-          {item.clearable && <button className={button} disabled={busy} onClick={() => void update(item, { cleared: true })}>Clear</button>}
-          {view !== "decisions" && (item.snoozedUntil !== null && item.snoozedUntil > Date.now()
-            ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
-            : <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
-        </div>
-      </li>;
-      })}
-    </ul>
-    {result && <footer className="mt-4 flex items-center justify-between gap-3 border-t border-hairline/40 pt-4">
-      <button className={button} disabled={busy || page === 0} onClick={() => setPage(current => current - 1)}>Previous</button>
-      <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.max(1, Math.ceil(result.total / result.pageSize))}</span>
-      <button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(current => current + 1)}>Next</button>
+    </div>
+    {/* Only when there is somewhere to go. "Page 1 of 1" between two
+        disabled buttons was a footer for nothing. */}
+    {result && result.total > result.pageSize && <footer className="mt-4 flex items-center justify-between gap-3 border-t border-hairline/40 pt-4">
+      <button className={button} disabled={page === 0} onClick={() => setPage(current => current - 1)}>Previous</button>
+      <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.ceil(result.total / result.pageSize)}</span>
+      <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => setPage(current => current + 1)}>Next</button>
     </footer>}
   </section>;
 }

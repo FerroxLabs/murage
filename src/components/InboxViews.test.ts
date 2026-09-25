@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import en from "@/locales/en.json";
-import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, inboxShowsEmpty, owedWaitingLine, waitedFor } from "./Inbox";
+import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, inboxShowsEmpty, inboxTally, owedWaitingLine, waitedFor } from "./Inbox";
 import type { InboxItem } from "../../shared/inbox";
 import { INBOX_BADGED_SEGMENTS } from "../../shared/inbox";
 
@@ -218,5 +218,16 @@ describe("the nothing-here panel and the rows that are not items", () => {
     // decisions, so the other tabs never meet it at all.
     expect(inboxShowsEmpty("routines", [], [], one)).toBe(true);
     expect(inboxShowsEmpty("routines", [], one, [])).toBe(false);
+  });
+});
+
+describe("the line that counts what is on the list", () => {
+  it("says nothing when there is nothing", () => {
+    expect(inboxTally(0, 0)).toBe("");
+  });
+  it("counts items, and mentions unread only when there are some", () => {
+    expect(inboxTally(1, 0)).toBe("1 item");
+    expect(inboxTally(3, 0)).toBe("3 items");
+    expect(inboxTally(3, 1)).toBe("3 items, 1 unread");
   });
 });

@@ -15,6 +15,8 @@ let vite: ViteDevServer, origin: string, root: string, db: DatabaseSync;
 /** Engines here and signed out of (GET /api/setup), and what was turned off. */
 let signedOut: Array<{ id: string; name: string; signInCommand?: string }> = [];
 const turnedOff: string[] = [];
+/** How long each Inbox read takes, so a test can click while one is in flight. */
+let inboxDelay = 0;
 const proof = "inbox-fixture-proof";
 const scope: InboxAccess = { owner: true, threads: [{ threadId: "old-task", label: "Research bot", botId: "research" }] };
 function source(id: string, kind: string, content: Record<string, unknown>, thread = "old-task", at = Date.now()) {
@@ -60,6 +62,7 @@ test.beforeAll(async () => {
         if (!url.pathname.startsWith("/api/inbox")) return next();
         let encoded = "";
         for await (const chunk of req) { encoded += String(chunk); if (encoded.length > 16_384) { res.statusCode = 413; res.end(); return; } }
+        if (inboxDelay && req.method === "GET") await new Promise(resolve => setTimeout(resolve, inboxDelay));
         try {
           const query: InboxQuery = { view: (url.searchParams.get("view") ?? "needs-you") as InboxQuery["view"], query: url.searchParams.get("query") ?? "", page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" };
           const response = inboxRequest(db, { method: req.method ?? "GET", path: url.pathname, query, body: encoded ? JSON.parse(encoded) as InboxStateUpdate : undefined }, { ...scope, owner: req.headers["x-murage-surface"] === "desktop" && req.headers["x-murage-surface-secret"] === proof });
@@ -73,6 +76,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await vite?.close(); db?.close(); if (root) safeWipeSync(root); });
 test.beforeEach(() => {
+  inboxDelay = 0; signedOut = [];
   db.exec("DELETE FROM messages WHERE thread_id IN ('old-task','not-permitted'); DELETE FROM inbox_item_state WHERE json_extract(source_key,'$[0]')='old-task';");
   source("approval", "options", { card: { requestId: "approval-request", title: "SECRET_CARD_CONTENT", subtitle: "PRIVATE_COMMAND", tool: "Bash", options: ["Allow", "Deny"] } });
   source("credential", "secret", { secret: { requestKey: "connection-key", label: "SECRET_CREDENTIAL_LABEL", description: "SECRET_CREDENTIAL_BODY" } });
@@ -92,11 +96,11 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) {
     await expect(page.getByText(/SECRET_CARD_CONTENT|PRIVATE_COMMAND|SECRET_CREDENTIAL/)).toHaveCount(0);
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Approval requested", exact: true }) });
     await card.getByRole("button", { name: "Mark read", exact: true }).click();
-    await expect(card.getByText("Read", { exact: true })).toBeVisible();
-    await expect(card.getByText("Pending", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Mark unread", exact: true })).toBeVisible();
+    await expect(card.getByText(/^Waiting \d+ min for your approval\.$/)).toBeVisible();
     await page.reload();
     await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
-    await expect(card.getByText("Read", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Mark unread", exact: true })).toBeVisible();
     expect(JSON.parse(String(db.prepare("SELECT json FROM messages WHERE id='approval'").get()!.json)).card.answered).toBeUndefined();
     // Snooze is offered on a segment tab, not on the Needs-you umbrella (8e8a3afa),
     // and snoozed items come back under All with "Show snoozed items".
@@ -142,8 +146,9 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   // the rest
   await page.getByRole("button", { name: "Dismiss all 2 connection requests" }).click();
   await expect(requests).toHaveCount(0);
-  const dismissed = db.prepare("SELECT json FROM messages WHERE thread_id='old-task' AND kind='connector'").all() as Array<{ json: string }>;
-  expect(dismissed.map(row => JSON.parse(row.json).connector.dismissed)).toEqual([true, true, true]);
+  // The rows go the moment they are clicked; the saves land just after.
+  const dismissed = () => (db.prepare("SELECT json FROM messages WHERE thread_id='old-task' AND kind='connector'").all() as Array<{ json: string }>).map(row => JSON.parse(row.json).connector.dismissed);
+  await expect.poll(dismissed).toEqual([true, true, true]);
 
   // an engine: asked first, then turned off, and its row goes
   const engine = page.getByRole("listitem").filter({ hasText: "OpenCode is here, and nobody is signed in to it." });
@@ -165,4 +170,43 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   await page.reload();
   await page.getByRole("button", { name: /^Connections/ }).click();
   await expect(page.getByRole("heading", { name: "Sign in needed" })).toHaveCount(0);
+});
+
+// THE OWNER'S REPORT: on Needs you, "Dismiss all" did nothing, "I don't use"
+// and "Turn it off" worked only sometimes, and the page jumped every few
+// seconds. Needs you re-reads itself every five seconds, and each read held
+// every button disabled and pushed an "Updating Inbox" line in above the
+// list. The test above runs on Connections, which does not re-read, so it
+// never met the read. This one clicks while a slow read is in flight.
+test("Needs you answers clicks while it re-reads itself, and holds still", async ({ page }, testInfo) => {
+  const days = 24 * 60 * 60 * 1000;
+  for (const [id, slug] of [["connect-a", "trustpilot"], ["connect-b", "gmail"]]) {
+    source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
+  }
+  signedOut = [{ id: "qwen", name: "Qwen" }, { id: "droid", name: "Droid", signInCommand: "droid" }];
+  await page.goto(origin + "/__inbox");
+  const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
+  await expect(requests).toHaveCount(2);
+  await page.setViewportSize({ width: 900, height: 1100 });
+  await page.screenshot({ path: testInfo.outputPath("inbox-needs-you.png"), fullPage: true });
+  inboxDelay = 2_500;
+  const top = async () => (await page.getByRole("list", { name: "Engines to sign in to" }).boundingBox())!.y;
+  const before = await top();
+  // Wait for the five-second re-read to start, then act inside it.
+  await page.waitForRequest(request => request.url().includes("/api/inbox?"), { timeout: 8_000 });
+  expect(await top()).toBe(before);
+  await expect(page.getByText(/Updating Inbox/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Dismiss all 2 connection requests" }).click();
+  await expect(requests).toHaveCount(0);
+  const qwen = page.getByRole("listitem").filter({ hasText: "Qwen is here" });
+  await qwen.getByRole("button", { name: "I don't use Qwen" }).click();
+  await qwen.getByRole("button", { name: "Turn it off" }).click();
+  await expect(qwen).toHaveCount(0);
+  await expect.poll(() => turnedOff).toContain("qwen");
+  // A read that was already on its way cannot bring them back.
+  await page.waitForTimeout(6_000);
+  await expect(requests).toHaveCount(0);
+  await expect(qwen).toHaveCount(0);
+  await expect(page.getByRole("listitem").filter({ hasText: "Droid is here" })).toHaveCount(1);
+  await expect.poll(() => (db.prepare("SELECT json FROM messages WHERE thread_id='old-task' AND kind='connector'").all() as Array<{ json: string }>).map(row => JSON.parse(row.json).connector.dismissed)).toEqual([true, true]);
 });
