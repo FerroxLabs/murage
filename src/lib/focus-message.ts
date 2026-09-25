@@ -44,47 +44,61 @@ export async function landOnSearchHit(
   dispatch({ type: "focusMessage", threadId: hit.threadId, messageId: hit.messageId });
 }
 
+export const FLASH_MS = 1800;
+
+/** Find the row for `messageId` (retrying briefly: messages may land a tick
+ * after the task switch), scroll to it and flash it: `FLASH_CLASSES` on the
+ * bubble, `data-flash` on its `.transcript-row` so paint containment does
+ * not clip the ring. `onLanded` runs once the flash has begun. The returned
+ * cleanup stops the search and removes the flash at once. */
+export function flashMessage(
+  root: Pick<ParentNode, "querySelector">,
+  messageId: string,
+  onLanded: () => void,
+  reducedMotion: () => boolean = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+): () => void {
+  let tries = 0;
+  let cancelled = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  let target: HTMLElement | null = null;
+  let row: HTMLElement | null = null;
+  const attempt = () => {
+    if (cancelled) return;
+    const wrapper = root.querySelector<HTMLElement>(`[data-mid="${CSS.escape(messageId)}"]`);
+    target = wrapper?.lastElementChild as HTMLElement | null;
+    if (!target) {
+      if (tries++ < 20) retryTimer = setTimeout(attempt, 100);
+      return;
+    }
+    row = wrapper?.closest<HTMLElement>(".transcript-row") ?? null;
+    row?.setAttribute("data-flash", "");
+    target.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    target.classList.add(...FLASH_CLASSES);
+    onLanded();
+    flashTimer = setTimeout(() => {
+      target?.classList.remove(...FLASH_CLASSES);
+      row?.removeAttribute("data-flash");
+    }, FLASH_MS);
+  };
+  attempt();
+  return () => {
+    cancelled = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    if (flashTimer) clearTimeout(flashTimer);
+    target?.classList.remove(...FLASH_CLASSES);
+    row?.removeAttribute("data-flash");
+  };
+}
+
 export function useFocusMessage(threadId: string, ready: boolean) {
   const { state, dispatch } = useStore();
   const focus = state.focusMessage;
   useEffect(() => {
     if (!focus || focus.consumed || focus.threadId !== threadId || !ready) return;
-    // messages may land a tick after the task switch; try briefly
-    let tries = 0;
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let flashTimer: ReturnType<typeof setTimeout> | null = null;
-    let target: HTMLElement | null = null;
-    let row: HTMLElement | null = null;
-    const attempt = () => {
-      if (cancelled) return;
-      const wrapper = document.querySelector<HTMLElement>(`[data-mid="${CSS.escape(focus.messageId)}"]`);
-      target = wrapper?.lastElementChild as HTMLElement | null;
-      if (!target) {
-        if (tries++ < 20) retryTimer = setTimeout(attempt, 100);
-        return;
-      }
-      row = wrapper?.closest<HTMLElement>(".transcript-row") ?? null;
-      row?.setAttribute("data-flash", "");
-      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-      target.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
-      target.classList.add(...FLASH_CLASSES);
-      // Consume only after the target is mounted and the flash has begun.
-      // `consumed` is intentionally not an effect dependency, so this active
-      // flash survives the bookkeeping update while future remounts ignore it.
-      dispatch({ type: "focusMessageConsumed", nonce: focus.nonce });
-      flashTimer = setTimeout(() => {
-        target?.classList.remove(...FLASH_CLASSES);
-        row?.removeAttribute("data-flash");
-      }, 1800);
-    };
-    attempt();
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      if (flashTimer) clearTimeout(flashTimer);
-      target?.classList.remove(...FLASH_CLASSES);
-      row?.removeAttribute("data-flash");
-    };
+    // Consume only after the target is mounted and the flash has begun.
+    // `consumed` is intentionally not an effect dependency, so this active
+    // flash survives the bookkeeping update while future remounts ignore it.
+    return flashMessage(document, focus.messageId, () => dispatch({ type: "focusMessageConsumed", nonce: focus.nonce }));
   }, [dispatch, focus?.nonce, focus?.threadId, focus?.messageId, threadId, ready]);
 }
