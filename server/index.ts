@@ -13178,7 +13178,7 @@ const server = createServer(async (req, res) => {
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       lastReply.delete(m[2]);
       const updated = store.deleteGroupTask(group.id, m[2]);
-      if (!updated) return json(res, 400, { error: "a channel keeps at least one task" });
+      if (!updated) return json(res, 404, { error: "no such channel task" });
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       // Deleting the open task moves the channel to another one: bounded
       // like a switch frame.

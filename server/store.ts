@@ -1610,8 +1610,10 @@ export class Store {
 
   deleteGroupTask(groupId: string, threadId: string): GroupRecord | null {
     const group = this.group(groupId);
-    if (!group || group.dm || !group.tasks || group.tasks.length < 2) return null;
-    if (!group.tasks.some((task) => task.threadId === threadId)) return null;
+    if (!group || group.dm || !group.tasks?.some((task) => task.threadId === threadId)) return null;
+    // A channel always has a conversation. Deleting the last one used to be
+    // refused, silently in the channel view; it now leaves a fresh one.
+    if (group.tasks.length < 2) this.createGroupTask(groupId, undefined, false);
     group.tasks = group.tasks.filter((task) => task.threadId !== threadId);
     this.deleteThreadRecord(threadId);
     if (group.threadId === threadId) {
