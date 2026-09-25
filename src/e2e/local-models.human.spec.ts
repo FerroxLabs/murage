@@ -342,7 +342,7 @@ for (const skin of skins) test(`Engines: each engine says where it stands on loc
   await open(page, skin, 1440);
   const dialog = await openSettings(page, "Engines");
   // V4 — the fixture's engine is a Claude-driver instance, a tools engine.
-  const line = dialog.getByText("Works with local models — manage them under Models → Local models", { exact: false }).first();
+  const line = dialog.getByText("Works with local models. Manage them under Models → Local models", { exact: false }).first();
   await expect(line).toBeVisible();
   await shoot(page, dialog, testInfo.outputPath(`engines-local-line-1440-${skin}.png`));
   // and the link on it is the same door the picker's empty row uses

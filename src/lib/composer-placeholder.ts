@@ -1,9 +1,8 @@
 /** The composer is one line tall until something is typed, so on a narrow
- * screen a long placeholder was clipped mid-word. There it keeps only the part
- * before " — " ("Ember is working"); the rest is a hint a wide screen has room
- * for. */
-export function compactPlaceholder(text: string, narrow: boolean): string {
-  if (!narrow) return text;
-  const cut = text.indexOf(" — ");
-  return cut > 0 ? text.slice(0, cut) : text;
+ * screen a long placeholder was clipped mid-word. There it keeps only its
+ * lead ("Ember is working"); the hint is for a wide screen, which shows both
+ * as two sentences. */
+export function compactPlaceholder(lead: string, hint: string | undefined, narrow: boolean): string {
+  if (narrow || !hint) return lead;
+  return `${lead}. ${hint.charAt(0).toUpperCase()}${hint.slice(1)}`;
 }

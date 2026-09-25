@@ -238,7 +238,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: "No Box key yet — add one in App Settings → Tools & Connections." };
+        return { state: "unavailable", reason: "No Box key yet. Add one in App Settings → Tools & Connections." };
       }
       try {
         await api("/me");

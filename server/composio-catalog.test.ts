@@ -26,6 +26,13 @@ describe("marketplace catalog traversal", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("never lists the connection service itself as an app to connect", async () => {
+    // 0.1.60 Mac pass: the Marketplace showed the service's own toolkit card,
+    // by name, as an "Included" app. Product copy never names it.
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ items: [{ slug: "gmail" }, { slug: "COMPOSIO", name: "Composio" }, { slug: "slack" }] })));
+    expect((await listToolkits(project("no-self"))).cards.map(card => card.slug)).toEqual(["gmail", "slack"]);
+  });
+
   it("forwards managed cursors without exposing a project key", async () => {
     setManagedBrokerAccess({ url: "https://broker.example.test", token: "b".repeat(64) });
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
