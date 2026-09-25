@@ -52,14 +52,19 @@ describe("usage formatting", () => {
   });
 
   it("carries the cached share through sums and names it in the breakdown", () => {
-    // records from before the field existed simply don't contribute to it
+    // A record with input but no cache count leaves the summed split unknown:
+    // a missing count is not zero (upstream #1673)
     expect(sumUsage([{ input: 100, output: 10, costUsd: null, turns: 1 }, { input: 200, output: 20, cachedInput: 150, costUsd: null, turns: 1 }]))
-      .toEqual({ input: 300, output: 30, cachedInput: 150, costUsd: null, turns: 2 });
+      .toEqual({ input: 300, output: 30, costUsd: null, turns: 2 });
+    // an explicit zero is a real count and survives the sum
+    expect(sumUsage([{ input: 100, output: 8, cachedInput: 0, costUsd: null, turns: 1 }, { input: 100, output: 8, cachedInput: 50, costUsd: null, turns: 1 }]).cachedInput).toBe(50);
+    expect(sumUsage([{ input: 100, output: 8, cachedInput: 0, costUsd: null, turns: 1 }, { input: 0, output: 8, costUsd: null, turns: 1 }]).cachedInput).toBe(0);
+    expect(sumUsage([{ input: 100, output: 8, cachedInput: 0, costUsd: null, turns: 1 }, { input: 100, output: 8, cachedInput: Number.NaN, costUsd: null, turns: 1 }]).cachedInput).toBeUndefined();
     expect(sumUsage([{ input: 100, output: 10, costUsd: null, turns: 1 }])).toEqual({ input: 100, output: 10, costUsd: null, turns: 1 });
     // the headline stays the whole figure; the split is what explains it
     expect(usageDetail({ input: 88_200, output: 1_200, cachedInput: 79_000, costUsd: null, turns: 5 })).toBe("88.2k in (79k cached) · 1.2k out");
     expect(usageDetail({ input: 900, output: 50, costUsd: null, turns: 1 })).toBe("900 in · 50 out");
-    expect(usageDetail({ input: 900, output: 50, cachedInput: 0, costUsd: null, turns: 1 })).toBe("900 in · 50 out");
+    expect(usageDetail({ input: 900, output: 50, cachedInput: 0, costUsd: null, turns: 1 })).toBe("900 in (0 cached) · 50 out");
     // a cached figure can never exceed the input it is part of, or go negative
     expect(cachedInput({ input: 100, output: 0, cachedInput: 250, costUsd: null, turns: 1 })).toBe(100);
     expect(cachedInput({ input: 100, output: 0, cachedInput: -3, costUsd: null, turns: 1 })).toBe(0);
@@ -166,6 +171,12 @@ describe("the usage report says what is missing instead of rendering less", () =
     expect(ids(lines)).not.toContain("fresh");
     // The point of the line: it explains the silence.
     expect(lines.find((line) => line.id === "no-cache")?.text).toMatch(/no cached input reported/);
+  });
+
+  it("does not call a reported zero cache a missing one", () => {
+    const lines = usageReport({ ...bare, cachedInput: 0 });
+    expect(ids(lines)).not.toContain("no-cache");
+    expect(ids(lines)).toContain("fresh");
   });
 
   it("names the absence of a cost rather than dropping a line", () => {
