@@ -2028,10 +2028,16 @@ const SETUP_TASK_TITLE = "Getting you set up";
  * Set once, and only over the untitled default, so a person who renames it
  * keeps their name for it.
  */
-function nameTheSetupTask(): void {
+function nameTheSetupTask(present: ReadonlySet<string>): void {
   const chiefBotId = setup.chiefBotId();
   const chief = chiefBotId ? store.bot(chiefBotId) : null;
   if (!chief) return;
+  // Only the conversation setup is happening in. This runs on every read of
+  // the setup view, and the Chief's open thread is whichever one the owner
+  // last opened: a new conversation beside it was renamed too, so the list
+  // showed two "Getting you set up" (0.1.60 Linux customer pass).
+  if (!present.has(setupCardKey("hello", "welcome"))) return;
+  if (chief.tasks?.some((entry) => entry.threadId !== chief.threadId && entry.title === SETUP_TASK_TITLE)) return;
   const task = chief.tasks?.find((entry) => entry.threadId === chief.threadId);
   if (!task || (task.title ?? "").trim() !== UNTITLED_TASK) return;
   try {
@@ -2255,7 +2261,7 @@ async function driveSetup(view: SetupView): Promise<void> {
     console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
   }
   driveSetupConversation(view);
-  nameTheSetupTask();
+  nameTheSetupTask(setupCardKeysInChiefThread(view));
   // Told to the client AFTER the cards are appended, so a view that carries
   // `conversationLive` is a view whose thread is already up to date.
   view.conversationLive = conversationLive(view, setupCardKeysInChiefThread(view));
