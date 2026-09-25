@@ -234,7 +234,7 @@ const SHELLS = /^(ba|z|da|k|fi)?sh$/;
  * understands quotes and the usual separators, and marks anything it cannot
  * know (expansion, substitution) instead of guessing. `complex` is set when
  * the line uses syntax this does not model (subshells, here-docs, braces). */
-function splitShell(line: string): { commands: Word[][]; complex: boolean; scan: string } {
+function splitShell(line: string): { commands: Word[][]; complex: boolean; scan: string; words: string } {
   const commands: Word[][] = [];
   // Here-docs waiting for the end of their line, and every body read, with
   // the command that reads it, so `scan` can leave out the bodies that are
@@ -373,7 +373,15 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean; scan:
     from = body.end;
   }
   scan += line.slice(from);
-  return { commands, complex, scan };
+  // `words` leaves out every body: the plain shell-word check ("rm",
+  // "trash") is about shell, and a script fed to python or node is judged by
+  // the delete calls it makes (CODE_DELETE over `scan`), not by the words in
+  // the text it writes.
+  let words = "";
+  let at = 0;
+  for (const body of bodies) { words += line.slice(at, body.start); at = body.end; }
+  words += line.slice(at);
+  return { commands, complex, scan, words };
 }
 
 const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate", "rtk", "stdbuf", "unbuffer", "ionice", "chronic"]);
@@ -433,7 +441,7 @@ function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
 }
 
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
-  const { commands, complex, scan } = splitShell(line);
+  const { commands, complex, scan, words } = splitShell(line);
   let cwd = place.cwd;
   const found: Collected = { deletes: [] };
   const sql = SQL_DESTRUCTIVE.exec(scan);
@@ -501,7 +509,7 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
     if (!literals.length) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
   }
-  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(scan) && !found.deletes.length) {
+  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(words) && !found.deletes.length) {
     found.unknownDelete = short(line);
   }
   return deleteHit(found, place);

@@ -404,3 +404,18 @@ describe("a heredoc body is the command's input, not more commands", () => {
     ]) expect(classifyStopLine("Bash", { command }, "", place())?.kind, command).toBe("delete");
   });
 });
+
+// Dax's RWA routine, 2026-09-25: a python snippet editing the pipeline
+// sheet was held as "Delete something Murage cannot place" because the plain
+// shell words ("rm", "trash") were searched for in the Python it fed, where
+// they were only text being written. Code is judged by what it calls.
+describe("a script fed to an interpreter is judged by its delete calls, not its words", () => {
+  it("lets a snippet that writes notes mentioning rm and trash through", () => {
+    const command = "cd ~/notes/work\npython3 - <<'PY'\np='pipeline.md'\ns=open(p).read()\ns+='\\n- moved to trash, rm the old draft later\\n'\nopen(p,'w').write(s)\nPY";
+    expect(classifyStopLine("Bash", { command }, command, place())).toBeNull();
+  });
+  it("still stops a snippet that deletes", () => {
+    const command = "python3 - <<'PY'\nimport os\nos.remove('/Users/ada/Documents/a.txt')\nPY";
+    expect(classifyStopLine("Bash", { command }, command, place())?.kind).toBe("delete");
+  });
+});
