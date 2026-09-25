@@ -87,7 +87,7 @@ posixOnly("About me", () => {
     expect(await captured(tag)).toContain(ABOUT);
   }, 60000);
 
-  it("reaches a routine run and a webhook run on the owner's own thread, as MEMORY.md does", async () => {
+  it("reaches a routine run on the owner's own thread, and never a webhook run", async () => {
     const tag = marker();
     const routine = (await api("POST", "/api/routines", { botId: moss.id, name: "About check", prompt: `Please answer briefly. ${tag}`, schedule: { type: "once", at: Date.now() + 3_600_000 } })).routine;
     await api("POST", `/api/routines/${routine.id}/run`, {});
@@ -102,7 +102,8 @@ posixOnly("About me", () => {
     expect(delivered.status).toBe(202);
     const hooked = await captured(hookTag);
     expect(hooked).toContain("authenticated external webhook");
-    expect(hooked).toContain(ABOUT);
+    // a webhook's payload came from outside and its reply may go back out
+    expect(hooked).not.toContain(ABOUT);
   }, 90000);
 
   it("switches off for this bot only, and back on", async () => {
