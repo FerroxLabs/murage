@@ -729,8 +729,16 @@ function codeEntryMarkup(hidden: boolean): string {
  * does. There is deliberately no `<form>` element either — a form whose
  * script failed to load would navigate with the code in the query string,
  * putting the credential in an access log, which is the one place the whole
- * fragment design exists to keep it out of. */
-export function codeEntryScript(): string {
+ * fragment design exists to keep it out of.
+ *
+ * `installIdVar` names a variable in the enclosing script that holds the phone
+ * app's install id (see `enterPage`), so a typed code sent from a page the app
+ * opened still replaces that install's old record rather than taking a second
+ * slot. Without it the body is exactly `{ credential }`, as it always was. */
+export function codeEntryScript(installIdVar?: string): string {
+  const body = installIdVar
+    ? `${installIdVar} ? { credential: code, installId: ${installIdVar} } : { credential: code }`
+    : "{ credential: code }";
   return `(function () {
   var box = document.getElementById("cf");
   if (!box || typeof fetch !== "function") return;
@@ -778,7 +786,7 @@ export function codeEntryScript(): string {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ credential: code })
+      body: JSON.stringify(${body})
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
@@ -860,7 +868,6 @@ ${CODE_ENTRY_STYLE}
   ${codeEntryMarkup(true)}
 </main>
 <script nonce="${nonce}">
-${codeEntryScript()}
 (function () {
   var say = function (title, detail) {
     document.getElementById("t").textContent = title;
@@ -878,6 +885,9 @@ ${codeEntryScript()}
   // Before anything else, and before any network call: the address bar and
   // the session history must not keep it.
   history.replaceState(null, "", "/enter");
+  // The typed-code field, wired inside this scope so that a code typed after
+  // the link failed carries the same install id the link did.
+  ${codeEntryScript("installId")}
   if (!credential) {
     // Not a dead end any more. This page is reached with an empty fragment by
     // anyone who bookmarked it, and by every device that cannot scan — so it

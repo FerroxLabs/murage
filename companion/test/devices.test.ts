@@ -12,6 +12,7 @@ import {
   cleanDeviceName,
   cleanInstallId,
   DeviceRegistry,
+  MAX_DEVICES,
   MAX_PAIRING_ATTEMPTS,
   MAX_SESSIONS_PER_DEVICE,
   PAIRING_TTL_MS,
@@ -873,6 +874,39 @@ describe("pairing again from the same app install", () => {
     expect(registry.count()).toBe(3);
     const stored = JSON.parse(readFileSync(join(DATA_DIR, "devices.json"), "utf8"));
     expect(stored.devices.every((d: { installId?: string }) => d.installId === undefined)).toBe(true);
+  });
+
+  it("takes a reinstall back into a full fleet, and still refuses a new install there", () => {
+    const registry = new DeviceRegistry();
+    pairAs(registry, INSTALL, "iPhone");
+    for (let i = 1; i < MAX_DEVICES; i++) pairAs(registry, undefined, `phone ${i}`);
+    expect(registry.count()).toBe(MAX_DEVICES);
+
+    const again = pairAs(registry, INSTALL, "iPhone again");
+    expect(registry.count()).toBe(MAX_DEVICES);
+    expect(registry.list().map((d) => d.id)).toContain(again.device.id);
+    expect(registry.list().map((d) => d.name)).not.toContain("iPhone");
+
+    const { code } = registry.openPairing();
+    expect(registry.redeem(code, "Pixel", undefined, "android-install-fedcba9876543210")).toMatchObject({
+      reason: "full",
+    });
+    expect(registry.count()).toBe(MAX_DEVICES);
+  });
+
+  it("answers a replayed request with its original device, whatever install id the replay carries", () => {
+    const registry = new DeviceRegistry();
+    const other = pairAs(registry, "android-install-fedcba9876543210", "Pixel");
+    const { code } = registry.openPairing();
+    const requestId = "pair-request-0123456789abcdef";
+    const first = registry.redeem(code, "iPhone", requestId, INSTALL);
+    if ("error" in first) throw new Error(`pairing failed: ${first.error}`);
+
+    const replay = registry.redeem(code, "iPhone", requestId, "android-install-fedcba9876543210");
+    expect(replay).toEqual(first);
+    expect(registry.count()).toBe(2);
+    expect(registry.authenticate(other.token)?.id).toBe(other.device.id);
+    expect(registry.list().map((d) => d.id).sort()).toEqual([first.device.id, other.device.id].sort());
   });
 
   it("keeps the old record when the replacement cannot be written", () => {

@@ -635,6 +635,39 @@ describe("pairing from the app replaces its own old record", () => {
     expect(posted).toEqual([{ credential: "murage_pair_abc" }]);
   });
 
+  it("keeps the install id when the link fails and the person types the code instead", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [
+      { ok: false, body: { error: "that code has expired" } },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("cf").hidden).toBe(false);
+    node("cc").value = "123456";
+    node("cb").listeners.click();
+    await settle();
+    expect(posted[1]).toEqual({ credential: "123456", installId: "ios-install-0123456789abcdef" });
+  });
+
+  it("types a code exactly as it always did when there is no install id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const failed = runEnter(page.body, "#murage_pair_abc", [{ ok: false, body: { error: "that code has expired" } }]);
+    failed.node("go").listeners.click();
+    await settle();
+    failed.node("cc").value = "123456";
+    failed.node("cb").listeners.click();
+    await settle();
+    expect(failed.posted[1]).toEqual({ credential: "123456" });
+
+    // A bookmarked /enter with no fragment at all, and the sign-in page.
+    const bare = runEnter(page.body, "", []);
+    bare.node("cc").value = "654321";
+    bare.node("cb").listeners.click();
+    await settle();
+    expect(bare.posted).toEqual([{ credential: "654321" }]);
+    expect(codeEntryScript()).toContain("JSON.stringify({ credential: code })");
+  });
+
   it("replaces the record at the door, so a reinstall does not take a second slot", async () => {
     const origin = { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` };
     const install = "ios-install-0123456789abcdef";
