@@ -17,6 +17,7 @@ import {
   BROKER_UNAVAILABLE,
   connectedServices,
   connectionBroker,
+  configured,
   connectionMode,
   connectorMigration,
   connectorPanelFields,
@@ -27,6 +28,7 @@ import {
   LEGACY_DAILY_LIMIT,
   primeBrokerReadiness,
   relayMcp,
+  turnConnectedAppsReady,
   resetManagedBrokerState,
   setBrokerEventSink,
 } from "./composio.ts";
@@ -297,6 +299,31 @@ describe("what a broker request carries", () => {
 });
 
 describe("the FluxRouter readiness probe", () => {
+  it("a turn re-checks a broker that failed one probe, so connected apps come back without a restart", async () => {
+    // Seen live twice: one failed probe left readiness "not ready", which made
+    // configured() false, and turns only re-probed once configured() was
+    // already true. Every bot lost its connected apps until the app restarted.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    health = { status: 503, body: { ready: false } };
+    await readyFlux({ legacy: false, claim: { state: "claimed" } });
+    expect(configured(cfg())).toBe(false);
+
+    health = { status: 200, body: { ready: true, claims: true } };
+    vi.setSystemTime(Date.now() + 25_000);
+    expect(configured(cfg())).toBe(false);
+    expect(await turnConnectedAppsReady(cfg())).toBe(true);
+    expect(connectionBroker(cfg())).toBe("flux");
+  });
+
+  it("a turn does not wait on or repeat a probe while the answer is fresh", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await readyFlux({ legacy: false, claim: { state: "claimed" } });
+    expect(healthProbes).toBe(1);
+    expect(await turnConnectedAppsReady(cfg())).toBe(true);
+    expect(await turnConnectedAppsReady(cfg())).toBe(true);
+    expect(healthProbes).toBe(1);
+  });
+
   it("probes once and then trusts a healthy answer for five minutes", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     await readyFlux({ claim: { state: "claimed" } });

@@ -5700,7 +5700,7 @@ async function startTurn(
       // them — a key in the config says the connections exist, not that
       // this engine can reach them — and only to a bot the user has not
       // switched off: the key is workspace-wide, the grant is per bot.
-      if (bot.composio !== false && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
+      if (bot.composio !== false && instance.adapter.capabilities.composioMcp === true && await composio.turnConnectedAppsReady(cfg)) {
         const connection = await connectedAppsIntegration(bot.id, threadId, dispatchClaimId);
         if (connection) integrations.composio = connection;
       }
@@ -7554,7 +7554,7 @@ async function runGroupMemberTurn(
     integrations.phone = phoneIntegration();
   }
   try {
-    if (bot.composio !== false && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
+    if (bot.composio !== false && instance.adapter.capabilities.composioMcp === true && await composio.turnConnectedAppsReady(cfg)) {
       const connection = await connectedAppsIntegration(bot.id, threadId, internalGeneration);
       if (connection) integrations.composio = connection;
     }
