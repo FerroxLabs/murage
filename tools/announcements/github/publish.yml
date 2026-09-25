@@ -1,0 +1,136 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# FerroxLabs/murage-announcements: .github/workflows/publish.yml
+#
+# This file is a TEMPLATE kept in the Murage repo. It does nothing here (it is
+# not under .github/workflows/). Copy it into the private announcements repo.
+#
+#   pull request  lint announcements.yml and images/, preview in the job summary
+#   merge to main lint again, then wait for the owner's approval on the
+#                 "announcements-production" environment, then sign and upload
+#                 announcements.json, announcements.json.sig and images/ to
+#                 the R2 bucket behind https://updates.ferroxlabs.com/murage/
+#
+# The lint and sign scripts, and the rules they apply, come from the Murage
+# repo itself (tools/announcements/ and shared/announcements.ts) at MURAGE_REF,
+# so the publisher checks exactly what the app checks.
+#
+# Setup (tools/announcements/README.md has the full list):
+#   Environment "announcements-production", required reviewer: the owner,
+#   deployment branches: main only. Its secrets and variables:
+#     secret   ANNOUNCEMENTS_SIGNING_KEY   Ed25519 private key, PKCS#8 PEM
+#     secret   R2_ACCESS_KEY_ID            R2 API token, write to the bucket only
+#     secret   R2_SECRET_ACCESS_KEY
+#     secret   R2_ACCOUNT_ID
+#     variable R2_BUCKET                   the bucket behind updates.ferroxlabs.com
+#     variable ANNOUNCEMENTS_PUBLIC_KEY    base64 public key compiled into the app
+name: Announcements
+
+on:
+  pull_request:
+    paths: ["announcements.yml", "images/**", ".github/workflows/publish.yml"]
+  push:
+    branches: [main]
+    paths: ["announcements.yml", "images/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: announcements-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MURAGE_REPO: FerroxLabs/murage
+  # Pin to a release tag or commit of the Murage repo whose rules match the
+  # apps in the field. Move it forward when a release changes the rules.
+  MURAGE_REF: main
+  YAML_VERSION: 2.9.0
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MURAGE_REPO }}
+          ref: ${{ env.MURAGE_REF }}
+          path: murage
+          persist-credentials: false
+          sparse-checkout: |
+            shared/announcements.ts
+            tools/announcements
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --no-save --no-package-lock --ignore-scripts "yaml@${YAML_VERSION}"
+      - name: Lint
+        run: node murage/tools/announcements/lint.mjs announcements.yml
+
+  publish:
+    needs: lint
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    # The owner approves every publish here (required reviewer).
+    environment: announcements-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MURAGE_REPO }}
+          ref: ${{ env.MURAGE_REF }}
+          path: murage
+          persist-credentials: false
+          sparse-checkout: |
+            shared/announcements.ts
+            tools/announcements
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --no-save --no-package-lock --ignore-scripts "yaml@${YAML_VERSION}"
+      - name: Sign
+        env:
+          ANNOUNCEMENTS_SIGNING_KEY: ${{ secrets.ANNOUNCEMENTS_SIGNING_KEY }}
+          ANNOUNCEMENTS_PUBLIC_KEY: ${{ vars.ANNOUNCEMENTS_PUBLIC_KEY }}
+        run: node murage/tools/announcements/sign.mjs announcements.yml out
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          test -n "$R2_BUCKET"
+          # Pictures first, so a notice never names one that is not there yet.
+          if [ -n "$(ls -A out/images)" ]; then
+            aws s3 cp out/images "s3://$R2_BUCKET/murage/images/" --recursive \
+              --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=86400"
+          fi
+          # The feed, then its signature. An app that reads between the two
+          # sees a pair that does not verify and keeps its cached copy.
+          aws s3 cp out/announcements.json "s3://$R2_BUCKET/murage/announcements.json" \
+            --endpoint-url "$R2_ENDPOINT" --content-type "application/json" --cache-control "public, max-age=300"
+          aws s3 cp out/announcements.json.sig "s3://$R2_BUCKET/murage/announcements.json.sig" \
+            --endpoint-url "$R2_ENDPOINT" --content-type "text/plain" --cache-control "public, max-age=300"
+      - name: Check what is live
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl -fsS https://updates.ferroxlabs.com/murage/announcements.json -o live.json
+          curl -fsS https://updates.ferroxlabs.com/murage/announcements.json.sig -o live.json.sig
+          # The CDN may serve the previous copy for up to five minutes.
+          if cmp -s live.json out/announcements.json; then echo "Live feed matches what was signed."
+          else echo "::warning::The live feed does not match yet (CDN cache). Check again in five minutes."; fi
