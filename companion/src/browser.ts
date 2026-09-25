@@ -1035,6 +1035,62 @@ export function renewalScript(): string {
 })();`;
 }
 
+/** The app shell's Content-Security-Policy, for one response's nonce.
+ *
+ * The shell had none, and chat renders some raw HTML. Each line is here for
+ * something the app actually loads, and says what:
+ *
+ *  - `script-src`: the bundle and its lazy chunks from 'self'; the inline
+ *    scripts (the pre-paint skin stamp in `index.html`, the renewal script
+ *    this door adds) by this response's nonce. A nonce rather than a hash
+ *    because the stamp is whatever `vite build` left in `dist/index.html`,
+ *    and a hash pinned here would break on the next edit to that file.
+ *    `wasm-unsafe-eval` is WebAssembly compilation for the call's speech
+ *    detector (`src/lib/silero-vad.ts`); it permits no string evaluation.
+ *  - `style-src 'unsafe-inline'`: React's style props are exempt, but
+ *    KaTeX's markup, TipTap's injected sheet and the sandboxed previews' own
+ *    `<style>` are not — and a `srcdoc` frame inherits this policy.
+ *  - `img-src`: pasted and generated images are data: and blob:; connector
+ *    logos are remote (`PluginsPanel.tsx:409-414`). Chat never fetches a
+ *    remote image on sight (`ChatMarkdown.tsx:401`), so `https:` here admits
+ *    logos, not tracking pixels in model text.
+ *  - `connect-src`: the API and the event stream are same-origin. The one
+ *    foreign socket is the skill recorder's live transcription
+ *    (`src/lib/assemblyai-transcription.ts:20`), named exactly.
+ *  - `frame-src 'self'`: the diagram frame, same-origin by URL and made
+ *    opaque by its own sandbox header. `srcdoc` previews are not governed
+ *    by it; their `sandbox=""` already runs no script.
+ *  - `frame-ancestors 'none'` says what `X-Frame-Options: DENY` says, for
+ *    browsers that read only this. */
+export function shellCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' wss://streaming.assemblyai.com",
+    "frame-src 'self'",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+/** Give every `<script>` in the shell this response's nonce.
+ *
+ * Every one, including the module entry that `'self'` would already allow:
+ * the shell is this build's own document, read whole from the harness, and a
+ * script tag in it is one the build put there. Only the shell goes through
+ * here — never the diagram frame, whose own policy names its script by hash. */
+export function withScriptNonce(html: string, nonce: string): string {
+  return html.replace(/<script(?=[\s>])/gi, `<script nonce="${nonce}"`);
+}
+
 /** Put the renewal script into the shell document.
  *
  * Before `</body>` when there is one, appended when there is not — an SPA
@@ -1042,14 +1098,11 @@ export function renewalScript(): string {
  * trailing script in, and refusing to inject would silently give back the
  * ninety-day product this change exists to replace.
  *
- * No nonce, and that is checked rather than assumed: neither this door nor
- * the harness sends a Content-Security-Policy on the shell, and `dist/
- * index.html` carries no CSP meta — it already runs an inline script of its
- * own to stamp the colour scheme before first paint. The day a policy lands,
- * this is the second script that needs a nonce and the first one will have
- * shown the way. */
-export function injectRenewal(html: string): string {
-  const tag = `<script>${renewalScript()}</script>`;
+ * It carries the shell's nonce when there is one (`relayShell` always passes
+ * it); without it `shellCsp` would refuse the very script that keeps the
+ * session alive, silently. */
+export function injectRenewal(html: string, nonce?: string): string {
+  const tag = `<script${nonce ? ` nonce="${nonce}"` : ""}>${renewalScript()}</script>`;
   const close = html.lastIndexOf("</body>");
   if (close < 0) return html + tag;
   return html.slice(0, close) + tag + html.slice(close);
@@ -1669,6 +1722,15 @@ function relayStatic(
  * a 502 would be a blank screen. Choosing the degraded-but-working side is
  * the same call the rest of this file makes about a failed renewal. */
 function relayShell(harness: IncomingMessage, res: ServerResponse, expected: string, cache: string): void {
+  // One nonce per response, never reused: it is the whole of what lets the
+  // shell's own inline scripts run and an injected one not.
+  const nonce = randomBytes(16).toString("base64");
+  const headers: Record<string, string> = {
+    ...BASE_HEADERS,
+    "cache-control": cache,
+    "content-type": expected,
+    "content-security-policy": shellCsp(nonce),
+  };
   const chunks: Buffer[] = [];
   let size = 0;
   let overflowed = false;
@@ -1677,8 +1739,12 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
     size += chunk.length;
     if (size > MAX_SHELL_BYTES) {
       overflowed = true;
-      // No content-length: the rest of this body is still arriving.
-      res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
+      // No content-length: the rest of this body is still arriving. The
+      // policy goes out anyway, with a nonce no script here carries: the
+      // inline skin stamp is refused and the entry bundle still loads from
+      // 'self', so the app runs in its default palette. A document this door
+      // could not read gets the stricter answer, not a looser one.
+      res.writeHead(200, headers);
       for (const buffered of chunks) res.write(buffered);
       chunks.length = 0;
       res.write(chunk);
@@ -1690,13 +1756,8 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
   harness.on("error", () => res.destroy());
   harness.on("end", () => {
     if (overflowed) return;
-    const html = injectRenewal(Buffer.concat(chunks).toString("utf8"));
-    res.writeHead(200, {
-      ...BASE_HEADERS,
-      "cache-control": cache,
-      "content-type": expected,
-      "content-length": Buffer.byteLength(html),
-    });
+    const html = injectRenewal(withScriptNonce(Buffer.concat(chunks).toString("utf8"), nonce), nonce);
+    res.writeHead(200, { ...headers, "content-length": Buffer.byteLength(html) });
     res.end(html);
   });
 }

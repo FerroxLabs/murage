@@ -420,3 +420,73 @@ describe("the diagram frame", () => {
     expect(asked).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("the shell's policy", () => {
+  const cspOf = (answer: Answer): string => String(answer.headers["content-security-policy"] ?? "");
+  const nonceOf = (csp: string): string => /'nonce-([^']+)'/.exec(csp)?.[1] ?? "";
+  const directive = (csp: string, name: string): string =>
+    csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
+
+  it("names every script in the shell by this response's nonce, and allows nothing else inline", async () => {
+    const shell = await knock("GET", "/", await signedIn());
+    const csp = cspOf(shell);
+    const nonce = nonceOf(csp);
+    expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/);
+    const tags = [...shell.body.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]);
+    // the skin stamp, the module entry, and the renewal script this door adds
+    expect(tags).toHaveLength(3);
+    for (const tag of tags) expect(tag).toContain(`nonce="${nonce}"`);
+    expect(shell.body).toContain("/session/renew");
+    expect(directive(csp, "script-src")).toBe(`script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'`);
+    expect(csp).not.toContain("'unsafe-eval'");
+  });
+
+  it("carries what the app needs and no wider", async () => {
+    const csp = cspOf(await knock("GET", "/", await signedIn()));
+    // the diagram frame, by URL; srcdoc previews are not governed by frame-src
+    expect(directive(csp, "frame-src")).toBe("frame-src 'self'");
+    expect(directive(csp, "connect-src")).toBe("connect-src 'self' wss://streaming.assemblyai.com");
+    expect(directive(csp, "img-src")).toBe("img-src 'self' data: blob: https:");
+    expect(directive(csp, "media-src")).toBe("media-src 'self' data: blob:");
+    expect(directive(csp, "object-src")).toBe("object-src 'none'");
+    expect(directive(csp, "base-uri")).toBe("base-uri 'none'");
+    expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
+    expect(csp).not.toMatch(/(?:^|; )default-src [^;]*\*/);
+  });
+
+  it("mints a fresh nonce for every response", async () => {
+    const cookie = await signedIn();
+    const first = nonceOf(cspOf(await knock("GET", "/", cookie)));
+    const second = nonceOf(cspOf(await knock("GET", "/", cookie)));
+    expect(first).not.toBe(second);
+  });
+
+  it("covers the deep links, which are the same document", async () => {
+    const deep = await knock("GET", "/chat/bot_1", await signedIn());
+    expect(deep.status).toBe(200);
+    const nonce = nonceOf(cspOf(deep));
+    expect(nonce).not.toBe("");
+    expect(deep.body).toContain(`nonce="${nonce}"`);
+  });
+
+  it("keeps the policy on a shell too big to rewrite", async () => {
+    // Above the ceiling the bytes go through unmodified. The policy still
+    // goes out, with a nonce no script carries: the inline skin stamp is
+    // refused and the page paints in the default palette, while the entry
+    // bundle loads from 'self' and the app runs. Loosening the policy for a
+    // document this door could not read would be the wrong way round.
+    replies.set("/", reply(200, { "content-type": "text/html" }, SHELL.replace("</body>", `${"x".repeat(2 * 1024 * 1024 + 16)}</body>`)));
+    const big = await knock("GET", "/", await signedIn());
+    expect(big.status).toBe(200);
+    expect(nonceOf(cspOf(big))).not.toBe("");
+    expect(big.body).not.toContain("nonce=");
+    expect(big.body).not.toContain("/session/renew");
+  });
+
+  it("leaves the sign-in page's own tighter policy alone", async () => {
+    const page = await knock("GET", "/", { "sec-fetch-mode": "navigate" });
+    expect(page.status).toBe(401);
+    expect(cspOf(page)).toContain("default-src 'none'");
+  });
+});
