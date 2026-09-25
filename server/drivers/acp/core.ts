@@ -36,6 +36,7 @@ import {
 import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
 import { resolveToolIdentity, resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
 import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
+import { approvalSummary } from "../../../shared/approval-summary.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
 import { folderTrustKindNames } from "../../folder-trust.ts";
 import { createHash } from "node:crypto";
@@ -1823,7 +1824,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
           }
           const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
-          const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
+          const summary = approvalSummary(String(toolCall.rawInput?.command ?? toolCall.title ?? tool));
           const computerAsk = controlsHost && acpAskControlsComputer(toolCall);
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {

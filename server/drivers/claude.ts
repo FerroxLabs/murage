@@ -24,6 +24,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { approvalSummary } from "../../shared/approval-summary.ts";
 
 import type {
   DriverCreateInput,
@@ -338,7 +339,7 @@ function askSummary(ask: Ask): string {
   const input = ask.input ?? {};
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (typeof input.question === "string") return input.question.slice(0, 300);
-  if (typeof input.command === "string") return input.command.slice(0, 200);
+  if (typeof input.command === "string") return approvalSummary(input.command);
   if (typeof input.url === "string") return input.url.slice(0, 200);
   const text = JSON.stringify(input);
   return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
