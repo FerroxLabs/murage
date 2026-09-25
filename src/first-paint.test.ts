@@ -94,4 +94,13 @@ describe("the first paint", () => {
       expect(graph.inputs[file], file).toBeDefined();
     }
   });
+
+  it("leaves both Markdown editors and Tiptap to the first edit", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/MarkdownEditor.tsx", "src/components/editor/RichMarkdownEditor.tsx", "src/lib/markdown-fidelity.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    expect([...reached].filter((path) => path.startsWith("@tiptap/"))).toEqual([]);
+  });
 });

@@ -21,7 +21,7 @@
 // (a stat, not a 2 MiB re-read) and handed to the session, which reloads a
 // clean document and raises a conflict for a dirty one. Nothing here writes
 // a file except an explicit Save or Save a copy.
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, Maximize2, Minimize2, Pencil, Pin, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
@@ -46,7 +46,7 @@ import {
 } from "@/lib/document-session";
 import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDraftStore } from "@/lib/markdown-drafts";
 import { saveBlob } from "@/lib/save-file";
-import { MarkdownEditor, MarkdownEditorController } from "./MarkdownEditor";
+import type { MarkdownEditorController } from "./MarkdownEditor";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
 import { MemorySettings } from "./MemorySettings";
@@ -57,6 +57,11 @@ import {
   WORKSPACE_FILES_ROUTES, isWorkspaceRelativePath,
   type WorkspaceEntry, type WorkspaceListResponse, type WorkspaceReadResult, type WorkspaceRootInfo, type WorkspaceScopeRef, type WorkspaceSearchResponse,
 } from "../../shared/workspace-files";
+
+// The editor, its Tiptap kit and the fidelity checker are one chunk, loaded
+// the first time a file is opened for editing (spec §6). Previewing never
+// needs them.
+const MarkdownEditor = lazy(() => import("./MarkdownEditor").then((module) => ({ default: module.MarkdownEditor })));
 
 const button = "min-h-9 rounded-lg border border-hairline/50 bg-control px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
 const iconButton = "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
@@ -179,11 +184,16 @@ export function WorkspacePaneSurface({
     editors.current.clear();
   }, []);
 
-  const editorFor = useCallback((tab: WorkspaceTab, read: WorkspaceReadResult): EditorEntry => {
+  const editorFor = useCallback(async (tab: WorkspaceTab, read: WorkspaceReadResult): Promise<EditorEntry> => {
     const existing = editors.current.get(tab.id);
     if (existing && existing.key === tabKey(tab)) return existing;
-    existing?.unsubscribe();
-    if (existing) void existing.controller.dispose();
+    const { MarkdownEditorController } = await import("./MarkdownEditor");
+    // Another load of this tab may have registered an editor while the chunk
+    // was on the wire; adopt it rather than open a second session.
+    const settled = editors.current.get(tab.id);
+    if (settled && settled.key === tabKey(tab)) return settled;
+    settled?.unsubscribe();
+    if (settled) void settled.controller.dispose();
     const session = createDocumentSessionStore(openDocumentSession(read));
     const identity = tabIdentity(tab);
     const controller = new MarkdownEditorController({
@@ -602,7 +612,7 @@ export function readErrorMessage(code: string | null, name: string, message?: st
 
 function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeAction, onOpenFiles, probeMs }: {
   tab: WorkspaceTab; api: ApiCall; dispatch: WorkspacePaneDispatch;
-  editorFor: (tab: WorkspaceTab, read: WorkspaceReadResult) => EditorEntry;
+  editorFor: (tab: WorkspaceTab, read: WorkspaceReadResult) => Promise<EditorEntry>;
   editors: { current: Map<string, EditorEntry> };
   nativeAction?: WorkspaceNativeAction; onOpenFiles?: (scope: WorkspaceScopeRef) => void; probeMs: number;
 }) {
@@ -648,8 +658,11 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
         const read = await readWorkspaceFile(api, identity.scope, identity.relativePath, controller.signal);
         if (!live()) return;
         setMissing(false);
-        if (tab.mode === "edit" && kind === "markdown") setLoad({ status: "editor", entry: editorFor(tab, read), read });
-        else setLoad({ status: "ready", read });
+        if (tab.mode === "edit" && kind === "markdown") {
+          const entry = await editorFor(tab, read);
+          if (!live()) return;
+          setLoad({ status: "editor", entry, read });
+        } else setLoad({ status: "ready", read });
       } catch (reason) {
         if (!live() || controller.signal.aborted) return;
         const failure = saveFailureFrom(reason);
@@ -801,7 +814,11 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
       {load.status === "image" && (load.url
         ? <ImageMedia item={{ id: tabKey(tab), src: load.url, name, alt: t("workspacePane.imageLabel", { name }), source: "workspace", download: true }} imgClassName="max-h-[70vh] max-w-full object-contain" />
         : <p className="text-[13px] text-ink-secondary">{t("workspacePane.imageUnavailable")}</p>)}
-      {load.status === "editor" && <MarkdownEditor controller={load.entry.controller} title={tab.relativePath} />}
+      {load.status === "editor" && (
+        <Suspense fallback={<p role="status" className="text-[12.5px] text-ink-secondary">{t("workspacePane.opening", { name })}</p>}>
+          <MarkdownEditor controller={load.entry.controller} title={tab.relativePath} />
+        </Suspense>
+      )}
       {load.status === "ready" && kind === "markdown" && (
         <>
           <div role="group" aria-label={t("workspacePane.viewLabel")} className="inline-flex self-start overflow-hidden rounded-lg border border-hairline/50 bg-control text-[12px]">
