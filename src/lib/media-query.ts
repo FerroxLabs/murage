@@ -23,3 +23,21 @@ export function useNarrowViewport(): boolean {
   }, []);
   return narrow;
 }
+
+/** A finger is the primary pointer: phones, and tablets without a trackpad. */
+export const COARSE_POINTER_QUERY = "(pointer: coarse)";
+
+/** Reactive, for the same reason as useNarrowViewport: an iPad gains and
+ * loses a trackpad without reloading the page. */
+export function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(() => globalThis.matchMedia?.(COARSE_POINTER_QUERY).matches ?? false);
+  useEffect(() => {
+    const mql = globalThis.matchMedia?.(COARSE_POINTER_QUERY);
+    if (!mql) return;
+    const apply = () => setCoarse(mql.matches);
+    apply();
+    mql.addEventListener("change", apply);
+    return () => mql.removeEventListener("change", apply);
+  }, []);
+  return coarse;
+}
