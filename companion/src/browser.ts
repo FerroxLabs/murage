@@ -1692,6 +1692,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       return;
     }
 
+    // The build's own compressed copy first, for the files it made one of.
+    const staticType = method === "GET" ? staticContentType(path) : null;
+    if (staticType && encoding && hasBuildSiblings(path)) {
+      return relayPrecompressed(req, res, path, staticType, encoding, options, () => forward(null));
+    }
     forward(null);
   };
 }
@@ -1762,6 +1767,87 @@ function relayStatic(
   }
   res.writeHead(200, staticHeaders(path, expected));
   harness.pipe(res);
+}
+
+/** Whether the build writes compressed copies of this path
+ * (`scripts/compress-dist.mjs`): the files whose names change when their
+ * content does, and nothing that keeps its name across releases — a copy of
+ * those would be stale the day after an update. */
+export function hasBuildSiblings(path: string): boolean {
+  return path.startsWith("/assets/") || MERMAID_FRAME_FILE.test(path);
+}
+
+/** Relay the build's own compressed copy of a hashed file, or hand back to
+ * the ordinary path when there is none.
+ *
+ * Brotli at its maximum quality is far too slow to run per request and costs
+ * nothing at build time, and the main script is the 5.5 MB that makes a cold
+ * launch on cellular slow. So the harness is asked for `<file>.br` first. It
+ * is asked the way this door asks it everything, rather than read off a disk
+ * this door does not own.
+ *
+ * A miss is anything but a 200 that is neither HTML nor JSON: the SPA
+ * fallback (index.html, 200) and the no-UI JSON 404 both mean "no copy", and
+ * neither may ever be relayed under a script's name. An error or a silent
+ * harness falls back too; the ordinary path then says what went wrong in its
+ * own words. */
+function relayPrecompressed(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  expected: string,
+  encoding: Encoding,
+  options: BrowserDoorOptions,
+  fallback: () => void,
+): void {
+  let state: "asking" | "serving" | "fell-back" = "asking";
+  const miss = () => {
+    if (state !== "asking") return;
+    state = "fell-back";
+    fallback();
+  };
+  const upstream = httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port: options.harnessPort,
+      path: `${path}${encoding === "br" ? ".br" : ".gz"}`,
+      method: "GET",
+      headers: forwardedHeaders(req),
+    },
+    (harness) => {
+      clearTimeout(deadline);
+      const type = String(harness.headers["content-type"] ?? "");
+      if ((harness.statusCode ?? 0) !== 200 || type.startsWith("text/html") || isJson(type)) {
+        harness.resume();
+        return miss();
+      }
+      state = "serving";
+      const length = harness.headers["content-length"];
+      res.writeHead(200, {
+        ...staticHeaders(path, expected),
+        "content-encoding": encoding,
+        ...(length ? { "content-length": length } : {}),
+      });
+      harness.on("error", () => res.destroy());
+      harness.pipe(res);
+    },
+  );
+  const deadline = setTimeout(
+    () => upstream.destroy(new Error("the harness sent no response headers")),
+    options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS,
+  );
+  deadline.unref?.();
+  upstream.on("error", () => {
+    clearTimeout(deadline);
+    if (state === "serving") res.destroy();
+    else miss();
+  });
+  res.on("close", () => {
+    if (state === "serving" && !res.writableEnded) upstream.destroy();
+  });
+  // The browser's own request is left unread here, so the fallback can still
+  // pipe it upstream exactly as it always has.
+  upstream.end();
 }
 
 /** The shell document, with the renewal script injected.

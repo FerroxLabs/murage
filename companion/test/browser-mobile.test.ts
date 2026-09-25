@@ -9,7 +9,7 @@
 // and what it refuses, and the fake records every path it was asked for.
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
-import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from "node:zlib";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -593,5 +593,77 @@ describe("bytes on the wire", () => {
     for (const answer of [await knock("GET", "/healthz"), await knock("GET", "/api/bots"), await knock("GET", "/enter")]) {
       expect(answer.headers.vary).toBe("Accept-Encoding");
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("the build's own compressed copies", () => {
+  const JS = "export const line = 1;\n".repeat(400);
+  /** Different words from JS on purpose: seeing these proves the door sent
+   * the build's copy rather than compressing its own. */
+  const BUILT = "/* the build's copy */ export const line = 1;\n".repeat(100);
+  const ASSET = "/assets/index-AbC123.js";
+
+  it("sends the brotli copy the build made, and asks for nothing else", async () => {
+    replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+    replies.set(`${ASSET}.br`, reply(200, { "content-type": "application/octet-stream" }, brotliCompressSync(BUILT)));
+    const answer = await knock("GET", ASSET, { ...(await signedIn()), "accept-encoding": "gzip, br" });
+    expect(answer.status).toBe(200);
+    expect(answer.headers["content-encoding"]).toBe("br");
+    expect(answer.body).toBe(BUILT);
+    // The door's type, never the harness's octet-stream for a `.br` file.
+    expect(answer.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(answer.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(answer.headers.vary).toBe("Accept-Encoding");
+    expect(asked).toEqual([`${ASSET}.br`]);
+  });
+
+  it("asks for the gzip copy when that is all the browser takes", async () => {
+    replies.set(`${ASSET}.gz`, reply(200, { "content-type": "application/octet-stream" }, gzipSync(BUILT)));
+    const answer = await knock("GET", ASSET, { ...(await signedIn()), "accept-encoding": "gzip" });
+    expect(answer.headers["content-encoding"]).toBe("gzip");
+    expect(answer.body).toBe(BUILT);
+    expect(asked).toEqual([`${ASSET}.gz`]);
+  });
+
+  it("falls back to compressing on the fly when the build left no copy", async () => {
+    // No `.br` registered: the harness answers the SPA fallback, HTML at 200,
+    // which must read as "no copy" and never as the answer.
+    replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+    const answer = await knock("GET", ASSET, { ...(await signedIn()), "accept-encoding": "br" });
+    expect(answer.headers["content-encoding"]).toBe("br");
+    expect(answer.body).toBe(JS);
+    expect(asked).toEqual([`${ASSET}.br`, ASSET]);
+  });
+
+  it("falls back when the harness is serving no UI at all", async () => {
+    replies.set(`${ASSET}.br`, reply(404, { "content-type": "application/json" }, '{"error":"no route"}'));
+    replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+    const answer = await knock("GET", ASSET, { ...(await signedIn()), "accept-encoding": "br" });
+    expect(answer.status).toBe(200);
+    expect(answer.body).toBe(JS);
+  });
+
+  it("does not ask for a copy of anything whose name outlives its content", async () => {
+    replies.set("/manifest.webmanifest", reply(200, { "content-type": "application/octet-stream" }, JSON.stringify({ name: "Murage", pad: "x".repeat(2048) })));
+    const cookie = await signedIn();
+    await knock("GET", "/manifest.webmanifest", { ...cookie, "accept-encoding": "br" });
+    await knock("GET", "/", { ...cookie, "accept-encoding": "br" });
+    expect(asked).toEqual(["/manifest.webmanifest", "/"]);
+  });
+
+  it("does not ask for a copy when the browser takes neither encoding", async () => {
+    replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+    await knock("GET", ASSET, await signedIn());
+    expect(asked).toEqual([ASSET]);
+  });
+
+  it("keeps the diagram frame sandboxed and frameable when it comes from a copy", async () => {
+    const FRAME = "/mermaid-frame-0123456789abcdef.html";
+    replies.set(`${FRAME}.br`, reply(200, { "content-type": "application/octet-stream" }, brotliCompressSync("<!doctype html><p>frame</p>")));
+    const answer = await knock("GET", FRAME, { ...(await signedIn()), "accept-encoding": "br" });
+    expect(answer.body).toBe("<!doctype html><p>frame</p>");
+    expect(answer.headers["content-security-policy"]).toBe("sandbox allow-scripts");
+    expect(answer.headers["x-frame-options"]).toBeUndefined();
   });
 });
