@@ -721,6 +721,16 @@ export function configured(cfg: AppConfig): boolean {
   return connectionMode(cfg) !== "unavailable";
 }
 
+/** Whether a turn about to start can mount connected apps. It refreshes a
+ * stale readiness answer first (never waiting on a probe already running),
+ * so one failed probe cannot leave every later turn without connected apps:
+ * configured() alone reads the cache, and nothing re-probed it once it said
+ * no, until the app restarted or someone opened Connected apps. */
+export async function turnConnectedAppsReady(cfg: AppConfig): Promise<boolean> {
+  await primeBrokerReadiness({ turn: true });
+  return configured(cfg);
+}
+
 /** Three answers, not two. The desktop shell sets MURAGE_CREDENTIAL_STORE to
  * "unavailable" when it could not read credentials.bin this launch; without
  * that signal an unreadable store is indistinguishable from a user who never
