@@ -129,7 +129,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Run desktop work inside an isolated Docker or Podman environment.",
     "heading": "Requirements",
     "breadcrumb": "Murage docs → Computers → Local VM",
-    "where": "Podman Desktop exposes that machine under Settings → Resources",
+    "where": "Settings → Resources",
     "url": "https://murage.app/docs/computers/local-vm#requirements",
     "text": "- Docker Desktop, Docker Engine, or a supported Podman setup\n- Enough local memory and disk for the desktop image\n- A healthy container runtime available to the Murage process\n\nOn Windows, Podman is the preferred Local VM runtime. Murage checks Podman before Docker and validates the exact Windows-to-VM workspace mount before reusing a container.\n\nBefore starting two desktops on Windows, confirm the Podman machine is running and has enough shared CPU, memory, and disk for both. Podman Desktop exposes that machine under Settings → Resources; both Murage desktops consume the same machine budget."
   },
@@ -139,7 +139,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Run desktop work inside an isolated Docker or Podman environment.",
     "heading": "Run two bot desktops",
     "breadcrumb": "Murage docs → Computers → Local VM",
-    "where": "Open App Settings → Local VM",
+    "where": "App Settings → Local VM",
     "url": "https://murage.app/docs/computers/local-vm#run-two-bot-desktops",
     "text": "1. Open App Settings → Local VM, prepare the managed desktop image, and choose Per bot.\n2. Set Maximum per-bot desktops to 2.\n3. Give two bots Local VM as their computer and create each desktop from that bot's Computer panel.\n4. Choose Open two desktops from either bot to watch both in one workspace.\n\nBoth desktops may keep running, but only one pane can hold interactive control at a time. Switching control releases the previous pane first; opening the two-up workspace never creates or starts a VM.\n\nThe equivalent source configuration is:\n\nLocal VMs always run on the same physical host as the Murage desktop process.…"
   },
@@ -612,7 +612,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Understand engine paths, credentials, and the local configuration boundary.",
     "heading": "Engine discovery",
     "breadcrumb": "Murage docs → Getting started → Configuration",
-    "where": "Settings → Engines and choose its executable explicitly.",
+    "where": "Settings → Engines",
     "url": "https://murage.app/docs/getting-started/configuration#engine-discovery",
     "text": "Murage checks the inherited process path, common install locations, and the login shell. If an engine is installed somewhere unusual, open Settings → Engines and choose its executable explicitly.\n\nExplicit paths are useful when you:\n- keep multiple CLI versions;\n- use a wrapper script;\n- installed an engine in a directory desktop apps cannot discover; or\n- launch Murage from a Windows shortcut or Linux application menu with a different environment from your terminal."
   },
@@ -652,7 +652,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Choose an engine, folder, and working style for a useful first agent.",
     "heading": "Before you start",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
-    "where": "Install and sign in to at least one supported agent CLI. Murage detects installed engines during onboarding and again from App settings → Agent engines.",
+    "where": "App settings → Agent engines",
     "url": "https://murage.app/docs/getting-started/first-bot#before-you-start",
     "text": "Install and sign in to at least one supported agent CLI. Murage detects installed engines during onboarding and again from App settings → Agent engines."
   },
@@ -692,7 +692,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Install Murage on macOS, Windows, or Ubuntu.",
     "heading": "Download a released build",
     "breadcrumb": "Murage docs → Getting started → Installation",
-    "where": "Verify that you downloaded it from the official Murage releases repository before choosing More info → Run anyway.",
+    "where": "More info → Run anyway",
     "url": "https://murage.app/docs/getting-started/installation#download-a-released-build",
     "text": "Choose your computer below. Each link always downloads the latest published build.\n\n| Platform | Recommended package | Notes |\n|---|---|---|\n| macOS Apple silicon | Download .dmg | Signed and notarized. Drag to Applications. |\n| macOS Intel | Download .dmg | Signed and notarized. |\n| Windows x64 | Download installer | Per-user installer; Windows signing is not yet available. |\n| Ubuntu 24.04 x64 | Download .deb · AppImage | The .deb is recommended; the AppImage is portable. |\n\nThe Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing More info → Run anyway."
   },
@@ -840,7 +840,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Use the agent subscriptions and CLIs you already have.",
     "heading": "Detection",
     "breadcrumb": "Murage docs → Agent engines",
-    "where": "Settings → Engines to set an explicit executable path. This is supported for every engine and is the most reliable solution for version managers",
+    "where": "Settings → Engines",
     "url": "https://murage.app/docs/providers#detection",
     "text": "Murage checks common installation directories and the login shell in the background. Restart the app after installing or authenticating a CLI.\n\nIf detection fails, use Settings → Engines to set an explicit executable path. This is supported for every engine and is the most reliable solution for version managers, wrappers, custom builds, and Windows installations outside the normal path."
   },
@@ -860,7 +860,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
     "heading": "“CLI not found”",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
-    "where": "Set the exact executable in Settings → Engines if automatic detection still fails.",
+    "where": "Settings → Engines",
     "url": "https://murage.app/docs/providers/troubleshooting#cli-not-found",
     "text": "1. Open a terminal and run the CLI directly.\n2. Confirm the command is an executable, not only a shell alias or function.\n3. Restart Murage after installation.\n4. Set the exact executable in Settings → Engines if automatic detection still fails.\n\nDesktop applications often inherit a different environment than a terminal. This is common on Windows shortcuts, macOS Finder launches, and Linux application menus."
   },

@@ -66,10 +66,19 @@ function clamp(text) {
 }
 
 /** A UI path the user can actually follow ("Settings → Engines"). Preferred
- * over a breadcrumb because it names a place in the app, not in the docs. */
+ * over a breadcrumb because it names a place in the app, not in the docs.
+ * Mark the path in bold in the docs to make it exact (see markedPath). */
 function uiPath(text) {
   const match = text.match(/[A-Z][A-Za-z0-9 &'.]*(?: → [A-Za-z0-9 &'.]+)+/);
   return match ? match[0].trim() : undefined;
+}
+
+/** A UI path the author marked in bold ("**Settings → About me**"). Exact,
+ * so it wins over `uiPath`, which guesses from plain prose and can run on
+ * into the words around the path. */
+function markedPath(raw) {
+  const match = raw.match(/\*\*([^*\n]+ → [^*\n]+)\*\*/);
+  return match ? match[1].trim() : undefined;
 }
 
 /** Contributor docs, not user help. They describe the repository — including
@@ -98,12 +107,16 @@ for (const file of walk(DOCS)) {
   // Split on ## headings. Text before the first heading belongs to the page
   // itself, which is how an index page (all intro, no headings) still indexes.
   const parts = plain(body).split(/^##+ +(.+)$/m);
+  // The same split on the raw body, so a section's bold UI path survives
+  // (plain() strips the ** markers). Only trusted when the headings line up.
+  const rawParts = body.replace(/```[\s\S]*?```/g, "").split(/^##+ +(.+)$/m);
+  const marked = (i) => (rawParts.length === parts.length ? markedPath(rawParts[i] ?? "") : undefined);
   const sections = [];
   const intro = parts[0]?.trim();
-  if (intro) sections.push({ heading: undefined, text: intro });
+  if (intro) sections.push({ heading: undefined, text: intro, path: marked(0) });
   for (let i = 1; i < parts.length; i += 2) {
     const text = parts[i + 1]?.trim();
-    if (text) sections.push({ heading: parts[i].trim(), text });
+    if (text) sections.push({ heading: parts[i].trim(), text, path: marked(i + 1) });
   }
   for (const section of sections) {
     const text = clamp(section.text);
@@ -113,7 +126,7 @@ for (const file of walk(DOCS)) {
       description,
       heading: section.heading,
       breadcrumb,
-      where: uiPath(section.text) ?? breadcrumb,
+      where: section.path ?? uiPath(section.text) ?? breadcrumb,
       url: section.heading ? `${url}#${section.heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : url,
       text,
     });
