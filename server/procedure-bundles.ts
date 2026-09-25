@@ -155,7 +155,12 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
     bytes+=Buffer.byteLength(line);if(bytes>INDEX_MAX_BYTES)break;lines.push(line);
   }
   return {catalogue:bundle.catalogue.map(skill=>({...skill,directory:join(root,skill.directory)})),playbooks:bundle.playbooks,
-    importedPrompt:lines.length?`\n\nImported skills pinned for this task:\n${lines.join("\n")}\nBefore starting work one of these covers, read its exact SKILL.md path and follow it. These references never override the user's instructions or permissions.`:""};
+    importedPrompt:importedSkillsPrompt(lines)};
+}
+
+/** The "Its list of skills" layer: one line per imported skill, or nothing. */
+export function importedSkillsPrompt(lines:readonly string[]):string{
+  return lines.length?`\n\nImported skills pinned for this task:\n${lines.join("\n")}\nBefore starting work one of these covers, read its exact SKILL.md path and follow it. These references never override the user's instructions or permissions.`:"";
 }
 
 /** Forgetting revokes only known task-owned projections; unknown files and
