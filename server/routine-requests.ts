@@ -547,15 +547,15 @@ function cardCopy(
   const remainsPaused = operation.action === "update" && current?.enabled === false;
   const deferredInterval = definition.schedule.type === "interval" && definition.schedule.anchorAt === undefined;
   const nextDescription = remainsPaused
-    ? "None — this routine remains paused"
+    ? "None: this routine remains paused"
     : deferredInterval
       ? "One interval after confirmation"
       : nextRunAt !== null
         ? formatInstant(nextRunAt, timeZone)
         : operation.action === "pause"
-          ? "None — this routine will be paused"
+          ? "None: this routine will be paused"
           : operation.action === "delete"
-            ? "None — this routine will be deleted"
+            ? "None: this routine will be deleted"
             : "None";
   const status = remainsPaused ? " · Remains paused" : "";
   // Existing routines may predate nested-card redaction. The approval still
@@ -582,7 +582,7 @@ function cardCopy(
     detail: [
       `Action: ${actionCopy.detail}`,
       `Name: ${name}`,
-      ...(forBot ? [`For: @${redactSecretsInText(forBot.name)} — each run uses that bot's engine and permissions`] : []),
+      ...(forBot ? [`For: @${redactSecretsInText(forBot.name)} (each run uses that bot's engine and permissions)`] : []),
       `Schedule: ${when}`,
       `Next run: ${nextDescription}`,
       `Runs on: ${destination}`,

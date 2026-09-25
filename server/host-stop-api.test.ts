@@ -120,7 +120,7 @@ it("turning the connection off mid-turn stops a direct turn with a reason notice
     const exported = await fetch(`${fixture.info.url}/api/threads/${bot.threadId}/export`, { headers });
     expect(exported.status).toBe(200);
     const markdown = await exported.text();
-    expect(markdown).toContain("> Stopped — the model connection it was using was changed or turned off");
+    expect(markdown).toContain("> Stopped: the model connection it was using was changed or turned off");
     expect(markdown).not.toContain("stopped:");
   } finally {
     await setConnectionEnabled(true);

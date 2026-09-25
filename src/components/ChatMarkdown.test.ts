@@ -91,7 +91,7 @@ it("never requests a remote, local-path, file or SVG image from model text", () 
 // Rendering percent-encoded the backslashes, so the link fell to the default
 // protocol allow-list and rendered dead (href=""), and Markdown read "\." as an
 // escaped "." so the separator before ".murage" was lost.
-const saveTitles = (html: string) => [...html.matchAll(/title="Save a copy — ([^"]*)"/g)].map(([, path]) => path);
+const saveTitles = (html: string) => [...html.matchAll(/title="Save a copy: ([^"]*)"/g)].map(([, path]) => path);
 it("offers a Windows file link written with backslashes as Save a copy, every separator intact", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, {
     text: "[Report](C:\\Users\\Maus\\.murage\\_drafts\\-old\\report.md) and [Notes](<D:\\.hidden\\notes.md>)",

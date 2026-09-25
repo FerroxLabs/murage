@@ -362,7 +362,7 @@ const support: AcpSupport = {
     }
   },
   nativeSource: "fuigo.acp",
-  loginNote: "Fuigo has no credential — add a Flux Router key in App Settings, or run `fuigo login` in a terminal",
+  loginNote: "Fuigo has no credential: add a Flux Router key in App Settings, or run `fuigo login` in a terminal",
 
   // Murage SHIPS this engine (scripts/prepare-fuigo.mjs stages it into
   // Resources and MURAGE_FUIGO_DIR points at it), so this block only matters

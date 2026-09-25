@@ -28,7 +28,7 @@ export const MEMORY_MAX_BYTES = 24_000;
 export const MEMORY_SEED = `# Memory
 
 Durable notes this bot keeps between tasks. The first ${MEMORY_MAX_LINES} lines
-load at the start of every session — keep this file short and curated.
+load at the start of every session: keep this file short and curated.
 Longer notes belong in memory/<topic>.md files, read on demand.
 `;
 

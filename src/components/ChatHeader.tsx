@@ -106,7 +106,7 @@ export function WorkingFolderChip({ bot }: { bot: Bot }) {
       title={detail}
       // Friendly action first, resolved location second: a screen reader
       // hears both, and the folded icon-only form is still self-describing.
-      aria-label={`${workspaceActionLabel(workspace)} — ${detail}`}
+      aria-label={`${workspaceActionLabel(workspace)}: ${detail}`}
     >
       <Folder size={12} className="chip-trim:size-[14px]" />
       <span className="truncate chip-trim:hidden">{workspaceChipLabel(workspace)}</span>

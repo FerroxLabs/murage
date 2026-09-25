@@ -99,7 +99,7 @@ for (const [skin, width] of [["dark", 1100], ["light", 1100], ["dark", 390], ["l
   await open(page, { skin, width });
   await expect(lock(page)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Connect your apps", exact: true })).toBeVisible();
-  await expect(page.getByText("Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
   await expect(primary(page)).toBeVisible();
   await expect(page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true })).toBeVisible();
   // The live panel's controls are not there to be found.

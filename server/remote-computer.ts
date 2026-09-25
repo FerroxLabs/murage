@@ -142,7 +142,7 @@ export function remoteComputerBootstrapCommand(botName: string): string {
   // metacharacter away from being wrong again, forever. Encoding removes the
   // interpolation instead — base64's alphabet cannot express a metacharacter,
   // so there is nothing left for the remote shell to interpret.
-  const banner = Buffer.from(`\n  ▦ ${botName}'s computer — Murage\n\n`, "utf8").toString("base64");
+  const banner = Buffer.from(`\n  ▦ ${botName}'s computer: Murage\n\n`, "utf8").toString("base64");
   return [
     "if ! command -v xdotool >/dev/null || ! command -v convert >/dev/null || ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then sudo apt-get update -qq || true; sudo apt-get install -y -qq ca-certificates curl python3 gnome-screenshot xclip wmctrl xdotool imagemagick scrot >/dev/null 2>&1 || true; fi",
     "sudo mkdir -p /opt/muragebox/run",

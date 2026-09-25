@@ -845,7 +845,7 @@ describe("comms e2e (fake ACP fleet)", () => {
             (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
           );
           const waiting = current.messages.some(
-            (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
+            (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting: they're busy"),
           );
           return queued && waiting && !current.busy;
         }, 25_000, "approved ask was not retained as a waiting delegation");
@@ -937,7 +937,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       // The asker's delegate_bot queues behind the busy helper: its own turn
       // settles, the drain finds the helper busy and parks the handoff.
       expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "hey @RetiredHelper please pick this up" })).status).toBe(202);
-      const waitingChip = (m: any) => m.kind === "activity" && m.tool?.name === "Delegation to @RetiredHelper waiting — they're busy (retry 1/3 when they finish)";
+      const waitingChip = (m: any) => m.kind === "activity" && m.tool?.name === "Delegation to @RetiredHelper waiting: they're busy (retry 1/3 when they finish)";
       await waitUntil(async () => {
         const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
         return current.messages.some(waitingChip) && !current.busy;
@@ -971,7 +971,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       // One busy period, one retry chip: the reload's release is the retry.
       expect(askerBot.messages.filter(waitingChip)).toHaveLength(1);
       expect(askerBot.messages.some(
-        (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy (retry 2/3"),
+        (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting: they're busy (retry 2/3"),
       )).toBe(false);
       expect(askerBot.messages.some(
         (m: any) => m.kind === "activity" && m.tool?.name?.startsWith("Delegation to @RetiredHelper canceled"),
@@ -1019,7 +1019,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       expect(conversionReply.text).toContain("delivered to this conversation automatically");
       expect(conversionReply.text).not.toContain("wait_delegation");
       expect(askerBot.messages.some(
-        (m: any) => m.kind === "activity" && m.tool?.name === "@SlowHelper is still working — ask converted to a delegation",
+        (m: any) => m.kind === "activity" && m.tool?.name === "@SlowHelper is still working: ask converted to a delegation",
       )).toBe(true);
 
       // free the peer: its held turn completes and the late reply lands on
@@ -1152,7 +1152,7 @@ describe("comms e2e (fake ACP fleet)", () => {
             m.from?.botId === helper.id
             && m.kind === "activity"
             && m.tool?.ok === false
-            && m.tool?.name === "Delegated turn did not finish — provider settings changed",
+            && m.tool?.name === "Delegated turn did not finish: provider settings changed",
         );
         if (terminal?.length === 1) break;
         if (Date.now() > terminalDeadline) {
@@ -1200,7 +1200,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           ? state.groups.find((g: any) => g.id === note.comm.groupId)
           : undefined;
         const terminal = channel?.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.ok === false && /did not finish — .+/.test(m.tool?.name ?? ""),
+          (m: any) => m.kind === "activity" && m.tool?.ok === false && /did not finish: .+/.test(m.tool?.name ?? ""),
         );
         if (terminal) break;
         if (Date.now() > deadline) {

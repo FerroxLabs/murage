@@ -209,7 +209,7 @@ export function availableMemoryNotebooks(ticket:object,roster:MemoryRoster){
         if(lstatSync(topics).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
         for(const name of readdirSync(topics).slice(0,100))if(isMemoryTopicName(name))selections.push({kind:"bot",botId:bot.id,topic:name});
       }
-    }catch{issues.push({label:bot.id,error:"Topic directory could not be safely read."});}
+    }catch{issues.push({label:bot.id,error:"Topic directory could not be read."});}
     if(selections.length>=1000)break;
   }
   const sections=[...new Set([...roster.bots,...roster.groups].map(item=>item.section?.trim()||""))];

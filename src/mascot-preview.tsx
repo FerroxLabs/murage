@@ -77,7 +77,7 @@ const SLIDERS: { key: keyof Tuning; min: number; max: number; step: number; hint
   { key: "eyeScale", min: 0.4, max: 2, step: 0.01, hint: "eye size" },
   { key: "mouthStroke", min: 2, max: 26, step: 0.5, hint: "mouth thickness" },
   { key: "spring", min: 2, max: 20, step: 0.5, hint: "morph stiffness" },
-  { key: "turn", min: -180, max: 180, step: 1, hint: "head turn — body stays still" },
+  { key: "turn", min: -180, max: 180, step: 1, hint: "head turn: body stays still" },
   { key: "gazeX", min: -1, max: 1, step: 0.01, hint: "gaze across" },
   { key: "gazeY", min: -1, max: 1, step: 0.01, hint: "gaze up/down" },
 ];
@@ -171,7 +171,7 @@ function Tuner({
           <h3>Values to keep</h3>
           <pre className="tuner-code">
             {changed.length === 0
-              ? "// defaults — nothing to change"
+              ? "// defaults: nothing to change"
               : changed.map((k) => `${k}: ${tuning[k]},`).join("\n")}
           </pre>
 
@@ -298,7 +298,7 @@ function Preview() {
           <p className="intro">
             The app&rsquo;s lit body with the face engine behind it. Expressions morph on a
             spring, blink on each state&rsquo;s own rhythm, and the eyes wrap around an implied
-            sphere so a turn reads as a head turning — the silhouette itself never rotates.
+            sphere so a turn reads as a head turning: the silhouette itself never rotates.
           </p>
         </div>
         <button className="replay-all" type="button" onClick={() => setReplayAll((v) => v + 1)}>

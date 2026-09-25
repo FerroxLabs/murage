@@ -174,7 +174,7 @@ test("a host stop shows why the turn ended in a 1:1 thread with Tool calls off",
   await expect.poll(busy, { timeout: 10_000 }).toBe(false);
   const reason = page.getByTestId("stopped-row");
   await expect(reason).toBeVisible();
-  await expect(reason).toHaveText("Stopped — this computer was switched off for the bot");
+  await expect(reason).toHaveText("Stopped: this computer was switched off for the bot");
   await expect(reason).toHaveRole("status");
   // the neutral family, not the error card, and no tool chips
   await expect(reason).toHaveClass(/text-ink-secondary/);
@@ -185,5 +185,5 @@ test("a host stop shows why the turn ended in a 1:1 thread with Tool calls off",
   await page.screenshot({ path: evidencePath(info, "chat-host-stopped") });
   // the bot list's one-line preview reads the same, not the raw notice name
   const sidebar = await openSidebar(page);
-  await expect(sidebar.getByText("Stopped — this computer was switched off for the bot", { exact: true })).toBeVisible();
+  await expect(sidebar.getByText("Stopped: this computer was switched off for the bot", { exact: true })).toBeVisible();
 });

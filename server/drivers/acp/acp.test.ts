@@ -2416,7 +2416,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
     expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.");
     expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
-    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.");
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.");
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");
   });
 
@@ -2432,7 +2432,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     // Without a fluxrouter.ai locator the limit is still recognised, but the
     // provider is not named on the strength of provider prose alone.
     const bare = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "account_monthly_budget_exhausted" } });
-    expect(bare).toBe("This account has reached its monthly spending limit with the model provider. Adding credit will not lift it — ask them to raise it, or use another engine.");
+    expect(bare).toBe("This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.");
     expect(bare.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
     // A ceiling is not an exhausted balance: the credits copy must not move.
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");

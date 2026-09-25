@@ -1234,7 +1234,7 @@ async function listConnectedAccounts(
     seenCursors.add(next);
     cursor = next;
   }
-  throw new Error("Composio account inventory exceeded the pagination safety limit");
+  throw new Error("Composio account inventory exceeded the page limit");
 }
 
 async function listSessionToolkits(
@@ -1262,7 +1262,7 @@ async function listSessionToolkits(
     seenCursors.add(next);
     cursor = next;
   }
-  throw new Error("Composio toolkit inventory exceeded the pagination safety limit");
+  throw new Error("Composio toolkit inventory exceeded the page limit");
 }
 
 function summarizeAccounts(accounts: ConnectedAccountResponse[], slugs: string[]) {

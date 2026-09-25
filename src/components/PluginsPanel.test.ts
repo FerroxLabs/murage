@@ -401,7 +401,7 @@ describe("the connected-apps lock", () => {
     // against the live catalogue, so the copy names apps instead of a number.
     expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
-      "Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.",
+      "Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.",
     );
     expect(Object.values(en).some(value => /\d+\+ (?:more |)apps|and \d+\+ more/.test(value))).toBe(false);
     expect(en["connectedApps.lock.button"]).toBe("Add Flux Router key");

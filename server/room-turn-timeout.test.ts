@@ -183,10 +183,10 @@ describe("room turn timeout", () => {
 
   it("formats singular and plural timeout messages", () => {
     expect(roomTurnTimeoutMessage("Atlas", 1)).toBe(
-      "Atlas's room turn exceeded 1 minute — stopping; waiting for the engine to confirm close",
+      "Atlas's room turn exceeded 1 minute: stopping; waiting for the engine to confirm close",
     );
     expect(roomTurnTimeoutMessage("Atlas", 20)).toBe(
-      "Atlas's room turn exceeded 20 minutes — stopping; waiting for the engine to confirm close",
+      "Atlas's room turn exceeded 20 minutes: stopping; waiting for the engine to confirm close",
     );
   });
 });

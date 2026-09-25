@@ -84,5 +84,5 @@ it("snapshots the installed reviewed revision without exporting stale direct fil
   expect(result.dependencies).toBeNull();
   expect(readFileSync(join(state, "skills.json"), "utf8")).toBe(manifest);
   writeFileSync(join(source, "SKILL.md"), content + "changed");
-  expect(() => snapshotInstalledSkill(botId, "research")).toThrow("could not be exported safely");
+  expect(() => snapshotInstalledSkill(botId, "research")).toThrow("could not be exported");
 });

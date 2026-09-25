@@ -17,7 +17,7 @@ import { collectionSlug, deleteCollectionSkill, duplicateSkill, findingLines, re
 
 /** Long skills render this much until "Show all". */
 export const READER_PREVIEW_CHARS = 60_000;
-export const BLOCKED_LINE = "This skill was blocked by the safety check and can't be switched on.";
+export const BLOCKED_LINE = "This skill was blocked by the skill check and can't be switched on.";
 
 export { skillBody };
 
@@ -132,7 +132,7 @@ export function SkillReaderView(props: SkillReaderViewProps) {
       {pending?.kind === "enable" && (
         <div role="alertdialog" aria-label="Use this skill anyway?" className="mt-3 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
           <div className="font-medium">Use {skill.name} anyway?</div>
-          <p className="mt-1 text-ink-secondary">The safety check found:</p>
+          <p className="mt-1 text-ink-secondary">The skill check found:</p>
           <ul className="mt-1 list-disc pl-4 text-ink-secondary">{findings.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mt-3 flex gap-2">
             <button type="button" disabled={busy} onClick={props.onConfirm} className={`${BUTTON} bg-warning text-white`}>Use it anyway</button>

@@ -243,7 +243,7 @@ describe("the picker with nothing configured", () => {
     const title = pickerTriggerTitle(undefined, unavailableSelectionLabel(""), undefined);
     expect(title).not.toMatch(/·\s*$/);
     expect(title).not.toContain("Unavailable engine");
-    expect(title).toBe("No model chosen yet — open this to pick one");
+    expect(title).toBe("No model chosen yet. Open this to pick one");
   });
 
   it("still names a genuinely unavailable engine, and still joins cleanly", () => {

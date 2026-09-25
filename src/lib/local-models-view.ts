@@ -45,7 +45,7 @@ export const LOCAL_MODELS_FOOTER =
  */
 export function lookedLine(targets: readonly LocalDetectionTarget[]): string {
   const where = targets.map((target) => `${LOCAL_SERVER_KIND_LABELS[target.kind]} at ${target.address}`).join(", ");
-  return `Looked for ${where} — nothing answered.`;
+  return `Looked for ${where}. Nothing answered.`;
 }
 
 export function serverStatusLine(server: LocalServerView, now: number): string {
@@ -76,7 +76,7 @@ export function contextLine(model: LocalModelView): string {
   const window = model.context?.contextWindow;
   if (!window) return "Context size not reported by this server";
   if (window < AGENT_MIN_CONTEXT_TOKENS) {
-    return `${tokensLabel(window)} context loaded — too small for bots, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
+    return `${tokensLabel(window)} context loaded: too small for bots, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
   }
   return `${tokensLabel(window)} context loaded`;
 }
@@ -88,7 +88,7 @@ export function contextLine(model: LocalModelView): string {
 export function enginesLine(model: LocalModelView): string {
   const outcome = model.test?.outcome;
   if (outcome && outcome !== "tools-work" && outcome !== "tools-partial") return "";
-  if (!model.engines.length) return "No engine can use this model yet — run the test first";
+  if (!model.engines.length) return "No engine can use this model yet. Run the test first";
   return `Usable by ${model.engines.map(localEngineLabel).join(", ")}`;
 }
 
@@ -96,9 +96,9 @@ export function enginesLine(model: LocalModelView): string {
 export function testOutcomeLine(test: LocalToolTestResult): string {
   switch (test.outcome) {
     case "tools-work":
-      return "Tools work — ready for bots";
+      return "Tools work and are ready for bots";
     case "tools-partial":
-      return "Tools work, with gaps — some agent behaviour may be unreliable";
+      return "Tools work, with gaps: some agent behaviour may be unreliable";
     case "text-instead-of-tools":
       return "This model answers but can't use tools (it came back as text)";
     case "context-too-small":
@@ -106,7 +106,7 @@ export function testOutcomeLine(test: LocalToolTestResult): string {
         ? `Context too small for bots (loaded ${tokensLabel(test.context.contextWindow)}; bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`
         : `Context too small for bots (bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`;
     case "server-rejects-tools":
-      return "This server rejects tools — it has to be started with them enabled";
+      return "This server rejects tools. It has to be started with them enabled";
     case "model-not-found":
       return "This server no longer has that model";
     case "unreachable":
@@ -153,7 +153,7 @@ const CHECK_DETAILS: Record<string, string> = {
 export function checkLine(check: LocalToolCheck): string {
   const title = CHECK_TITLES[check.name] ?? check.name;
   const mark = check.status === "pass" ? "Pass" : check.status === "skipped" ? "Skipped" : "Fail";
-  return `${title}: ${mark} — ${CHECK_DETAILS[check.detail] ?? check.detail}`;
+  return `${title}: ${mark}, ${CHECK_DETAILS[check.detail] ?? check.detail}`;
 }
 
 export type LocalModelActionKind =

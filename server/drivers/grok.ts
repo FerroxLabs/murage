@@ -56,7 +56,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       }),
       httpErrorLabel: "xAI",
       missingKeyError: "This engine has no xAI key yet. Add one in App Settings → Models.",
-      unavailableReason: "No xAI key yet — add one in App Settings → Models.",
+      unavailableReason: "No xAI key yet: add one in App Settings → Models.",
       timeoutMs: 120_000,
       retryScale: Number(process.env.FAKE_GROK_RETRY_SCALE ?? "1"),
       generateModel: () => "grok-3-mini",

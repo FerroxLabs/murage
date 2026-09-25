@@ -81,7 +81,7 @@ describe("first paint", () => {
     expect(markup).toMatch(/data-tab-id="t1" data-dirty="true"/);
     expect(markup).toContain('aria-label="report.md has unsaved changes"');
     expect(markup).toMatch(/data-tab-id="t2"[^>]*data-preview="true"/);
-    expect(markup).toContain("notes.md (preview tab, replaced by the next file you open) — From Ops bot · this task");
+    expect(markup).toContain("notes.md (preview tab, replaced by the next file you open): From Ops bot · this task");
     expect(markup).toContain('aria-label="Close report.md"');
     expect(markup).toContain('aria-label="Close notes.md"');
     // The active tab's document is mounted; it is still loading on first paint.

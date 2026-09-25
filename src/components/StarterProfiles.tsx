@@ -98,7 +98,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
       dispatch({ type: "toggleAppSettings", open: false });
       onFirstTask?.();
     } catch {
-      setError("The first-task draft could not be saved safely. Your bots are imported. Open the bot from the sidebar and add your notes in the normal composer.");
+      setError("The first-task draft could not be saved. Your bots are imported. Open the bot from the sidebar and add your notes in the normal composer.");
     }
   };
   return <section aria-labelledby="starter-profiles-title" className="rounded-xl border border-hairline/40 bg-card p-4">

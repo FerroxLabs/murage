@@ -63,7 +63,7 @@ describe("sidebar phone status", () => {
     }, now)).toMatchObject({ kind: "connected", label: "Phone connected", connectedCount: 1 });
     expect(
       deriveSidebarPhoneStatus({ enabled: true, devices: [recent], connectedDeviceIds: [] }, now),
-    ).toMatchObject({ kind: "disconnected", label: "Phone paired — not connected" });
+    ).toMatchObject({ kind: "disconnected", label: "Phone paired: not connected" });
     expect(deriveSidebarPhoneStatus({
       enabled: false,
       devices: [recent],
@@ -144,7 +144,7 @@ describe("SidebarPhoneStatusButton", () => {
     });
     const stale = render("icons", {
       kind: "stale",
-      label: "Phone paired — not recently active",
+      label: "Phone paired: not recently active",
       pairedCount: 1,
       connectedCount: 0,
     });
@@ -159,7 +159,7 @@ describe("SidebarPhoneStatusButton", () => {
   it("uses the same fixed-size control in the compact text sidebar", () => {
     const markup = render("compact", {
       kind: "stale",
-      label: "Phone paired — not recently active",
+      label: "Phone paired: not recently active",
       pairedCount: 1,
       connectedCount: 0,
     });

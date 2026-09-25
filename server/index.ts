@@ -1600,7 +1600,7 @@ function checkedModelSelection(
     selection.effort !== current.selection.effort || selection.connectionId !== current.selection.connectionId
   );
   if (current?.busy && changed) {
-    return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
+    return { ok: false, status: 409, error: "the bot is working: stop it before changing models" };
   }
   const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
@@ -1664,7 +1664,7 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
   if (memberIds.every((id) => store.bot(id)?.hidden)) {
     return {
       ok: false,
-      error: "a channel needs at least one active bot — every member given is archived",
+      error: "a channel needs at least one active bot: every member given is archived",
     };
   }
   return { ok: true, memberIds };
@@ -3444,8 +3444,8 @@ async function answerRequest(
       kind: "activity",
       tool: {
         name: question
-          ? "The bot stopped waiting for this answer — send it as a message from the question card"
-          : "Couldn't deliver that answer — the request is no longer open, so the action was not run",
+          ? "The bot stopped waiting for this answer: send it as a message from the question card"
+          : "Couldn't deliver that answer: the request is no longer open, so the action was not run",
         ok: false,
       },
     });
@@ -3709,7 +3709,7 @@ const watchdog = new TurnWatchdog({
     store.appendMessage(turn.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `error: no activity for ${minutes} minutes — the turn was stopped`, ok: false },
+      tool: { name: `error: no activity for ${minutes} minutes: the turn was stopped`, ok: false },
     });
     recordMemorySettlement(turn.threadId, `watchdog:${store.activeLeaf(turn.threadId)}`, "interrupted");
     finalizeDelegationWatch(turn.threadId, false, "", "Delegated turn stalled and was stopped");
@@ -3808,7 +3808,7 @@ async function reviewPermissionCard(args: {
 }): Promise<boolean> {
   const mode = resolveAutoReviewMode(args.asker.autoReview);
   if (mode === "off" || !args.instance.reviewPermission) return false;
-  const persona = [args.asker.name, args.asker.title, args.asker.description].filter(Boolean).join(" — ");
+  const persona = [args.asker.name, args.asker.title, args.asker.description].filter(Boolean).join(": ");
   const reviewed = await requestReview(args.instance.reviewPermission.bind(args.instance), {
     tool: args.tool,
     summary: args.summary,
@@ -4265,7 +4265,7 @@ bus.subscribe((event: RuntimeEvent) => {
             role: "bot",
             kind: "activity",
             tool: {
-              name: `generated image could not be attached — ${error instanceof Error ? error.message : "invalid image"}`.slice(0, 160),
+              name: `generated image could not be attached: ${error instanceof Error ? error.message : "invalid image"}`.slice(0, 160),
               ok: false,
             },
           });
@@ -4638,7 +4638,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `retrying — attempt ${event.attempt + 1}/${RETRY_MAX_ATTEMPTS} in ${Math.round(event.delayMs / 1000)}s — ${event.reason}`, ok: true },
+        tool: { name: `retrying: attempt ${event.attempt + 1}/${RETRY_MAX_ATTEMPTS} in ${Math.round(event.delayMs / 1000)}s: ${event.reason}`, ok: true },
       });
       break;
     case "runtime.error": {
@@ -4878,7 +4878,7 @@ bus.subscribe((event: RuntimeEvent) => {
       const delegationFailureName = delegationStopped
         ? DELEGATION_STOPPED_NAME
         : !event.ok && event.stopReason?.trim()
-          ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
+          ? `Delegated turn did not finish: ${event.stopReason.trim().slice(0, 120)}`
           : undefined;
       finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped);
       // group busy/unread settle in the group turn engine, which knows
@@ -4992,7 +4992,7 @@ function finalizeDelegationWatch(
             ? `Delegation to @${targetName} completed without a text reply`
             : stopped
               ? `Delegation to @${targetName} was stopped before it finished`
-              : `Delegation to @${targetName} failed — ${failureName}`,
+              : `Delegation to @${targetName} failed: ${failureName}`,
           ok,
         },
       });
@@ -5036,7 +5036,7 @@ bus.subscribe((event: RuntimeEvent) => {
   store.appendMessage(event.threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: `Same call repeated ${threshold}× — ${tool}: ${args.slice(0, 80)}${args.length > 80 ? "…" : ""} — it may be stuck`, ok: false },
+    tool: { name: `Same call repeated ${threshold}×: ${tool}: ${args.slice(0, 80)}${args.length > 80 ? "…" : ""} (it may be stuck)`, ok: false },
   });
 });
 
@@ -5077,7 +5077,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
           targetThreadId,
           false,
           "",
-          `Delegated turn could not start — ${why.slice(0, 120)}`,
+          `Delegated turn could not start: ${why.slice(0, 120)}`,
         );
         if (finalized) return;
       }
@@ -5092,7 +5092,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
         ...(source.kind === "group" && sender
           ? { from: { botId: sender.id, name: sender.name, color: sender.color } }
           : {}),
-        tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
+        tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start: ${why.slice(0, 120)}`, ok: false },
       });
     };
     return startTurn(toBotId, text, {
@@ -5261,7 +5261,7 @@ function drainQueuedSends() {
         role: "bot",
         kind: "activity",
         tool: {
-          name: `error: queued message could not start — ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,
+          name: `error: queued message could not start: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,
           ok: false,
         },
       });
@@ -5437,7 +5437,7 @@ function turnRouting(bot: Pick<BotRecord, "modelSelection">, runOn?: RoutineRunO
     throw Object.assign(
       new Error(
         runOn === "cloud"
-          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+          ? "the Cloud VM runner is unavailable: configure Box in App Settings"
           : unavailableModelMessage(bot.modelSelection.instanceId),
       ),
       { status: 409 },
@@ -5512,7 +5512,7 @@ async function startTurn(
   if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
-    throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
+    throw Object.assign(new Error("this bot's project files are being restored: wait for the restore to finish"), {
       status: 409,
     });
   }
@@ -5580,7 +5580,7 @@ async function startTurn(
   // the engine returns so an old or unsupported value never reaches a CLI.
   if (effort && !instance.adapter.capabilities.effortLevels?.includes(effort)) {
     throw Object.assign(
-      new Error(`effort "${effort}" is not offered by this bot's engine — choose another level in settings`),
+      new Error(`effort "${effort}" is not offered by this bot's engine: choose another level in settings`),
       { status: 409 },
     );
   }
@@ -5865,17 +5865,17 @@ async function startTurn(
       // fall through to host CUA and accidentally click on the user's Mac.
       if (wants === "vm") {
         if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
-          throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
+          throw new Error("this model engine cannot use the Local VM: choose Claude or an ACP engine, or select another computer destination");
         }
         const localVmTarget = localVmTargetForBot(bot.id);
         if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) {
-          throw new LocalSetupError("computer", "this Local VM is being started, stopped, or replaced — wait for setup to finish");
+          throw new LocalSetupError("computer", "this Local VM is being started, stopped, or replaced: wait for setup to finish");
         }
         // Claim before the first await. The lifecycle route performs its
         // matching check synchronously, so neither side can enter while the
         // other is between inspection and mutation.
         if (!localVmLeaseFor(localVmTarget).claim(threadId, bot.id, localVmOwnerBusy)) {
-          throw new LocalSetupError("computer", "this Local VM is already being used by another turn — wait for that turn to finish");
+          throw new LocalSetupError("computer", "this Local VM is already being used by another turn: wait for that turn to finish");
         }
         localVmThreadTargets.set(threadId, localVmTarget);
         localVmActiveThreads.set(localVmTarget.key, threadId);
@@ -5896,10 +5896,10 @@ async function startTurn(
           hostPlatform: process.platform,
           providerSupportsLocal: mountsLocalComputer,
         })) {
-          throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+          throw new Error("this model engine cannot control this computer: choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
-        if (!cua) throw new LocalSetupError("computer", "CUA Driver is not ready for this computer — check permissions and restart Murage");
+        if (!cua) throw new LocalSetupError("computer", "CUA Driver is not ready for this computer: check permissions and restart Murage");
         integrations.localComputer = hostComputerIntegration(bot.id, threadId, dispatchClaimId, cua);
         computerKind = "local";
       }
@@ -5940,7 +5940,7 @@ async function startTurn(
       // existing cloud box, then falls back to host CUA without provisioning.
       if ((wants === "cloud" || wants === undefined) && cloudBackend === "box" && box.boxConfigured(cfg)) {
         if (!mountsCloudComputer && wants === "cloud") {
-          throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
+          throw new Error("this model engine cannot use computer tools: choose Claude, an ACP engine, or the Computer engine");
         }
         let b = await box.findBox(cfg, bot.id).catch(() => null);
         // Explicit Cloud and the box-native Computer engine provision on first
@@ -5972,7 +5972,7 @@ async function startTurn(
         }
       }
       if (wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
-        throw new LocalSetupError("computer", "Cloud box is not configured — add a Box API key or choose Local VM");
+        throw new LocalSetupError("computer", "Cloud box is not configured: add a Box API key or choose Local VM");
       }
       if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
         throw new LocalSetupError("computer", "the cloud computer could not be created or reached");
@@ -6422,7 +6422,7 @@ async function startTurn(
         // Termination is unconfirmed; hold ownership until application restart.
         // Retired provider events cannot clear this bot or admit queued work.
         revokeInternalGeneration(threadId,dispatchClaimId);
-        store.appendMessage(threadId,{role:"bot",kind:"activity",tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+        store.appendMessage(threadId,{role:"bot",kind:"activity",tool:{name:"error: provider termination is unconfirmed after access changed: restart Murage before continuing",ok:false}});
         return;
       }
       if (activeProviderSelections.get(threadId)?.route === providerRoute) activeProviderSelections.delete(threadId);
@@ -6653,7 +6653,7 @@ function dispatchTeamIncident(incident: WaitingTeamIncident): void {
     store.appendMessage(incident.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `error: this incident could not reach ${incident.chiefName} — ${why}`, ok: false },
+      tool: { name: `error: this incident could not reach ${incident.chiefName}: ${why}`, ok: false },
     });
   });
 }
@@ -7569,7 +7569,7 @@ async function runGroupMemberTurn(
       orchestration.result.outcome = "busy";
       return true;
     }
-    const message = `${bot.name} is busy in another conversation — skipped this round`;
+    const message = `${bot.name} is busy in another conversation: skipped this round`;
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -7625,7 +7625,7 @@ async function runGroupMemberTurn(
       if (connection) integrations.composio = connection;
     }
   } catch (error) {
-    const message = `connected apps are unavailable — ${error instanceof Error ? error.message : String(error)}`;
+    const message = `connected apps are unavailable: ${error instanceof Error ? error.message : String(error)}`;
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -7657,7 +7657,7 @@ async function runGroupMemberTurn(
       orchestration.result.outcome = "busy";
       return true;
     }
-    const message = `${bot.name} became busy in another conversation — skipped this round`;
+    const message = `${bot.name} became busy in another conversation: skipped this round`;
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -8021,7 +8021,7 @@ async function runGroupMemberTurn(
     unregisterStall = roomStallCompletions.register(threadId, () => {
       abandonProviderTurn();
       void releaseBrowserCapabilityForThread(threadId);
-      store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: "error: no activity — stopping; waiting for the engine to confirm close", ok: false } });
+      store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: "error: no activity: stopping; waiting for the engine to confirm close", ok: false } });
       recordMemorySettlement(threadId, `watchdog:${store.activeLeaf(threadId)}`, "interrupted");
       void beginRoomStop();
       finish("stalled");
@@ -8120,7 +8120,7 @@ async function runGroupMemberTurn(
         if(acceptedRoomCleanupFailed) {
           deadline.stop();unregisterStall();unsub();
           revokeInternalGeneration(threadId,internalGeneration);
-          store.appendMessage(threadId,{role:"bot",kind:"activity",from:{botId:bot.id,name:bot.name,color:bot.color},tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+          store.appendMessage(threadId,{role:"bot",kind:"activity",from:{botId:bot.id,name:bot.name,color:bot.color},tool:{name:"error: provider termination is unconfirmed after access changed: restart Murage before continuing",ok:false}});
           // Restart is required; do not report a settled room or
           // release its leases while the provider's termination is unknown.
           return;
@@ -8377,7 +8377,7 @@ async function runGroupGoalStep(args: {
         retriedTransient = true;
         updateGroupGoalRunProgress(
           args.operation,
-          `${args.bot.name}'s turn did not settle (${outcome.replace("_", " ")}) — retrying once.`,
+          `${args.bot.name}'s turn did not settle (${outcome.replace("_", " ")}): retrying once.`,
         );
         continue;
       }
@@ -8467,7 +8467,7 @@ async function runGroupGoalOperation(args: {
         args.groupId,
         args.operation,
         "blocked",
-        `${coordinatorResult.stopReason ?? `${args.coordinator.name} stayed busy`} — send the goal again when they are free.`,
+        `${coordinatorResult.stopReason ?? `${args.coordinator.name} stayed busy`}: send the goal again when they are free.`,
       );
       return;
     }
@@ -8477,7 +8477,7 @@ async function runGroupGoalOperation(args: {
         args.groupId,
         args.operation,
         "failed",
-        `${args.coordinator.name} could not complete the coordination step${reason ? ` — ${reason}` : ""}.`,
+        `${args.coordinator.name} could not complete the coordination step${reason ? `: ${reason}` : ""}.`,
       );
       return;
     }
@@ -8554,7 +8554,7 @@ async function runGroupGoalOperation(args: {
           args.groupId,
           args.operation,
           "blocked",
-          `Teammates stayed busy past the wait limit ${waitExhaustions} times — try again when the team is free.`,
+          `Teammates stayed busy past the wait limit ${waitExhaustions} times: try again when the team is free.`,
         );
         return;
       }
@@ -8566,7 +8566,7 @@ async function runGroupGoalOperation(args: {
         role: "bot",
         kind: "activity",
         from: { botId: args.coordinator.id, name: args.coordinator.name, color: args.coordinator.color },
-        tool: { name: `${reason} — asking ${args.coordinator.name} to reassign`, ok: false },
+        tool: { name: `${reason}: asking ${args.coordinator.name} to reassign`, ok: false },
       });
       updateGroupGoalRunProgress(args.operation, `${reason}. ${args.coordinator.name} is reassigning.`);
       coordinatorNote =
@@ -8580,7 +8580,7 @@ async function runGroupGoalOperation(args: {
         args.groupId,
         args.operation,
         "failed",
-        `${workerBot.name} could not return a result to ${args.coordinator.name}${reason ? ` — ${reason}` : ""}.`,
+        `${workerBot.name} could not return a result to ${args.coordinator.name}${reason ? `: ${reason}` : ""}.`,
       );
       return;
     }
@@ -8591,7 +8591,7 @@ async function runGroupGoalOperation(args: {
       args.groupId,
       args.operation,
       "limit-reached",
-      `Paused at the ${run.maxTurns}-turn safety limit. Send the goal again to continue with a fresh bounded run.`,
+      `Paused at the ${run.maxTurns}-turn limit. Send the goal again to continue with a fresh bounded run.`,
     );
   }
 }
@@ -8664,7 +8664,7 @@ function startGroupTurn(
       role: "bot",
       kind: "activity",
       tool: {
-        name: `${mentionedArchived.name} is archived and can't respond — restore it or mention an active room member.`,
+        name: `${mentionedArchived.name} is archived and can't respond: restore it or mention an active room member.`,
         ok: false,
       },
     });
@@ -8690,9 +8690,9 @@ function startGroupTurn(
     const defaultArchived = archived.find((member) => member.id === defaultArchivedId);
     let unavailableMessage: string | undefined;
     if (!mentionedArchived && !availableMembers.length) {
-      unavailableMessage = "No active room members can respond — restore an archived bot or add an active member.";
+      unavailableMessage = "No active room members can respond: restore an archived bot or add an active member.";
     } else if (!mentionedArchived && defaultArchived) {
-      unavailableMessage = `${defaultArchived.name} is archived and can't respond — restore it or mention an active room member.`;
+      unavailableMessage = `${defaultArchived.name} is archived and can't respond: restore it or mention an active room member.`;
     }
     if (unavailableMessage) {
       store.appendMessage(threadId, {
@@ -8751,7 +8751,7 @@ function startGroupTurn(
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `${owner?.name ?? "A room member"} is still stopping — this message was not dispatched`, ok: false },
+        tool: { name: `${owner?.name ?? "A room member"} is still stopping: this message was not dispatched`, ok: false },
       });
       return;
     }
@@ -8805,7 +8805,7 @@ function drainQueuedChannelSends(): void {
           role: "bot",
           kind: "activity",
           tool: {
-            name: `error: queued channel message could not start — ${(error instanceof Error ? error.message : String(error)).slice(0, 120)}`,
+            name: `error: queued channel message could not start: ${(error instanceof Error ? error.message : String(error)).slice(0, 120)}`,
             ok: false,
           },
         });
@@ -9170,7 +9170,7 @@ function resolveSkillRequest(args: {
     return {
       claimed: true,
       status: 409,
-      error: "this proposal was created by an older build — deny it and ask the bot to create it again",
+      error: "this proposal was created by an older build: deny it and ask the bot to create it again",
     };
   }
   if (args.reviewedSha256 !== request.sha256) {
@@ -9182,7 +9182,7 @@ function resolveSkillRequest(args: {
   }
   const previewSha256 = createHash("sha256").update(request.preview).digest("hex");
   if (previewSha256 !== request.sha256) {
-    return { claimed: true, status: 422, error: "the skill preview changed after review — deny and recreate it" };
+    return { claimed: true, status: 422, error: "the skill preview changed after review: deny and recreate it" };
   }
   const staged = getStagedSkillWrite(args.botId, request.stagedId);
   if (!staged) {
@@ -9685,7 +9685,7 @@ async function reloadProviders() {
     // the aggregate sweep below runs, so its receipt, channel chip and
     // coordination slot settle here — a slot left behind would count against
     // MAX_CONCURRENT_HANDOFFS for the life of the process.
-    finalizeDelegationWatch(run.threadId,false,"","Delegated turn did not finish — provider settings changed");
+    finalizeDelegationWatch(run.threadId,false,"","Delegated turn did not finish: provider settings changed");
     coordinationSlots.get(run.threadId)?.();
     store.setTaskActivity(run.botId,run.threadId,"idle");
     store.appendMessage(run.threadId,{role:"bot",kind:"activity",tool:{name:"error: turn interrupted because provider settings changed",ok:false}});
@@ -9709,12 +9709,12 @@ async function reloadProviders() {
       b.threadId,
       false,
       "",
-      "Delegated turn did not finish — provider settings changed",
+      "Delegated turn did not finish: provider settings changed",
     );
     store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: "error: turn interrupted — provider settings changed", ok: false },
+      tool: { name: "error: turn interrupted: provider settings changed", ok: false },
     });
     store.setActivity(b.id, "idle");
     retryDelegationsWaitingOn(b.id);
@@ -11238,7 +11238,7 @@ const server = createServer(async (req, res) => {
           if (forBotId !== from.id) {
             const target = store.bot(forBotId);
             if (!target) {
-              return json(res, 404, { error: "no bot with that id — call list_bots and copy the exact id from the result" });
+              return json(res, 404, { error: "no bot with that id: call list_bots and copy the exact id from the result" });
             }
             if (!canReach(from, target)) {
               return json(res, 403, { error: "that bot is not on your roster" });
@@ -11514,7 +11514,7 @@ const server = createServer(async (req, res) => {
           store.appendMessage(fromThreadId, {
             role: "bot",
             kind: "activity",
-            tool: { name: `@${currentTarget.name} is still working — ask converted to a delegation` },
+            tool: { name: `@${currentTarget.name} is still working: ask converted to a delegation` },
           });
           return json(res, 200, { timeout: true, taskId, toBotName: currentTarget.name, waitedMs: ASK_BOT_TIMEOUT_MS });
         }
@@ -11530,7 +11530,7 @@ const server = createServer(async (req, res) => {
         if (outcome.status === "failed" && !outcome.text.trim()) {
           // No partial answer to hand back — mirror the failure where the
           // exchange lives, with the provider's reason instead of silence.
-          const why = outcome.stopReason?.trim() ? ` — ${outcome.stopReason.trim().slice(0, 120)}` : "";
+          const why = outcome.stopReason?.trim() ? `: ${outcome.stopReason.trim().slice(0, 120)}` : "";
           mirrorActivity(commsBus, currentTarget, channel, `Turn failed${why}`, false);
           return json(res, 200, { botName: currentTarget.name, text: `(the bot's turn failed${why})` });
         }
@@ -11571,7 +11571,7 @@ const server = createServer(async (req, res) => {
           const runningEntry = [...delegationWatch.entries()].find(([, watch]) => watch.taskId === taskId);
           const running = runningEntry?.[1];
           const owner = stillQueued?.sourceThreadId ?? running?.sourceThreadId;
-          if (!owner) return json(res, 404, { error: "unknown task id — delegation receipts are kept for about 48 hours" });
+          if (!owner) return json(res, 404, { error: "unknown task id: delegation receipts are kept for about 48 hours" });
           if (owner !== fromThreadId) return json(res, 403, { error: "that task belongs to a different conversation" });
           if (Date.now() >= deadline) {
             const toBotId = stillQueued?.toBotId ?? running?.toBotId ?? "";
@@ -11639,9 +11639,9 @@ const server = createServer(async (req, res) => {
           // nothing about what to do instead
           const said: Record<Exclude<QueueResult, "ok">, string> = {
             self: "a bot cannot delegate to itself",
-            too_deep: "the Chief-to-lead-to-specialist handoff depth is exhausted — complete this work without another handoff",
+            too_deep: "the Chief-to-lead-to-specialist handoff depth is exhausted: complete this work without another handoff",
             no_target: "no such bot",
-            too_many: "too many delegations queued on this turn — finish some first",
+            too_many: "too many delegations queued on this turn: finish some first",
           };
           return json(res, 200, { error: said[queued.result === "ok" ? "no_target" : queued.result] });
         }
@@ -11651,8 +11651,8 @@ const server = createServer(async (req, res) => {
           queued: true,
           taskId: queued.id,
           message: from.approvePeerComms && !peerCardWaived
-            ? `Queued for review — @${targetName} will only pick it up if the user approves after your turn finishes.`
-            : `Delegation queued — @${targetName} will pick it up after your current turn finishes.`,
+            ? `Queued for review: @${targetName} will only pick it up if the user approves after your turn finishes.`
+            : `Delegation queued: @${targetName} will pick it up after your current turn finishes.`,
         });
         } finally { handoffSlot.release(); }
       }
@@ -11691,12 +11691,12 @@ const server = createServer(async (req, res) => {
         if (isWorkspaceChief(chief)) {
           if (!requestedSection) {
             return json(res, 400, {
-              error: "name the team this specialist joins — create_bot cannot add bots to your own roster",
+              error: "name the team this specialist joins: create_bot cannot add bots to your own roster",
             });
           }
           if (sectionKey(requestedSection) === sectionKey(chief.section)) {
             return json(res, 400, {
-              error: "create_bot cannot add bots to your own roster — name one of the teams from list_bots",
+              error: "create_bot cannot add bots to your own roster: name one of the teams from list_bots",
             });
           }
           const lead = store.bots.find(
@@ -11722,12 +11722,12 @@ const server = createServer(async (req, res) => {
           // refused even to a human until the incumbent stands down.
           if (wantsLead && lead) {
             return json(res, 409, {
-              error: `the ${requestedSection} team is already led by @${lead.name} — create this specialist without lead, or name another team`,
+              error: `the ${requestedSection} team is already led by @${lead.name}: create this specialist without lead, or name another team`,
             });
           }
           if (!lead && !wantsLead) {
             return json(res, 400, {
-              error: `the ${requestedSection} team has no lead yet — create this bot with lead: true to make it the lead, then add specialists under it`,
+              error: `the ${requestedSection} team has no lead yet: create this bot with lead: true to make it the lead, then add specialists under it`,
             });
           }
           // An existing lead's own label, so a near-miss spelling cannot fork
@@ -12605,7 +12605,7 @@ const server = createServer(async (req, res) => {
         else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? browserUnavailableDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
         else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
-          lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");
+          lines.push(`> ${msg.card.title}${msg.card.answered ? ` (answered: ${msg.card.answered})` : ""}`, "");
         }
       }
       res.writeHead(200, {
@@ -13522,7 +13522,7 @@ const server = createServer(async (req, res) => {
       if (!group) return json(res, 404, { error: "no such channel" });
       if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: "this channel is working or waiting on you: finish that turn first" });
       }
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
@@ -13574,7 +13574,7 @@ const server = createServer(async (req, res) => {
       if (!group) return json(res, 404, { error: "no such channel" });
       if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: "this channel is working or waiting on you: finish that turn first" });
       }
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
@@ -13588,7 +13588,7 @@ const server = createServer(async (req, res) => {
       if (!group) return json(res, 404, { error: "no such channel" });
       if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: "this channel is working or waiting on you: finish that turn first" });
       }
       if (!store.groupTaskByThread(group.id, m[2])) return json(res, 404, { error: "no such channel task" });
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
@@ -13614,7 +13614,7 @@ const server = createServer(async (req, res) => {
         channelTaskBlocked(existing) &&
         (body.memberIds !== undefined || body.defaultResponder !== undefined || body.bulletin !== undefined)
       ) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: "this channel is working or waiting on you: finish that turn first" });
       }
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) {
@@ -15079,7 +15079,7 @@ const server = createServer(async (req, res) => {
       if (!parsed.success) return json(res, 400, { error: "text must be a string" });
       if (Buffer.byteLength(parsed.data.text, "utf8") > MEMORY_FILE_MAX_BYTES) {
         return json(res, 400, {
-          error: `memory is capped at ${MEMORY_FILE_MAX_BYTES / 1024}KB — move longer notes into memory/<topic>.md files`,
+          error: `memory is capped at ${MEMORY_FILE_MAX_BYTES / 1024}KB: move longer notes into memory/<topic>.md files`,
         });
       }
       writeMemoryFile(m[1], parsed.data.text);
@@ -15136,7 +15136,7 @@ const server = createServer(async (req, res) => {
       // Claim synchronously with the busy check. startTurn checks the same
       // lease before reserving the bot, so no turn can enter during the
       // awaited Git operation.
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop the turn before restoring files" });
+      if (bot.busy) return json(res, 409, { error: "the bot is working: stop the turn before restoring files" });
       if (checkpointRestoreLeases.has(bot.id)) {
         return json(res, 409, { error: "this bot's project files are already being restored" });
       }
@@ -15525,7 +15525,7 @@ const server = createServer(async (req, res) => {
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the
       // next request is handled
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before editing" });
+      if (bot.busy) return json(res, 409, { error: "the bot is working: stop it before editing" });
       if (!registry.get(bot.modelSelection.instanceId)) {
         return json(res, 409, {
           error: unavailableModelMessage(bot.modelSelection.instanceId),
@@ -15550,7 +15550,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before switching versions" });
+      if (bot.busy) return json(res, 409, { error: "the bot is working: stop it before switching versions" });
       const leaf = store.setActiveLeaf(bot.threadId, String(body.messageId ?? ""));
       if (!leaf) return json(res, 404, { error: "no such message" });
       // provider sessions still hold the other branch — next turn replays
@@ -15833,7 +15833,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (bot && (directThreadBusy(bot.id,m[2]) || routines!.isActiveThread(m[2]))) {
-        return json(res, 409, { error: "this task is running — stop it first" });
+        return json(res, 409, { error: "this task is running: stop it first" });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       const updated = store.deleteTask(m[1], m[2]);
@@ -15870,7 +15870,7 @@ const server = createServer(async (req, res) => {
       }
       const vmOwner = localVmLeaseFor(SHARED_LOCAL_VM_TARGET).current(localVmOwnerBusy);
       if (vmOwner && (action === "stop" || action === "remove" || action === "run")) {
-        return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
+        return json(res, 409, { error: "the Local VM is being used by a bot: stop that turn first" });
       }
       if (action === "pull") localVmImageBusy = true;
       else localVmLifecycleBusy.add(SHARED_LOCAL_VM_TARGET.key);
@@ -15919,10 +15919,10 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this bot's Local VM setup action is still running" });
       }
       if (action === "run" && localVmProvisionBusy) {
-        return json(res, 409, { error: "another per-bot Local VM is being created — retry after it finishes" });
+        return json(res, 409, { error: "another per-bot Local VM is being created: retry after it finishes" });
       }
       const vmOwner = localVmLeaseFor(target).current(localVmOwnerBusy);
-      if (vmOwner) return json(res, 409, { error: "this bot is using its Local VM — stop the turn first" });
+      if (vmOwner) return json(res, 409, { error: "this bot is using its Local VM: stop the turn first" });
       // Fence this target, and the cross-target capacity decision for creates,
       // before the first await so two requests cannot both pass the limit.
       localVmLifecycleBusy.add(target.key);
@@ -15935,7 +15935,7 @@ const server = createServer(async (req, res) => {
             const count = await existingPerBotLocalVmCount(before.runtime);
             if (count >= localVmMaxInstances(cfg)) {
               return json(res, 409, {
-                error: `The per-bot Local VM limit is ${localVmMaxInstances(cfg)} — delete an unused bot VM or raise the limit in App Settings`,
+                error: `The per-bot Local VM limit is ${localVmMaxInstances(cfg)}: delete an unused bot VM or raise the limit in App Settings`,
               });
             }
           }
@@ -16732,7 +16732,7 @@ const server = createServer(async (req, res) => {
         );
         if (pendingReuse) {
           return json(res, 409, {
-            error: `the previous “${pendingReuse.name}” browser session is still being erased — wait before reusing it`,
+            error: `the previous “${pendingReuse.name}” browser session is still being erased: wait before reusing it`,
           });
         }
       }
@@ -17331,7 +17331,7 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: "Auto may start this VPS only after Start VPS automatically is enabled" });
         }
         if ((m[2] === "sleep" || m[2] === "remove") && (bot.busy || activeVpsThreads.has(botId))) {
-          return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
+          return json(res, 409, { error: "the VPS computer is being used by this bot: interrupt the turn first" });
         }
         if (m[2] === "join") {
           // Presence, not value: Node joins duplicate headers into "1, 1", which
@@ -17349,7 +17349,7 @@ const server = createServer(async (req, res) => {
       }
       if (m[2] === "remove") {
         // Boxes sleep and wake; only the VPS backend has a container to remove.
-        return json(res, 409, { error: "the cloud Box backend has no container to remove — use sleep instead" });
+        return json(res, 409, { error: "the cloud Box backend has no container to remove: use sleep instead" });
       }
       switch (m[2]) {
         case "provision":
@@ -17429,7 +17429,7 @@ try {
     const bot = store.bot(botId);
     if (!bot) continue;
     const why = [...new Set(scan.findings.filter(f => f.severity === "critical" || f.severity === "high").map(f => f.message.toLowerCase()))].join("; ");
-    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `I switched off my "${name}" skill because a safety check found that it ${why || "needs a look"}. It stays off. You can read it or remove it in my settings.` });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `I switched off my "${name}" skill because the skill check found that it ${why || "needs a look"}. It stays off. You can read it or remove it in my settings.` });
   }
 } catch (error) {
   console.warn("Skill safety sweep could not finish:", error instanceof Error ? error.message : String(error));

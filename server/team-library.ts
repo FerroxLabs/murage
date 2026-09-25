@@ -113,7 +113,7 @@ function relativeFile(value: unknown, field: string, suffix: string, prefix: str
     !path.startsWith(prefix) ||
     !path.endsWith(suffix)
   ) {
-    throw new Error(`${field} is not a safe catalog path`);
+    throw new Error(`${field} is not an allowed catalog path`);
   }
   return path;
 }

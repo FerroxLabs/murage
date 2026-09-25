@@ -443,7 +443,7 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(parseUpstreamTrustedFolders(`[meta]\nversion = 2\n[folders."/p"]\ntrusted = true\n`)).toEqual(new Map([["/p", true]]));
   });
 
-  it("treats a document it cannot read exactly as empty — never a grant the engine might not give", () => {
+  it("treats a document it cannot read exactly as empty: never a grant the engine might not give", () => {
     for (const bad of [
       `[folders."/p"]\ntrusted = yes\n`,
       `[folders."/p"]\ntrusted = true\nextra = 1\n`,
@@ -625,7 +625,7 @@ describe("the card and the chip (shared)", () => {
     const name = folderTrustWithheldName(["AGENTS.md", "CLAUDE.md", ".mcp.json", ".fuigo/skills", ".claude/rules", ".envrc", ".fuigo/hooks", ".fuigo/agents"]);
     expect(name).toBe("untrusted folder: AGENTS.md, CLAUDE.md, .mcp.json, .fuigo/skills, .claude/rules, .envrc and 2 more");
     expect(folderTrustNotice(name)).toEqual({ kind: "withheld", sources: "AGENTS.md, CLAUDE.md, .mcp.json, .fuigo/skills, .claude/rules, .envrc and 2 more" });
-    expect(folderTrustDisplayName("trusted folder: AGENTS.md")).toBe("Folder trusted — AGENTS.md apply from the next turn");
+    expect(folderTrustDisplayName("trusted folder: AGENTS.md")).toBe("Folder trusted: AGENTS.md apply from the next turn");
     expect(folderTrustNotice("stopped: the model connection was turned off")).toBeUndefined();
     expect(folderTrustNotice("error: boom")).toBeUndefined();
     expect(folderTrustNotice(undefined)).toBeUndefined();

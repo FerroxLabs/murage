@@ -333,7 +333,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if (ref.kind === "collection") {
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
-      if (skill.scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the safety check and can't be switched on.", code: "blocked", scan: skill.scan } };
+      if (skill.scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan: skill.scan } };
       if (skill.scan.verdict === "review" && acknowledged !== skill.scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan: skill.scan } };
       if (!existing) {
         const installed = installSkill(bot.id, ref.ref, skill.contents);

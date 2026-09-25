@@ -221,7 +221,7 @@ function IntakeQuestion({
             <button
               type="button"
               aria-label="Hide this question"
-              title="Hide this question — you can bring it back"
+              title="Hide this question. You can bring it back"
               onClick={onDismiss}
               className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
             >

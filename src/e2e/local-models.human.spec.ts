@@ -222,7 +222,7 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   // behind a disclosure.
   await tabTo(page, `Test ${TOOL_MODEL}`);
   await page.keyboard.press("Enter");
-  await expect(card.getByText("Tools work — ready for bots", { exact: true })).toBeVisible();
+  await expect(card.getByText("Tools work and are ready for bots", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Use with a bot", exact: true })).toBeVisible();
   await expect(card.getByText(/^Usable by .*Codex, Claude$/)).toBeVisible();
   await tabTo(page, `Test ${PROSE_MODEL}`);
@@ -232,8 +232,8 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   // the disclosure, opened by keyboard, holds the diagnostics — not the card
   const summary = card.locator("summary", { hasText: "What the test checked" }).first();
   await summary.focus(); await page.keyboard.press("Enter");
-  await expect(card.getByText("Calls a tool when it should: Pass — passed", { exact: true })).toBeVisible();
-  await expect(card.getByText("Handles a full tool set: Pass — passed", { exact: true })).toBeVisible();
+  await expect(card.getByText("Calls a tool when it should: Pass, passed", { exact: true })).toBeVisible();
+  await expect(card.getByText("Handles a full tool set: Pass, passed", { exact: true })).toBeVisible();
   await expect(card.getByText(/^Proven: chat tools, Codex \(responses\), Claude \(messages\)$/)).toBeVisible();
   await shoot(page, section, testInfo.outputPath(`local-models-4-tested-${width}-${skin}.png`));
 
@@ -266,7 +266,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   const trigger = page.locator('button[aria-haspopup="dialog"]').first();
   await trigger.click();
   await expect(picker).toBeVisible();
-  const emptyRow = picker.getByRole("button", { name: "No local server detected — add one in Settings → Models", exact: true });
+  const emptyRow = picker.getByRole("button", { name: "No local server detected. Add one in Settings → Models", exact: true });
   await expect(emptyRow).toBeVisible();
   await expect(picker.getByText("Local models", { exact: true })).toBeVisible();
   await shoot(page, picker, testInfo.outputPath(`picker-1-no-local-server-${width}-${skin}.png`));
@@ -284,7 +284,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   await section.getByRole("button", { name: "Add server", exact: true }).click();
   const card = section.getByRole("region", { name: `llama.cpp on ${SERVER_NAME} local model server`, exact: true });
   await card.getByRole("button", { name: `Test ${TOOL_MODEL}`, exact: true }).click();
-  await expect(card.getByText("Tools work — ready for bots", { exact: true })).toBeVisible();
+  await expect(card.getByText("Tools work and are ready for bots", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: `Test ${PROSE_MODEL}`, exact: true }).click();
   await expect(card.getByText("This model answers but can't use tools (it came back as text)", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
@@ -303,7 +303,7 @@ for (const skin of skins) for (const width of widths) test(`Picker: the Local ra
   expect(((await toolRow.textContent()) ?? "").split(`llama.cpp on ${SERVER_NAME}`).length).toBe(2);
   const proseRow = picker.getByRole("button", { name: new RegExp(`^${PROSE_MODEL} · llama\\.cpp on ${SERVER_NAME}`) });
   await expect(proseRow).toBeVisible();
-  await expect(proseRow).toContainText("Tools test failed — chat only, not usable for bot work");
+  await expect(proseRow).toContainText("Tools test failed: chat only, not usable for bot work");
   await expect(picker.locator("[data-local-rail-empty]")).toHaveCount(0);
   await toolRow.scrollIntoViewIfNeeded();
   await shoot(page, picker, testInfo.outputPath(`picker-2-local-rail-${width}-${skin}.png`));

@@ -158,7 +158,7 @@ export async function fetchSkillFromSource(
       return { skills: [{ source: parsed.rawUrl, files: [{ path: "SKILL.md", content }] }] };
     }
     const dirs = await discoverSkillDirs(parsed, fetcher);
-    if (!dirs.length) return { error: "no SKILL.md found there — paste a skill folder or a repo with a skills/ directory" };
+    if (!dirs.length) return { error: "no SKILL.md found there: paste a skill folder or a repo with a skills/ directory" };
     const skills = await Promise.all(dirs.map((dir) => fetchSkillDir(parsed, dir, fetcher)));
     return { skills };
   } catch (error) {

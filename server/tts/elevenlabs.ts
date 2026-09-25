@@ -69,9 +69,9 @@ function message(status: number, what: string, body: any): string {
     // Restricted keys are the common case, not a corner: a key with the
     // wrong scopes is REAL and still fails, so saying "copy a fresh one"
     // sends people to regenerate a key that was never the problem.
-    return "ElevenLabs rejected that key. If it's a restricted key, give it the Voices and Text to Speech permissions — or paste an unrestricted one.";
+    return "ElevenLabs rejected that key. If it's a restricted key, give it the Voices and Text to Speech permissions, or paste an unrestricted one.";
   }
-  if (status === 429) return theirs || "ElevenLabs is rate-limiting this account — wait a moment and try again.";
+  if (status === 429) return theirs || "ElevenLabs is rate-limiting this account: wait a moment and try again.";
   if (status === 402) return theirs || "ElevenLabs says this account is out of credit.";
   return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
@@ -93,7 +93,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
     if (res.ok) return { ok: true };
     return { ok: false, message: message(res.status, "checking that key", await safeJson(res)) };
   } catch {
-    return { ok: false, message: "Couldn't reach ElevenLabs to check that key — check your connection." };
+    return { ok: false, message: "Couldn't reach ElevenLabs to check that key: check your connection." };
   }
 }
 

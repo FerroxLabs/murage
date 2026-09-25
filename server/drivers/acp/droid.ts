@@ -242,7 +242,7 @@ const support: AcpSupport = {
   models: MODELS,
   defaultCli: "droid",
   nativeSource: "droid.acp",
-  loginNote: "Droid CLI is not signed in — run `droid` once and log in, or set FACTORY_API_KEY",
+  loginNote: "Droid CLI is not signed in: run `droid` once and log in, or set FACTORY_API_KEY",
 
   install: {
     command: {

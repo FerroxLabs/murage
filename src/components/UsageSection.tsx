@@ -48,14 +48,14 @@ export function UsageSection() {
               <span className="text-right tabular-nums text-ink" title={usageDetail(usage)}>
                 {formatTokens(freshTokens(usage))}
               </span>
-              <span className="text-right tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : <span className="text-ink-secondary">—</span>}</span>
+              <span className="text-right tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : <span className="text-ink-secondary">Unknown</span>}</span>
             </div>
           ))}
           <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-5 pt-2.5 text-[13px] font-medium text-ink">
             <span>All bots</span>
             <span className="text-right tabular-nums">{total.turns}</span>
             <span className="text-right tabular-nums" title={usageDetail(total)}>{formatTokens(freshTokens(total))}</span>
-            <span className="text-right tabular-nums">{hasFiniteCost(total.costUsd) ? formatUsd(total.costUsd) : "—"}</span>
+            <span className="text-right tabular-nums">{hasFiniteCost(total.costUsd) ? formatUsd(total.costUsd) : "Unknown"}</span>
           </div>
           {cachedInput(total) > 0 && (
             <div className="mt-3 text-[12px] leading-relaxed text-ink-secondary">

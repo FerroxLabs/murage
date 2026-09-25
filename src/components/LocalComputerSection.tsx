@@ -158,7 +158,7 @@ export function LocalComputerSection() {
     ) return;
     if (
       action === "recreate" &&
-      !window.confirm("Replace the existing Local VM with the pinned image and safety limits? Files and browser sign-ins in its durable workspace will remain.")
+      !window.confirm("Replace the existing Local VM with the pinned image and resource limits? Files and browser sign-ins in its durable workspace will remain.")
     ) return;
     setPending(action);
     setError(null);
@@ -347,7 +347,7 @@ export function LocalComputerSection() {
             {perBot ? (
               <div className="text-[13px] leading-relaxed text-ink-secondary">
                 {perBotRuntimeUnsupported
-                  ? "Apple container requires an explicit host port, so Murage will not guess or expose one. Install or start Docker or Podman for safe per-bot dynamic loopback ports."
+                  ? "Apple container requires an explicit host port, so Murage will not guess or expose one. Install or start Docker or Podman for per-bot dynamic loopback ports."
                   : <>
                       Choose <b className="text-ink">Local VM</b> for a bot, open that bot's Computer panel, then create its desktop there. Murage assigns a private workspace and an available loopback viewer port automatically.
                     </>}
@@ -388,7 +388,7 @@ export function LocalComputerSection() {
       )}
 
       <Card
-        title="Safety and storage"
+        title="Limits and storage"
         subtitle={perBot
           ? `Cua Driver operates only each VM's desktop. Every bot gets a private host folder mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; its files and browser profile survive VM replacement. Viewers bind only to loopback, and exact bot-derived targets prevent one bot from attaching to another bot's container. Each VM keeps the existing 4 GB, 2 CPU, 512-process and dropped-capability limits. VMs can still reach the internet.`
           : `Cua Driver operates only the VM's desktop. Exactly one private host folder is mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; files and browser sign-ins there survive VM replacement, while everything elsewhere in the VM remains disposable. The password-protected viewer is available only on this machine. Docker and Podman runs are limited to 4 GB memory, 2 CPUs and 512 processes; all Linux capabilities are dropped except the two the desktop supervisor needs to switch to its unprivileged user. The VM can still reach the internet, and bots share it one at a time.`}

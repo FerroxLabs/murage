@@ -132,7 +132,7 @@ describe("ImageSettingsView", () => {
   });
   it("names a saved model that is no longer in the catalog as unavailable", () => {
     const html = render(snapshot("openai", "openai", [openai], "gpt-image-9"));
-    expect(html).toContain("gpt-image-9 — unavailable");
+    expect(html).toContain("gpt-image-9: unavailable");
     expect(html).not.toContain("data-image-capability");
   });
   it("renders without a snapshot and without connections", () => {

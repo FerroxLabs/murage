@@ -140,7 +140,7 @@ export function applyHermesFluxHome(
   // (core.ts:645-651).
   if (env.HERMES_PROFILE) {
     throw new Error(
-      "Hermes cannot route Flux Router while HERMES_PROFILE is set — the profile persona lives in the native Hermes home, which Flux routing replaces. Unset HERMES_PROFILE for this bot, or pick a native model.",
+      "Hermes cannot route Flux Router while HERMES_PROFILE is set: the profile persona lives in the native Hermes home, which Flux routing replaces. Unset HERMES_PROFILE for this bot, or pick a native model.",
     );
   }
   env.HERMES_HOME = materializeFluxHermesHome(env, key, tier);

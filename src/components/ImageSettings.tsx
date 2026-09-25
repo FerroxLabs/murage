@@ -126,7 +126,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       <label className="mt-3 block text-[13px] text-ink">Image model
         <select aria-label="Image model" value={modelId} disabled={!catalog || Boolean(busy)} onChange={event => onChange({ connectionId, model: event.target.value })} className={select}>
           <option value="" disabled>Choose an image model</option>
-          {modelId && !model && <option value={modelId} disabled>{modelId} — unavailable</option>}
+          {modelId && !model && <option value={modelId} disabled>{modelId}: unavailable</option>}
           {catalog?.models.map(item => <option key={item.id} value={item.id} disabled={!item.generate || Boolean(item.disabledReason)}>{imageModelOptionLabel(item, catalog.defaultModel)}</option>)}
         </select>
       </label>

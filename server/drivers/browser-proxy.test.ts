@@ -74,7 +74,7 @@ beforeAll(async () => {
       res.setHeader("content-type", "application/json");
       if (path.endsWith("/click") && body.ref === "b99") {
         res.writeHead(400);
-        return res.end(JSON.stringify({ error: "that browser ref is stale or unknown — take a new browser_snapshot" }));
+        return res.end(JSON.stringify({ error: "that browser ref is stale or unknown: take a new browser_snapshot" }));
       }
       if (path.endsWith("/navigate") && body.url === "https://empty.example/") return res.end(JSON.stringify({ ...PAGE, elements: [], yaml: "", readiness: "unknown" }));
       if (path.endsWith("/state")) return res.end(JSON.stringify({ url: PAGE.url, title: PAGE.title, loading: true }));
@@ -164,7 +164,7 @@ describe("browser MCP proxy", () => {
     const res = await callTool("browser_navigate", { url: "shop.example/cart" });
     // every call pins the profile the bot was mounted with
     expect(hits).toEqual([{ path: "/v1/bots/bot-1/navigate", auth: `Bearer ${TOKEN}`, body: { url: "shop.example/cart", profile: "work" } }]);
-    expect(text(res)).toBe('Browser — Cart: https://shop.example/cart\nb1 link "Home"\nb2 textbox "Search" (value="shoes")');
+    expect(text(res)).toBe('Browser: Cart: https://shop.example/cart\nb1 link "Home"\nb2 textbox "Search" (value="shoes")');
     expect(res.result.isError).toBeFalsy();
   });
 
@@ -307,12 +307,12 @@ describe("formatObserved", () => {
   it("prefers the Playwright-style snapshot when the surface has one", () => {
     expect(
       formatObserved({ url: "https://a.example/p?token=1", title: "T", elements: [], yaml: '- link "Docs" [ref=e1]', notes: ["900px below"] }),
-    ).toBe('Browser — T: https://a.example/p\n- link "Docs" [ref=e1]\n900px below');
+    ).toBe('Browser: T: https://a.example/p\n- link "Docs" [ref=e1]\n900px below');
   });
 
   it("scrubs query and fragment and names an empty tab", () => {
     expect(formatObserved({ url: "https://a.example/p?token=1#x", title: "T", elements: [] })).toBe(
-      "Browser — T: https://a.example/p\nNo interactive elements found.",
+      "Browser: T: https://a.example/p\nNo interactive elements found.",
     );
     expect(formatObserved({ url: "about:blank", title: "", elements: [] })).toContain("about:blank");
   });

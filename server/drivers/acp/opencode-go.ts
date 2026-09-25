@@ -358,7 +358,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   defaultCli: "opencode",
   nativeSource: "opencode.acp",
   loginNote:
-    "OpenCode has no usable models — run `opencode auth login` or connect a provider in the OpenCode app",
+    "OpenCode has no usable models: run `opencode auth login` or connect a provider in the OpenCode app",
   install: {
     command: {
       darwin: "npm install -g opencode-ai",

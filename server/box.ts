@@ -143,13 +143,13 @@ export async function verifyToken(token: string): Promise<{ ok: true } | { ok: f
       return {
         ok: false,
         message: token.startsWith("box_")
-          ? "ascii.dev rejected that token — it may have been revoked or expired. Copy a fresh one from your ascii.dev account."
+          ? "ascii.dev rejected that token: it may have been revoked or expired. Copy a fresh one from your ascii.dev account."
           : "That doesn't look like a box API key: they start with box_. Copy the API key from your ascii.dev account (an account or session token won't work here).",
       };
     }
-    return { ok: false, message: `ascii.dev returned ${res.status} for that token — try again in a moment.` };
+    return { ok: false, message: `ascii.dev returned ${res.status} for that token: try again in a moment.` };
   } catch {
-    return { ok: false, message: "Couldn't reach ascii.dev to check that token — check your connection and retry." };
+    return { ok: false, message: "Couldn't reach ascii.dev to check that token: check your connection and retry." };
   }
 }
 
@@ -165,10 +165,10 @@ export function boxErrorMessage(status: number, what: string, body?: any): strin
     return [theirs || "ascii.dev needs a paid Box plan before it will create a computer.", link].filter(Boolean).join(" ");
   }
   if (status === 401 || status === 403) {
-    return "your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)";
+    return "your box token was rejected by ascii.dev: open App Settings and paste a current token (it starts with box_)";
   }
   if (status === 429) {
-    return theirs || "ascii.dev is rate-limiting this account — wait a minute and try again";
+    return theirs || "ascii.dev is rate-limiting this account: wait a minute and try again";
   }
   return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
@@ -242,7 +242,7 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       if (!rename.ok) throw new Error(boxErrorMessage(rename.status, "box naming", rename.body));
     }
     const ready = await waitReady(cfg, box.id);
-    if (!ready) throw new Error("box did not become ready within 90s — retry in a minute");
+    if (!ready) throw new Error("box did not become ready within 90s: retry in a minute");
 
     // Install the exact Cua Driver executable in the background, keep its
     // daemon private to the VM, and retain X11 tooling as a degraded fallback.
@@ -277,9 +277,9 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
 /** Wake the bot's box and return a FRESH desktop URL. */
 export async function joinBox(cfg: AppConfig, botId: string) {
   const box = await findBox(cfg, botId);
-  if (!box) throw new Error("no computer yet — provision it first");
+  if (!box) throw new Error("no computer yet: provision it first");
   const ready = await waitReady(cfg, box.id);
-  if (!ready) throw new Error("the box did not wake in time — try again");
+  if (!ready) throw new Error("the box did not wake in time: try again");
   // Provider archive/resume preserves disk but not processes. Reattach the
   // driver daemon before handing the desktop back to the user.
   await runCommand(cfg, box.id, ensureRemoteCuaCommand(), { timeoutMs: 15_000 }).catch(() => null);

@@ -104,7 +104,7 @@ export class ProviderRegistry {
             displayName: entry.displayName,
             cli: cliOfRaw(entry.config),
             shadow: true,
-            reason: `unknown driver "${entry.driver}" — kept as configured, unavailable here`,
+            reason: `unknown driver "${entry.driver}": kept as configured, unavailable here`,
           },
         }];
       }

@@ -74,7 +74,7 @@ describe("the empty state says where Murage looked (spec V1)", () => {
     // llama.cpp is called llama.cpp. Mislabelling it "oMLX" — the other server
     // on :8080 — is the exact confusion the spec calls out.
     expect(line).toContain("llama.cpp");
-    expect(line).toContain("nothing answered");
+    expect(line).toContain("Nothing answered");
   });
 });
 
@@ -101,7 +101,7 @@ describe("a server card states what it found, in that order", () => {
 
   it("names the engines that can use the model, and says so plainly when none can", () => {
     expect(enginesLine(model({ engines: ["fuigoAgent", "piAgent", "codex"] }))).toBe("Usable by Fuigo, pi, Codex");
-    expect(enginesLine(model({ engines: [] }))).toContain("run the test first");
+    expect(enginesLine(model({ engines: [] }))).toContain("Run the test first");
     expect(enginesLine(model({ engines: ["fuigoAgent"], test: test("tools-partial") }))).toBe("Usable by Fuigo");
   });
 
@@ -155,7 +155,7 @@ describe("every test outcome is a plain sentence with a next action (spec T1)", 
   // 0.1.57 renames the one thing one way: visible copy says "bot", never
   // "agent". The sentence shape the spec fixes is unchanged.
   it("uses the words the spec fixes for the three outcomes people actually hit", () => {
-    expect(testOutcomeLine(test("tools-work"))).toBe("Tools work — ready for bots");
+    expect(testOutcomeLine(test("tools-work"))).toBe("Tools work and are ready for bots");
     expect(testOutcomeLine(test("text-instead-of-tools"))).toContain("can't use tools");
     expect(testOutcomeLine(test("context-too-small", { context: { contextWindow: 4_096, source: "llamacpp-props" } })))
       .toBe("Context too small for bots (loaded 4K; bots need 32K+)");
@@ -193,9 +193,9 @@ describe("every test outcome is a plain sentence with a next action (spec T1)", 
 
 describe("the technical half stays behind the disclosure", () => {
   it("turns each probe check into a sentence, including one nobody has a name for", () => {
-    expect(checkLine({ name: "chat.auto", status: "pass", detail: "ok" })).toBe("Calls a tool when it should: Pass — passed");
+    expect(checkLine({ name: "chat.auto", status: "pass", detail: "ok" })).toBe("Calls a tool when it should: Pass, passed");
     expect(checkLine({ name: "responses.functionCall", status: "skipped", detail: "no-endpoint" }))
-      .toBe("Responses-style tools (Codex): Skipped — this server does not offer that endpoint");
+      .toBe("Responses-style tools (Codex): Skipped, this server does not offer that endpoint");
     expect(checkLine({ name: "chat.stream", status: "fail", detail: "text-instead-of-tool" }))
       .toContain("answered with text instead of calling the tool");
   });

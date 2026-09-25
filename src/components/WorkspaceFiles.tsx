@@ -196,7 +196,7 @@ export function WorkspaceRow({ entry, showPath, busy, onOpen, onView, onSave, on
 }) {
   const note = entryNotice(entry), folder = entry.kind === "directory" && entry.state === "local";
   const meta = folder ? t("filesWorkspace.folder")
-    : canSaveEntry(entry) ? t("filesWorkspace.fileMeta", { size: formatFileSize(entry.bytes ?? 0), modified: entry.modifiedAt ? new Date(entry.modifiedAt).toLocaleString() : "—" })
+    : canSaveEntry(entry) ? t("filesWorkspace.fileMeta", { size: formatFileSize(entry.bytes ?? 0), modified: entry.modifiedAt ? new Date(entry.modifiedAt).toLocaleString() : "unknown" })
     : undefined;
   return <li data-workspace-path={entry.relativePath} data-kind={entry.kind} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
     <div className="min-w-0 flex-1">

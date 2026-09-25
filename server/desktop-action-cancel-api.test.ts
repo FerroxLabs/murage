@@ -196,7 +196,7 @@ it.runIf(HOST_COMPUTER)("tells the person, in the chat, that a stopped desktop a
     // One stop line, and it is the one that says to look at the screen —
     // never "Stopped by you" as well (or instead).
     await expect.poll(async () => (await notes()).map((m) => m.tool.name), { timeout: 5_000 })
-      .toEqual(["Stopped while an action was running on your screen — it may have finished anyway. Check the screen before retrying."]);
+      .toEqual(["Stopped while an action was running on your screen. It may have finished anyway. Check the screen before retrying."]);
   } finally {
     await releaseDriver(mark);
     await client.close();

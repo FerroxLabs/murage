@@ -43,7 +43,7 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
       // the turn end, and says why — the neutral dot, never the red one
       const stoppedReason = hostStoppedReason(message.tool.name);
       if (stoppedReason) {
-        events.push({ id: message.id, at: message.at, label: `Stopped — ${stoppedReason}`, state: "observed", kind: "tool" });
+        events.push({ id: message.id, at: message.at, label: `Stopped: ${stoppedReason}`, state: "observed", kind: "tool" });
         continue;
       }
       // a folder-trust notice is observed the same way: not a run, not a failure

@@ -78,7 +78,7 @@ export function deriveSidebarPhoneStatus(
     }
     return {
       kind: "disconnected",
-      label: pairedCount === 1 ? "Phone paired — not connected" : `${pairedCount} phones paired — none connected`,
+      label: pairedCount === 1 ? "Phone paired: not connected" : `${pairedCount} phones paired: none connected`,
       pairedCount,
       connectedCount: 0,
     };
@@ -102,8 +102,8 @@ export function deriveSidebarPhoneStatus(
   return {
     kind: "stale",
     label: pairedCount === 1
-      ? "Phone paired — not recently active"
-      : `${pairedCount} phones paired — none recently active`,
+      ? "Phone paired: not recently active"
+      : `${pairedCount} phones paired: none recently active`,
     pairedCount,
     connectedCount: 0,
   };

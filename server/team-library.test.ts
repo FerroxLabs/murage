@@ -65,7 +65,7 @@ describe("team library", () => {
 
     const unsafe = structuredClone(catalog);
     unsafe.teams[0]!.manifest = "../private.json";
-    expect(() => parseTeamCatalog(unsafe)).toThrow("safe catalog path");
+    expect(() => parseTeamCatalog(unsafe)).toThrow("allowed catalog path");
   });
 
   // The live catalog carries 65 teams plus 57 single-agent profiles. The

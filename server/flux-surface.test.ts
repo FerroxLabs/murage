@@ -389,7 +389,7 @@ describe("the gate is actually wired into the spawn path", () => {
   it("names the task only after the refusals, beside the append", () => {
     const titleAt = indexSource.indexOf("store.titleTaskFromFirstMessage(bot.id, text, threadId)");
     const fluxAt = indexSource.indexOf("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(");
-    const effortAt = indexSource.indexOf("is not offered by this bot's engine — choose another level in settings");
+    const effortAt = indexSource.indexOf("is not offered by this bot's engine: choose another level in settings");
     const appendAt = indexSource.indexOf("let userMessage = opts?.userMessage;");
     expect(titleAt).toBeGreaterThan(-1);
     expect(appendAt).toBeGreaterThan(-1);
@@ -399,7 +399,7 @@ describe("the gate is actually wired into the spawn path", () => {
   });
 
   it("throws it as a 409, beside the effort re-check", () => {
-    const effortAt = indexSource.indexOf("is not offered by this bot's engine — choose another level in settings");
+    const effortAt = indexSource.indexOf("is not offered by this bot's engine: choose another level in settings");
     const fluxAt = indexSource.indexOf("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(");
     expect(effortAt).toBeGreaterThan(-1);
     expect(fluxAt).toBeGreaterThan(effortAt);

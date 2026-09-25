@@ -452,7 +452,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
     return (
       <button
         type="button"
-        aria-label="Voice typing unavailable — tap to find out why"
+        aria-label="Voice typing unavailable. Tap to find out why"
         title={note}
         onClick={() => onNote?.(note)}
         className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary/40 hover:text-ink-secondary focus-visible:ring-2 focus-visible:ring-accent/70"
@@ -468,7 +468,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
     <button
       type="button"
       disabled={transcribing}
-      aria-label={listening ? "Listening — release to transcribe" : transcribing ? "Transcribing" : "Hold to talk"}
+      aria-label={listening ? "Listening. Release to transcribe" : transcribing ? "Transcribing" : "Hold to talk"}
       title={listening ? "Release to transcribe" : transcribing ? "Transcribing…" : "Hold to talk"}
       onPointerDown={(event) => {
         event.preventDefault();

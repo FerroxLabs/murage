@@ -255,7 +255,7 @@ describe("local setup failures", () => {
 
   it.each([
     ["browser", "agent-browser command timed out", "The built-in browser could not start"],
-    ["computer", "CUA Driver is not ready for this computer — check permissions and restart Murage", "This bot&#x27;s computer was not ready"],
+    ["computer", "CUA Driver is not ready for this computer: check permissions and restart Murage", "This bot&#x27;s computer was not ready"],
     ["working-folder", "Project folder lease refused: conflict", "This bot&#x27;s working folder could not be used"],
   ])("gives a %s failure its own card, with Retry and no provider advice", (localFailure, message, title) => {
     const markup = render({ message, localFailure, onRetry: () => {} });
@@ -287,7 +287,7 @@ describe("local setup failures", () => {
       // Engine output always carries details; its message cannot choose the card.
       { message: "agent-browser command timed out", details: "agent-browser command timed out\nACP request: session/prompt" },
       { message: "provider said agent-browser command timed out" },
-      { message: "CUA Driver is not ready for this computer — check permissions and restart Murage" },
+      { message: "CUA Driver is not ready for this computer: check permissions and restart Murage" },
       { message: "Internal error", localFailure: "provider" },
       { message: "Internal error", localFailure: "Browser" },
     ]) {

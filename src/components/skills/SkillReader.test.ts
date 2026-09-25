@@ -53,7 +53,7 @@ describe("the skill reader", () => {
   it("gives a Blocked skill no switch and no Add button, and says why", () => {
     const skill = detail({ verdict: "blocked", scan: { verdict: "blocked", contentHash: "c".repeat(64), findings: [finding("Reads passwords, keys or tokens")] } });
     const html = render({ skill });
-    expect(html).toContain("This skill was blocked by the safety check and can&#x27;t be switched on.");
+    expect(html).toContain("This skill was blocked by the skill check and can&#x27;t be switched on.");
     expect(html).not.toContain('role="switch"');
     expect(render({ skill, mode: { kind: "bot", botId: "b1" } })).not.toContain(">Add<");
   });

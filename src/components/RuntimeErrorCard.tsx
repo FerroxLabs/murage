@@ -40,7 +40,7 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, di
         </div>
       </div>
       {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked
-        ? "The provider's safety checks stopped this request. Review your request before sending a new message. Changing Murage permissions will not remove the provider's restriction."
+        ? "The provider's content checks stopped this request. Review your request before sending a new message. Changing Murage permissions will not remove the provider's restriction."
         : "Review the details, then retry or choose another configured model in Provider settings."}</p>}
       {!safetyBlocked && <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> Provider settings</button>

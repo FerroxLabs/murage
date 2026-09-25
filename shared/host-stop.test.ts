@@ -10,8 +10,8 @@ describe("host-stop notice contract", () => {
     expect(hostStoppedReason(undefined)).toBeUndefined();
   });
 
-  it("spells a notice 'Stopped — <reason>' for surfaces without the renderer's locale (export, delegation summaries)", () => {
-    expect(hostStoppedDisplayName("stopped: this computer was switched off for the bot")).toBe("Stopped — this computer was switched off for the bot");
+  it("spells a notice 'Stopped: <reason>' for surfaces without the renderer's locale (export, delegation summaries)", () => {
+    expect(hostStoppedDisplayName("stopped: this computer was switched off for the bot")).toBe("Stopped: this computer was switched off for the bot");
     expect(hostStoppedDisplayName("Bash")).toBeUndefined();
     expect(hostStoppedDisplayName("error: claude exited null before result")).toBeUndefined();
     expect(hostStoppedDisplayName(null)).toBeUndefined();

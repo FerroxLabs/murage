@@ -301,7 +301,7 @@ function SaveFileLink({ filePath, children }: { filePath: string; children?: Rea
       <button
         type="button"
         onClick={() => void save()}
-        title={`Save a copy — ${filePath}`}
+        title={`Save a copy: ${filePath}`}
         className="[overflow-wrap:anywhere] text-left text-accent underline decoration-accent/40 hover:decoration-accent"
       >
         {children}

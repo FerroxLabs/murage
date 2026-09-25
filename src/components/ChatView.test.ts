@@ -281,7 +281,7 @@ describe("the chat header answers to its container, not the window", () => {
     expect(header).toContain('return { path: bot.cwd, origin: "bot" }');
     expect(header).toContain('return { origin: "default" }');
     // The complete resolved location travels as the accessible description.
-    expect(header).toMatch(/aria-label=\{`\$\{workspaceActionLabel\(workspace\)\} — \$\{detail\}`\}/);
+    expect(header).toMatch(/aria-label=\{`\$\{workspaceActionLabel\(workspace\)\}: \$\{detail\}`\}/);
     expect(header).toContain("description: workspaceDetail(workspace)");
   });
 });

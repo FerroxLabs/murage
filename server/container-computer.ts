@@ -127,7 +127,7 @@ RUN set -eux; \\
     esac; \\
     for ssl_lib in "/lib/$lib_triplet/libssl.so.3" "/lib/$lib_triplet/libcrypto.so.3"; do \\
       if [ -e "$ssl_lib" ] && [ ! -s "$ssl_lib" ]; then \\
-        echo "pinned base image is defective on $arch: $ssl_lib is zero bytes, so curl cannot start — re-pull or replace the base image instead of debugging the wheel download" >&2; \\
+        echo "pinned base image is defective on $arch: $ssl_lib is zero bytes, so curl cannot start: re-pull or replace the base image instead of debugging the wheel download" >&2; \\
         exit 1; \\
       fi; \\
     done; \\
@@ -338,9 +338,9 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   if (!status.imageMatches) return "The existing Local VM uses an older desktop or Cua Driver; recreate it";
   if (!status.managed) return "The existing container was not created by Murage; recreate it";
   if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
-  if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
+  if (status.security === "unsafe") return "The existing Local VM is missing its resource limits; recreate it";
   if (status.persistence === "unsafe") return "The existing Local VM is missing its durable workspace; recreate it";
-  if (status.container === "stopped") return "This desktop image cannot safely resume; recreate the Local VM";
+  if (status.container === "stopped") return "This desktop image cannot resume; recreate the Local VM";
   if (status.desktop_error) return `The Local VM desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The Local VM started, but Cua Driver is not ready yet";
   return null;
@@ -932,7 +932,7 @@ export async function containerComputerAction(
     throw Object.assign(new Error(before.problem ?? "This runtime cannot create a per-bot Local VM"), { status: 409 });
   }
   if (action === "start") {
-    throw Object.assign(new Error("This desktop image cannot safely resume; remove and recreate the Local VM"), {
+    throw Object.assign(new Error("This desktop image cannot resume; remove and recreate the Local VM"), {
       status: 409,
     });
   }

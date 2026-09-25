@@ -115,7 +115,7 @@ export class RoomTurnStallRegistry {
 
 export function roomTurnTimeoutMessage(botName: string, minutes: number): string {
   const unit = minutes === 1 ? "minute" : "minutes";
-  return `${botName}'s room turn exceeded ${minutes} ${unit} — stopping; waiting for the engine to confirm close`;
+  return `${botName}'s room turn exceeded ${minutes} ${unit}: stopping; waiting for the engine to confirm close`;
 }
 /** One stopped room claim. Re-observe a bounded close receipt, never re-kill
  * or turn an elapsed deadline into permission to release the owner. */

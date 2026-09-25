@@ -211,7 +211,7 @@ export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
   if(!createdKey)return null;
   return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
     <p className="break-words font-medium">Your recovery key is {createdKey.label}, saved in {createdKey.folder}.</p>
-    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else — a USB drive, another computer, or your password manager.</p>
+    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
     {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
     {s.saveKeyCopy&&<div className="flex flex-wrap gap-2">
       <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
@@ -235,7 +235,7 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
       <RecoveryKeyKeepsafe s={s}/>
       {!status.refs&&<div className="min-w-0 space-y-3">
         <p className="text-[13px] text-ink-secondary">{s.setUp
-          ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, saves it somewhere safe outside that folder, and asks you once before switching daily backups on."
+          ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, keeps it in a separate place outside that folder, and asks you once before switching daily backups on."
           : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>
         <div className="flex flex-wrap gap-2">
           {s.setUp

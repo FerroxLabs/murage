@@ -107,7 +107,7 @@ export function BundleImportDialog({ archivePath, fileName, onClose, onImported 
         </> : <p className="mt-1 text-ink-secondary">The prior version lacks saved comparison data, so its changes cannot be shown.</p>}
         <p className="mt-2 font-medium">Imports a separate copy; existing bots and permissions stay unchanged.</p>
       </section>}
-      <p className="mt-2 text-ink-secondary">The scan flags known patterns and is not a guarantee that content is safe. Imported instructions remain untrusted.</p>
+      <p className="mt-2 text-ink-secondary">The scan flags known patterns and cannot promise the content is harmless. Imported instructions remain untrusted.</p>
       {preview.scan.reviewRequired && <label className="mt-3 flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={Boolean(busy)} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the warnings and want to import this selection.</label>}
     </section>}
     {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}

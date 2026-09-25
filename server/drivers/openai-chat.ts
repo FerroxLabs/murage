@@ -117,7 +117,7 @@ function addressRefusal(label: string, endpoint: string, code: "https-required" 
     // keep the placeholder
   }
   return code === "https-required"
-    ? `${label}: refusing to send the API key to ${host} over plain http. Use https, or an address on this machine or your own network — a cloud metadata address is never a model server.`
+    ? `${label}: refusing to send the API key to ${host} over plain http. Use https, or an address on this machine or your own network: a cloud metadata address is never a model server.`
     : `${label}: ${host} no longer resolves to an address on this network, so the request was not sent.`;
 }
 

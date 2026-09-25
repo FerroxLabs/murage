@@ -386,8 +386,8 @@ export async function installConnector(options: InstallOptions): Promise<Install
           backupPath: prior?.backupPath ?? null,
           rollbackCommand: rollbackCommandFor(prior?.backupPath ?? null, target),
           reason: prior
-            ? `${target} has a Flux block that is not the one we wrote — refusing to overwrite it`
-            : `${target} already has a Flux block we have no record of — refusing to overwrite it`,
+            ? `${target} has a Flux block that is not the one we wrote: refusing to overwrite it`
+            : `${target} already has a Flux block we have no record of: refusing to overwrite it`,
         };
       }
     }
@@ -497,7 +497,7 @@ export async function installConnector(options: InstallOptions): Promise<Install
         rolledBack: true,
         backupPath,
         rollbackCommand: rollbackCommandFor(backupPath, target),
-        reason: "the Flux route did not answer after the write — the config was restored",
+        reason: "the Flux route did not answer after the write: the config was restored",
       };
     }
   }

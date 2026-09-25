@@ -337,7 +337,7 @@ const support = (run: typeof execCli): AcpSupport => ({
   // Cursor's compatibility alias is unambiguous and ships with the same CLI.
   defaultCli: "cursor-agent",
   nativeSource: "cursor.acp",
-  loginNote: "Cursor CLI is not signed in — run `cursor-agent login` in a terminal, or set CURSOR_API_KEY",
+  loginNote: "Cursor CLI is not signed in: run `cursor-agent login` in a terminal, or set CURSOR_API_KEY",
 
   install: {
     command: {

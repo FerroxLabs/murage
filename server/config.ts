@@ -1054,7 +1054,7 @@ export function customMcpServers(cfg: AppConfig): Record<string, CustomMcpServer
   const out: Record<string, CustomMcpServer> = {};
   for (const [name, raw] of Object.entries(cfg.mcpServers ?? {})) {
     if (raw && typeof raw === "object" && "url" in raw) {
-      skipMcpEntry(name, 'only stdio servers ("command") are supported so far — HTTP transports are a planned follow-up');
+      skipMcpEntry(name, 'only stdio servers ("command") are supported so far: HTTP transports are a planned follow-up');
       continue;
     }
     // One parser for the file and the settings panel: mcp-registry.ts owns

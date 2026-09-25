@@ -250,7 +250,7 @@ export function helpTopics(corpus: readonly HelpEntry[] = HELP_INDEX): string[] 
   for (const entry of corpus) {
     if (seen.has(entry.title)) continue;
     seen.add(entry.title);
-    topics.push(entry.description ? `${entry.title} — ${entry.description}` : entry.title);
+    topics.push(entry.description ? `${entry.title}: ${entry.description}` : entry.title);
   }
   return topics;
 }

@@ -196,7 +196,7 @@ export const SETUP_NO_FIRST_BACKUP = "Daily backups are on, but this desktop app
  * backup exists: the whole point of taking one during setup is that "backups
  * are on" and "I have a backup" stop being different things. */
 export function firstBackupError(cause: unknown): string {
-  return `Daily backups are on, but the first backup couldn't start. ${runNowError(cause)} Nothing has been backed up yet — use Back up now when you can.`;
+  return `Daily backups are on, but the first backup couldn't start. ${runNowError(cause)} Nothing has been backed up yet. Use Back up now when you can.`;
 }
 
 /** What one act of setup did, for the page to react to. */

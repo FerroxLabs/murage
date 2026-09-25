@@ -427,7 +427,7 @@ function observed(
   isError = false,
 ) {
   if (!frame) {
-    return text(id, `${note}\n(couldn't capture the screen — call screenshot to retry)`, isError);
+    return text(id, `${note}\n(couldn't capture the screen: call screenshot to retry)`, isError);
   }
   const observation = observations.observeFrame(frame.hash ?? (crop ? null : frame.data), crop);
   if (!observation.changed) {
@@ -435,7 +435,7 @@ function observed(
     // well have landed, and re-clicking a button that already submitted
     // is the expensive kind of wrong
     const guidance = followsAction
-      ? " Don't repeat the action — it may already have succeeded. If you expected a change, call screenshot again after it has had time to render."
+      ? " Don't repeat the action: it may already have succeeded. If you expected a change, call screenshot again after it has had time to render."
       : " No new image is attached.";
     return text(id, `${note}\n(the screen is identical to the frame you already have.${guidance})`, isError);
   }
@@ -456,7 +456,7 @@ const OBSERVE_PROPS = {
   observe: {
     type: "boolean",
     description:
-      "default true — return a fresh screenshot with the result. Set false only when chaining mechanical steps you don't need to see.",
+      "default true: return a fresh screenshot with the result. Set false only when chaining mechanical steps you don't need to see.",
   },
   settle_ms: { type: "number", description: "wait before the screenshot, default 350, max 3000" },
 };
@@ -536,13 +536,13 @@ const TOOLS = [
   {
     name: "computer_request_help",
     description:
-      "Ask the person to take over this computer (a login, a CAPTCHA, anything you should not do alone) and wait until they hand control back. Also call it with no reason when an action was refused because a person is already driving. You cannot take control yourself — this only asks.",
+      "Ask the person to take over this computer (a login, a CAPTCHA, anything you should not do alone) and wait until they hand control back. Also call it with no reason when an action was refused because a person is already driving. You cannot take control yourself: this only asks.",
     inputSchema: {
       type: "object",
       properties: {
         reason: {
           type: "string",
-          description: "one short sentence the person will read — what you need their hands for",
+          description: "one short sentence the person will read: what you need their hands for",
         },
       },
     },
@@ -550,7 +550,7 @@ const TOOLS = [
   {
     name: "click",
     description:
-      "Click on the computer's screen and return the resulting screen. Use pixel coordinates exactly as they appear in the last frame you were given — any scaling to the real display is handled for you.",
+      "Click on the computer's screen and return the resulting screen. Use pixel coordinates exactly as they appear in the last frame you were given: any scaling to the real display is handled for you.",
     inputSchema: {
       type: "object",
       properties: {
@@ -597,7 +597,7 @@ const TOOLS = [
   {
     name: "computer_batch",
     description:
-      "Run several UI actions in ONE go and return the screen at the end — much faster than separate calls (one round trip, one screenshot). Use it for mechanical sequences you can predict without looking in between, e.g. click a field, type, Tab, type, press Return. Stop the batch before anything whose outcome you need to see first.",
+      "Run several UI actions in ONE go and return the screen at the end: much faster than separate calls (one round trip, one screenshot). Use it for mechanical sequences you can predict without looking in between, e.g. click a field, type, Tab, type, press Return. Stop the batch before anything whose outcome you need to see first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -629,14 +629,14 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code — and, unlike the UI tools, no screenshot unless you ask for one.",
+      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one.",
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string" },
         observe: {
           type: "boolean",
-          description: "default false — set true to also return a screenshot (e.g. after launching a GUI app)",
+          description: "default false: set true to also return a screenshot (e.g. after launching a GUI app)",
         },
       },
       required: ["command"],
@@ -794,7 +794,7 @@ async function semanticActAndObserve(
   args: any,
 ): Promise<void> {
   if (!semanticBrowserUrl || !semanticBrowserRefs.has(ref)) {
-    return text(id, "that browser ref is stale or unknown — take a new browser_snapshot", true);
+    return text(id, "that browser ref is stale or unknown: take a new browser_snapshot", true);
   }
   const observe = wantsFrame(args);
   const semantic = semanticBrowserCommand(action, {
@@ -836,7 +836,7 @@ async function call(id: unknown, name: string, args: any) {
   }
   if (name === "computer_request_help") {
     if (!control.configured) {
-      return text(id, "nobody can be paged for this computer right now — carry on carefully", true);
+      return text(id, "nobody can be paged for this computer right now: carry on carefully", true);
     }
     const initial = await control.state(true);
     // If the person is already driving, don't clobber whatever plea they
@@ -855,7 +855,7 @@ async function call(id: unknown, name: string, args: any) {
         return text(
           id,
           sawHold
-            ? "The person has finished driving and handed control back. The screen may have changed while they drove — take a fresh screenshot before your next action."
+            ? "The person has finished driving and handed control back. The screen may have changed while they drove: take a fresh screenshot before your next action."
             : "The person saw your request and dismissed it without taking control. Carry on yourself.",
         );
       }
@@ -920,7 +920,7 @@ async function call(id: unknown, name: string, args: any) {
       );
       return text(
         id,
-        `Semantic browser snapshot — ${snapshot.title || "Untitled"}: ${publicUrl}\n${lines.join("\n") || "No interactive elements found."}`,
+        `Semantic browser snapshot: ${snapshot.title || "Untitled"}: ${publicUrl}\n${lines.join("\n") || "No interactive elements found."}`,
       );
     } catch {
       semanticBrowserUrl = null;
@@ -1080,7 +1080,7 @@ async function call(id: unknown, name: string, args: any) {
     const elapsed = marker[2];
     const note = met
       ? `condition met: ${label} (~${elapsed}s)`
-      : `timed out after ${timeout}s waiting for ${label} — inspect with computer_exec (logs, process list) before waiting again.`;
+      : `timed out after ${timeout}s waiting for ${label}: inspect with computer_exec (logs, process list) before waiting again.`;
     return text(id, note, !met);
   }
   if (name === "open_url") {

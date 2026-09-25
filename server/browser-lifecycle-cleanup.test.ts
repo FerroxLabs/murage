@@ -158,7 +158,7 @@ describe("durable browser lifecycle cleanup", () => {
 
     expect(() => coordinator.hasPendingProfile("work")).toThrow(expect.objectContaining({
       status: 503,
-      message: expect.stringMatching(/could not be read safely.*blocked/i),
+      message: expect.stringMatching(/could not be read.*blocked/i),
     }));
     expect(() => coordinator.prepare("profile", "work")).toThrow(expect.objectContaining({ status: 503 }));
     expect(() => coordinator.pending()).toThrow(expect.objectContaining({ status: 503 }));

@@ -372,9 +372,9 @@ describe("drainDelegations", () => {
     const chip = await waitFor(() =>
       store
         .messagesFor(from.threadId)
-        .find((m) => m.kind === "activity" && (m.tool?.name ?? "").includes("waiting — they're busy")),
+        .find((m) => m.kind === "activity" && (m.tool?.name ?? "").includes("waiting: they're busy")),
     );
-    expect(chip.tool?.name).toBe("Delegation to @Helper waiting — they're busy (retry 1/3 when they finish)");
+    expect(chip.tool?.name).toBe("Delegation to @Helper waiting: they're busy (retry 1/3 when they finish)");
     expect(runTargetCalls).toEqual([]);
     // retained for the retry drain the target's settling turn triggers
     expect(_pendingCount(from.threadId)).toBe(1);
@@ -711,7 +711,7 @@ describe("busy retries and receipts", () => {
     const runTarget = (...args: unknown[]) => void dispatched.push(args);
 
     drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
-    await waitFor(() => chipCount("waiting — they're busy (retry 1/") === 1);
+    await waitFor(() => chipCount("waiting: they're busy (retry 1/") === 1);
     expect(dispatched).toHaveLength(0);
     expect(_pendingCount(from.threadId)).toBe(1);
     // this is the set a settling target turn re-drains
@@ -741,7 +741,7 @@ describe("busy retries and receipts", () => {
     }
     drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
     await waitFor(() => _pendingCount(from.threadId) === 0);
-    expect(chipCount("canceled — still busy after")).toBe(1);
+    expect(chipCount("canceled: still busy after")).toBe(1);
     expect(findDelegationReceipt(taskId)).toMatchObject({
       status: "busy_gave_up",
       toBotName: "Helper",
@@ -765,7 +765,7 @@ describe("busy retries and receipts", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(pendingDelegationInfo(taskId)?.attempts).toBe(1);
-    expect(chipCount("canceled — still busy after")).toBe(0);
+    expect(chipCount("canceled: still busy after")).toBe(0);
 
     store.patchBot(target.id, { busy: false });
     expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
@@ -935,7 +935,7 @@ describe("delegations queued from a room", () => {
     discardDelegations(buses.commsBus, room.threadId);
     expect(
       store.messagesFor(room.threadId).some((message) =>
-        message.tool?.name?.includes("dropped — the turn did not finish")),
+        message.tool?.name?.includes("dropped: the turn did not finish")),
     ).toBe(true);
   });
 
@@ -953,7 +953,7 @@ describe("delegations queued from a room", () => {
     );
     drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
     await waitFor(() =>
-      store.messagesFor(room.threadId).find((m) => (m.tool?.name ?? "").includes("waiting — they're busy")));
+      store.messagesFor(room.threadId).find((m) => (m.tool?.name ?? "").includes("waiting: they're busy")));
     expect(_pendingCount(room.threadId)).toBe(1);
 
     // A different member's turn in the same room is interrupted.
@@ -1059,7 +1059,7 @@ describe("delegated turn status helpers", () => {
     ], 1_000, 5);
     expect(lines).toEqual([
       "tool: Bash",
-      "Stopped — the model connection it was using was changed or turned off",
+      "Stopped: the model connection it was using was changed or turned off",
     ]);
   });
 
@@ -1118,7 +1118,7 @@ describe("a busy teammate with a free thread", () => {
     drainDelegations(bus, approvalBus, from.threadId, runTarget);
     await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
     expect(runTarget.mock.calls[0]![0]).toBe(target.id);
-    expect(chips("waiting — they're busy")).toBe(0);
+    expect(chips("waiting: they're busy")).toBe(0);
   });
 
   it("is asked about the thread the handoff would actually run on", async () => {
@@ -1140,10 +1140,10 @@ describe("a busy teammate with a free thread", () => {
     for (let attempt = 1; attempt <= MAX_BUSY_ATTEMPTS; attempt += 1) {
       releaseDelegationsWaitingOn(target.id);
       drainDelegations(bus, approvalBus, from.threadId, runTarget);
-      await waitFor(() => chips("waiting — they're busy") + chips("canceled — still busy after") === attempt);
+      await waitFor(() => chips("waiting: they're busy") + chips("canceled: still busy after") === attempt);
     }
     expect(runTarget).not.toHaveBeenCalled();
-    expect(chips("canceled — still busy after")).toBe(1);
+    expect(chips("canceled: still busy after")).toBe(1);
     expect(_pendingCount(from.threadId)).toBe(0);
   });
 
@@ -1156,14 +1156,14 @@ describe("a busy teammate with a free thread", () => {
     const runTarget = vi.fn();
     queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
     drainDelegations(bus, approvalBus, from.threadId, runTarget);
-    await waitFor(() => chips("waiting — they're busy") === 1);
+    await waitFor(() => chips("waiting: they're busy") === 1);
 
     // Its own thread is still taken: nothing is released, no retry is spent.
     expect(releaseDelegationsWaitingOn(target.id, () => false)).toEqual([]);
     drainDelegations(bus, approvalBus, from.threadId, runTarget);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(chips("waiting — they're busy")).toBe(1);
-    expect(chips("canceled — still busy after")).toBe(0);
+    expect(chips("waiting: they're busy")).toBe(1);
+    expect(chips("canceled: still busy after")).toBe(0);
 
     // The thread it needs frees while the bot stays busy elsewhere.
     const asked: string[] = [];
@@ -1191,7 +1191,7 @@ describe("a busy teammate with a free thread", () => {
     expect(store.bot(target.id)?.busy).toBe(true);
     resolvePeerComms(approvalBus, card.card!.requestId!, "allow");
     await waitFor(() => runTarget.mock.calls.length === 1);
-    expect(chips("waiting — they're busy")).toBe(0);
+    expect(chips("waiting: they're busy")).toBe(0);
   });
 
   it("keeps the old bot-wide rule for a bus that cannot answer", async () => {
@@ -1201,7 +1201,7 @@ describe("a busy teammate with a free thread", () => {
     const runTarget = vi.fn();
     queueDelegation(bus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
     drainDelegations(bus, approvalBus, from.threadId, runTarget);
-    await waitFor(() => chips("waiting — they're busy") === 1);
+    await waitFor(() => chips("waiting: they're busy") === 1);
     expect(runTarget).not.toHaveBeenCalled();
   });
 });

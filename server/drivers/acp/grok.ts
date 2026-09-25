@@ -219,7 +219,7 @@ const support: AcpSupport = {
   effortLevels: ["low", "medium", "high"],
   defaultCli: "grok",
   nativeSource: "grok.acp",
-  loginNote: "Grok CLI is not signed in — run `grok login` in a terminal",
+  loginNote: "Grok CLI is not signed in: run `grok login` in a terminal",
 
   // No Windows one-liner: the installer is a POSIX shell script, and offering
   // `curl … | bash` there would be advice that cannot run. Windows falls back

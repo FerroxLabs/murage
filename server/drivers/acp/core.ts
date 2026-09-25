@@ -178,11 +178,11 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
   if (info?.kind === "spend-cap") {
     return info.provider === "flux-router"
       ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine."
-      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it — ask them to raise it, or use another engine.";
+      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.";
   }
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
-      return "Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.";
+      return "Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.";
     }
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
@@ -1795,7 +1795,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} offered no "${want}" permission option — cancelling the request instead of guessing`,
+              message: `${DRIVER_KIND} offered no "${want}" permission option: cancelling the request instead of guessing`,
             });
 
           const toolCall = params.toolCall ?? {};

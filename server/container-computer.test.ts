@@ -687,7 +687,7 @@ describe("containerComputerAction", () => {
       [`docker inspect ${CONTAINER}`]: readyInspect({ State: { Running: false } }),
     });
 
-    await expect(containerComputerAction("start", fake.run, "linux")).rejects.toThrow("cannot safely resume");
+    await expect(containerComputerAction("start", fake.run, "linux")).rejects.toThrow("cannot resume");
     expect(fake.calls).not.toContain(`docker start ${CONTAINER}`);
   });
 });

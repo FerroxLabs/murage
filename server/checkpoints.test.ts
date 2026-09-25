@@ -168,7 +168,7 @@ describe("restore", () => {
     const result = await restore(bot, cwd, checkpoint!);
     expect(result).toEqual({
       ok: false,
-      error: "restore stopped because some current files could not be added to the safety checkpoint",
+      error: "restore stopped because some current files could not be added to the checkpoint taken before a restore",
     });
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("two");
     expect(existsSync(locked)).toBe(true);

@@ -81,11 +81,11 @@ export async function stopDesktopControl({ takeScreen, stopTurn, confirmIdle }: 
 export function desktopStopMessage(outcome: DesktopStopOutcome, name: string): string {
   if (outcome.kind === "stopped") {
     return outcome.heldScreen
-      ? `${name} stopped, and you have this screen. An action already underway can still finish — check the screen. Hand control back when you are ready.`
-      : `${name} stopped, so it will not start another action. Taking the screen back failed, so an action already underway can still finish — check the screen.`;
+      ? `${name} stopped, and you have this screen. An action already underway can still finish, so check the screen. Hand control back when you are ready.`
+      : `${name} stopped, so it will not start another action. Taking the screen back failed, so an action already underway can still finish, so check the screen.`;
   }
   if (outcome.kind === "screen-held-only") {
-    return `You have this screen, so ${name} cannot start another action — but its turn did not confirm it stopped (${outcome.reason}). Use Stop in the header, and check the screen.`;
+    return `You have this screen, so ${name} cannot start another action, but its turn did not confirm it stopped (${outcome.reason}). Use Stop in the header, and check the screen.`;
   }
-  return `Nothing was stopped (${outcome.reason}). ${name} may still be using this screen — use Stop in the header, and check the screen.`;
+  return `Nothing was stopped (${outcome.reason}). ${name} may still be using this screen. Use Stop in the header, and check the screen.`;
 }

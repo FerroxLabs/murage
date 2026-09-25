@@ -135,7 +135,7 @@ export class TelegramApprovals {
     ];
     if (question.options.length) {
       lines.push("");
-      question.options.forEach((option, i) => lines.push(`${i + 1}. ${option.label}${option.description ? ` — ${option.description}` : ""}`));
+      question.options.forEach((option, i) => lines.push(`${i + 1}. ${option.label}${option.description ? `: ${option.description}` : ""}`));
     }
     return lines.join("\n");
   }
@@ -232,7 +232,7 @@ export class TelegramApprovals {
     let reply: string;
     if (/^\/cancel$/i.test(text)) {
       draft.awaitingText = false;
-      reply = "Okay — tap an option or Skip on the question above.";
+      reply = "Okay. Tap an option or Skip on the question above.";
     } else if (text.length > QUESTION_LIMITS.otherChars) {
       reply = `That answer is longer than ${QUESTION_LIMITS.otherChars.toLocaleString("en-US")} characters. Send a shorter one.`;
     } else if (question.multiSelect) {
