@@ -156,6 +156,7 @@ import {
   type SavedAttachment,
   validateAttachmentUploadId,
 } from "./attachments.ts";
+import { createThumbnails, loadResize, THUMBNAIL_WIDTHS, thumbnailWidth } from "./image-thumbnail.ts";
 import {
   avatarGenerationRequestSchema,
   avatarGenerationStateMatches,
@@ -10390,6 +10391,30 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
+/** Chat image thumbnails (spec §6): at most 32 MB of them, in memory, and at
+ * most two resizes at a time (a third first view gets its original). */
+const thumbnails = createThumbnails({ resize: loadResize, maxBytes: 32 * 1024 * 1024, maxConcurrent: 2 });
+
+/** One immutable image, or its `?w=` thumbnail when that is smaller. `key`
+ * names the stored image, never anything the client sent, and the cache key
+ * adds a digest of its bytes: an attachment deleted with its message can be
+ * saved again under the same client-chosen uploadId with other pixels. */
+async function sendImage(res: ServerResponse, url: URL, key: string, bytes: Buffer, mime: string, headers: Record<string, string> = {}) {
+  const width = thumbnailWidth(url.searchParams.get("w"));
+  if (width === null) return json(res, 400, { error: `w must be one of ${THUMBNAIL_WIDTHS.join(", ")}` });
+  const body = (width !== undefined
+    && (await thumbnails.variant(`${key}:${createHash("sha256").update(bytes).digest("base64url")}`, bytes, mime, width)))
+    || { bytes, mime };
+  res.writeHead(200, {
+    "content-type": body.mime,
+    "content-length": String(body.bytes.byteLength),
+    // an attachment and a settled message's image never change
+    "cache-control": "private, max-age=31536000, immutable",
+    ...headers,
+  });
+  res.end(body.bytes);
+}
+
 function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -12296,14 +12321,7 @@ const server = createServer(async (req, res) => {
       }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
-      const bytes = Buffer.from(message.png, "base64");
-      res.writeHead(200, {
-        "content-type": message.mime ?? "image/png",
-        "content-length": String(bytes.byteLength),
-        // a settled message's image never changes
-        "cache-control": "private, max-age=31536000, immutable",
-      });
-      return res.end(bytes);
+      return sendImage(res, url, `screen:${m[1]}:${message.id}`, Buffer.from(message.png, "base64"), message.mime ?? "image/png");
     }
 
     // ── image attachments ────────────────────────────────────────────────
@@ -12434,13 +12452,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "GET") {
       const attachment = readAttachment(m[1]!);
       if (!attachment) return json(res, 404, { error: "no such attachment" });
-      res.writeHead(200, {
-        "content-type": attachment.mime,
-        "content-length": String(attachment.bytes.byteLength),
-        "cache-control": "private, max-age=31536000, immutable",
-        "x-content-type-options": "nosniff",
-      });
-      return res.end(attachment.bytes);
+      return sendImage(res, url, `attachment:${m[1]}`, attachment.bytes, attachment.mime, { "x-content-type-options": "nosniff" });
     }
 
     // ── search across every transcript ──────────────────────────────────

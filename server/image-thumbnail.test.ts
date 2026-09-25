@@ -164,6 +164,24 @@ describe("createThumbnails", () => {
     expect(thumbs.heldBytes()).toBe(200);
   });
 
+  it("serves the original rather than queue a resize past its concurrency, and remembers nothing for it", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const resize: Resize = vi.fn(async () => { await gate; return small; });
+    const thumbs = createThumbnails({ resize: async () => resize, maxBytes: 10_000, maxConcurrent: 2 });
+    const busy = [thumbs.variant("a", source, "image/png", 320), thumbs.variant("b", source, "image/png", 320)];
+    // a third image while two resize: its original, at once
+    expect(await thumbs.variant("c", source, "image/png", 320)).toBeNull();
+    // a view of an image already resizing shares that work instead
+    const shared = thumbs.variant("a", source, "image/png", 320);
+    finish();
+    expect(await Promise.all([...busy, shared])).toEqual([small, small, small]);
+    expect(resize).toHaveBeenCalledTimes(2);
+    // once the burst is over, the refused image gets its thumbnail
+    expect(await thumbs.variant("c", source, "image/png", 320)).toEqual(small);
+    expect(resize).toHaveBeenCalledTimes(3);
+  });
+
   it("never resizes a GIF, an SVG or an unknown type", async () => {
     const resize: Resize = vi.fn(async () => small);
     const thumbs = createThumbnails({ resize: async () => resize, maxBytes: 10_000 });

@@ -127,8 +127,12 @@ const MAX_ORIGINAL_MARKS = 10_000;
 
 /** Thumbnails by source key and width, up to `maxBytes`, oldest out first.
  * Sources are immutable (a saved attachment, a settled message's pixels), so
- * an entry never goes stale. */
-export function createThumbnails(options: { resize: () => Promise<Resize | null>; maxBytes: number }) {
+ * an entry never goes stale. At most `maxConcurrent` resizes run at once; a
+ * first view past that gets its original now rather than a place in a queue
+ * that a scroll through a gallery could make as long as it liked, and gets
+ * its thumbnail on a later view. */
+export function createThumbnails(options: { resize: () => Promise<Resize | null>; maxBytes: number; maxConcurrent?: number }) {
+  const maxConcurrent = options.maxConcurrent ?? Infinity;
   const cache = new Map<string, Thumbnail>();
   const original = new Set<string>();
   // Concurrent first views of one image share one decode.
@@ -192,6 +196,8 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
       }
       const pending = inFlight.get(id);
       if (pending) return pending;
+      // Not remembered: this image is refused for now, not for good.
+      if (inFlight.size >= maxConcurrent) return null;
       const work = make(id, source, width).finally(() => inFlight.delete(id));
       inFlight.set(id, work);
       return work;
