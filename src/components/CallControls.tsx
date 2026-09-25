@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 // turn-taking loop, the voice host, the microphone and its speech model)
 // load on the first call (spec §6), so a phone that never calls never
 // downloads them.
-import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useRef, useState } from "react";
 import { Phone, PhoneOff } from "lucide-react";
 
 import { useStore, type Bot, type Group } from "@/state/store";
@@ -13,9 +13,12 @@ import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { LazyFallback } from "./LazyFallback";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 
-const Call = lazy(() => import("./CallView").then((module) => ({ default: module.Call })));
-const GroupCall = lazy(() => import("./GroupCallView").then((module) => ({ default: module.GroupCall })));
+const CallChunk = retryableLazy(() => import("./CallView").then((module) => ({ default: module.Call })));
+const GroupCallChunk = retryableLazy(() => import("./GroupCallView").then((module) => ({ default: module.GroupCall })));
+const Call = CallChunk.Component;
+const GroupCall = GroupCallChunk.Component;
 
 export function CallButton({ bot }: { bot: Bot }) {
   return (
@@ -197,9 +200,11 @@ export function CallOverlay({ bot }: { bot: Bot }) {
   const active = useOnCall() === bot.id;
   if (!active) return null;
   return (
-    <Suspense fallback={<LazyFallback />}>
-      <Call bot={bot} />
-    </Suspense>
+    <LazyBoundary onRetry={CallChunk.retry}>
+      <Suspense fallback={<LazyFallback />}>
+        <Call bot={bot} />
+      </Suspense>
+    </LazyBoundary>
   );
 }
 
@@ -207,8 +212,10 @@ export function GroupCallOverlay({ group, members }: { group: Group; members: Bo
   const active = useOnCall() === group.id;
   if (!active) return null;
   return (
-    <Suspense fallback={<LazyFallback />}>
-      <GroupCall group={group} members={members} />
-    </Suspense>
+    <LazyBoundary onRetry={GroupCallChunk.retry}>
+      <Suspense fallback={<LazyFallback />}>
+        <GroupCall group={group} members={members} />
+      </Suspense>
+    </LazyBoundary>
   );
 }

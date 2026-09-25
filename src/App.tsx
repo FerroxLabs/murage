@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { initAnalytics } from "@/lib/analytics";
@@ -30,14 +30,20 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { useDeepLinks } from "@/components/useDeepLinks";
 import { LazyFallback } from "@/components/LazyFallback";
+import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
 // that never opens them never downloads them. One Suspense per surface, so a
-// panel loading does not blank one that is already open.
-const BotSettingsDialog = lazy(() => import("@/components/BotSettingsDialog").then((module) => ({ default: module.BotSettingsDialog })));
-const ComputerPanel = lazy(() => import("@/components/ComputerPanel").then((module) => ({ default: module.ComputerPanel })));
-const SettingsModal = lazy(() => import("@/components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
+// panel loading does not blank one that is already open. One LazyBoundary per
+// surface too, so a chunk that fails to arrive costs that panel a retry
+// button, not the whole app (LazyBoundary.tsx).
+const BotSettings = retryableLazy(() => import("@/components/BotSettingsDialog").then((module) => ({ default: module.BotSettingsDialog })));
+const Computer = retryableLazy(() => import("@/components/ComputerPanel").then((module) => ({ default: module.ComputerPanel })));
+const Settings = retryableLazy(() => import("@/components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
+const BotSettingsDialog = BotSettings.Component;
+const ComputerPanel = Computer.Component;
+const SettingsModal = Settings.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -356,25 +362,31 @@ function Shell() {
         </main>
       )}
       {state.settingsOpen && bot && (
-        <Suspense fallback={<LazyFallback />}>
-          <BotSettingsDialog key={bot.id} bot={bot} />
-        </Suspense>
+        <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <BotSettingsDialog key={bot.id} bot={bot} />
+          </Suspense>
+        </LazyBoundary>
       )}
       {state.computerOpen && bot && (
-        <Suspense fallback={<LazyFallback />}>
-          <ComputerPanel
-            key={bot.id}
-            bot={bot}
-            onOpenVmWorkspace={openLocalVmWorkspace}
-            onExpandBrowser={openBrowserWorkspace}
-          />
-        </Suspense>
+        <LazyBoundary onRetry={Computer.retry} onDismiss={() => dispatch({ type: "toggleComputer", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <ComputerPanel
+              key={bot.id}
+              bot={bot}
+              onOpenVmWorkspace={openLocalVmWorkspace}
+              onExpandBrowser={openBrowserWorkspace}
+            />
+          </Suspense>
+        </LazyBoundary>
       )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && (
-        <Suspense fallback={<LazyFallback />}>
-          <SettingsModal />
-        </Suspense>
+        <LazyBoundary onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <SettingsModal />
+          </Suspense>
+        </LazyBoundary>
       )}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the

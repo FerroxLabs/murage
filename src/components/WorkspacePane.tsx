@@ -21,7 +21,7 @@
 // (a stat, not a 2 MiB re-read) and handed to the session, which reloads a
 // clean document and raises a conflict for a dirty one. Nothing here writes
 // a file except an explicit Save or Save a copy.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, Maximize2, Minimize2, Pencil, Pin, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
@@ -47,6 +47,7 @@ import {
 import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDraftStore } from "@/lib/markdown-drafts";
 import { saveBlob } from "@/lib/save-file";
 import type { MarkdownEditorController } from "./MarkdownEditor";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
 import { MemorySettings } from "./MemorySettings";
@@ -61,7 +62,8 @@ import {
 // The editor, its Tiptap kit and the fidelity checker are one chunk, loaded
 // the first time a file is opened for editing (spec §6). Previewing never
 // needs them.
-const MarkdownEditor = lazy(() => import("./MarkdownEditor").then((module) => ({ default: module.MarkdownEditor })));
+const Editor = retryableLazy(() => import("./MarkdownEditor").then((module) => ({ default: module.MarkdownEditor })));
+const MarkdownEditor = Editor.Component;
 
 const button = "min-h-9 rounded-lg border border-hairline/50 bg-control px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
 const iconButton = "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
@@ -815,9 +817,11 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
         ? <ImageMedia item={{ id: tabKey(tab), src: load.url, name, alt: t("workspacePane.imageLabel", { name }), source: "workspace", download: true }} imgClassName="max-h-[70vh] max-w-full object-contain" />
         : <p className="text-[13px] text-ink-secondary">{t("workspacePane.imageUnavailable")}</p>)}
       {load.status === "editor" && (
-        <Suspense fallback={<p role="status" className="text-[12.5px] text-ink-secondary">{t("workspacePane.opening", { name })}</p>}>
-          <MarkdownEditor controller={load.entry.controller} title={tab.relativePath} />
-        </Suspense>
+        <LazyBoundary inline onRetry={Editor.retry}>
+          <Suspense fallback={<p role="status" className="text-[12.5px] text-ink-secondary">{t("workspacePane.opening", { name })}</p>}>
+            <MarkdownEditor controller={load.entry.controller} title={tab.relativePath} />
+          </Suspense>
+        </LazyBoundary>
       )}
       {load.status === "ready" && kind === "markdown" && (
         <>
