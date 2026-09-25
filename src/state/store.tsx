@@ -54,6 +54,8 @@ import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
+import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
+import { callNative, nativeAvailable } from "@/lib/native-shell";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting"]);
@@ -661,6 +663,9 @@ export interface AppState {
    *  entered from the other end. `botId` is that pre-fill. */
   teamLibrary: { open: boolean; botId?: string; view?: TeamLibraryView; tab?: "import" };
   connected: boolean;
+  /** The door said this browser's session is gone (GET /session → 401).
+   * Final for this page: the only way back is pairing again. */
+  signedOut?: boolean;
   error: string | null;
   mascotMotion: {
     botId: string;
@@ -919,6 +924,7 @@ export type Action =
   | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean;acknowledgeNoLimits?:boolean} }
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
+  | { type: "signedOut" }
   | { type: "error"; message: string | null }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
@@ -1559,6 +1565,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case "updateTask": return state;
     case "connected":
       return { ...state, connected: action.value };
+    case "signedOut":
+      return { ...state, signedOut: true, connected: false };
     case "error":
       return {
         ...(action.message && state.selectedId
@@ -1872,6 +1880,7 @@ export const initialState: AppState = {
   focusMessage: null,
   teamLibrary: { open: false },
   connected: false,
+  signedOut: false,
   error: null,
   mascotMotion: null,
   pendingQueued: {},
@@ -1909,6 +1918,9 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     },
   });
   const body = await res.json().catch(() => ({}));
+  // Not proof on its own: a harness route answers 401 for a provider it
+  // could not sign in to. The door's /session decides (lib/session-check.ts).
+  if (res.status === 401) void checkSession();
   // The status rides along, the way `composer-attachments.ts` already does it.
   // Without it every failure looks alike to a caller, and the peripheral
   // retry loop cannot tell "the harness hiccuped" from "this surface is never
@@ -2760,6 +2772,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         console.warn(`snapshot: ${part.key} is not available on this surface; not retrying`, error);
         return;
       }
+      if (sessionSignedOut()) return; // as permanent as a surface gate for this page
       if (error !== undefined) {
         console.warn(`snapshot: ${part.key} refresh failed; retrying`, error);
       }
@@ -3061,12 +3074,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (hydrated) handleFrame(frame, delivery?.replayed);
           else pendingFrames.push({ frame, replayed: delivery?.replayed === true });
         },
+        stillSignedIn: async () => (await checkSession()) !== "signed-out",
       });
     });
     const stopApprovalClicks = window.muragebox?.approvalNotifications?.onOpen(target => {
       openNotificationTarget(dispatch, target, stateRef.current);
       // land on the card itself, not just its conversation
       if (typeof target.messageId === "string" && target.messageId) dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId });
+    });
+    // Signed out: stop every loop that would keep knocking, and let the phone
+    // app show its own re-pair screen. A browser gets SignedOutCard.
+    const stopSignedOut = onSignedOut(() => {
+      rawDispatch({ type: "signedOut" });
+      liveClosed = true;
+      stopLive?.();
+      for (const refresh of peripheralRefresh.values()) {
+        if (refresh.timer) clearTimeout(refresh.timer);
+        refresh.timer = null;
+      }
+      void nativeAvailable("rePair")
+        .then((available) => (available ? callNative("rePair") : undefined))
+        .catch(() => {});
     });
     return () => {
       alive = false;
@@ -3078,6 +3106,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       stopLive?.();
       stopApprovalClicks?.();
+      stopSignedOut();
     };
   }, []);
 

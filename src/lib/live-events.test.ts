@@ -579,3 +579,37 @@ describe("the secret's production path", () => {
     }
   });
 });
+
+describe("a stream that died because the session did", () => {
+  it("stops reconnecting once the door says this browser is signed out", async () => {
+    const fixture = harness();
+    let answer!: (signedIn: boolean) => void;
+    const stillSignedIn = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    const onError = vi.fn();
+    openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true, onError, stillSignedIn }, fixture.platform);
+    fixture.sources[0]!.error();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(stillSignedIn).toHaveBeenCalledOnce();
+    answer(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(60_000);
+    fixture.windowTarget.emit("online");
+    fixture.documentTarget.emit("visibilitychange");
+    expect(fixture.sources).toHaveLength(1);
+    expect(fixture.windowTarget.count("online")).toBe(0);
+  });
+
+  it("keeps reconnecting when the door says signed in, or cannot be reached", async () => {
+    const fixture = harness();
+    const stop = openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true, stillSignedIn: async () => true },
+      fixture.platform,
+    );
+    fixture.sources[0]!.error();
+    await Promise.resolve();
+    vi.advanceTimersByTime(500);
+    expect(fixture.sources).toHaveLength(2);
+    stop();
+  });
+});

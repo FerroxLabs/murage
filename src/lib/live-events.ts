@@ -53,6 +53,10 @@ export interface LiveEventsHandlers {
   onSnapshotRequired: () => Promise<boolean>;
   onOpen?: () => void;
   onError?: () => void;
+  /** Asked after the stream drops. EventSource never reveals the status that
+   * ended it, so a dead session looks exactly like a host that went to
+   * sleep; false ends the supervisor instead of retrying forever. */
+  stillSignedIn?: () => Promise<boolean>;
   screens?: boolean;
   staleMs?: number;
   retryMinMs?: number;
@@ -356,6 +360,7 @@ export function openLiveEvents(
   };
 
   let connect: () => void;
+  let stop: () => void;
   const scheduleReconnect = () => {
     if (stopped || retryTimer !== null || !platform.isOnline() || !platform.isVisible()) return;
     const exponent = Math.min(retryAttempt, 20);
@@ -373,6 +378,13 @@ export function openLiveEvents(
     closeSource();
     handlers.onError?.();
     scheduleReconnect();
+    // Asked in parallel with the retry, so an asleep host costs no delay;
+    // a signed-out answer cancels the retry it is racing.
+    if (handlers.stillSignedIn) {
+      void handlers.stillSignedIn().then((signedIn) => {
+        if (!signedIn) stop();
+      }, () => {});
+    }
   };
 
   const openSource = () => {
@@ -526,7 +538,7 @@ export function openLiveEvents(
   platform.windowTarget?.addEventListener("focus", onFocus);
   platform.documentTarget?.addEventListener("visibilitychange", onVisibilityChange);
 
-  return () => {
+  stop = () => {
     if (stopped) return;
     stopped = true;
     clearInterval(staleTimer);
@@ -536,4 +548,5 @@ export function openLiveEvents(
     platform.windowTarget?.removeEventListener("focus", onFocus);
     platform.documentTarget?.removeEventListener("visibilitychange", onVisibilityChange);
   };
+  return stop;
 }

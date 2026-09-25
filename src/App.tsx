@@ -12,6 +12,7 @@ import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
+import { SignedOutCard } from "@/components/SignedOutCard";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
@@ -269,6 +270,8 @@ function Shell() {
           dead server is indistinguishable from a dozen broken features from
           in here, and that cost the owner an hour on 2026-09-22. */}
       <ServerLifecycleBanner />
+      {/* Only after the door itself said 401 (lib/session-check.ts). */}
+      {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
