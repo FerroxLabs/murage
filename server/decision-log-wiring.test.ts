@@ -235,7 +235,7 @@ posixOnly("authorization decisions are logged", () => {
     "an exact command grant is offered on the card and logged as its own rule",
     async () => {
       const bot = await makePermissionBot({ name: "Exacting" });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
       const card = await waitForBotCard(bot.id);
       expect(card, "no approval card ever appeared").not.toBeNull();
       // the engine's own command, the turn's folder and the engine asking
@@ -246,11 +246,11 @@ posixOnly("authorization decisions are logged", () => {
 
       const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { allowKey: exactKey });
       expect(grant.status, JSON.stringify(grant.body)).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       await waitForDecision((r) => r.decision === "user-approved" && r.requestId === card.card.requestId);
 
       // the same command in the same folder on the same engine: no card
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "run it again" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it again" })).status).toBe(202);
       const row = await waitForDecision((r) => r.decision === "auto-approved" && r.botId === bot.id);
       expect(row, "the exact grant never answered the second ask").not.toBeNull();
       expect(row!.source).toBe("exact-command");
