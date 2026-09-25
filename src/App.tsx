@@ -12,6 +12,7 @@ import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
+import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
 import { SignedOutCard } from "@/components/SignedOutCard";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
@@ -273,6 +274,8 @@ function Shell() {
           dead server is indistinguishable from a dozen broken features from
           in here, and that cost the owner an hour on 2026-09-22. */}
       <ServerLifecycleBanner />
+      {/* The remote counterpart: a phone or browser whose computer went quiet. */}
+      {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
@@ -339,7 +342,9 @@ function Shell() {
           </div>
           {!state.connected && (
             <div className="text-[12px]">
-              This usually clears on its own. If it does not, quit Murage and open it again.
+              {desktop === true
+                ? "This usually clears on its own. If it does not, quit Murage and open it again."
+                : "This usually clears on its own once your computer is awake and online."}
             </div>
           )}
         </main>
