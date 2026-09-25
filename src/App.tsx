@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
-import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
-import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
-import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
@@ -32,6 +29,15 @@ import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { useDeepLinks } from "@/components/useDeepLinks";
+import { LazyFallback } from "@/components/LazyFallback";
+
+// Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
+// settings page and, through House rules and the skill editor, Tiptap; a phone
+// that never opens them never downloads them. One Suspense per surface, so a
+// panel loading does not blank one that is already open.
+const BotSettingsDialog = lazy(() => import("@/components/BotSettingsDialog").then((module) => ({ default: module.BotSettingsDialog })));
+const ComputerPanel = lazy(() => import("@/components/ComputerPanel").then((module) => ({ default: module.ComputerPanel })));
+const SettingsModal = lazy(() => import("@/components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -349,17 +355,27 @@ function Shell() {
           )}
         </main>
       )}
-      {state.settingsOpen && bot && <BotSettingsDialog key={bot.id} bot={bot} />}
+      {state.settingsOpen && bot && (
+        <Suspense fallback={<LazyFallback />}>
+          <BotSettingsDialog key={bot.id} bot={bot} />
+        </Suspense>
+      )}
       {state.computerOpen && bot && (
-        <ComputerPanel
-          key={bot.id}
-          bot={bot}
-          onOpenVmWorkspace={openLocalVmWorkspace}
-          onExpandBrowser={openBrowserWorkspace}
-        />
+        <Suspense fallback={<LazyFallback />}>
+          <ComputerPanel
+            key={bot.id}
+            bot={bot}
+            onOpenVmWorkspace={openLocalVmWorkspace}
+            onExpandBrowser={openBrowserWorkspace}
+          />
+        </Suspense>
       )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
-      {state.appSettingsOpen && <SettingsModal />}
+      {state.appSettingsOpen && (
+        <Suspense fallback={<LazyFallback />}>
+          <SettingsModal />
+        </Suspense>
+      )}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}

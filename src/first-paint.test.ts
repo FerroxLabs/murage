@@ -86,4 +86,12 @@ describe("the first paint", () => {
     const silero = importsOf("src/lib/call-mic.ts").filter((edge) => edge.path === "src/lib/silero-vad.ts");
     expect(silero.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
   });
+
+  it("opens Settings, a bot's settings and the computer panel on first use", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+  });
 });
