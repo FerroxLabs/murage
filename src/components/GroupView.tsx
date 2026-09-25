@@ -23,7 +23,7 @@ import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { MessageActionSheet, type MessageAction } from "./ChatView";
+import { ErrorBanner, MessageActionSheet, type MessageAction } from "./ChatView";
 import { Composer } from "./Composer";
 import { ChatFindBar } from "./ChatFindBar";
 import { GroupTaskPicker } from "./TaskPicker";
@@ -1596,6 +1596,9 @@ export function GroupView({ group }: { group: Group }) {
       )}
 
       {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
+      {/* A channel never showed an error: a refused delete or rename in the
+          conversation picker just did nothing. Same banner as a bot chat. */}
+      {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">

@@ -91,3 +91,24 @@ export function peerContactHint(bot: Pick<Bot, "autoApprove" | "fullAccess" | "a
   }
   return "On: this bot stops and asks you before it contacts another bot.";
 }
+
+/** The routine whose own conversation this is, if any: every run of that
+ * routine works here, so this conversation's approval level is the routine's
+ * (server/routines.ts routineForConversation). */
+export function routineOfConversation<T extends { botId: string; threadId?: string; target?: string }>(
+  routines: readonly T[],
+  botId: string,
+  threadId: string | undefined,
+): T | undefined {
+  if (!threadId) return undefined;
+  return routines.find((routine) => routine.botId === botId && routine.threadId === threadId && (routine.target ?? "bot") === "bot");
+}
+
+/** The level a routine's runs are judged at: its own, or its bot's level
+ * (the bot's own setting, not any one conversation's). */
+export function routineEffectiveMode(
+  routine: { permissionMode?: PermissionMode },
+  profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean },
+): PermissionMode {
+  return routine.permissionMode ?? permissionModeOf(profile);
+}

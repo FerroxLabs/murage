@@ -18,6 +18,7 @@ const COPY = {
   queued: { label: "Queued", tone: "text-ink-secondary", border: "border-hairline/45" },
   running: { label: "Running", tone: "text-accent", border: "border-accent/30" },
   waiting: { label: "Needs your input", tone: "text-warning", border: "border-warning/35" },
+  "needs-you": { label: "Waiting on you", tone: "text-warning", border: "border-warning/35" },
   completed: { label: "Completed", tone: "text-success", border: "border-success/30" },
   failed: { label: "Failed", tone: "text-danger", border: "border-danger/35" },
   cancelled: { label: "Cancelled", tone: "text-ink-secondary", border: "border-hairline/45" },
@@ -71,6 +72,7 @@ function StatusIcon({ status }: { status: RoutineRunCardData["status"] }) {
     case "running":
       return <Loader2 aria-hidden="true" className={cn(className, "animate-spin text-accent")} />;
     case "waiting":
+    case "needs-you":
       return <ShieldAlert aria-hidden="true" className={cn(className, "text-warning")} />;
     case "completed":
       return <CheckCircle2 aria-hidden="true" className={cn(className, "text-success")} />;
@@ -112,7 +114,8 @@ export function RoutineRunCard({
       ? (run.error ?? run.summary)
       : (run.summary ?? run.error),
   );
-  const actionLabel = run.status === "waiting" ? "Review" : "Open run";
+  const asking = run.status === "waiting" || run.status === "needs-you";
+  const actionLabel = asking ? "Review" : "Open run";
 
   return (
     <section
@@ -142,7 +145,7 @@ export function RoutineRunCard({
             aria-label={`${actionLabel} for ${run.routineName}`}
             className={cn(
               "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
-              run.status === "waiting"
+              asking
                 ? "bg-warning/15 text-warning hover:bg-warning/25"
                 : "bg-raised text-ink-secondary hover:bg-raised-hover hover:text-ink",
             )}

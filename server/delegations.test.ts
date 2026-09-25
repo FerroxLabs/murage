@@ -26,12 +26,13 @@ import {
   releaseDelegationsWaitingOn,
   threadsWaitingOn,
   discardDelegations,
+  dropUnreachableDelegations,
   pendingThreads,
   _loadPending,
   _pendingCount,
   _resetPending,
 } from "./delegations.ts";
-import { peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
+import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
@@ -460,6 +461,24 @@ describe("drainDelegations", () => {
         .find((m) => m.kind === "activity" && (m.tool?.name ?? "").includes("denied by user")),
     );
     expect(chip.tool?.ok).toBe(false);
+    expect(runTargetCalls).toEqual([]);
+  });
+
+  it("reports a cancelled approval as cancelled, not denied by the user", async () => {
+    store.patchBot(from.id, { approvePeerComms: true });
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    await waitFor(() => store.messagesFor(from.threadId).find((m) => m.card?.requestId));
+    cancelPeerApprovalsForThread(from.threadId);
+
+    await waitFor(() => findDelegationReceipt(queued.id!));
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "cancelled", result: "the approval was cancelled before a decision" });
+    const chips = store.messagesFor(from.threadId).filter((m) => m.kind === "activity").map((m) => m.tool?.name ?? "");
+    expect(chips.some((name) => name.includes("denied by user"))).toBe(false);
+    expect(chips).toContain(`Delegation to @${target.name}: the approval was cancelled before a decision`);
     expect(runTargetCalls).toEqual([]);
   });
 
@@ -1276,4 +1295,36 @@ describe("the harness answers that question the way it dispatches", () => {
   // `handoffCanStart` itself is tested thoroughly above, against every
   // collaborator answering every way. That the harness hands it the REAL
   // collaborators, and that the predicate is on the bus at all, is UNPROVEN.
+});
+
+describe("dropUnreachableDelegations", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    _resetPending();
+  });
+
+  it("drops only the handoffs a team change made unreachable, straight away, and says so", () => {
+    const store = new Store(selection);
+    const { commsBus } = setupBuses(store);
+    const from = store.createBot({ name: "Sender", section: "Ops" });
+    const moved = store.createBot({ name: "Moved", section: "Ops" });
+    const stays = store.createBot({ name: "Stays", section: "Ops" });
+    const gone = queueDelegation(commsBus, from, { toBotId: moved.id, message: "one", depth: 0 }, 2);
+    const kept = queueDelegation(commsBus, from, { toBotId: stays.id, message: "two", depth: 0 }, 2);
+    expect(store.setBotsSection([moved.id], "Sales").ok).toBe(true);
+
+    expect(dropUnreachableDelegations(commsBus)).toBe(1);
+
+    expect(findDelegationReceipt(gone.id!)).toMatchObject({ status: "dropped", result: expect.stringContaining("different sections") });
+    expect(pendingDelegationInfo(gone.id!)).toBeNull();
+    expect(pendingDelegationInfo(kept.id!)).not.toBeNull();
+    expect(findDelegationReceipt(kept.id!)).toBeNull();
+    expect(store.messagesFor(from.threadId).some((m) => m.tool?.name.includes("Delegation to @Moved canceled"))).toBe(true);
+    // Persisted: a restart does not bring the dropped handoff back.
+    _loadPending();
+    expect(pendingDelegationInfo(gone.id!)).toBeNull();
+    expect(pendingDelegationInfo(kept.id!)).not.toBeNull();
+    // Nothing else to drop the second time.
+    expect(dropUnreachableDelegations(commsBus)).toBe(0);
+  });
 });

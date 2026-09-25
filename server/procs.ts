@@ -203,13 +203,13 @@ export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): 
 /** Request termination and confirm the owned lifecycle. POSIX requires root
  * close AND group disappearance; Windows retains its existing root-close
  * contract and taskkill route, not a claim about already-orphaned helpers. */
-export function awaitCliTreeStopped(child: ChildProcess): Promise<boolean> {
+export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
   const ownership = cliOwnership.get(child);
   if (!ownership) return Promise.resolve(false);
-  return stopOwnedCli(child, ownership);
+  return stopOwnedCli(child, ownership, undefined, termGraceMs);
 }
 
-function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver): Promise<boolean> {
+function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
   if (observer && !owned.observers.has(observer)) {
     owned.observers.add(observer);
     for (const observation of owned.observations) {
@@ -270,7 +270,7 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     // Preserve existing diagnostic route/fallback observations, including
     // after root close (the retained group is still ours).
     killCliTreeWith({ pid, exitCode: null, signalCode: null, kill: (value) => owned.closed ? false : child.kill(value) }, observe, REAL_KILL_DEPS);
-    if (await wait(CLI_TERM_GRACE_MS)) return true;
+    if (await wait(termGraceMs)) return true;
     signal("SIGKILL");
     return wait(CLI_FORCE_WAIT_MS);
   };

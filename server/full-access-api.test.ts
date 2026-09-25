@@ -224,13 +224,15 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       expect(line.tool.steps[0]).toContain(CLEAN_BUILD);
       expect((await threadMessages(bot.threadId)).some((m) => /^auto-approved .*\(full access\)/.test(String(m.tool?.name ?? "")))).toBe(false);
 
-      // switching back to Auto restores Auto's stop for the same command
+      // Back on Auto, the same delete inside its own folder is Auto's to
+      // answer too (0.1.60: a delete the stop line places inside the bot's
+      // own roots is not "destructive" for Auto's guard), and it says so as
+      // Auto, not as Full access.
       expect((await desktopApi("PATCH", thread, { fullAccess: false })).status).toBe(200);
       expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean it again" })).status).toBe(202);
-      const card = await poll(() => liveCard(bot.threadId), 20_000);
-      expect(card, "Auto did not stop at rm -rf after leaving Full access").not.toBeNull();
-      expect(card.card.held).toContain("destructive");
-      await deny(bot.id, bot.threadId, card.card.requestId);
+      expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      expect((await threadMessages(bot.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+      expect((await threadMessages(bot.threadId)).some((m) => /^auto-approved [^(]*: rm -rf build/.test(String(m.tool?.name ?? "")))).toBe(true);
     },
     60_000,
   );

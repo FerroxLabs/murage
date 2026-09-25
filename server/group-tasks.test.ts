@@ -70,7 +70,7 @@ describe("channel tasks", () => {
     expect(store.groupByThread(second.threadId)?.id).toBe(channel.id);
   });
 
-  it("renames and deletes tasks but never removes the final conversation", async () => {
+  it("renames and deletes tasks, and deleting the last one leaves a fresh conversation", async () => {
     const { store } = await freshStore();
     const bot = store.createBot();
     const channel = store.createGroup("Product", [bot.id]);
@@ -81,7 +81,14 @@ describe("channel tasks", () => {
     expect(store.renameGroupTask(channel.id, second.threadId, "  Research  ")?.title).toBe("Research");
     expect(store.deleteGroupTask(channel.id, second.threadId)).toMatchObject({ threadId: first });
     expect(store.messagesFor(second.threadId)).toEqual([]);
-    expect(store.deleteGroupTask(channel.id, first)).toBeNull();
+    // The owner pressed the bin on the only conversation and nothing
+    // happened. A channel still always has one: a fresh, empty one.
+    store.appendMessage(first, { role: "user", kind: "text", text: "the only one" });
+    const after = store.deleteGroupTask(channel.id, first)!;
+    expect(after.tasks).toHaveLength(1);
+    expect(after.threadId).not.toBe(first);
+    expect(store.messagesFor(first)).toEqual([]);
+    expect(store.messagesFor(after.threadId)).toEqual([]);
   });
 
   it("normalizes a supplied task title at the store boundary", async () => {

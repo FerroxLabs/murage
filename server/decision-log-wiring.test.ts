@@ -186,7 +186,7 @@ posixOnly("authorization decisions are logged", () => {
     "a rule-matched auto-approval writes a row naming the rule",
     async () => {
       const bot = await makePermissionBot({ name: "Granted", alwaysAllow: ["shell:echo"] });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
 
       const row = await waitForDecision((r) => r.decision === "auto-approved" && r.botId === bot.id);
       expect(row, "the auto-approval never reached the decision log").not.toBeNull();
@@ -205,7 +205,7 @@ posixOnly("authorization decisions are logged", () => {
     "a card and the human's allow write two rows",
     async () => {
       const bot = await makePermissionBot({ name: "Askme" });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
 
       const card = await waitForBotCard(bot.id);
       expect(card, "no approval card ever appeared").not.toBeNull();
@@ -217,7 +217,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(shown!.botId).toBe(bot.id);
       expect(shown!.tool).toBe("shell");
 
-      const answered = await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" });
+      const answered = await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" });
       expect(answered.status).toBe(200);
       expect(answered.body.outcome).not.toBe("unavailable");
 
@@ -232,15 +232,43 @@ posixOnly("authorization decisions are logged", () => {
   );
 
   it(
+    "an exact command grant is offered on the card and logged as its own rule",
+    async () => {
+      const bot = await makePermissionBot({ name: "Exacting" });
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      const card = await waitForBotCard(bot.id);
+      expect(card, "no approval card ever appeared").not.toBeNull();
+      // the engine's own command, the turn's folder and the engine asking
+      const exactKey = card.card.exactAllowKey as string;
+      expect(JSON.parse(exactKey.slice("exact:".length))).toEqual(["grok", expect.stringMatching(/^\//), "echo hi"]);
+      // the per-program grant is still offered beside it
+      expect(card.card.allowKey).toBe("shell:echo");
+
+      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { allowKey: exactKey });
+      expect(grant.status, JSON.stringify(grant.body)).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      await waitForDecision((r) => r.decision === "user-approved" && r.requestId === card.card.requestId);
+
+      // the same command in the same folder on the same engine: no card
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it again" })).status).toBe(202);
+      const row = await waitForDecision((r) => r.decision === "auto-approved" && r.botId === bot.id);
+      expect(row, "the exact grant never answered the second ask").not.toBeNull();
+      expect(row!.source).toBe("exact-command");
+      expect(row!.rule).toBe(exactKey);
+    },
+    120_000,
+  );
+
+  it(
     "a human deny writes its row too",
     async () => {
       const bot = await makePermissionBot({ name: "Refused" });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "run it" })).status).toBe(202);
 
       const card = await waitForBotCard(bot.id);
       expect(card).not.toBeNull();
       const requestId = card.card.requestId as string;
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
 
       const user = await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId);
       expect(user, "the denial never reached the decision log").not.toBeNull();
@@ -307,7 +335,7 @@ posixOnly("authorization decisions are logged", () => {
       // the settings route drops question grants instead of storing them
       expect(bot.alwaysAllow).toEqual(["shell:echo"]);
 
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "ask me" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "ask me" })).status).toBe(202);
       const card = await waitForBotCard(bot.id);
       expect(card, "the question was answered by a rule instead of reaching the owner").not.toBeNull();
       const requestId = card.card.requestId as string;
@@ -325,7 +353,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(grant.status).toBe(400);
       expect(grant.body.error).toMatch(/questions cannot be always allowed/);
 
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
       expect(await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId)).not.toBeNull();
 
       const rows = (await api("GET", "/api/decisions")).body.decisions as DecisionRow[];

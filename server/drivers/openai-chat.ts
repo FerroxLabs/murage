@@ -7,11 +7,13 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "../provider-routing.ts";
+import type { AgentPlanEntry } from "../../shared/agent-plan.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
+import { createTodoBlockFilter, extractTodoBlocks } from "../../shared/todo-block.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
@@ -640,11 +642,35 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       // output the user already saw. Never reset across attempts.
       let sawOutput = false;
       for (;;) {
+        // These engines have no plan channel, so some models write their
+        // to-do list into the answer as a <todo> block (issue #7). It becomes
+        // the same plan update a structured plan does and leaves the answer;
+        // anything that is not really a checklist passes through unchanged.
+        const todo = createTodoBlockFilter();
+        let streamedPlans = 0;
+        const emitPlans = (plans: AgentPlanEntry[][]) => {
+          for (const entries of plans) {
+            streamedPlans++;
+            emit({ ...base(turn.threadId, turnId), type: "plan.updated", entries });
+          }
+        };
+        const emitAnswerDelta = (delta: string) => {
+          if (delta) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
+        };
         try {
           const completion = await complete(messages, model, true, abort.signal, (delta, streamKind) => {
             sawOutput = true;
-            emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta });
+            if (streamKind !== "assistant_text") {
+              emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta });
+              return;
+            }
+            const out = todo.push(delta);
+            emitPlans(out.plans);
+            emitAnswerDelta(out.text);
           }, turn.providerRoute);
+          const rest = todo.flush();
+          emitPlans(rest.plans);
+          emitAnswerDelta(rest.text);
           const reply = completion.text.trim() ? completion.text : completion.reasoning;
           if (!reply.trim()) {
             const finish = completion.finishReason && completion.finishReason !== "stop"
@@ -663,7 +689,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             source: options.nativeLog.source,
             msg: options.nativeLog.incoming(completion),
           });
-          emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: reply });
+          // The finished answer is read the same way; a server that sent the
+          // text without streaming it still gets its plan.
+          const answer = completion.text.trim() ? extractTodoBlocks(completion.text) : { text: reply, plans: [] };
+          if (!streamedPlans) emitPlans(answer.plans);
+          // A reply that was only a to-do list shows the plan, not an empty message.
+          if (answer.text.trim()) {
+            emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: answer.text });
+          }
           if (completion.usage) {
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...completion.usage });
           }
@@ -717,7 +750,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             });
             // Keep what the provider did send. The failed terminal below marks
             // that reply failed; it is never presented as a completed answer.
-            const kept = outcome.partial.text.trim() ? outcome.partial.text : outcome.partial.reasoning;
+            // A closed to-do block already reached the plan while streaming; an
+            // unclosed one is kept as written.
+            const kept = outcome.partial.text.trim() ? extractTodoBlocks(outcome.partial.text).text : outcome.partial.reasoning;
             if (kept.trim()) {
               emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: kept });
             }

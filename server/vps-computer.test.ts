@@ -27,6 +27,7 @@ import {
   vpsDockerArgs,
   vpsDriverError,
   vpsSshTunnelArgs,
+  inspectVpsForAuto,
   reuseVps,
   type VpsCommandRunner,
 } from "./vps-computer.ts";
@@ -571,6 +572,92 @@ describe("VPS computer", () => {
       expect(healthCalls).toHaveLength(1);
       expect(driverProbes).toBeGreaterThanOrEqual(4);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Upstream #1772: a turn start no longer fails at the 5 s lock while the
+  // same VPS is busy. Overlapping provisions share one operation, and turn
+  // preparation (provision, Auto's inspection) waits through a lifecycle
+  // action for a bounded time; Stop, Start and Remove keep the fast refusal.
+  it("shares a slow provision instead of refusing its second caller after five seconds", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fake = fixture({ image: false, container: false });
+    const runner: VpsCommandRunner = async (args, options) => {
+      if (args[2] === "build") await gate;
+      return fake.runner(args, options);
+    };
+    const first = vpsComputerAction("provision", CONFIG, BOT_ID, runner);
+    let secondFailure: unknown;
+    const second = vpsComputerAction("provision", CONFIG, BOT_ID, runner).catch((error) => { secondFailure = error; return null; });
+    try {
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(secondFailure).toBeUndefined();
+      release();
+      await vi.advanceTimersByTimeAsync(10_000);
+      const results = await Promise.all([first, second]);
+      expect(results[0]?.ready).toBe(true);
+      expect(results[1]).toEqual(results[0]);
+      expect(fake.calls.filter(({ args }) => args[2] === "build")).toHaveLength(1);
+      expect(fake.calls.filter(({ args }) => args[2] === "run")).toHaveLength(1);
+    } finally {
+      release();
+      await Promise.allSettled([first, second]);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["provision", "auto"] as const)("a %s turn start waits past five seconds for a lifecycle action on the same VPS", async (mode) => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fake = fixture({ running: false });
+    const runner: VpsCommandRunner = async (args, options) => {
+      if (args[2] === "start") await gate;
+      return fake.runner(args, options);
+    };
+    const panelStart = vpsComputerAction("start", CONFIG, BOT_ID, runner);
+    await vi.advanceTimersByTimeAsync(0);
+    let failure: unknown;
+    const turnStart = (mode === "provision"
+      ? vpsComputerAction("provision", CONFIG, BOT_ID, runner)
+      : inspectVpsForAuto(CONFIG, BOT_ID, runner)).catch((error) => { failure = error; return null; });
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(failure).toBeUndefined();
+      release();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await panelStart).ready).toBe(true);
+      expect((await turnStart)?.ready).toBe(true);
+      expect(failure).toBeUndefined();
+    } finally {
+      release();
+      await Promise.allSettled([panelStart, turnStart]);
+      vi.useRealTimers();
+    }
+  });
+
+  it("a turn start's wait for a busy VPS is still bounded", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fake = fixture({ running: false });
+    const runner: VpsCommandRunner = async (args, options) => {
+      if (args[2] === "start") await gate;
+      return fake.runner(args, options);
+    };
+    const panelStart = vpsComputerAction("start", CONFIG, BOT_ID, runner);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const turnStart = expect(inspectVpsForAuto(CONFIG, BOT_ID, runner)).rejects.toThrow(/being prepared/);
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 1_000);
+      await turnStart;
+    } finally {
+      release();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await Promise.allSettled([panelStart]);
       vi.useRealTimers();
     }
   });

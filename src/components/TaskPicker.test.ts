@@ -307,3 +307,49 @@ describe("hoistWaitingTasks", () => {
     expect(view.navigable.map((task) => task.threadId)).toEqual(["run-1", "chat"]);
   });
 });
+
+describe("snooze and questions in the conversation list", () => {
+  const now = Date.parse("2026-09-24T15:30:00-04:00");
+  const noop = () => {};
+  const tasks = [
+    { threadId: "open", title: "Plan the launch", createdAt: now - 60_000 },
+    { threadId: "quiet", title: "Weekly numbers", createdAt: now - 120_000, unread: true },
+    { threadId: "asking", title: "Pick a tone", createdAt: now - 180_000, busy: true, activity: "waiting-on-you" as const },
+  ];
+  const render = (extra: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(ConversationTaskPicker, {
+      threadId: "open", tasks, busy: false, onNew: noop, onSwitch: noop, onRename: noop, onDelete: noop,
+      initialOpen: true, now, timeZone: "America/New_York", locale: "en-US",
+      snoozes: new Map([["quiet", Date.parse("2026-09-25T09:00:00-04:00")]]),
+      questions: { asking: 1 },
+      canSnooze: true,
+      ...extra,
+    }));
+
+  it("marks a snoozed conversation with its time instead of Unread", () => {
+    const markup = render();
+    expect(markup).toContain("Snoozed until tomorrow, 9:00 AM");
+    expect(markup).not.toContain(" · Unread");
+    expect(markup).toContain('aria-label="Unsnooze Weekly numbers"');
+  });
+
+  it("shows Unread again once the snooze is over", () => {
+    const markup = render({ now: Date.parse("2026-09-25T09:00:01-04:00") });
+    expect(markup).toContain(" · Unread");
+    expect(markup).not.toContain("Snoozed until");
+  });
+
+  it("badges a waiting question and names it, and will not offer to snooze it", () => {
+    const markup = render();
+    expect(markup).toContain('data-question-badge="1"');
+    expect(markup).toContain('aria-label="1 question for you"');
+    expect(markup).toContain('aria-label="Snooze Plan the launch"');
+    expect(markup).not.toContain('aria-label="Snooze Pick a tone"');
+  });
+
+  it("offers nothing to snooze where snoozing is not available", () => {
+    const markup = render({ canSnooze: false });
+    expect(markup).not.toContain('aria-label="Snooze Plan the launch"');
+    expect(markup).toContain("Snoozed until tomorrow, 9:00 AM");
+  });
+});

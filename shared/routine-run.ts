@@ -9,7 +9,9 @@ export interface RoutineRunCardData {
   runId: string;
   routineId: string;
   routineName: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "missed";
+  /** `needs-you`: the run limit came while a card waited on the owner; the
+   * run carries on once it is answered. */
+  status: "queued" | "running" | "waiting" | "needs-you" | "completed" | "failed" | "cancelled" | "missed";
   /** Exact terminal team-goal outcome when this run targeted a room. */
   goalStatus?: "completed" | "needs-input" | "blocked" | "limit-reached" | "paused" | "stopped" | "failed";
   executionThreadId?: string;

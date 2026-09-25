@@ -196,9 +196,12 @@ describe("B34 Q14 scripted evaluator script", () => {
     });
     const skillVariant = variant("skill", UUID_B.replace("7c", "8d"), evaluated, `rollback:${UUID_B}`, ["t-1", "t-2", "t-3"],
       claims([samples[0]!, samples[1]!, samples[2]!, pin, pin, pin, ledger]));
-    const routineVariant = variant("routine", pair("d".repeat(64), 1), pair(UUID_A, 2), pair(UUID_B, 3), ["r-1", "r-2", "r-3"],
+    const routineVariant = variant("routine", pair("d".repeat(64), 1), pair(UUID_A, 2), pair(UUID_B, 3), ["r-1", "r-1", "r-1"],
       claims([samples[4]!, samples[5]!, samples[6]!, pin, pin, pin, ledger]));
     expect(() => validateAdapterArtifacts("Q14", { row: "Q14", variants: [skillVariant, routineVariant] })).not.toThrow();
+    // A routine's runs share its one conversation; a skill's tasks never do.
+    expect(() => validateAdapterArtifacts("Q14", { row: "Q14", variants: [skillVariant, { ...routineVariant, nextTask: { ...routineVariant.nextTask, threadId: "r-2" } }] })).toThrow();
+    expect(() => validateAdapterArtifacts("Q14", { row: "Q14", variants: [{ ...skillVariant, nextTask: { ...skillVariant.nextTask, threadId: "t-1" } }, routineVariant] })).toThrow();
     // The flat v2 artifact and a same-kind pair are refused.
     expect(() => validateAdapterArtifacts("Q14", { row: "Q14", ...skillVariant })).toThrow();
     expect(() => validateAdapterArtifacts("Q14", { row: "Q14", variants: [skillVariant, { ...skillVariant, reviewId: `${skillVariant.reviewId}x` }] })).toThrow();

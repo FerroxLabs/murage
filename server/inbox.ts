@@ -315,6 +315,12 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
     + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND segment=? AND ${live}`).get(allowed, segment, now)?.n ?? 0);
   const approvalCount = segmentCount("approval");
   const questionCount = segmentCount("question");
+  // THE SAME QUESTIONS, SPLIT BY CONVERSATION, so a row can carry a question
+  // badge that attributes part of this number and never adds to it. Same
+  // predicate as `questionCount`, grouped; only the view the sidebar polls.
+  const questionThreads = decisions ? Object.fromEntries((db.prepare(SOURCE
+    + `SELECT thread_id, COUNT(*) AS n FROM items WHERE decision=1 AND segment='question' AND ${live} GROUP BY thread_id ORDER BY thread_id`)
+    .all(allowed, now) as Array<{ thread_id: string; n: number }>).map(row => [row.thread_id, Number(row.n)])) : undefined;
   const connectionCount = segmentCount("connection");
   const decisionCount = Number(db.prepare(SOURCE
     + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND ${live}`).get(allowed, now)?.n ?? 0);
@@ -362,6 +368,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
     // `decisions` puts a badge on a tab the sidebar total cannot explain.
     decisions: decisionCount + restore.length, toRead: toReadCount,
     approvals: approvalCount, questions: questionCount, connections: connectionCount + restore.length,
+    ...(questionThreads ? { questionThreads } : {}),
     // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
     // owner's thirty six rows were four routines; the tab says "one line per
     // routine, not per run" and this is that sentence kept in data.
@@ -371,6 +378,19 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
     // would mean inventing all three. It is a purpose-built row, exactly like
     // the routine rows above it.
     ...(restore.length > 0 ? { restore } : {}) };
+}
+
+/** Every conversation holding something owed to the owner: an approval, a
+ *  question or a connection still waiting. Deliberately ignores the Inbox's
+ *  own item snooze and clear marks, because this answers "may this
+ *  conversation go quiet?" (server/thread-snooze.ts), and the answer for
+ *  anything owed is no, whatever else was done to it. An expired card is
+ *  not owed: nothing is waiting on it any more. */
+export function owedThreads(db: DatabaseSync, access: InboxAccess): Set<string> {
+  const allowed = scope(access);
+  const rows = db.prepare(SOURCE + `SELECT DISTINCT thread_id FROM items
+    WHERE decision=1 AND COALESCE(json_extract(json,'$.card.expired'),0)=0`).all(allowed) as Array<{ thread_id: string }>;
+  return new Set(rows.map(row => row.thread_id));
 }
 
 /** State updates cannot change source status, approve requests or run tools. */

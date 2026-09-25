@@ -234,7 +234,7 @@ const SHELLS = /^(ba|z|da|k|fi)?sh$/;
  * understands quotes and the usual separators, and marks anything it cannot
  * know (expansion, substitution) instead of guessing. `complex` is set when
  * the line uses syntax this does not model (subshells, here-docs, braces). */
-function splitShell(line: string): { commands: Word[][]; complex: boolean; scan: string } {
+function splitShell(line: string): { commands: Word[][]; complex: boolean; scan: string; words: string } {
   const commands: Word[][] = [];
   // Here-docs waiting for the end of their line, and every body read, with
   // the command that reads it, so `scan` can leave out the bodies that are
@@ -373,7 +373,15 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean; scan:
     from = body.end;
   }
   scan += line.slice(from);
-  return { commands, complex, scan };
+  // `words` leaves out every body: the plain shell-word check ("rm",
+  // "trash") is about shell, and a script fed to python or node is judged by
+  // the delete calls it makes (CODE_DELETE over `scan`), not by the words in
+  // the text it writes.
+  let words = "";
+  let at = 0;
+  for (const body of bodies) { words += line.slice(at, body.start); at = body.end; }
+  words += line.slice(at);
+  return { commands, complex, scan, words };
 }
 
 const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate", "rtk", "stdbuf", "unbuffer", "ionice", "chronic"]);
@@ -433,7 +441,7 @@ function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
 }
 
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
-  const { commands, complex, scan } = splitShell(line);
+  const { commands, complex, scan, words } = splitShell(line);
   let cwd = place.cwd;
   const found: Collected = { deletes: [] };
   const sql = SQL_DESTRUCTIVE.exec(scan);
@@ -501,7 +509,7 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
     if (!literals.length) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
   }
-  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(scan) && !found.deletes.length) {
+  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(words) && !found.deletes.length) {
     found.unknownDelete = short(line);
   }
   return deleteHit(found, place);
@@ -1244,6 +1252,61 @@ function appHit(call: ToolCall, place: StopLinePlace): StopHit | null {
 }
 
 // ── entry point ───────────────────────────────────────────────────────
+
+/** Does every delete in this shell line land strictly inside the bot's own
+ * roots? For Auto's destructive guard (server/auto-approve.ts), which stops
+ * `rm -f` wherever it points: a delete of the bot's own scratch file in /tmp
+ * is not the catastrophe that guard was written for.
+ *
+ * True only when the reader saw at least one `rm` as a command, saw every
+ * `rm` in the text as a command (not inside a string, or handed to ssh or
+ * another shell), and placed each target strictly inside one of `roots` (a
+ * root itself, or a glob over one, is not inside it). False whenever anything
+ * is unsure: a target it cannot place, any other delete verb, or a Windows
+ * home, whose commands are read as PowerShell. */
+export function deletesPlacedInside(command: string, given: StopLinePlace): boolean {
+  const place = canonPlace(given);
+  if (WIN_CANON.test(place.home)) return false;
+  const real = (path: string) => {
+    try { return place.realpath ? clean(place.realpath(path)) : path; } catch { return path; }
+  };
+  const realHome = real(clean(place.home));
+  const tooBroad = (path: string) => isTooBroad(path, place.home) || isTooBroad(path, realHome);
+  const roots = place.roots.filter((root) => root).map(clean).filter((root) => posix.isAbsolute(root) && !tooBroad(root));
+  if (!roots.length) return false;
+  const { commands } = splitShell(command);
+  const vars = new Map<string, string>([["HOME", place.home]]);
+  let cwd = place.cwd;
+  const targets: Target[] = [];
+  let seen = 0;
+  for (const raw of commands) {
+    const cmd = raw.map((word) => expand(word, vars));
+    const assigning = cmd[0]?.text && /^(export|local|declare|readonly|typeset)$/.test(cmd[0].text) ? cmd.slice(1) : cmd;
+    if (assigning.length && assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) {
+      for (const word of assigning) {
+        const eq = word.text.indexOf("=");
+        if (word.dynamic) vars.delete(word.text.slice(0, eq));
+        else vars.set(word.text.slice(0, eq), word.text.slice(eq + 1));
+      }
+      continue;
+    }
+    const prog = program(cmd);
+    if (!prog) continue;
+    if (prog.name === "cd") {
+      const to = operands(prog.args)[0];
+      cwd = !to ? place.home : resolveWord(to, cwd, place.home).path;
+      continue;
+    }
+    if (/^(rmdir|unlink|trash|shred|srm|xargs|find|rsync|del|erase|rd)$/.test(prog.name)) return false;
+    if (prog.name !== "rm") continue;
+    const ops = operands(prog.args);
+    if (!ops.length) return false;
+    seen += 1;
+    for (const word of ops) targets.push(resolveWord(word, cwd, place.home));
+  }
+  if (!seen || seen !== (command.match(/\brm\b/g) ?? []).length) return false;
+  return targets.every((target) => target.path !== undefined && roots.some((root) => within(root, real(target.path!))));
+}
 
 function commandText(tool: string, input: unknown, summary: string): string | undefined {
   const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!;

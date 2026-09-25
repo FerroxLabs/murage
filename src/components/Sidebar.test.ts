@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -20,7 +21,7 @@ vi.mock("@/lib/analytics", () => ({
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview,
-  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark } =
+  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark, sidebarThreadOwed, sidebarSnoozedUntil } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -441,3 +442,24 @@ describe("a dot in the sidebar means one thing", () => {
 // is covered only by the first-run human specs, which drive the real
 // renderer — and if it is ever worth pinning properly, the way is to render
 // the row, not to read the file that draws it.
+
+describe("snoozing from a sidebar row", () => {
+  const bots = [{ id: "b", threadId: "open", activity: "waiting-on-you",
+    tasks: [{ threadId: "open", activity: "idle" }, { threadId: "asking", activity: "waiting-on-you" }] }] as unknown as Bot[];
+  it("will not snooze a conversation that is waiting on the owner", () => {
+    expect(sidebarThreadOwed("asking", bots, {})).toBe(true);
+    expect(sidebarThreadOwed("open", bots, {})).toBe(false);
+    expect(sidebarThreadOwed("open", bots, { open: 1 })).toBe(true);
+    expect(sidebarThreadOwed("room", bots, {})).toBe(false);
+  });
+  it("only reports a snooze that is still ahead", () => {
+    const snoozes = new Map([["open", 2_000]]);
+    expect(sidebarSnoozedUntil("open", snoozes, 1_000)).toBe(2_000);
+    expect(sidebarSnoozedUntil("open", snoozes, 2_000)).toBeUndefined();
+  });
+  it("offers Snooze in both row menus only when the desktop passes a handler", () => {
+    const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+    expect(source).toContain('...(snoozable && onSnooze ? [item(');
+    expect(source.match(/snoozable=\{desktop === true\}/g)).toHaveLength(2);
+  });
+});

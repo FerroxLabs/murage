@@ -25,7 +25,7 @@
 import { unlinkSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { newId } from "./contracts.ts";
-import type { BotRecord, Message } from "./store.ts";
+import type { BotRecord, Message, MessageOrigin } from "./store.ts";
 
 /** The slice of Store this module needs — narrow so tests can fake it. */
 export interface SteerStore {
@@ -40,7 +40,7 @@ interface QueueEntry {
    * happen on a DIFFERENT thread (a room turn) — drain matches on "this
    * queue's bot is idle now", which needs the bot, not the settling thread. */
   botId: string;
-  items: Array<{ messageId: string; text: string; prompt: string; replyToId?: string; sendId?: string }>;
+  items: Array<{ messageId: string; text: string; prompt: string; replyToId?: string; sendId?: string; origin?: MessageOrigin }>;
 }
 
 const queues = new Map<string, QueueEntry>(); // threadId → waiting sends
@@ -96,7 +96,7 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { prompt?: string; replyToId?: string; sendId?: string } = {},
+  options: { prompt?: string; replyToId?: string; sendId?: string; origin?: MessageOrigin } = {},
 ): QueuedSteer {
   const id = newId();
   const entry = queues.get(threadId) ?? { botId, items: [] };
@@ -109,6 +109,7 @@ export function queueSteeredMessage(
     prompt: options.prompt ?? text,
     replyToId: options.replyToId,
     sendId: options.sendId,
+    ...(options.origin ? { origin: options.origin } : {}),
   });
   queues.set(threadId, entry);
   saveQueues();
@@ -131,6 +132,9 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
   ) => void | Promise<void>,
+  /** Holds a queue the thread's own busy flag cannot see, such as the bot
+   * speaking in a room turn (upstream OpenMausBot #1664). */
+  isBlocked?: (botId: string, threadId: string) => boolean,
 ): void {
   // deleting only the entry being visited is safe under Map iteration
   for (const [threadId, entry] of queues) {
@@ -142,6 +146,7 @@ export function drainSteeredMessages(
       continue;
     }
     if (store.taskByThread ? store.taskByThread(bot.id,threadId)?.busy : bot.busy) continue;
+    if (isBlocked?.(entry.botId, threadId)) continue;
     // committed to draining: the entry leaves the map before anything runs,
     // so a settle racing another settle can never fire the same queue twice
     queues.delete(threadId);
@@ -158,6 +163,7 @@ export function drainSteeredMessages(
           replyToId: item.replyToId,
           sendId: item.sendId,
           queueId: item.messageId,
+          ...(item.origin ? { origin: item.origin } : {}),
         }),
       );
     }

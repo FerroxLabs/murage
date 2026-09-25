@@ -45,3 +45,9 @@ it("leaves a call's two routes to the call routes, which scope them to the bots 
     expect(requiresDesktopAuthority("POST", path), path).toBe(false);
   }
 });
+
+it("guards owner team management: rename, members and lead, and delete", () => {
+  for (const [method, path] of [["GET", "/api/team-sections"], ["POST", "/api/team-sections/rename"], ["POST", "/api/team-sections/members"], ["POST", "/api/team-sections/delete"]])
+    expect(requiresDesktopAuthority(method, path), `${method} ${path}`).toBe(true);
+  expect(requiresDesktopAuthority("POST", "/api/team-sectionsx")).toBe(false);
+});

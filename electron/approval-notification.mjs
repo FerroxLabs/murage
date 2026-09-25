@@ -1,23 +1,28 @@
 import { randomBytes } from "node:crypto";
 // Approval-only native presentation. OS sound settings and DND remain authoritative.
 export const APPROVAL_SOUND = "murage-approval.wav";
-const fields = new Set(["botId", "threadId", "requestId", "messageId", "requestTurnId", "title", "body"]);
+const fields = new Set(["botId", "threadId", "requestId", "messageId", "requestTurnId", "title", "body", "silent"]);
 const identity = value => typeof value === "string" && value.length > 0 && value.length <= 512 && /^[\w.:-]+$/.test(value);
 export function approvalPayload(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !fields.has(key))) return null;
   if (![value.botId, value.threadId, value.requestId, value.messageId].every(identity)) return null;
   if (value.requestTurnId !== undefined && !identity(value.requestTurnId)) return null;
   if (typeof value.title !== "string" || value.title.length > 300 || typeof value.body !== "string" || value.body.length > 1000) return null;
+  if (value.silent !== undefined && typeof value.silent !== "boolean") return null;
   return { ...value };
 }
 const xml = value => value.replace(/[<>&"']/g, char => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;", '"':"&quot;", "'":"&apos;" })[char]);
 const activationPrefix = "murage-approval:";
 const activationToken = value => typeof value === "string" && /^murage-approval:[a-f0-9]{32}$/.test(value);
-export function approvalOptions(payload, platform, launch) {
-  if (platform === "darwin") return { title: payload.title, body: payload.body, sound: APPROVAL_SOUND, silent: false };
+/** `silent`: this computer muted notification sounds (upstream #1274). The
+ *  banner still shows; only the sound is dropped. */
+export function approvalOptions(payload, platform, launch, silent = false) {
+  if (platform === "darwin") return silent
+    ? { title: payload.title, body: payload.body, silent: true }
+    : { title: payload.title, body: payload.body, sound: APPROVAL_SOUND, silent: false };
   if (platform === "win32" && launch !== undefined && !activationToken(launch)) return null;
   if (platform === "win32") return {
-    toastXml: `<toast${launch ? ` launch="${xml(launch)}"` : ""}><visual><binding template="ToastGeneric"><text>${xml(payload.title)}</text><text>${xml(payload.body)}</text></binding></visual><audio src="ms-winsoundevent:Notification.Reminder" loop="false"/></toast>`,
+    toastXml: `<toast${launch ? ` launch="${xml(launch)}"` : ""}><visual><binding template="ToastGeneric"><text>${xml(payload.title)}</text><text>${xml(payload.body)}</text></binding></visual>${silent ? '<audio silent="true"/>' : '<audio src="ms-winsoundevent:Notification.Reminder" loop="false"/>'}</toast>`,
   };
   return null;
 }
@@ -43,7 +48,10 @@ export function createApprovalNotifications({ Notification, platform, onOpen, au
   const show = input => {
     const payload = approvalPayload(input);
     if (!payload||stopped) return { accepted: false };
-    const options = approvalOptions(payload, platform);
+    // The renderer's choice, kept aside: the server's re-read copy of the
+    // approval knows nothing about this computer's sound setting.
+    const silent = payload.silent === true;
+    const options = approvalOptions(payload, platform, undefined, silent);
     if (!options) return { accepted: false };
     const key = JSON.stringify([payload.botId, payload.threadId, payload.requestTurnId ?? "", payload.requestId]);
     if (seen.has(key)||pending.has(key)||pending.size>=capacity) return { accepted: false };
@@ -54,7 +62,7 @@ export function createApprovalNotifications({ Notification, platform, onOpen, au
     try {
       registerActivation();
       const token = platform === "win32" ? activationPrefix + randomBytes(16).toString("hex") : undefined;
-      const notice = new Notification(approvalOptions(current,platform,token));
+      const notice = new Notification(approvalOptions(current,platform,token,silent));
       active.set(key, notice);
       let opened = false;
       const openOnce = () => {

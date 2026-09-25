@@ -7,6 +7,7 @@
 // never saw.
 
 import { newId } from "./contracts.ts";
+import type { MessageOrigin } from "./store.ts";
 
 interface ChannelQueueItem {
   id: string;
@@ -14,6 +15,7 @@ interface ChannelQueueItem {
   replyToId?: string;
   sendId?: string;
   mode: "chat" | "goal";
+  origin?: MessageOrigin;
 }
 
 interface ChannelQueueEntry {
@@ -35,6 +37,7 @@ export function queueChannelMessage(
     replyToId?: string;
     sendId?: string;
     mode?: "chat" | "goal";
+    origin?: MessageOrigin;
   } = {},
 ): QueuedChannelMessage {
   const entry = queues.get(threadId) ?? { groupId, items: [] };
@@ -45,6 +48,7 @@ export function queueChannelMessage(
     replyToId: options.replyToId,
     sendId: options.sendId,
     mode: options.mode ?? "chat",
+    ...(options.origin ? { origin: options.origin } : {}),
   };
   entry.items.push(item);
   queues.set(threadId, entry);

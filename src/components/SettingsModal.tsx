@@ -4,7 +4,7 @@ import { t } from "@/lib/i18n";
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Archive, BookOpen, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, ScrollText, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
+import { Archive, BookOpen, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, ScrollText, Search, Smartphone, Terminal, Trash2, User, UserRound, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -25,9 +25,11 @@ import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { SkillsSettings } from "./skills/SkillsSettings";
 import { HouseRulesSettings } from "./HouseRulesSettings";
+import { AboutMeSettings } from "./AboutMeSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { BackupSettings } from "./BackupSettings";
 import { StartupSettings } from "./StartupSettings";
+import { AnnouncementsSettings } from "./AnnouncementsSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { DiscordSettings } from "./DiscordSettings";
@@ -49,7 +51,7 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough", "announcements", "news", "notices"] },
   { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
@@ -70,6 +72,7 @@ const SECTIONS: Array<{
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
   { id: "skills", label: "Skills", icon: BookOpen, desktopOnly: true, keywords: ["skills", "skill", "import", "scan", "library", "instructions", "safety"] },
   { id: "houseRules", label: "House rules", icon: ScrollText, desktopOnly: true, keywords: ["house rules", "constitution", "soul", "rules", "principles", "guidance", "values", "tone", "every bot"] },
+  { id: "aboutMe", label: "About me", icon: UserRound, desktopOnly: true, keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
 ];
 
@@ -802,6 +805,7 @@ export function SettingsModal() {
                 <ToolCallsRow /></>}
                 {desktop !== true && <p className="text-[12px] text-ink-secondary">Language, tool-call display and channel settings are managed in the desktop app.</p>}
                 <UpdatesRow />
+                {desktop === true && <AnnouncementsSettings />}
                 <DiagnosticsRow />
                 <AnalyticsRow />
               </>
@@ -868,6 +872,8 @@ export function SettingsModal() {
             {desktop === true && section === "skills" && <SkillsSettings />}
 
             {desktop === true && section === "houseRules" && <HouseRulesSettings />}
+
+            {desktop === true && section === "aboutMe" && <AboutMeSettings />}
 
             {section === "usage" && <UsageSection />}
           </div>

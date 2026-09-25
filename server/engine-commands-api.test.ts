@@ -69,6 +69,21 @@ posixOnly("engine commands", () => {
     expect((await api("GET", "/api/bots/no-such-bot/engine-commands")).status).toBe(404);
   });
 
+  it("runs an engine command only for the owner's own surfaces", async () => {
+    for (const unproven of [{}, { "x-murage-companion": "1" }, { "x-murage-surface": "desktop" }] as Array<Record<string, string>>) {
+      const refused = await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/review" }, unproven);
+      expect(refused.status, JSON.stringify(unproven)).toBe(403);
+    }
+    const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as Array<{ role: string; text?: string }>;
+    expect(messages.some((message) => message.role === "user" && message.text === "/review")).toBe(false);
+    // ordinary words from the same callers are still taken
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "a plain note, not a command" }, {})).status).toBe(202);
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/review" })).status).toBe(202);
+    await expect.poll(() => promptOf(readJson(fixture.fixtureDumpPath)), { timeout: 20000 }).toBe("/review");
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+  }, 60000);
+
   it("sends a picked command to the engine as the command alone and shows its answer", async () => {
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/context" })).status).toBeLessThan(300);
     await expect.poll(() => promptOf(readJson(fixture.fixtureDumpPath)), { timeout: 20000 }).toBe("/context");

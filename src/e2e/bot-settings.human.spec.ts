@@ -29,6 +29,9 @@ test.beforeAll(async () => {
   } catch (error) { await vite?.close(); await fixture.close(); throw error; }
 });
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
+// A fresh data dir has not seen this release's What's new page, and its modal
+// would sit over the settings window. This spec is about bot settings.
+test.beforeEach(async ({ page }) => { await page.route("**/api/whats-new?*", route => route.fulfill({ json: { show: false } })); });
 
 test("Computer gear opens the same bot settings exclusively and allows reopening", async ({ page }, testInfo) => {
   for (const width of [390, 820, 1440]) {
@@ -87,13 +90,24 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await page.setViewportSize({ width, height: 900 });
   await page.addInitScript(skin => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); }, skin);
   await page.goto(origin); await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
+  // The full app reads /api/setup on load, and that read seats a Chief of
+  // Staff in a workspace that has none (seatChiefOfStaff). So "authority is
+  // preserved" means unchanged from what the loaded app holds, not from the
+  // fixture file.
+  type StoredBot = { id: string; chiefOfStaff?: boolean; autoApprove?: boolean; composio?: boolean };
+  const storedBots = async () => (await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: StoredBot[] }).bots;
+  await expect.poll(async () => (await storedBots()).some(bot => bot.chiefOfStaff)).toBe(true);
+  const authority = ({ chiefOfStaff, autoApprove, composio }: StoredBot) => ({ chiefOfStaff: Boolean(chiefOfStaff), autoApprove: Boolean(autoApprove), composio: Boolean(composio) });
+  const before = authority((await storedBots()).find(bot => bot.id === botId)!);
   const opener = page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first(); await opener.click();
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
   await expect(dialog.getByText("The imported role is not active. Use the role control below to assign a role explicitly.", { exact: true })).toBeVisible();
-  if (width < 640) expect(await dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option").count()).toBe(11);
-  else expect(await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button").count()).toBe(11);
+  // 12 on the desktop: the 11 sections everywhere plus "What shapes", which
+  // is offered only once the renderer knows it is the desktop.
+  if (width < 640) await expect(dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option")).toHaveCount(12);
+  else await expect(dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button")).toHaveCount(12);
   await page.screenshot({ path: testInfo.outputPath(`settings-overview-${width}-${skin}.png`), fullPage: true });
   if (width === 1440 && skin === "dark") {
     // Delay an actual fixture upload response. Closing must not pretend it
@@ -150,8 +164,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await dialog.getByRole("button", { name: "Close bot settings", exact: true }).focus(); await page.keyboard.press("Tab");
   expect(await page.evaluate(() => Boolean(document.activeElement?.closest('dialog[open]')))).toBe(true);
   await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0); await expect(opener).toBeFocused();
-  const stored = await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: { id: string; chiefOfStaff?: boolean; autoApprove?: boolean; composio?: boolean }[] };
-  expect(stored.bots.find(bot => bot.id === botId)).toMatchObject({ chiefOfStaff: false, autoApprove: false, composio: false });
+  expect(authority((await storedBots()).find(bot => bot.id === botId)!)).toEqual(before);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

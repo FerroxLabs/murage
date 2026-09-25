@@ -57,7 +57,7 @@ export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as c
 
 /** Statuses where a person owes an answer. Shared so the query, the count and
  *  the tab can never disagree about what a decision is. */
-export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input"] as const;
+export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input", "needs-you"] as const;
 
 /** Statuses that are news rather than a question. */
 export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused"] as const;
@@ -117,6 +117,11 @@ export interface InboxPage {
   approvals: number;
   /** Judgements wanted, with nothing drafted yet. */
   questions: number;
+  /** `questions` split by conversation (thread id to count), on the
+   *  `decisions` view only. Attribution for the question badge on sidebar
+   *  rows and in the conversation list: the values sum to `questions` and
+   *  are never added to any total. */
+  questionThreads?: Record<string, number>;
   /** A CONNECTION THAT ONLY THE RUNS KNOW IS DEAD. Present on the views that
    *  can act on it. Nothing re-checks a connector once it is connected, so a
    *  token that expires between uses is visible nowhere else in the product;

@@ -10,6 +10,7 @@
 // audience is the owner: a conversation that belongs to a linked channel
 // person (Slack, Discord or Telegram) gets neither, matching the structured
 // memory rule that bot and team scopes are owner-audience only.
+import { aboutMePrompt } from "./about-me.ts";
 import { notebookSourceIds } from "./memory/import.ts";
 import { sectionContextSystemPrompt } from "./section-context.ts";
 import { loadMemory, memorySystemPrompt } from "./workspace.ts";
@@ -21,13 +22,22 @@ import { loadMemory, memorySystemPrompt } from "./workspace.ts";
 //
 // The owner can switch the team brief off for one bot (`teamBrief: false`,
 // from "What shapes <bot>"); its own notebook always rides.
-type StandingBot = { id: string; section?: string; teamBrief?: boolean };
-type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean };
+//
+// About me (about-me.ts), the owner's own profile, follows the same
+// owner-audience rule and has the same kind of per-bot switch
+// (`aboutMe: false`). It is its own layer near House Rules, not part of the
+// joined standing block below.
+type StandingBot = { id: string; section?: string; teamBrief?: boolean; aboutMe?: boolean };
+type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean;
+  /** A webhook turn: its payload came from outside and its reply may go
+   *  back out, so the owner's private profile stays home. */
+  webhook?: boolean };
 
 /** The two blocks apart, for the labelled prompt (bot-shapes.ts). */
-export function standingContextParts(bot: StandingBot, opts: StandingOptions): { teamBrief: string; memory: string } {
-  if (!opts.ownerAudience) return { teamBrief: "", memory: "" };
+export function standingContextParts(bot: StandingBot, opts: StandingOptions): { aboutMe: string; teamBrief: string; memory: string } {
+  if (!opts.ownerAudience) return { aboutMe: "", teamBrief: "", memory: "" };
   return {
+    aboutMe: bot.aboutMe === false || opts.webhook ? "" : aboutMePrompt(),
     teamBrief: bot.teamBrief === false ? "" : sectionContextSystemPrompt(bot.section),
     memory: memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended }),
   };

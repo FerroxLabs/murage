@@ -33,9 +33,25 @@ const fail = (msg) => {
   throw new Error(msg);
 };
 
+// The desktop app's proof. Answering a card with a yes (and most settings)
+// needs it; without it the harness only takes a decline. A dev or fixture
+// harness hands it out on /api/desktop-secret; otherwise pass the value the
+// harness was started with in MURAGE_DEV_DESKTOP_SECRET.
+let desktopHeaders = {};
+async function loadDesktopProof() {
+  let secret = process.env.MURAGE_DEV_DESKTOP_SECRET?.trim() ?? "";
+  if (!secret) {
+    const res = await fetch(`${BASE}/api/desktop-secret`).catch(() => null);
+    const body = res?.ok ? await res.json().catch(() => ({})) : {};
+    secret = typeof body.secret === "string" ? body.secret : "";
+  }
+  if (!secret) fail("no desktop proof: start the harness with MURAGE_ALLOW_DEV_DESKTOP_SECRET=1 or set MURAGE_DEV_DESKTOP_SECRET");
+  desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
+}
+
 async function api(path, init) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...desktopHeaders },
     ...init,
   });
   const body = await res.json().catch(() => ({}));
@@ -110,6 +126,7 @@ async function expectReply(bot, want, budgetMs) {
 
 async function main() {
   log(`e2e against ${BASE} (box: ${WITH_BOX ? "yes" : "no"})`);
+  await loadDesktopProof();
 
   // ── server up ──
   const { bots } = await api("/api/bots").catch((e) => fail(`server not up at ${BASE} — ${e.message}`));

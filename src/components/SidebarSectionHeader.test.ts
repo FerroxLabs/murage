@@ -110,4 +110,20 @@ describe("SidebarSectionHeader", () => {
     );
     expect(pinned).not.toContain("team instructions");
   });
+
+  it("gives a team heading a menu button with a 44px target, and built-in headings none", () => {
+    const team = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, { name: "Operations", collapsed: false, onToggle: () => {}, reorderable: false, dragging: false, onManage: () => {} }),
+    );
+    expect(team).toContain('aria-label="Operations team options"');
+    expect(team).toContain('aria-haspopup="menu"');
+    expect(team).toContain('aria-expanded="false"');
+    expect(team).toMatch(/after:-inset-2\.5/);
+    // Closed: no menu in the page until it is opened.
+    expect(team).not.toContain('role="menu"');
+    const builtIn = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, { name: "Bots", collapsed: false, onToggle: () => {}, reorderable: false, dragging: false }),
+    );
+    expect(builtIn).not.toContain("team options");
+  });
 });

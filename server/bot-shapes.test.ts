@@ -36,14 +36,14 @@ function legacyDirectSystem(v: {
     v.persona +
     (computerKind === "vm"
       ? v.vmPerBot
-        ? " You have your own isolated Cua sandbox: a Linux desktop in a container reserved for this bot. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
-        : " You have a shared, isolated Cua sandbox: a Linux desktop in a container on this machine. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+        ? " You have your own isolated computer sandbox: a Linux desktop in a container reserved for this bot. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+        : " You have a shared, isolated computer sandbox: a Linux desktop in a container on this machine. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
       : computerKind === "box" && v.driverKind !== "boxAgent"
       ? " You have your own cloud computer. In Chrome, prefer browser_snapshot with browser_click/browser_fill for semantic, trusted actions; use screenshot/click/type_text for visual or non-browser UI, open_url for navigation, and computer_exec for Linux tasks. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable pixel actions with computer_batch."
       : computerKind === "vps"
-        ? " You have your own self-hosted remote Linux computer through the official Cua tools. Its filesystem is disposable: everything on it is wiped whenever its container is recreated, so keep long-lived work somewhere durable — push it to a remote, or hand the results back in chat — instead of leaving it only on that computer. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully."
+        ? " You have your own self-hosted remote Linux computer through the computer tools. Its filesystem is disposable: everything on it is wiped whenever its container is recreated, so keep long-lived work somewhere durable (push it to a remote, or hand the results back in chat) instead of leaving it only on that computer. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully."
         : computerKind === "local"
-        ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+        ? " You can act on the user's computer through the computer tools: take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
         : "") +
     (computerKind
       ? " At a sign-in, password, MFA, CAPTCHA, or other protected-input step, stop and ask the user to complete it on the visible computer. Never type their password or ask them to paste a password or one-time code into chat."
@@ -302,5 +302,37 @@ describe("the date and time a turn starts at", () => {
     expect(withNowLine("hello", " It is now X.")).toBe("It is now X.\n\nhello");
     expect(withNowLine("/review main", " It is now X.", true)).toBe("/review main");
     expect(withNowLine("hello", "")).toBe("hello");
+  });
+});
+
+describe("About me, the owner's own profile", () => {
+  const ABOUT = "<about-the-owner>\nABOUT_CANARY\n</about-the-owner>\n\n";
+  const base: DirectTurnShapeInput = {
+    houseRules: HOUSE, persona: PERSONA, computerKind: null, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
+    coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: BRIEF, memory: MEMORY,
+    primer: " P", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [],
+  };
+
+  it("rides right after House Rules, in the stable prefix, as a switchable layer of the owner's", () => {
+    const layers = directTurnLayers({ ...base, aboutMe: ABOUT });
+    expect(layers.slice(0, 3).map((layer) => layer.id)).toEqual(["house-rules", "about-me", "persona"]);
+    expect(layers[1]).toMatchObject({ group: "rules", switchable: true, locked: false, text: ABOUT });
+    expect(joinShapeLayers(layers).startsWith(HOUSE + ABOUT + PERSONA)).toBe(true);
+    expect(joinShapeLayers(layers).indexOf("ABOUT_CANARY")).toBeLessThan(joinShapeLayers(layers).indexOf(" P"));
+  });
+
+  it("adds nothing when the turn was given none", () => {
+    expect(joinShapeLayers(directTurnLayers(base))).toBe(joinShapeLayers(directTurnLayers({ ...base, aboutMe: "" })));
+    expect(joinShapeLayers(directTurnLayers(base))).not.toContain("about-the-owner");
+  });
+
+  it("shows in the panel after House Rules with its switch, and not at all before the owner writes one", () => {
+    const current = { houseRules: { on: true, text: "Be kind." }, persona: PERSONA, teamBrief: null, memory: MEMORY, chiefGuide: null, skills: [] };
+    const rows = botShapeRows({ ...current, aboutMe: { on: false, text: "I run a shop." } }, null);
+    expect(rows.map((row) => row.id).slice(0, 3)).toEqual(["house-rules", "about-me", "persona"]);
+    expect(rows[1]).toMatchObject({ text: "I run a shop.", on: false, switchable: true, editor: "aboutMe", group: "rules" });
+    expect(rows[1]!.what).toMatch(/only when they are talking with you/);
+    expect(botShapeRows({ ...current, aboutMe: null }, null).map((row) => row.id)).not.toContain("about-me");
+    expect(botShapeRows(current, null).map((row) => row.id)).not.toContain("about-me");
   });
 });

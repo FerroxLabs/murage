@@ -140,3 +140,24 @@ describe("removing a skill actually issues the DELETE", () => {
     expect(skillsPanel).toContain("title={`Remove ${skill.name} from ${botName}. Add it again from the library at any time.`}");
   });
 });
+
+// Upstream OpenMausBot #1557: every engine's `input` includes the cached
+// re-read of the whole thread, so adding it per turn counts the same prefix
+// once per message. Totals headline the fresh figure instead.
+describe("usage totals count the tokens actually bought", () => {
+  const usageSection = read("./UsageSection.tsx");
+  const settingsPanel = read("./SettingsPanel.tsx");
+
+  it("never headlines input + output in the Usage settings", () => {
+    for (const source of [usageSection, settingsPanel]) {
+      expect(source).not.toMatch(/formatTokens\((?:usage|total)\.input \+ (?:usage|total)\.output\)/);
+    }
+    expect(usageSection).toContain("formatTokens(freshTokens(usage))");
+    expect(usageSection).toContain("formatTokens(freshTokens(total))");
+    expect(settingsPanel).toContain("formatTokens(freshTokens(usage))");
+  });
+
+  it("sorts bots by the same fresh figure it shows", () => {
+    expect(usageSection).toContain("freshTokens(b.usage) - freshTokens(a.usage)");
+  });
+});

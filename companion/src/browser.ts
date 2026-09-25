@@ -31,7 +31,7 @@ import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders,
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isInboxRoute, isRoutineWrite, needsLaunchProof } from "./routes.ts";
+import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isInboxRoute, isRoutineWrite, launchProofHeaders, needsLaunchProof } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
@@ -1570,6 +1570,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           method,
           headers: {
             ...forwardedHeaders(req, body),
+            // The owner-voice routes and the cloud-desktop join (routes.ts,
+            // shared with the device door), plus this door's own proof for the
+            // Inbox and a call's routes, already refused above without one.
+            ...launchProofHeaders(method, path, options.companionToken),
             ...(carriesProof ? { "x-murage-companion-token": options.companionToken! } : {}),
           },
         },

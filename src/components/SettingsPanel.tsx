@@ -10,7 +10,7 @@ import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
+import { botUsage, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
 import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
@@ -22,6 +22,7 @@ import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { BotPermissionDefault } from "./BotPermissionDefault";
+import { RememberedApprovals } from "./RememberedApprovals";
 import { defaultModeStep, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
@@ -77,8 +78,8 @@ function BotUsageCard({ bot }: { bot: Bot }) {
         </div>
         <div>
           <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Tokens</div>
-          <div className="mt-0.5 tabular-nums text-ink" title={`${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`}>
-            {formatTokens(usage.input + usage.output)}
+          <div className="mt-0.5 tabular-nums text-ink" title={usageDetail(usage)}>
+            {formatTokens(freshTokens(usage))}
           </div>
         </div>
         <div>
@@ -809,6 +810,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onChoose={chooseDefaultMode}
             onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
           />
+
+          <RememberedApprovals bot={bot} desktop={desktop} />
 
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Review routine approvals</div>

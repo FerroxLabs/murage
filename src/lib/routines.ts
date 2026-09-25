@@ -29,6 +29,9 @@ export type RoutineRunStatus =
   | "queued"
   | "running"
   | "waiting"
+  /** The run limit came while a card waited on the owner; answering it lets
+   * the run finish. */
+  | "needs-you"
   | "completed"
   | "failed"
   | "cancelled"
@@ -57,6 +60,13 @@ export interface Routine {
   attachments?: RoutineContextAttachment[];
   /** Absent means skip; see server/routines.ts. */
   overlap?: "skip" | "queue";
+  /** The approval level its runs are judged at; absent means the bot's own
+   * level when a run starts (server/routine-permissions.ts). */
+  permissionMode?: import("./permission-mode").PermissionMode;
+  /** "Always allow for this routine": exact-command and stop-line keys. */
+  alwaysAllow?: string[];
+  /** The routine's own conversation, where every run works. */
+  threadId?: string;
   skippedRuns?: number;
   lastSkippedAt?: number;
   /** Derived by the server from settled runs. */
@@ -116,4 +126,6 @@ export interface RoutineInput {
   timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
   overlap?: "skip" | "queue";
+  /** A level, or `inherit` to follow the bot's level. */
+  permissionMode?: import("./permission-mode").PermissionMode | "inherit";
 }

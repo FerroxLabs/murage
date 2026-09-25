@@ -8,6 +8,7 @@ import {
   COMPANION_ACCOUNT_USER_ID_FIELD,
   COMPANION_CLIENT_INSTANCE_FIELD,
   COMPANION_INSTALLATION_CREDENTIAL_FIELD,
+  COMPANION_INSTALLATION_EXPIRY_FIELD,
   COMPANION_INSTALLATION_ID_FIELD,
   createCompanionAccountService,
   resolveCompanionControlPlaneURL,
@@ -215,7 +216,7 @@ describe("Companion account service", () => {
     expect(client.requestOTP).toHaveBeenCalledOnce();
   });
 
-  it("persists one stable identity and the complete provision atomically", async () => {
+  it("persists installation recovery credentials before the complete endpoint provision", async () => {
     const activatePersistedEndpoint = vi.fn(async () => ({ status: "ready", ready: true }));
     const { client, service, store } = serviceFixture({ activatePersistedEndpoint });
 
@@ -248,14 +249,97 @@ describe("Companion account service", () => {
       [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
       [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
     });
-    // First write creates the identity; the next single document contains
-    // account, installation, endpoint, and connector material together.
-    expect(store.writes).toHaveLength(2);
-    expect(store.writes[1]).toMatchObject(persisted);
+    // First the account identity, then the installation a Retry needs
+    // (upstream #1712). Endpoint and connector material still become durable
+    // together in the last write.
+    expect(store.writes).toHaveLength(3);
+    expect(store.writes[1]).toMatchObject({
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_INSTALLATION_ID_FIELD]: INSTALLATION_ID,
+      [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+      [COMPANION_INSTALLATION_EXPIRY_FIELD]: expect.any(Number),
+    });
+    expect(store.writes[1]).not.toHaveProperty(MANAGED_COMPANION_ENDPOINT_FIELD);
+    expect(store.writes[1]).not.toHaveProperty(MANAGED_COMPANION_TOKEN_FIELD);
+    expect(store.update.mock.invocationCallOrder[1]).toBeLessThan(client.ensureEndpoint.mock.invocationCallOrder[0]);
+    expect(store.writes[2]).toMatchObject(persisted);
     expect(activatePersistedEndpoint).toHaveBeenCalledOnce();
 
     await service.restore();
-    expect(store.writes).toHaveLength(2);
+    expect(store.writes).toHaveLength(3);
+  });
+
+  // Upstream OpenMausBot #1712: when managed HTTPS setup fails, Retry must
+  // not rotate a valid installation credential into the rate limit.
+  it("reuses the installation credential after initial endpoint provisioning fails", async () => {
+    const ensureEndpoint = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("endpoint_unavailable", 502))
+      .mockResolvedValueOnce({ endpoint: { url: ENDPOINT }, connectorToken: CONNECTOR_TOKEN });
+    const client = readyClient({ ensureEndpoint });
+    const activatePersistedEndpoint = vi.fn(async () => ({ status: "ready", ready: true }));
+    const { service, store } = serviceFixture({ client, activatePersistedEndpoint });
+
+    await expect(service.verifyCode("ada@example.com", "12345678")).resolves.toMatchObject({ status: "error", email: "ada@example.com" });
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_INSTALLATION_ID_FIELD]: INSTALLATION_ID,
+      [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+    });
+    expect(store.read()).not.toHaveProperty(MANAGED_COMPANION_ENDPOINT_FIELD);
+    expect(activatePersistedEndpoint).not.toHaveBeenCalled();
+
+    await expect(service.retry()).resolves.toMatchObject({ status: "ready", endpoint: ENDPOINT });
+    expect(client.ensureInstallation).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      accountToken: ACCOUNT_TOKEN,
+      currentCredential: INSTALLATION_CREDENTIAL,
+      clientInstanceId: UUID,
+    }));
+    expect(ensureEndpoint).toHaveBeenNthCalledWith(2, INSTALLATION_CREDENTIAL);
+    expect(client.verifyOTP).toHaveBeenCalledOnce();
+    expect(client.revokeInstallation).not.toHaveBeenCalled();
+    expect(activatePersistedEndpoint).toHaveBeenCalledOnce();
+  });
+
+  it("restores an interrupted endpoint provision with the saved installation credential", async () => {
+    const failedClient = readyClient({
+      ensureEndpoint: vi.fn(async () => { throw new ControlPlaneError("endpoint_unavailable", 502); }),
+    });
+    const failed = serviceFixture({ client: failedClient });
+    await failed.service.verifyCode("ada@example.com", "12345678");
+    const restored = serviceFixture({ initial: failed.store.read() });
+
+    await expect(restored.service.restore()).resolves.toMatchObject({ status: "ready", endpoint: ENDPOINT });
+    expect(restored.client.ensureInstallation).toHaveBeenCalledWith(expect.objectContaining({
+      accountToken: ACCOUNT_TOKEN,
+      currentCredential: INSTALLATION_CREDENTIAL,
+      clientInstanceId: UUID,
+    }));
+    expect(restored.client.verifyOTP).not.toHaveBeenCalled();
+  });
+
+  it("preserves an established installation when its pre-provision credential write fails", async () => {
+    const initial = signedCredentials();
+    const { client, service, store } = serviceFixture({ initial });
+    store.update.mockRejectedValueOnce(new Error("save failed"));
+
+    await service.retry();
+
+    expect(client.ensureEndpoint).not.toHaveBeenCalled();
+    expect(client.deleteEndpoint).not.toHaveBeenCalled();
+    expect(client.revokeInstallation).not.toHaveBeenCalled();
+    expect(store.read()).toEqual(initial);
+  });
+
+  it("revokes a newly created installation when its recovery credential cannot be saved", async () => {
+    const { client, service, store } = serviceFixture();
+    const persist = store.update.getMockImplementation();
+    store.update.mockImplementationOnce(persist).mockRejectedValueOnce(new Error("save failed"));
+
+    await expect(service.verifyCode("ada@example.com", "12345678")).resolves.toMatchObject({ status: "error" });
+    expect(client.ensureEndpoint).not.toHaveBeenCalled();
+    expect(client.revokeInstallation).toHaveBeenCalledWith(ACCOUNT_TOKEN, INSTALLATION_ID);
+    expect(store.read()).not.toHaveProperty(COMPANION_INSTALLATION_CREDENTIAL_FIELD);
   });
 
   it("never exposes any bearer, connector token, installation ID, or credential", async () => {

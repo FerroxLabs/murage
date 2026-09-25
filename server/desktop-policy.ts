@@ -21,12 +21,18 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
   { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },
+  // The packaged app writes through /replace with its commit token; this
+  // plain-file path serves dev and headless launches and must not let a
+  // local process swap the owner's Flux key.
+  { methods: ["POST"], path: /^\/api\/flux-connection\/mutate$/, purpose: "replace, select or remove the Flux key" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+$/, purpose: "bot authority, engine, working folder and deletion" },
   { methods: ["GET", "DELETE"], path: /^\/api\/folder-trust$/, purpose: "per-folder trust record for an engine that gates repo-local files" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow$/, purpose: "persistent permission grants" },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow\/remove$/, purpose: "remove a persistent permission grant" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
   { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },
   { methods: ["POST"], path: /^\/api\/teams\/(import|export)$/, purpose: "team configuration and filesystem import/export" },
+  { methods: ["GET", "POST"], path: /^\/api\/team-sections(?:\/|$)/, purpose: "rename, delete and change the members and lead of a team" },
   { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
   { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
   { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },
@@ -57,12 +63,14 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["PUT", "PATCH", "DELETE"], path: /^\/api\/mcp\/servers\/[a-z][a-z0-9_-]{0,31}$/, purpose: "change MCP launch configuration" },
   { methods: ["POST"], path: /^\/api\/(routines|calendar-calls)$/, purpose: "create a durable spawn schedule" },
   { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/instructions\/rollback$/, purpose: "restore a retained routine instruction version" },
+  { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/, purpose: "remember or remove a routine's own permission grant" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/(routines|calendar-calls)\/[\w-]+$/, purpose: "change a durable spawn schedule" },
   { methods: ["POST"], path: /^\/api\/webhooks(?:\/[\w-]+\/(rotate|test))?$/, purpose: "create or exercise external triggers" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/webhooks\/[\w-]+$/, purpose: "change external trigger configuration" },
   { methods: ["POST"], path: /^\/api\/connectors\/[\w-]+\/authorize$/, purpose: "authorize a connected account" },
   { methods: ["DELETE"], path: /^\/api\/connectors\/[\w-]+(?:\/accounts\/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?$/, purpose: "revoke connected accounts" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/connector-cards\/[\w-]+\/authorize$/, purpose: "authorize an account through an inline card" },
+  { methods: ["PUT", "DELETE"], path: /^\/api\/thread-snoozes\/[^/]+$/, purpose: "snooze or wake a conversation" },
 ];
 
 export function requiresDesktopAuthority(method: string, path: string): boolean {

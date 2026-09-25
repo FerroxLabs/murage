@@ -790,13 +790,13 @@ export function connectorAccess(input: {
 export function connectorSystemPrompt(access: ConnectorAccess): string {
   switch (access) {
     case "mounted":
-      return " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service.";
+      return " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the connected-app tools. Find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service.";
     case "package-off":
-      return " You have no connected-app tools this turn because you were installed from a bot package, and packaged assistants start with connected apps switched off until the user turns them on for you. The workspace's connections may exist and be perfectly healthy — you are simply not mounted on them. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
+      return " You have no connected-app tools this turn because you were installed from a bot package, and packaged assistants start with connected apps switched off until the user turns them on for you. The workspace's connections may exist and be perfectly healthy; you are simply not mounted on them. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
     case "bot-off":
-      return " You have no connected-app tools this turn because connected apps are switched off for you specifically — a per-bot setting the user controls. The workspace's connections may exist and be perfectly healthy. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
+      return " You have no connected-app tools this turn because connected apps are switched off for you specifically (a per-bot setting the user controls). The workspace's connections may exist and be perfectly healthy. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
     case "unconfigured":
-      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up — connected apps run through FluxRouter and this workspace has neither FluxRouter nor its own Composio key, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
+      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up: connected apps run through FluxRouter, and this workspace has neither FluxRouter nor its own connected-apps key, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
     case "engine":
       return " You have no connected-app tools this turn because the engine you are running on cannot mount connector tools. The workspace's connections may exist and be perfectly healthy, and another engine would reach them. If the user asks for work in a connected service, say that this bot's current engine cannot use connected apps and that switching its model/engine would; never tell them the service is disconnected.";
   }
@@ -818,7 +818,7 @@ export function requiredAppsSystemPrompt(
 ): string {
   if (!apps?.length) return "";
   const describe = (app: { label: string; reason: string; optional?: boolean }) =>
-    `${app.label}${app.optional ? " (optional)" : ""} — ${app.reason.trim().replace(/\.$/, "")}`;
+    `${app.label}${app.optional ? " (optional)" : ""}: ${app.reason.trim().replace(/\.$/, "")}`;
   return ` The profile you were installed from declares that your work depends on these connected services: ${apps
     .map(describe)
     .join("; ")}. Treat that as the shape of your job, not as proof of access: check whether you actually hold the tools before promising work in one of them, and if a required service is missing, say which one and why you need it.`;

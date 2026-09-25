@@ -75,9 +75,17 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** "Always allow this exact command here": command text, folder and
+   * engine (shared/exact-command.ts). Command cards only, never stop-line. */
+  exactAllowKey?: string;
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
+  /** "Always allow for this routine" on a card a routine run raised: the
+   * scoped key (the stop-line place or this exact command here) and the
+   * routine it is stored on. */
+  routineAllowKey?: string;
+  routineId?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
   /** 0.1.52 ASK2: a provider question's structured questions, persisted
@@ -152,6 +160,16 @@ export interface SecretRequestCardData {
   error?: string;
 }
 
+/** Who put a user message into the transcript. The harness decides this when
+ * it writes the message, from the surface the request proved (the desktop
+ * app's secret, the phone companion's launch credential), never from the
+ * request body. Absent means not proven: an older message, or a local caller
+ * with neither proof. Only an owner origin counts as the owner's say-so. */
+export type MessageOrigin = "desktop" | "companion" | "unproven";
+export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
+  return origin === "desktop" || origin === "companion";
+}
+
 export interface Message {
   id: string;
   /** Verified durable deliverable identities; raw paths never become download links. */
@@ -220,6 +238,8 @@ export interface Message {
   /** steer-queue entry this drained user line came from. The client pending
    * chip matches on this id, not on equal text. Absent on ordinary sends. */
   queueId?: string;
+  /** user messages: see MessageOrigin. Server-written only. */
+  origin?: MessageOrigin;
 }
 
 export type GroupDefaultResponder =
@@ -719,6 +739,9 @@ export interface BotRecord {
   /** Whether its team's brief reaches this bot's turns. Absent means on;
    * the owner switches it off in "What shapes <bot>" (standing-context.ts). */
   teamBrief?: false;
+  /** Whether the owner's About me reaches this bot's owner turns. Absent
+   * means on; switched off in "What shapes <bot>" (about-me.ts). */
+  aboutMe?: false;
   /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
   connectedAppAccess?: ConnectedAppAccess;
   /** Monotonic identity fence; returning to an old role never revives requests. */
@@ -1043,6 +1066,10 @@ export class Store {
       // Only an exact false is stored; anything else reads as on.
       if (b.teamBrief !== undefined && b.teamBrief !== false) {
         delete b.teamBrief;
+        botsMigrated = true;
+      }
+      if (b.aboutMe !== undefined && b.aboutMe !== false) {
+        delete b.aboutMe;
         botsMigrated = true;
       }
       // One shape for "no voice note": absent. A blank or whitespace-only
@@ -1610,8 +1637,10 @@ export class Store {
 
   deleteGroupTask(groupId: string, threadId: string): GroupRecord | null {
     const group = this.group(groupId);
-    if (!group || group.dm || !group.tasks || group.tasks.length < 2) return null;
-    if (!group.tasks.some((task) => task.threadId === threadId)) return null;
+    if (!group || group.dm || !group.tasks?.some((task) => task.threadId === threadId)) return null;
+    // A channel always has a conversation. Deleting the last one used to be
+    // refused, silently in the channel view; it now leaves a fresh one.
+    if (group.tasks.length < 2) this.createGroupTask(groupId, undefined, false);
     group.tasks = group.tasks.filter((task) => task.threadId !== threadId);
     this.deleteThreadRecord(threadId);
     if (group.threadId === threadId) {
@@ -1878,8 +1907,10 @@ export class Store {
   }
 
   /** Fork the conversation: a new user message that replaces `sourceId`
-   * (same parent, new text) and becomes the active leaf. */
-  branchMessage(threadId: string, sourceId: string, text: string): Message | null {
+   * (same parent, new text) and becomes the active leaf. `sendId` is the
+   * client's identity for this edit, so a network retry answers with this
+   * fork instead of forking and rerunning again (upstream #1387). */
+  branchMessage(threadId: string, sourceId: string, text: string, origin?: MessageOrigin, sendId?: string): Message | null {
     const t = this.thread(threadId);
     const source = t.messages.find((m) => m.id === sourceId);
     if (!source) return null;
@@ -1891,6 +1922,8 @@ export class Store {
       text,
       parentId: source.parentId ?? null,
       replyToId: source.replyToId,
+      ...(origin ? { origin } : {}),
+      ...(sendId ? { sendId } : {}),
     };
     mdb.appendMessage(threadId, full);
     t.messages.push(full);
@@ -2122,6 +2155,51 @@ export class Store {
       for (const botId of changedIds) this.emit({ type: "bot", botId });
     }
     return { ok: true, bots: ids.map((id) => this.bot(id)!) };
+  }
+
+  /** Apply one owner team change (rename, members, delete) to bots and
+   * channels together. Like setBotsSection, the next bots file is written
+   * before any live record changes; the channels follow, and a failed
+   * channel write puts the bots file back. A patch value of `undefined`
+   * removes that field, so "no team" is stored as an absent section. The
+   * caller (team-sections.ts) owns the one-lead-per-team rule. */
+  applyTeamChange(
+    botPatches: ReadonlyMap<string, Partial<BotRecord>>,
+    groupPatches: ReadonlyMap<string, Partial<GroupRecord>>,
+  ): void {
+    const merge = <T extends object>(record: T, patch: Partial<T>): T => {
+      const next = { ...record, ...patch };
+      for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (next as Record<string, unknown>)[key];
+      return next;
+    };
+    const previousBots = this.bots;
+    const nextBots = this.bots.map((bot) => (botPatches.has(bot.id) ? merge(bot, botPatches.get(bot.id)!) : bot));
+    const previousGroups = this.groups.map((group) => ({ ...group }));
+    const replace = <T extends object>(live: T, next: T) => {
+      for (const key of Object.keys(live)) if (!(key in next)) delete (live as Record<string, unknown>)[key];
+      Object.assign(live, next);
+    };
+    if (botPatches.size) {
+      this.saveBots(nextBots);
+      // Live before the channels are saved: that save reconciles memory
+      // scopes from the live roster, and must see the new labels.
+      for (const bot of this.bots) if (botPatches.has(bot.id)) replace(bot, nextBots.find((next) => next.id === bot.id)!);
+    }
+    if (groupPatches.size) {
+      try {
+        for (const group of this.groups) if (groupPatches.has(group.id)) replace(group, merge(group, groupPatches.get(group.id)!));
+        this.saveGroups();
+      } catch (error) {
+        this.groups.forEach((group, index) => replace(group, previousGroups[index]));
+        if (botPatches.size) {
+          this.saveBots(previousBots);
+          for (const bot of this.bots) if (botPatches.has(bot.id)) replace(bot, previousBots.find((prior) => prior.id === bot.id)!);
+        }
+        throw error;
+      }
+    }
+    for (const id of botPatches.keys()) this.emit({ type: "bot", botId: id });
+    for (const id of groupPatches.keys()) this.emit({ type: "group", groupId: id });
   }
 
   /** The one way runtime state changes. Sets `activity` and derives `busy`
@@ -2493,6 +2571,17 @@ export class Store {
     task.procedurePin=structuredClone(pin);
     try{this.saveBots();}catch(error){delete task.procedurePin;throw error;}
     return task.procedurePin;
+  }
+
+  /** A new routine run in the routine's own conversation is a fresh start:
+   *  its first turn pins the skills and routine instruction current then,
+   *  not the ones an earlier run pinned. Earlier bundles stay on disk. */
+  releaseTaskProcedures(botId:string, threadId:string):void {
+    const task=this.bot(botId)?.tasks?.find(item=>item.threadId===threadId);
+    if(!task?.procedurePin)return;
+    const prior=task.procedurePin;
+    delete task.procedurePin;
+    try{this.saveBots();}catch(error){task.procedurePin=prior;throw error;}
   }
 
   pinGroupProcedures(groupId:string, threadId:string, botId:string, pin:ProcedurePin):ProcedurePin {

@@ -647,6 +647,22 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(texts).toEqual(["before one", "before two", "after"]);
   });
 
+  it("turns a <todo> block a model wrote into the answer into plan updates (issue #7)", async () => {
+    await create("todo");
+    await instance.adapter.sendTurn({ threadId: "t-todo", text: "go", model: "ollama-cloud/glm-5.2" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const plans = recorder.events.flatMap((e) => (e.type === "plan.updated" ? [e.entries] : []));
+    expect(plans).toEqual([
+      [{ content: "List the folder", status: "pending" }, { content: "Report back", status: "pending" }],
+      [{ content: "List the folder", status: "completed" }, { content: "Report back", status: "pending" }],
+    ]);
+    const deltas = recorder.events.flatMap((e) => (e.type === "content.delta" && e.streamKind === "assistant_text" ? [e.delta] : []));
+    expect(deltas.join("")).toBe("On it.\n\nListing now.Found two files.");
+    const texts = recorder.events.flatMap((e) => (e.type === "item.completed" && e.itemType === "assistant_text" ? [e.text] : []));
+    expect(texts).toEqual(["On it.\n\nListing now.", "Found two files."]);
+  });
+
   it("brokers a permission ask (a pi confirm) through request.opened → respondToRequest", async () => {
     // Before 0.1.52 ASK3 this used the select fixture; a select is now a
     // question, so the permission path is pi's confirm dialog.

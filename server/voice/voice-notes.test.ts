@@ -77,6 +77,24 @@ describe("voice notes", () => {
     expect(note.bytes.toString()).toBe(readFileSync(join(folder, file!)).toString());
   });
 
+  it("keeps nothing when the turn ended while the voice was being made", async () => {
+    // Upstream OpenMausBot #1762: synthesis can outlive its turn. A Stop or a
+    // settle during the wait must not leave a note in the chat afterwards.
+    const f = fixture();
+    let live = true;
+    const speak = f.deps.speak;
+    const deps: VoiceNoteDeps = {
+      ...f.deps,
+      speak: async (...args) => { const audio = await speak(...args); live = false; return audio; },
+      stillLive: () => live,
+    };
+    await expect(createVoiceNote(deps, { botId: "bot-1", threadId: "thread-1", runId: "run-1", text: "Done." }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(f.spoken).toHaveLength(1);
+    expect(f.messages).toEqual([]);
+    expect(existsSync(join(f.dataDir, "workspaces", "bot-1", "generated-audio", "thread-1"))).toBe(false);
+  });
+
   it("refuses an empty note, one too long to be a note, and a bot that is gone, without speaking", async () => {
     const f = fixture();
     await expect(createVoiceNote(f.deps, { botId: "bot-1", threadId: "t", runId: "r", text: "   " })).rejects.toThrow("something to say");

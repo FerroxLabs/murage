@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=../announcements.schema.json
+# announcements.yml: every notice the Murage app can show. See ../README.md.
+#
+# One notice per list item. Delete an item and merge to pull it: apps drop it
+# on their next check (within six hours).
+#
+#   id           lowercase letters, digits, dashes; never reuse one
+#   kind         info (sidebar banner) | important | security (full card)
+#   layout       hero | split | spotlight (spotlight needs no picture)
+#   accent       orange | blue | gold | violet | mint | paper
+#   title        up to 60 characters
+#   body         up to 400; paragraphs, **bold**, [links](https://...)
+#   image        a file in images/ (png, jpg, webp, up to 1 MB)
+#   imageAlt     what the picture shows, required with an image
+#   link         { label, url }: a button that opens the browser (https)
+#   action       { label, target }: a button inside the app, one of
+#                settings-general, settings-models, settings-connections,
+#                settings-skills, settings-house-rules, settings-backups,
+#                check-for-updates
+#   appVersions  optional range, like ">=0.1.60 <0.2.0"
+#   platforms    optional list: mac, windows, linux
+#   startsAt     optional, like "2026-10-01T09:00:00Z" (quoted)
+#   endsAt       optional, same form
+#
+# Copy rules: plain words, no em dashes, never "safe", never Composio, no HTML.
+# Change the look from one notice to the next (layout and accent) so people
+# keep reading them.
+items:
+  - id: search-mid-call
+    kind: info
+    layout: split
+    accent: blue
+    title: Search while you talk
+    body: |
+      Bots now look things up **mid-call**, from the live web.
+    image: search-mid-call.webp
+    imageAlt: A glass globe with a pulse of light
+    link:
+      label: See how
+      url: https://ferroxlabs.com/murage
+    appVersions: ">=0.1.60"
+    startsAt: "2026-10-01T09:00:00Z"
+    endsAt: "2026-10-31T09:00:00Z"
+
+  - id: flux-slow-2026-10-02
+    kind: important
+    layout: spotlight
+    accent: violet
+    title: Flux is running slowly
+    body: |
+      Replies from Flux models may take longer this afternoon. **Nothing is lost**; slow replies still arrive.
+
+      We will post here when it is back to normal.
+    action:
+      label: Open Models
+      target: settings-models
+    startsAt: "2026-10-02T12:00:00Z"
+    endsAt: "2026-10-02T20:00:00Z"

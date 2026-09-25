@@ -238,7 +238,7 @@ test("the key is created without a dialog, in the first folder allowed to hold i
     assert.equal(created.label,"murage-recovery-key.txt");
     assert.match(created.publicKey,/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/);
     assert.equal(readBackupIdentity(created.file,p.installation).recipient,created.publicKey);
-    assert.equal(lstatSync(created.file).mode&0o777,0o600);
+    if(process.platform!=="win32")assert.equal(lstatSync(created.file).mode&0o777,0o600);
     // A second call never replaces the first; it takes the next free name.
     const again=createRecoveryKeyIn([p.safe],{installation:p.installation});
     assert.equal(again.label,"murage-recovery-key-2.txt");
@@ -265,7 +265,7 @@ test("a copy of the key is byte-identical, owner-only, and held to the same plac
     assert.equal(copy.label,"my-key.txt");
     assert.equal(copy.publicKey,created.publicKey);
     assert.equal(readFileSync(copy.file,"utf8"),readFileSync(created.file,"utf8"));
-    assert.equal(lstatSync(copy.file).mode&0o777,0o600);
+    if(process.platform!=="win32")assert.equal(lstatSync(copy.file).mode&0o777,0o600);
     // The same rules: not inside the backup folder, not inside the installation,
     // and never replacing a file that is already there.
     assert.throws(()=>copyRecoveryKeyFile({from:created.file,to:path.join(p.destination,"k.txt"),installation:p.installation,destination:p.destination}),/BACKUP_RECOVERY_KEY_INSIDE_DESTINATION/);
