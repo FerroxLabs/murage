@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { lastSeenLabel, ReplaceOldDevice } from "./ReplaceOldDevice";
+import { lastSeenLabel, ReplaceDeviceAction, ReplaceOldDevice } from "./ReplaceOldDevice";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
 
@@ -35,6 +35,33 @@ describe("Replace an old device", () => {
     expect(html.indexOf("Old iPad")).toBeLessThan(html.indexOf("Pixel"));
     expect(html).toContain('aria-label="Replace Old iPad, last seen 40 d ago"');
     expect(html).toContain('type="button"');
+  });
+
+  // M4: a revoke has no undo, so the first tap only asks.
+  it("asks \"Remove <name>?\" before revoking, and the first tap revokes nothing", () => {
+    const onAsk = vi.fn();
+    const onConfirm = vi.fn();
+    const props = { name: "Old iPad", seen: "40 d ago", busy: false, onAsk, onCancel: vi.fn(), onConfirm };
+    const first = ReplaceDeviceAction({ ...props, confirming: false }) as any;
+    expect(first.props.children).toBe("Replace");
+    first.props.onClick();
+    expect(onAsk).toHaveBeenCalledOnce();
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    const html = renderToStaticMarkup(createElement(ReplaceDeviceAction, { ...props, confirming: true }));
+    expect(html).toContain("Remove Old iPad?");
+    expect(html).toContain("Cancel");
+    const [remove, cancel] = (ReplaceDeviceAction({ ...props, confirming: true }) as any).props.children;
+    cancel.props.onClick();
+    expect(props.onCancel).toHaveBeenCalledOnce();
+    remove.props.onClick();
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
+  it("wires the list so only the confirm step calls onReplace", () => {
+    const source = read("./ReplaceOldDevice.tsx");
+    expect(source).toContain("onAsk={() => setConfirming(device.id)}");
+    expect(source).not.toContain("onClick={() => onReplace(device.id)}");
   });
 
   it("says when each was last seen in words", () => {

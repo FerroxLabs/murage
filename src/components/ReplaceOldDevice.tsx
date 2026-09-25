@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { PhoneDevice } from "./PhoneSetupFlow";
 
 /** "5 min ago", for a device list. */
@@ -17,7 +19,10 @@ export function lastSeenLabel(at: number, now = Date.now()): string {
  * sorted least recently seen first (`DeviceRegistry.replaceCandidates`), so
  * this renders them as given and never re-sorts. Replacing is the ordinary
  * revoke. The pairing code on screen survives it, so the phone that was
- * refused taps Try again and is in. */
+ * refused taps Try again and is in.
+ *
+ * Two taps, "Replace" then "Remove <name>?", because a revoke has no undo and
+ * the list is exactly the owner's own devices. */
 export function ReplaceOldDevice({
   candidates,
   max,
@@ -29,6 +34,7 @@ export function ReplaceOldDevice({
   busy: boolean;
   onReplace: (deviceId: string) => void;
 }) {
+  const [confirming, setConfirming] = useState<string | null>(null);
   if (!candidates.length) return null;
   return (
     <div
@@ -50,19 +56,75 @@ export function ReplaceOldDevice({
                 <div className="truncate text-[12.5px] text-ink">{device.name}</div>
                 <div className="text-[11px] text-ink-secondary">Last seen {seen}</div>
               </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onReplace(device.id)}
-                aria-label={`Replace ${device.name}, last seen ${seen}`}
-                className="min-h-9 shrink-0 rounded-lg px-3 text-[12px] text-danger hover:bg-control disabled:opacity-40"
-              >
-                Replace
-              </button>
+              <ReplaceDeviceAction
+                name={device.name}
+                seen={seen}
+                busy={busy}
+                confirming={confirming === device.id}
+                onAsk={() => setConfirming(device.id)}
+                onCancel={() => setConfirming(null)}
+                onConfirm={() => {
+                  setConfirming(null);
+                  onReplace(device.id);
+                }}
+              />
             </li>
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+/** One row's action: "Replace" only asks; "Remove <name>?" revokes. */
+export function ReplaceDeviceAction({
+  name,
+  seen,
+  busy,
+  confirming,
+  onAsk,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  seen: string;
+  busy: boolean;
+  confirming: boolean;
+  onAsk: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onAsk}
+        aria-label={`Replace ${name}, last seen ${seen}`}
+        className="min-h-9 shrink-0 rounded-lg px-3 text-[12px] text-danger hover:bg-control disabled:opacity-40"
+      >
+        Replace
+      </button>
+    );
+  }
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onConfirm}
+        className="min-h-9 rounded-lg bg-danger px-3 text-[12px] font-medium text-white disabled:opacity-40"
+      >
+        Remove {name}?
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onCancel}
+        className="min-h-9 rounded-lg px-2 text-[12px] text-ink-secondary hover:bg-control disabled:opacity-40"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
