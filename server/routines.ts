@@ -16,6 +16,7 @@ import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, 
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
+import { loadRoutinePermissionMode, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -94,6 +95,10 @@ export interface Routine {
    * run waiting behind it; further occurrences are skipped until it starts.
    * Manual, webhook and channel runs are separate requests either way. */
   overlap?: "skip" | "queue";
+  /** The approval level this routine's scheduled and manual runs are judged
+   * at (server/routine-permissions.ts). Absent means inherit: the bot's own
+   * level when the run starts. Older files have none and inherit. */
+  permissionMode?: RoutinePermissionMode;
   /** How many scheduled occurrences were skipped because a run was still
    * active, and when the last one was due. Absent means none. */
   skippedRuns?: number;
@@ -221,6 +226,8 @@ export interface RoutineInput {
   timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
   overlap?: "skip" | "queue";
+  /** A level, or `inherit` / null to follow the bot's level. */
+  permissionMode?: RoutinePermissionMode | "inherit" | null;
 }
 
 interface RoutineFile {
@@ -564,6 +571,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (input.overlap !== undefined && input.overlap !== "skip" && input.overlap !== "queue") {
     throw new Error("Choose skip or queue for overlapping runs");
   }
+  const permissionMode = input.permissionMode === undefined ? null : routinePermissionModeInput(input.permissionMode);
   return {
     name,
     prompt,
@@ -577,6 +585,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
     ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     attachments,
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
   };
 }
 
@@ -612,12 +621,13 @@ export class RoutineManager {
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
+              permissionMode: loadRoutinePermissionMode(routine.permissionMode),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
             // Absent rather than undefined keys, so a load and save round-trip
             // leaves an older file's routines byte-for-byte shaped as before.
-            for (const key of ["overlap", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            for (const key of ["overlap", "permissionMode", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
               try { loaded.watch = readRoutineWatchBinding(routine.watch, routine.id); }
@@ -833,6 +843,20 @@ export class RoutineManager {
     return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: structuredClone(run.humanPrincipal) } : {}) };
   }
 
+  /** The routine whose scheduled or manual run is working in this thread,
+   * and the level it chose (absent = inherit), so the host can judge the run
+   * at that level. Null for webhook and channel work, room goals, and a
+   * routine that no longer exists: those keep their own rules. */
+  routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode } | null {
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && ["running", "waiting"].includes(candidate.status));
+    if (!run || run.target !== "bot") return null;
+    const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+    if (trigger !== "schedule" && trigger !== "manual") return null;
+    const routine = this.routines.find((candidate) => candidate.id === run.routineId);
+    if (!routine || routine.botId !== run.botId) return null;
+    return { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}) };
+  }
+
   create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);
@@ -901,6 +925,7 @@ export class RoutineManager {
       timeoutMinutes: Object.hasOwn(patch, "timeoutMinutes") ? patch.timeoutMinutes : routine.timeoutMinutes,
       attachments: patch.attachments ?? routine.attachments,
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
+      permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
     });
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
@@ -938,6 +963,7 @@ export class RoutineManager {
       }
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
+      if (clean.permissionMode === undefined) delete routine.permissionMode;
       if (patch.enabled === false) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;

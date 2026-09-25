@@ -271,15 +271,20 @@ export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
 
 /** Who started the turn, as Full access reads it: the owner at the desktop
  * (or a bot the owner's turn reached), the owner's own message from
- * Telegram, Slack or Discord, or anyone and anything else — a webhook, a
- * routine, another person's channel message. */
-export type FullAccessOrigin = "owner" | "owner-channel" | "other";
+ * Telegram, Slack or Discord, a scheduled or manual run of one of the owner's
+ * routines judged at that routine's own level (server/routine-permissions.ts),
+ * or anyone and anything else — a webhook, another person's channel message,
+ * a turn whose origin could not be proven. */
+export type FullAccessOrigin = "owner" | "owner-channel" | "routine" | "other";
 
 /** Does Full access cover a turn from this origin? The owner's channel
- * messages only when the bot's option says so; everything else never. */
+ * messages only when the bot's option says so. A routine run is covered when
+ * the level it is judged at is Full access or No limits: the caller has
+ * already applied the routine's level to `bot`, so the flags ARE that level.
+ * Everything else never. */
 export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin): boolean {
   if (!hasFullAccess(bot)) return false;
-  if (origin === "owner") return true;
+  if (origin === "owner" || origin === "routine") return true;
   return origin === "owner-channel" && bot?.fullAccessChannelMessages === true;
 }
 
@@ -360,6 +365,12 @@ export interface AutoContext {
   /** the turn is the workspace owner's own Telegram, Slack or Discord
    * message (it is also unattended and automated) */
   channelOwner?: boolean;
+  /** The turn is a scheduled or manual run of one of the owner's routines,
+   * and the caller judged `bot` at that routine's level (its own, or the
+   * bot's level when the run started). Full access and No limits then cover
+   * it exactly as they cover a turn the owner started. Never set for a
+   * webhook or channel turn, and an `unattended` mark outranks it. */
+  routineLevel?: boolean;
   /** The caller established — from the engine's STRUCTURED tool
    * input, never from the card text — that every filesystem path this
    * request names lies inside the directories Murage manages for THIS bot:
@@ -409,7 +420,8 @@ export function autoVerdict(
   // own channel message joins the owner's turns only when the bot's option
   // says so.
   const origin: FullAccessOrigin = context?.unattended || context?.automated
-    ? context.channelOwner === true ? "owner-channel" : "other"
+    ? context.channelOwner === true ? "owner-channel"
+      : context.routineLevel === true && !context.unattended ? "routine" : "other"
     : "owner";
   // the guards outrank the grants, so an "always allow" can never widen
   // into them

@@ -118,6 +118,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
+import { applyRoutinePermissionMode, effectiveRoutinePermissionMode, type RoutinePermissionMode } from "./routine-permissions.ts";
 import { approvalKey, autoVerdict, approvalHoldNote, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
@@ -4278,8 +4279,13 @@ bus.subscribe((event: RuntimeEvent) => {
         : undefined;
       // offered on ordinary command cards only; a stop-line card keeps its own scoped grants
       const exactAllowKey = stopHit ? undefined : exactAllowKeyFor(event.tool, event.summary, exactCommand);
-      const verdict = permission && asker && event.requestId
-        ? autoVerdict(asker, event.tool, event.summary, {
+      // A scheduled or manual routine run is judged at its routine's level
+      // (server/routine-permissions.ts); webhook, channel and unattended
+      // turns never are.
+      const routineLevel = permission && bot && event.requestId && !unattended ? routineRunLevel(event.threadId) : null;
+      const judged = routineLevel && asker ? applyRoutinePermissionMode(asker, routineLevel.mode) : asker;
+      const verdict = permission && asker && judged && event.requestId
+        ? autoVerdict(judged, event.tool, event.summary, {
             exactCommand,
             stopLine: questionAsk ? undefined : stopHit,
             stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
@@ -4289,6 +4295,8 @@ bus.subscribe((event: RuntimeEvent) => {
             // Full access covers turns the owner started; a routine's turn
             // is judged as Auto would judge it
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
+            // ...unless it is a routine run judged at its routine's own level
+            ...(routineLevel ? { routineLevel: true } : {}),
             // ...and the owner's own channel message, if the bot allows it
             channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
             // The bot editing its own MEMORY.md or its own thread files
@@ -5435,9 +5443,19 @@ async function startTurn(
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  // A scheduled or manual routine run is judged at its routine's level (its
+  // own, or the bot's level right now), not at whatever this run's task
+  // copied when it was made. The level is applied here, before the run's
+  // snapshot is taken, so the engine's stop-line setting, folder trust and
+  // every approval in the turn read the same level.
+  const routineLevel = humanIsOwner && (opts?.automationSource === "schedule" || opts?.automationSource === "manual") && !opts?.unattended
+    ? routineRunLevel(threadId)
+    : null;
+  if (routineLevel) Object.assign(bot, applyRoutinePermissionMode(bot, routineLevel.mode));
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
     : opts?.automationSource === "channel" ? "owner-channel"
+    : routineLevel ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
@@ -6154,7 +6172,7 @@ async function startTurn(
       // inline concatenation sent (bot-shapes.test.ts), and kept as this
       // bot's last turn for "What shapes <bot>". Built in the same tick as
       // the dispatch, so every value is the one the engine receives.
-      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other", webhook: opts?.automationSource === "webhook" });
+      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" || fullAccessOrigin === "routine", webhook: opts?.automationSource === "webhook" });
       const systemLayers = directTurnLayers({
         // The owner's House Rules open every bot's prompt (house-rules.ts).
         houseRules: houseRulesPrompt(),
@@ -8747,6 +8765,20 @@ function peerContactSettings(botId: string, threadId: string) {
   return conversation.group ? conversation.bot : botForDirectThread(botId, threadId);
 }
 
+/** The level a scheduled or manual routine run working in this thread is
+ * judged at: the routine's own, or its bot's current level (inherit). Null
+ * for anything else, and for a thread someone outside the desktop reached
+ * (an unattended mark outranks a routine's level, so a webhook's or another
+ * bot's unattended turn keeps its own rules). */
+function routineRunLevel(threadId: string): { routineId: string; mode: RoutinePermissionMode } | null {
+  if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return null;
+  const run = routines?.routineRunForThread(threadId);
+  if (!run || isUnattended(threadId)) return null;
+  const profile = store.bot(run.botId);
+  if (!profile) return null;
+  return { routineId: run.routineId, mode: effectiveRoutinePermissionMode(run, profile) };
+}
+
 /** Who started the turn now running in this thread, as Full access reads
  * it (server/auto-approve.ts). Only the workspace owner's conversation can be
  * anything but "other"; inside a routine run only the owner's own channel
@@ -8755,7 +8787,8 @@ function peerContactSettings(botId: string, threadId: string) {
 function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel" : "other";
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+    : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
 
