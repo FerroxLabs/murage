@@ -70,7 +70,7 @@ interface Output { cv: Uint32Array; block: Uint32Array; counter: number; blockLe
 
 /** The last block of one chunk, uncompressed, so the caller can set ROOT. */
 function chunkOutput(chunk: Uint8Array, counter: number): Output {
-  let cv = IV;
+  let cv: Uint32Array = IV;
   const blocks = Math.max(1, Math.ceil(chunk.length / BLOCK_LEN));
   for (let i = 0; i < blocks - 1; i++) {
     cv = compress(cv, words(chunk.subarray(i * BLOCK_LEN, (i + 1) * BLOCK_LEN)), counter, BLOCK_LEN, i === 0 ? CHUNK_START : 0).subarray(0, 8);
