@@ -119,9 +119,10 @@ import {
 } from "../shared/credential-request.ts";
 
 import { applyRoutinePermissionMode, effectiveRoutinePermissionMode, type RoutinePermissionMode } from "./routine-permissions.ts";
-import { approvalKey, autoVerdict, approvalHoldNote, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
-import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { classifyStopLine, deletesPlacedInside, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { commandFromToolInput } from "../shared/exact-command.ts";
 import { extendStepLine, newStepLine, type StepLevel } from "./full-access-steps.ts";
 import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
@@ -3982,6 +3983,24 @@ function stopLineFor(botId: string, threadId: string, event: { tool: string; sum
   }
 }
 
+/** Does every delete in this command land inside the bot's own roots (its
+ * workspace and thread folders, the turn's folder, temp)? Read from the
+ * engine's structured command with the stop line's own reader; the card text
+ * must say the same thing. Never throws: a failure is "no". */
+function deletesInsideFor(botId: string, threadId: string, event: { tool: string; summary: string; toolCall?: { name: string; input: unknown } }): boolean {
+  try {
+    if (!isCommandTool(event.tool)) return false;
+    const input = event.toolCall?.input;
+    const command = commandFromToolInput(input);
+    if (command === undefined) return false;
+    const commandCwd = input && typeof input === "object" && !Array.isArray(input) ? (input as { cwd?: unknown }).cwd : undefined;
+    const place = stopLinePlace(botId, threadId, commandCwd);
+    return deletesPlacedInside(command, place) && (event.summary.trim() === command.trim() || deletesPlacedInside(event.summary, place));
+  } catch {
+    return false;
+  }
+}
+
 /** A message the owner allowed (or a grant covered) goes to people who are
  * now known: the next message to them is not "someone new". */
 function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
@@ -4295,6 +4314,9 @@ bus.subscribe((event: RuntimeEvent) => {
         ? autoVerdict(judged, event.tool, event.summary, {
             exactCommand,
             stopLine: questionAsk ? undefined : stopHit,
+            // a delete the stop line placed inside the bot's own roots is not
+            // "destructive" for Auto's guard (a process kill still is)
+            ...(!questionAsk && stopHit === null && deletesInsideFor(asker.id, event.threadId, event) ? { deletesInside: true } : {}),
             stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
             unattended,
             scope: event.approvalScope,

@@ -14,8 +14,15 @@ import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./s
 import { redactSecretsInText } from "./redact.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, type ExactCommand } from "../shared/exact-command.ts";
 
+/** The plain `rm` rule, the one a delete placed inside the bot's own roots
+ * is excused from (see `deletesInside` below). */
+const RM_RULE = /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i;
+/** Stopping processes stays destructive for that excuse: a command that
+ * kills something is guarded whatever else it deletes. */
+const KILLS = /\b(pkill|killall|kill)\b/;
+
 const DESTRUCTIVE = [
-  /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
+  RM_RULE, // rm -rf, rm -fr, rm -r -f
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
   /\bshutdown\b|\breboot\b|\bhalt\b/i,
   /:\(\)\s*\{.*\}\s*;?\s*:/, // fork bomb
@@ -378,6 +385,13 @@ export interface AutoContext {
    * and stop-line keys only. Honoured only with `routineLevel`, never on an
    * unattended turn or for host control, and never over a guard. */
   routineAllow?: readonly string[];
+  /** The caller established with the stop line's own reader
+   * (server/stop-line.ts deletesPlacedInside) that every delete this command
+   * names lands strictly inside the bot's own roots: its workspace and thread
+   * folders, the turn's folder, the temp folders. Such a delete is not
+   * "destructive" for Auto's guard, unless the command also stops processes
+   * or trips any other destructive rule. */
+  deletesInside?: boolean;
   /** The caller established — from the engine's STRUCTURED tool
    * input, never from the card text — that every filesystem path this
    * request names lies inside the directories Murage manages for THIS bot:
@@ -409,6 +423,13 @@ export interface AutoContext {
   stopAllowedForTask?: string;
 }
 
+/** Is the only destructive thing here an `rm` the caller placed inside the
+ * bot's own roots? Every other rule, and any process kill, still counts. */
+function excusedDelete(text: string, context: AutoContext | undefined): boolean {
+  if (context?.deletesInside !== true || KILLS.test(text)) return false;
+  return DESTRUCTIVE.every((rule) => rule === RM_RULE || !rule.test(text));
+}
+
 export function autoVerdict(
   bot: AutoApprover,
   tool: string,
@@ -433,7 +454,7 @@ export function autoVerdict(
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const guarded = context?.exactCommand ? `${summary}\n${context.exactCommand.command}` : summary;
-  const destructive = matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
+  const destructive = excusedDelete(guarded, context) ? null : matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
   const sensitive = destructive ? null : matchFirst(SENSITIVE, guarded);
   // The stop line outranks every mode, Full access included: deleting
   // outside its folder, paying, and messaging someone new wait for the
