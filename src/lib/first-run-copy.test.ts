@@ -494,6 +494,15 @@ describe("what the key card claims, to whom", () => {
     expect(key.recommendationBonus).not.toMatch(/\bneed\b|\brequired\b/i);
   });
 
+  // Seen on Windows: an engine was listed but could not think, so the heading
+  // said "Your bots need a brain first" and the line under it said "You are
+  // already up and running". The heading reads `nothingToThinkWith`; this
+  // line has to read the same answer, or the card contradicts itself.
+  it("agrees with the heading when the machine has nothing to think with", () => {
+    expect(fluxRecommendation({ agents: [{ id: "unusable" }], nothingToThinkWith: true })).toBe(key.recommendationBare);
+    expect(fluxRecommendation({ agents: [], nothingToThinkWith: false })).toBe(key.recommendation);
+  });
+
   it("does not undersell it to somebody who has nothing", () => {
     expect(fluxRecommendation({ agents: [] })).toBe(key.recommendationBare);
     expect(key.recommendationBare).not.toMatch(/optional/i);

@@ -72,9 +72,15 @@ const copy = FIRST_RUN_COPY.flux.key;
  * Unknown view answers the cautious one: the milder claim is the one that is
  * never wrong.
  */
-export function fluxRecommendation(view: { agents?: readonly unknown[] } | null | undefined): string {
+export function fluxRecommendation(view: { agents?: readonly unknown[]; nothingToThinkWith?: boolean } | null | undefined): string {
+  // The heading's own answer wins when the server gave one. An engine can be
+  // listed and still unable to think (seen on Windows), and then counting
+  // `agents` put "you are already up and running" under "your bots need a
+  // brain first" on the same card.
+  if (view?.nothingToThinkWith === true) return copy.recommendationBare;
   if (!view?.agents) return copy.recommendation;
-  return view.agents.length === 0 ? copy.recommendationBare : copy.recommendationBonus;
+  if (view.agents.length === 0) return view.nothingToThinkWith === false ? copy.recommendation : copy.recommendationBare;
+  return copy.recommendationBonus;
 }
 
 /**
