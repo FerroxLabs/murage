@@ -264,7 +264,12 @@ export interface VerificationServer {
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
-  options: { instrumentationSource?: string; portRange?: { from: number; span: number } } = {},
+  options: {
+    instrumentationSource?: string;
+    portRange?: { from: number; span: number };
+    /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed. */
+    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY", string>>;
+  } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
@@ -314,6 +319,9 @@ export async function launchVerificationServer(
     FAKE_CLAUDE_DUMP: fixtureDumpPath,
     FAKE_CLAUDE_FINISH_GATE_DIR: fixtureFinishGateDir,
     PATH: "",
+    // A verification server never asks the real announcements feed.
+    MURAGE_ANNOUNCEMENTS_URL: "off",
+    ...options.env,
   });
   // Optional fixture-owned observation only. Existing callers retain exactly
   // their previous launch; no preload path or source enters a live app config.
