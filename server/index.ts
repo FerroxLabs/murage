@@ -8926,11 +8926,14 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   return isUnattended(threadId) ? "other" : "owner";
 }
 
-/** Full access skips the bot-to-bot contact card, but only in a turn the
- * owner started: a webhook, channel or routine turn still asks, as in Auto
- * (the owner's own channel message only with the bot's option on). */
+/** Full access skips the bot-to-bot contact card in a turn the owner started
+ * and in a scheduled or manual routine run judged at Full access (the
+ * routine's own level, or its bot's): a webhook or channel turn still asks,
+ * as in Auto (the owner's own channel message only with the bot's option on). */
 function fullAccessSkipsPeerCard(botId: string, threadId: string): boolean {
-  return fullAccessCovers(peerContactSettings(botId, threadId), fullAccessTurnOrigin(threadId));
+  const settings = peerContactSettings(botId, threadId);
+  const level = settings ? routineRunLevel(threadId) : null;
+  return fullAccessCovers(level && settings ? applyRoutinePermissionMode(settings, level.mode) : settings, fullAccessTurnOrigin(threadId));
 }
 
 function routineProposalPersistence(botId: string, threadId: string) {

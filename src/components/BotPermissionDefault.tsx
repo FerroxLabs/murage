@@ -18,13 +18,13 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "unlimited") {
     return onThisComputer
-      ? "Does anything without asking, except reading your keys and passwords. That includes this computer. Webhook and routine turns still ask."
-      : "Does anything without asking, except reading your keys and passwords. Webhook and routine turns still ask.";
+      ? "Does anything without asking, except reading your keys and passwords. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
+      : "Does anything without asking, except reading your keys and passwords. Webhook turns still ask. Routines use this level unless a routine has its own.";
   }
   if (mode === "full") {
     return onThisComputer
-      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook and routine turns still ask."
-      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook and routine turns still ask.";
+      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own."
+      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own.";
   }
   if (mode === "auto") {
     return onThisComputer

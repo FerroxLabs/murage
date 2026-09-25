@@ -6,6 +6,7 @@
 // in Bot settings, Permissions, Review routine approvals.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { peerContactHint } from "@/lib/permission-mode";
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -39,5 +40,16 @@ describe("0.1.60 copy flags", () => {
     const block = panel.slice(at, panel.indexOf("</div>\n            <div", at) + 400);
     expect(block).not.toMatch(/\bsafe(ly|ty)?\b/i);
     expect(block).toContain("This engine cannot run a separate review, so approval cards keep waiting for you.");
+  });
+
+  // Routines follow their own level in 0.1.60 (the bot's unless a routine has
+  // one), so no level description may say routine turns still ask.
+  it("no level description says routine turns still ask", () => {
+    for (const file of ["./components/BotPermissionDefault.tsx", "./components/FullAccessWarning.tsx", "./lib/permission-mode.ts"]) {
+      expect(source(file), file).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still/i);
+    }
+    expect(source("./components/BotPermissionDefault.tsx")).toContain("Webhook turns still ask. Routines use this level unless a routine has its own.");
+    const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
+    expect(hint).toContain("in routines at that level; webhook turns still stop and ask");
   });
 });
