@@ -32,21 +32,29 @@ describe("LazyBoundary", () => {
     return { instance, onRetry };
   };
 
-  it("shows the panel until a load fails, then only the retry", () => {
-    const { instance, onRetry } = boundary();
+  it("shows the panel until a load fails, then only the retry, which reloads the app", () => {
+    const reload = vi.fn();
+    const { instance, onRetry } = boundary({ reload });
     expect(renderToStaticMarkup(instance.render() as ReactElement)).toBe("<span>panel</span>");
     instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError() };
     vi.spyOn(console, "warn").mockImplementation(() => {});
     instance.componentDidCatch(new Error("chunk"));
-    // the fresh import is ready before the person taps
     expect(onRetry).toHaveBeenCalledOnce();
     const html = renderToStaticMarkup(instance.render() as ReactElement);
     expect(LAZY_RETRY_TEXT).toBe("Couldn't open this — tap to retry");
     expect(html).toContain("Couldn&#x27;t open this — tap to retry");
     expect(html).toContain('role="alert"');
     expect(html).not.toContain("panel");
+    // Chromium caches a failed import() in the module map: only a new
+    // document fetches the chunk again (verification f5).
     instance.retry();
-    expect(renderToStaticMarkup(instance.render() as ReactElement)).toBe("<span>panel</span>");
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("reloads directly, never through chunk-reload's once-a-minute guard", () => {
+    const source = read("./LazyBoundary.tsx");
+    expect(source).toContain("(this.props.reload ?? (() => window.location.reload()))();");
+    expect(source).not.toContain("chunk-reload\"");
   });
 
   it("offers Close when the panel can be dismissed, so a dead network is not a trap", () => {

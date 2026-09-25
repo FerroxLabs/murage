@@ -8,9 +8,15 @@
 // phone, a flaky network while opening Settings twice. This keeps it to the
 // panel: "Couldn't open this — tap to retry".
 //
-// React.lazy remembers a rejected import for good, so a retry needs a fresh
-// lazy component. `retryableLazy` hands out one stable component that renders
-// whichever lazy is current, and `retry` swaps in a new one.
+// "Tap to retry" reloads the whole page. A fresh React.lazy is not enough:
+// Chromium caches a failed dynamic import() in the module map, so the same
+// URL rejects again without touching the network (phone verification f5,
+// Chromium 143). Only a new document gets a new module map. The reload is
+// direct, not through chunk-reload.ts, so that module's once-a-minute guard
+// (meant for automatic reloads) never blocks a person who asked.
+//
+// `retryableLazy` still swaps in a fresh lazy when a load fails, which lets a
+// browser that does not cache the failure open the panel again after Close.
 import { Component, lazy, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
 export interface RetryableLazy<P extends object> {
@@ -44,6 +50,8 @@ export class LazyBoundary extends Component<
     onDismiss?: () => void;
     /** Inside a pane rather than over the whole app. */
     inline?: boolean;
+    /** Test seam; the page reload by default. */
+    reload?: () => void;
   },
   { failed: boolean }
 > {
@@ -61,7 +69,7 @@ export class LazyBoundary extends Component<
   }
 
   retry = () => {
-    this.setState({ failed: false });
+    (this.props.reload ?? (() => window.location.reload()))();
   };
 
   render() {

@@ -220,6 +220,10 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
       )}
     >
       <img
+        // A new element when the srcset is dropped: Chromium keeps the old
+        // candidate's density on a live <img> after srcset is removed, so the
+        // original drew at a fraction of its size (phone verification f2).
+        key={srcSet ? "srcset" : "original"}
         src={item.src}
         srcSet={srcSet}
         sizes={srcSet ? sizes : undefined}
