@@ -158,6 +158,20 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
   saveReceipts();
 }
 
+/** A deleted conversation takes its handoffs with it: queued ones and the
+ * results peers sent back to it. */
+export function forgetDelegationsForThreads(threadIds: readonly string[]): void {
+  const gone = new Set(threadIds);
+  let pendingChanged = false;
+  for (const threadId of gone) if (pendingDelegations.delete(threadId)) pendingChanged = true;
+  if (pendingChanged) savePending();
+  const kept = receipts.filter((receipt) => !gone.has(receipt.sourceThreadId));
+  if (kept.length !== receipts.length) {
+    receipts = kept;
+    saveReceipts();
+  }
+}
+
 export function findDelegationReceipt(id: string): DelegationReceipt | null {
   return receipts.find((receipt) => receipt.id === id) ?? null;
 }

@@ -332,6 +332,8 @@ export interface DeletionServiceOptions {
   database: () => DatabaseSync;
   /** attachments go through the quota-aware remover when one is given */
   deleteAttachment?: (path: string) => void;
+  /** other per-conversation records to drop once the rows are gone */
+  forgetThreads?: (threadIds: string[]) => void;
 }
 
 export class ConversationDeletions {
@@ -421,6 +423,7 @@ export class ConversationDeletions {
     const leftovers = [...entry.leftovers];
     const threadIds = entry.threadIds.filter((id) => ID.test(id));
     this.deleteArtifactRows(threadIds);
+    try { this.options.forgetThreads?.(threadIds); } catch (error) { console.error("conversation deletion: could not drop records", error); }
     for (const threadId of threadIds) {
       for (const dir of [dirs.events, dirs.native]) {
         for (const name of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) record(removeConfined(dir, nodePath.join(dir, name)), nodePath.join(dir, name), removed, failed);

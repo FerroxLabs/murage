@@ -270,7 +270,7 @@ import {
 } from "./question-normalize.ts";
 import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, forgetDelegationsForThreads, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -1680,7 +1680,7 @@ const folderTrust = new FolderTrustStore(join(DATA_DIR, "folder-trust.json"));
 // Deleting a conversation removes its files and the engine's own transcript
 // of it, not only its rows (server/conversation-deletion.ts). A pending record
 // is written first; the boot pass below finishes one a crash interrupted.
-const conversationDeletions = new ConversationDeletions({ dataDir: DATA_DIR, database, deleteAttachment });
+const conversationDeletions = new ConversationDeletions({ dataDir: DATA_DIR, database, deleteAttachment, forgetThreads: forgetDelegationsForThreads });
 /** Where each configured local engine keeps its own history. */
 function deletionEngineHomes(): DeletionEngineHome[] {
   const homes: DeletionEngineHome[] = [];
