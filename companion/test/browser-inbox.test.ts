@@ -88,6 +88,54 @@ describe("the browser door's Inbox", () => {
     } finally { await close(door); await close(harness); }
   });
 
+  it("replaces a browser's proof with its own on an image upload", async () => {
+    const seen: Array<{ url: string; headers: IncomingHttpHeaders; bytes: number }> = [];
+    const harness = createServer((req, res) => {
+      let bytes = 0;
+      req.on("data", (chunk: Buffer) => { bytes += chunk.length; });
+      req.on("end", () => {
+        seen.push({ url: req.url ?? "", headers: req.headers, bytes });
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    const harnessPort = await listen(harness);
+    const door = createServer(createBrowserHandler({
+      harnessPort, companionToken: PRIVATE_TOKEN,
+      identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    try {
+      const uploaded = await fetch(`http://127.0.0.1:${port}/api/attachments?threadId=thread_1`, {
+        method: "POST", body: Buffer.alloc(2048, 7),
+        headers: {
+          "content-type": "image/png", origin: `http://127.0.0.1:${port}`,
+          cookie: `${cookieName("http")}=paired-session`, "x-murage-companion-token": "attacker-supplied-proof",
+        },
+      });
+      expect(uploaded.status).toBe(201);
+      expect(seen.at(-1)!.url).toBe("/api/attachments?threadId=thread_1");
+      expect(seen.at(-1)!.headers["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
+      expect(seen.at(-1)!.bytes).toBe(2048);
+      expect(await uploaded.text()).not.toContain(PRIVATE_TOKEN);
+    } finally { await close(door); await close(harness); }
+  });
+
+  it("explains an image upload refused because the sidecar was launched without the proof", async () => {
+    const door = createServer(createBrowserHandler({
+      harnessPort: 1, identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/attachments?threadId=thread_1`, {
+        method: "POST", body: "x",
+        headers: { "content-type": "image/png", origin: `http://127.0.0.1:${port}`, cookie: `${cookieName("http")}=paired-session` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.text()).toContain("sending images requires");
+    } finally { await close(door); }
+  });
+
   it("explains a call refused because the sidecar was launched without the proof", async () => {
     const door = createServer(createBrowserHandler({
       harnessPort: 1, identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,

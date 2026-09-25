@@ -9507,7 +9507,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
 // door only adds the launch credential. These drive the composition in
 // index.ts (the desktop-authority gate, inboxDoor, callAccess) with the real
 // companionAuthorized, over a socket. The marker alone proves nothing.
-describe("the Inbox and calls open only to a proven companion", () => {
+describe("the Inbox, calls and image uploads open only to a proven companion", () => {
   const send = async (method: string, path: string, headers: Record<string, string>, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
@@ -9570,6 +9570,33 @@ describe("the Inbox and calls open only to a proven companion", () => {
       // (voice-host needs something said) or writes nothing for an empty log.
       expect(await send("POST", `/api/bots/${visible.id}/voice-host`, PAIRED_PHONE, {})).toEqual({ status: 400, body: { error: "text required" } });
       expect(await send("POST", `/api/bots/${visible.id}/call-note`, PAIRED_PHONE, { log: [] })).toEqual({ status: 200, body: { ok: true, written: false } });
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${visible.id}`);
+      await desktopApi("DELETE", `/api/bots/${hidden.id}`);
+    }
+  });
+
+  it("takes a phone's image for a conversation it can see, and answers a hidden one like a missing one", async () => {
+    const visible = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const hidden = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=", "base64");
+    const upload = async (threadId: string, headers: Record<string, string>) => {
+      const res = await fetch(`${BASE}/api/attachments?threadId=${threadId}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: png });
+      return { status: res.status, body: await res.json().catch(() => null) as any };
+    };
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${hidden.id}`, { hidden: true, chiefOfStaff: false })).status).toBe(200);
+      expect(await upload(visible.threadId, MARKER_ONLY)).toEqual({ status: 404, body: { error: "no such conversation" } });
+      expect((await upload(visible.threadId, WRONG_TOKEN)).status).toBe(404);
+
+      const taken = await upload(visible.threadId, PAIRED_PHONE);
+      expect(taken.status).toBe(201);
+      expect(taken.body).toMatchObject({ mime: "image/png", bytes: png.byteLength });
+      const hiddenUpload = await upload(hidden.threadId, PAIRED_PHONE);
+      expect(hiddenUpload).toEqual({ status: 404, body: { error: "no such conversation" } });
+      expect(hiddenUpload).toEqual(await upload("no-such-thread", PAIRED_PHONE));
+      // the private bot-to-bot room is not the phone's either
+      expect((await upload("test-inbox-dm-thread", PAIRED_PHONE)).status).toBe(404);
     } finally {
       await desktopApi("DELETE", `/api/bots/${visible.id}`);
       await desktopApi("DELETE", `/api/bots/${hidden.id}`);

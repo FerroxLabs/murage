@@ -72,10 +72,16 @@ export function isInboxRoute(method: string, path: string): boolean {
 }
 
 const CALL_ROUTE = /^\/api\/bots\/[\w-]+\/(?:voice-host|call-note)$/;
+/** An image upload. Bound to a conversation (`?threadId=`), the harness
+ *  takes it only with the launch proof, then only for a thread the phone's
+ *  sidebar shows (server/index.ts, `mayReadThread`). */
+export function isImageUpload(method: string, path: string): boolean {
+  return method === "POST" && path === "/api/attachments";
+}
 /** Routes the harness answers only when the sidecar proves it forwarded them:
- *  the Inbox (C2) and a call's two routes (C9). */
+ *  the Inbox (C2), a call's two routes (C9) and an image upload. */
 export function needsLaunchProof(method: string, path: string): boolean {
-  return isInboxRoute(method, path) || (method === "POST" && CALL_ROUTE.test(path));
+  return isInboxRoute(method, path) || (method === "POST" && CALL_ROUTE.test(path)) || isImageUpload(method, path);
 }
 
 /** Requests that speak as the owner: answering a card, and the owner's own

@@ -596,7 +596,7 @@ describe("the Inbox reaches the browser door", () => {
 });
 
 describe("routes that carry the sidecar's launch proof", () => {
-  it("covers the Inbox and both call routes, and nothing else", () => {
+  it("covers the Inbox and both call routes", () => {
     expect(needsLaunchProof("GET", "/api/inbox")).toBe(true);
     expect(needsLaunchProof("POST", "/api/inbox/state")).toBe(true);
     expect(needsLaunchProof("POST", "/api/bots/bot_1/voice-host")).toBe(true);
@@ -604,6 +604,14 @@ describe("routes that carry the sidecar's launch proof", () => {
     expect(needsLaunchProof("GET", "/api/bots/bot_1/voice-host")).toBe(false);
     expect(needsLaunchProof("POST", "/api/bots/bot_1/messages")).toBe(false);
     expect(needsLaunchProof("POST", "/api/bots/../voice-host")).toBe(false);
+  });
+
+  it("covers an image upload, and none of its neighbours", () => {
+    expect(needsLaunchProof("POST", "/api/attachments")).toBe(true);
+    expect(needsLaunchProof("GET", "/api/attachments")).toBe(false);
+    expect(needsLaunchProof("GET", "/api/attachments/11111111-1111-4111-8111-111111111111.png")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/attachments/11111111-1111-4111-8111-111111111111.png")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/files")).toBe(false);
   });
 
   it("lets a signed-in browser reach voice-host", () => {
