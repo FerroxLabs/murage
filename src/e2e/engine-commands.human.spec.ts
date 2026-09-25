@@ -72,6 +72,9 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 
 async function openBot(page: Page, name: string) {
   await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  // A fresh data dir has not seen this release's What's new page, and its
+  // modal would sit over the sidebar. This spec is about the composer.
+  await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
   await page.goto(origin);
   await (await openSidebar(page)).getByText(name, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
