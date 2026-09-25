@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { requestNotificationPermission } from "@/lib/notify";
+import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-sounds";
 import { t } from "@/lib/i18n";
 import { notificationPreferencesSchema, resolveNotificationPreferences, type NotificationPreferences } from "../../shared/notification-preferences";
 
@@ -17,6 +18,7 @@ export function NotificationSettings() {
   const [permission, setPermission] = useState<Permission>(currentPermission);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const sounds = useNotificationSounds();
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
   useEffect(() => {
     if (!dirtyRef.current) setDraft(resolveNotificationPreferences(state.config?.notifications));
@@ -94,6 +96,10 @@ export function NotificationSettings() {
         </label>
       </div>}
     </div>
+    <label className="mt-3 flex min-h-11 items-start gap-2 py-1.5 text-[13px] text-ink">
+      <input type="checkbox" checked={sounds} onChange={event => setNotificationSounds(event.target.checked)} className={"mt-0.5 " + focus} />
+      <span>{t("notificationSettings.soundLabel")}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{t("notificationSettings.soundHelp")}</span></span>
+    </label>
     <div className="mt-3 text-[12px] text-ink-secondary">
       {permission === "granted" ? <p>{t("notificationSettings.permissionGranted")}</p>
         : permission === "denied" ? <p>{t("notificationSettings.permissionDenied")}</p>

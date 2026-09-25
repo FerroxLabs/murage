@@ -31,7 +31,7 @@ import {
   _pendingCount,
   _resetPending,
 } from "./delegations.ts";
-import { peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
+import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "fake-model" });
@@ -460,6 +460,24 @@ describe("drainDelegations", () => {
         .find((m) => m.kind === "activity" && (m.tool?.name ?? "").includes("denied by user")),
     );
     expect(chip.tool?.ok).toBe(false);
+    expect(runTargetCalls).toEqual([]);
+  });
+
+  it("reports a cancelled approval as cancelled, not denied by the user", async () => {
+    store.patchBot(from.id, { approvePeerComms: true });
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    await waitFor(() => store.messagesFor(from.threadId).find((m) => m.card?.requestId));
+    cancelPeerApprovalsForThread(from.threadId);
+
+    await waitFor(() => findDelegationReceipt(queued.id!));
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "cancelled", result: "the approval was cancelled before a decision" });
+    const chips = store.messagesFor(from.threadId).filter((m) => m.kind === "activity").map((m) => m.tool?.name ?? "");
+    expect(chips.some((name) => name.includes("denied by user"))).toBe(false);
+    expect(chips).toContain(`Delegation to @${target.name}: the approval was cancelled before a decision`);
     expect(runTargetCalls).toEqual([]);
   });
 

@@ -84,6 +84,10 @@ export interface VoiceNoteDeps {
   cfg: AppConfig;
   /** tts.speak with the bot's own voice service and voice. */
   speak: (cfg: AppConfig, text: string, voiceId?: string, run?: undefined, own?: "flux" | "xai" | "elevenlabs" | "system") => Promise<Audio>;
+  /** Whether the turn that asked for the note is still running. Making the
+   * voice can outlive the turn (a Stop, or the turn settling meanwhile);
+   * a note is only kept when this is still true afterwards. */
+  stillLive?: () => boolean;
 }
 
 export interface VoiceNote {
@@ -131,6 +135,11 @@ export async function createVoiceNote(
   if (!extension) throw new VoiceNoteError(502, "The voice service returned audio this app cannot keep.");
   const bytes = Buffer.concat(clips.map((clip) => Buffer.from(clip.bytes)));
   if (!bytes.length) throw new VoiceNoteError(502, "The voice service returned no audio.");
+  // Re-check after the wait, before anything is kept (upstream OpenMausBot
+  // #1762): nothing below awaits, so the check holds through the append.
+  if (deps.stillLive && !deps.stillLive()) {
+    throw new VoiceNoteError(409, "This turn ended before the voice note was ready, so it was not sent.");
+  }
 
   const directory = managedAudioRoot(deps.dataDir, input.botId, input.threadId, true);
   const id = randomUUID();

@@ -292,7 +292,7 @@ import {
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { fullAccessApprovesSetup, fullAccessChange, fullAccessOptionsChange } from "./full-access.ts";
-import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
+import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, peerApprovalFailure, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, hostConsentRefusal, hostConsentState, isHostComputerConsent, resolveHostComputerConsent } from "./host-computer-consent.ts";
 import {
   canReach,
@@ -2603,6 +2603,11 @@ function finishGroupTurnOperation(groupId: string, operation: GroupTurnOperation
   if (operations?.size === 0) groupTurnOperations.delete(groupId);
   const group = store.group(groupId);
   if (group) broadcast({ kind: "group", group: publicGroupState(group) });
+  // A 1:1 message queued behind this room turn waits on this map entry, and
+  // the operation can outlive the member's turn.completed, so drain here at
+  // the true end. The drain re-checks activeGroupTurnForBot, so a room turn
+  // begun meanwhile still holds it (upstream OpenMausBot #1664).
+  drainQueuedSends();
   // A follow-up sent while this operation was running belongs to the
   // harness, not whichever composer happened to be mounted. Hand the next
   // one to the ordinary channel runner as soon as the channel is truly idle.
@@ -5096,6 +5101,8 @@ function drainQueuedSends() {
         },
       });
     }),
+    // a bot idle in this thread can still be speaking in a room
+    (botId) => Boolean(activeGroupTurnForBot(botId)),
   );
 }
 
@@ -10532,7 +10539,8 @@ const server = createServer(async (req, res) => {
         }
         try {
           const note = await createVoiceNote(
-            { db: database(), dataDir: DATA_DIR, store, cfg, speak: (config, text, voiceId, _run, own) => tts.speak(config, text, voiceId, undefined, own) },
+            { db: database(), dataDir: DATA_DIR, store, cfg, speak: (config, text, voiceId, _run, own) => tts.speak(config, text, voiceId, undefined, own),
+              stillLive: () => { try { requireActiveInternal(); return true; } catch { return false; } } },
             { botId: internalClaim.botId, threadId: internalClaim.threadId, runId: String(internalClaim.generation), text: body.text, title: body.title },
           );
           rememberVoiceNote({ threadId: internalClaim.threadId, at: Date.now(), name: note.artifact.filename, mime: note.mime, bytes: note.bytes, text: body.text });
@@ -11085,7 +11093,7 @@ const server = createServer(async (req, res) => {
         //
         // per-bot approval gate: a chief-of-staff bot without this on is
         // free to coordinate; one with it on must wait for a human card
-        // (15-min timeout → deny) before its peer turn starts. The channel
+        // (15-min timeout → expired) before its peer turn starts. The channel
         // and the chips are created only AFTER the verdict, so a denied
         // contact leaves no trace of an exchange that never happened.
         if (from.approvePeerComms && !peerCardWaived) {
@@ -11098,7 +11106,7 @@ const server = createServer(async (req, res) => {
             fromThreadId,
           );
           requireActiveInternal();
-          if (verdict !== "allow") return json(res, 200, { error: "denied by user" });
+          if (verdict !== "allow") return json(res, 200, peerApprovalFailure(verdict));
           // The card may have been open for minutes. Re-read both records so
           // deleted bots cannot recreate transcripts through stale objects.
           const freshFrom = store.bot(fromBotId);
@@ -14953,11 +14961,22 @@ const server = createServer(async (req, res) => {
               });
               return { ok: true as const, steered: true as const, threadId, message };
             }
-            if (!current.busy) {
+            if (!current.busy && !activeGroupTurnForBot(current.id)) {
               const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
               return { ok: true as const, threadId, message };
             }
             const queued = queueSteeredMessage(current.id, threadId, text, {
+              replyToId: replyTo?.id,
+              sendId,
+              prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
+            });
+            return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
+          }
+          // Idle here but speaking in a room: startTurn would refuse with 409.
+          // Queue the words; the drain runs them when the room turn ends
+          // (upstream OpenMausBot #1664).
+          if (activeGroupTurnForBot(currentAtStart.id)) {
+            const queued = queueSteeredMessage(currentAtStart.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),

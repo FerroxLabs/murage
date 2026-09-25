@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const sounds = vi.hoisted(() => ({ enabled: true }));
+vi.mock("./notification-sounds", () => ({
+  notificationSoundsEnabled: () => sounds.enabled,
+}));
+
 import {
   buildNotificationOptions,
   createApprovalDeduper,
@@ -34,7 +39,10 @@ function installNotification(permission: NotificationPermission, focused = false
   return { notices, requestPermission };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  sounds.enabled = true;
+});
 
 describe("desktop notifications", () => {
   it("delivers a fresh focused approval through the native bridge once", () => {
@@ -186,5 +194,34 @@ describe("buildNotificationOptions", () => {
       tag: "murage:bot-9",
       icon: undefined,
     });
+  });
+});
+
+// Upstream OpenMausBot #1274: someone on a call with a bot hears it talk, then
+// the platform's chime for the same reply. This computer can mute the sound
+// and keep the banner.
+describe("notification sounds", () => {
+  it("lets the platform play its sound by default", () => {
+    const { notices } = installNotification("granted");
+    showNotification(frame, vi.fn());
+    expect(notices[0]?.options?.silent).toBeUndefined();
+  });
+
+  it("posts silently when sounds are muted on this computer, keeping the banner", () => {
+    sounds.enabled = false;
+    const { notices } = installNotification("granted");
+    showNotification(frame, vi.fn());
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.options).toMatchObject({ body: frame.body, silent: true });
+  });
+
+  it("asks the native approval banner to stay silent too", () => {
+    sounds.enabled = false;
+    installNotification("granted");
+    const show = vi.fn(async () => ({ accepted: true }));
+    Object.assign(window, { muragebox: { platform: "darwin", approvalNotifications: { show } } });
+    const approval = { ...frame, kind: "approval" as const, requestId: "muted-approval", messageId: "card" };
+    showNotification(approval, vi.fn());
+    expect(show).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId, requestId: "muted-approval", messageId: "card", title: frame.title, body: frame.body, silent: true });
   });
 });

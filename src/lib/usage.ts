@@ -20,7 +20,16 @@ export function sumUsage(items: Array<TaskUsage | undefined>): TaskUsage {
     if (hasFiniteCost(u.cachedInput)) out.cachedInput = (out.cachedInput ?? 0) + u.cachedInput;
     if (hasFiniteCost(u.costUsd)) out.costUsd = (out.costUsd ?? 0) + u.costUsd;
   }
+  // A record with input but no cache count leaves the whole split unknown.
+  // Treating the missing count as zero would call its input all new text.
+  if (items.some((u) => u && u.input > 0 && !cachedKnown(u))) delete out.cachedInput;
   return out;
+}
+
+/** The engine reported how much input came from its cache. A missing count
+ * is unknown, not zero (upstream OpenMausBot #1673). */
+export function cachedKnown(u: Pick<TaskUsage, "cachedInput">): boolean {
+  return hasFiniteCost(u.cachedInput);
 }
 
 export function botUsage(bot: Pick<Bot, "tasks">): TaskUsage {
@@ -73,8 +82,7 @@ export function cachedInput(u: TaskUsage): number {
  * model ~17k tokens of reading each turn — so the breakdown is where the
  * "was that really 100k?" question gets answered. */
 export function usageDetail(u: TaskUsage): string {
-  const cached = cachedInput(u);
-  const input = cached > 0 ? `${formatTokens(u.input)} in (${formatTokens(cached)} cached)` : `${formatTokens(u.input)} in`;
+  const input = cachedKnown(u) ? `${formatTokens(u.input)} in (${formatTokens(cachedInput(u))} cached)` : `${formatTokens(u.input)} in`;
   return `${input} · ${formatTokens(u.output)} out`;
 }
 
@@ -155,7 +163,7 @@ export function usageReport(u: TaskUsage, context: UsageReportContext = {}): Usa
   // The headline is fresh tokens; this is the full arithmetic behind it, so
   // the two can be reconciled instead of looking like a discrepancy.
   lines.push({ id: "breakdown", text: usageDetail(u) });
-  if (cachedInput(u) > 0) {
+  if (cachedKnown(u)) {
     lines.push({ id: "fresh", text: `${formatTokens(freshTokens(u))} tok new: the figure on the chip` });
     // the whole thread rides along on every turn, so most of "in" is the
     // model re-reading what it already saw — say so, or the figure reads as

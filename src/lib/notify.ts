@@ -2,6 +2,7 @@
 // The server decides *whether* something is worth an interruption (it owns
 // the per-bot toggle); this only decides how to show it here.
 import type { Notification } from "../../server/notify.ts";
+import { notificationSoundsEnabled } from "./notification-sounds";
 
 export type NotifyFrame = Notification;
 
@@ -65,6 +66,7 @@ export function showNotification(
         void bridge.approvalNotifications.show({
           botId: frame.botId, threadId: frame.threadId, requestId: frame.requestId, messageId: frame.messageId,
           ...(frame.requestTurnId ? { requestTurnId: frame.requestTurnId } : {}), title: frame.title, body: frame.body,
+          ...(notificationSoundsEnabled() ? {} : { silent: true }),
         }).catch(() => {});
       } catch { /* A disposed bridge must not interrupt the SSE fold. */ }
       return;
@@ -80,6 +82,9 @@ export function showNotification(
     const options: NotificationOptions = {
       body: frame.body,
       ...buildNotificationOptions({ id: frame.botId, avatarUrl: frame.privatePreview ? undefined : avatarUrl }),
+      // The banner still lands; only the sound is held back on a computer
+      // that muted notification sounds.
+      ...(notificationSoundsEnabled() ? {} : { silent: true }),
     };
     new Notification(frame.title, options).onclick = open;
   }

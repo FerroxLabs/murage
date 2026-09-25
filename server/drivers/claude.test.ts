@@ -1040,6 +1040,26 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
+  it("a Stop during the prompt write on a retained process settles as cancelled, not a throw (upstream #1701)", async () => {
+    // The fake stops reading stdin after its first prompt, so a prompt larger
+    // than the pipe buffer stays mid-write until the process dies.
+    await create(undefined, { FAKE_CLAUDE_STEER_GATE: join(scratch, "never-opened.gate") });
+    const first = await instance.adapter.sendTurn({ threadId: "t-live-write-stop", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    // turn.started is emitted after Stop is registered and before the prompt
+    // write is awaited: stopping here is a Stop that lands mid-write
+    const unsubscribe = instance.adapter.onEvent((event) => {
+      if (event.type === "turn.started" && event.turnId !== first.turnId) {
+        unsubscribe();
+        void instance.adapter.interruptTurn("t-live-write-stop");
+      }
+    });
+    const second = await instance.adapter.sendTurn({ threadId: "t-live-write-stop", text: `two ${"x".repeat(2_000_000)}` });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
   it("an error result the CLI writes for a stopped turn settles as cancelled, not failed (STOP1)", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({
