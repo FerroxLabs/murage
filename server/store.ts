@@ -2573,6 +2573,17 @@ export class Store {
     return task.procedurePin;
   }
 
+  /** A new routine run in the routine's own conversation is a fresh start:
+   *  its first turn pins the skills and routine instruction current then,
+   *  not the ones an earlier run pinned. Earlier bundles stay on disk. */
+  releaseTaskProcedures(botId:string, threadId:string):void {
+    const task=this.bot(botId)?.tasks?.find(item=>item.threadId===threadId);
+    if(!task?.procedurePin)return;
+    const prior=task.procedurePin;
+    delete task.procedurePin;
+    try{this.saveBots();}catch(error){task.procedurePin=prior;throw error;}
+  }
+
   pinGroupProcedures(groupId:string, threadId:string, botId:string, pin:ProcedurePin):ProcedurePin {
     const group=this.group(groupId);
     const holder=group?.dm&&group.threadId===threadId?group:this.groupTaskByThread(groupId,threadId);

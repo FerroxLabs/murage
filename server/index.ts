@@ -5681,6 +5681,7 @@ async function startTurn(
       let browser: Extract<Awaited<ReturnType<typeof browserIntegration>>, { profileKey: string }> | null = null;
       const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
         createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
+      routines?.notePinnedBundle(threadId, procedurePin.bundleId);
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       // The Chief of Staff guide rides every turn of the workspace Chief
       // while it is switched on, and no other bot's (skill-library.ts).
@@ -6777,7 +6778,11 @@ routines = new RoutineManager({
     // Each run starts a fresh engine session in the routine's conversation:
     // the engine gets this run's instructions and at most the recent history
     // replay every fresh session gets, never an ever-growing session.
-    if (reused) store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
+    // It also pins the skills and instruction current now, not the first run's.
+    if (reused) {
+      store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
+      store.releaseTaskProcedures(run.botId, run.threadId);
+    }
     // the run marker: where one run ends and the next begins
     store.appendMessage(run.threadId, {
       role: "bot",

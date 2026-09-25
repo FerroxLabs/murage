@@ -367,9 +367,12 @@ export function validateAdapterArtifacts(row: AdapterRow, value: unknown): Adapt
       rule(v.heldout.candidate > v.heldout.baseline, at("held-out candidate must beat the baseline"));
       rule(v.publication.publishedRevision !== v.publication.baseRevision, at("publication must change the revision"));
       rule(v.earlierTask.revisionAfterPublication === v.publication.baseRevision && v.earlierTask.revisionAfterRollback === v.publication.baseRevision, at("earlier task version must stay at the base revision"));
-      rule(v.nextTask.revision === v.publication.publishedRevision && v.nextTask.threadId !== v.earlierTask.threadId, at("next task must use the published revision in a new task"));
+      // A routine's runs share its one conversation; each run re-pins there.
+      rule(v.nextTask.revision === v.publication.publishedRevision && (v.publication.kind === "routine" ? v.nextTask.threadId === v.earlierTask.threadId : v.nextTask.threadId !== v.earlierTask.threadId), at(v.publication.kind === "routine" ? "next run must use the published revision in the routine's conversation" : "next task must use the published revision in a new task"));
       rule(v.rollback.fromRevision === v.publication.publishedRevision && v.rollback.toRevision !== v.publication.publishedRevision
-        && v.rollback.nextTask.revision === v.rollback.toRevision && ![v.earlierTask.threadId, v.nextTask.threadId].includes(v.rollback.nextTask.threadId), at("rollback must leave the published revision for a new task"));
+        && v.rollback.nextTask.revision === v.rollback.toRevision
+        && (v.publication.kind === "routine" ? v.rollback.nextTask.threadId === v.earlierTask.threadId : ![v.earlierTask.threadId, v.nextTask.threadId].includes(v.rollback.nextTask.threadId)),
+        at(v.publication.kind === "routine" ? "rollback must leave the published revision for the routine's next run" : "rollback must leave the published revision for a new task"));
       if (v.publication.kind === "routine") rule([v.publication.baseRevision, v.publication.publishedRevision, v.rollback.toRevision].every(value => routinePair(value) !== null)
         && routinePair(v.rollback.toRevision)![0] !== routinePair(v.publication.publishedRevision)![0], at("routine revisions must be distinct [instructionRevision, updatedAt] pairs"));
       rule(Q14_READBACK_FACTS.every(fact => v.readback.filter(entry => entry.fact === fact).length === 1), at("readback must claim each Q14 fact exactly once"));
@@ -407,6 +410,10 @@ export const Q14_FACT_RULES: Record<"skill" | "routine", Record<Q14ReadbackFact,
     "published-revision-in-history": { field: "publication.publishedRevision", value: v => v.publication.publishedRevision, via: "api", path: "/api/routines", pointer: new RegExp(`^/routines/${INDEX}/instructionHistory/${INDEX}/id$`) },
     "rollback-history-entry": { field: "publication.baseRevision", value: v => v.publication.baseRevision, via: "api", path: "/api/routines", pointer: new RegExp(`^/routines/${INDEX}/instructionHistory/${INDEX}/rollbackOf$`) },
     ...SHARED_RULES,
+    // A routine's runs share one conversation, whose task pin is the latest
+    // run's; each earlier run keeps the bundle it pinned on its run record.
+    "earlier-task-pin": { ...SHARED_RULES["earlier-task-pin"], path: "/api/routines", pointer: new RegExp(`^/runs/${INDEX}/procedureBundleId$`), leaves: undefined },
+    "next-task-pin": { ...SHARED_RULES["next-task-pin"], path: "/api/routines", pointer: new RegExp(`^/runs/${INDEX}/procedureBundleId$`), leaves: undefined },
   },
 };
 /** Sibling scalars the runner reads from the same GET /api/routines body to bind a routine fact to its routine and history entry. */

@@ -154,6 +154,10 @@ export interface RoutineRun {
   instructionRevision?: string;
   instructionEvidence?: RoutineInstructionRevision["evidence"];
   instructionEvaluationReceiptId?: string;
+  /** The skills-and-instruction bundle this run's first turn pinned. Runs
+   * share their routine's one conversation, which carries only the latest
+   * run's pin; this keeps what each run used. */
+  procedureBundleId?: string;
   /** Snapshot of the legacy calendar/display length. */
   durationMinutes?: number;
   /** Snapshot of the optional active-work safety cap. */
@@ -1897,6 +1901,15 @@ export class RoutineManager {
     this.emitRoutine(current);
     this.emitRun(run);
     if (run.watch?.outcome === "failed") this.options.onRunFailed?.(cloneRun(run));
+  }
+
+  /** The live run working in this conversation pinned `bundleId` (first pin only). */
+  notePinnedBundle(threadId: string, bundleId: string): void {
+    const run = this.runs.find((item) => item.threadId === threadId && isLive(item.status));
+    if (!run || run.procedureBundleId) return;
+    run.procedureBundleId = bundleId;
+    this.save();
+    this.emitRun(run);
   }
 
   private emitRoutine(routine: Routine) {
