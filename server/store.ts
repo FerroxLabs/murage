@@ -719,6 +719,9 @@ export interface BotRecord {
   /** Whether its team's brief reaches this bot's turns. Absent means on;
    * the owner switches it off in "What shapes <bot>" (standing-context.ts). */
   teamBrief?: false;
+  /** Whether the owner's About me reaches this bot's owner turns. Absent
+   * means on; switched off in "What shapes <bot>" (about-me.ts). */
+  aboutMe?: false;
   /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
   connectedAppAccess?: ConnectedAppAccess;
   /** Monotonic identity fence; returning to an old role never revives requests. */
@@ -1043,6 +1046,10 @@ export class Store {
       // Only an exact false is stored; anything else reads as on.
       if (b.teamBrief !== undefined && b.teamBrief !== false) {
         delete b.teamBrief;
+        botsMigrated = true;
+      }
+      if (b.aboutMe !== undefined && b.aboutMe !== false) {
+        delete b.aboutMe;
         botsMigrated = true;
       }
       // One shape for "no voice note": absent. A blank or whitespace-only

@@ -5,7 +5,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { SECTION_CONTEXTS_FILE, writeSectionContext } from "./section-context.ts";
-import { standingContextPrompt } from "./standing-context.ts";
+import { saveAboutMe } from "./about-me.ts";
+import { standingContextParts, standingContextPrompt } from "./standing-context.ts";
 import { ensureWorkspace, MEMORY_MAX_LINES } from "./workspace.ts";
 
 const bot = { id: "standing-bot", section: "Ops" };
@@ -52,4 +53,24 @@ it("loads only the notebook's budget, however long it grows", () => {
   expect(prompt).toContain(`- line ${MEMORY_MAX_LINES - 1}`);
   expect(prompt).not.toContain(`- line ${MEMORY_MAX_LINES}`);
   expect(prompt).toContain("Trim it");
+});
+
+// About me (about-me.ts) is the owner's own profile: the same owner-audience
+// rule as the brief and the notebook, and a per-bot switch like the brief.
+it("gives About me to an owner-audience turn only, attended or not", () => {
+  saveAboutMe("ABOUT_ME_CANARY I run the Fern garden shop.");
+  expect(standingContextParts(bot, { ownerAudience: true, fileTools: true }).aboutMe).toContain("ABOUT_ME_CANARY");
+  expect(standingContextParts(bot, { ownerAudience: true, fileTools: false, unattended: true }).aboutMe).toContain("ABOUT_ME_CANARY");
+  expect(standingContextParts(bot, { ownerAudience: false, fileTools: true })).toEqual({ aboutMe: "", teamBrief: "", memory: "" });
+  // the joined standing block is unchanged: About me is its own layer
+  expect(standingContextPrompt(bot, { ownerAudience: true, fileTools: true })).not.toContain("ABOUT_ME_CANARY");
+});
+
+it("leaves About me out for a bot the owner switched it off for", () => {
+  saveAboutMe("ABOUT_ME_CANARY I run the Fern garden shop.");
+  const parts = standingContextParts({ ...bot, aboutMe: false }, { ownerAudience: true, fileTools: true });
+  expect(parts.aboutMe).toBe("");
+  expect(parts.memory).toContain("NOTEBOOK_CANARY");
+  saveAboutMe("");
+  expect(standingContextParts(bot, { ownerAudience: true, fileTools: true }).aboutMe).toBe("");
 });

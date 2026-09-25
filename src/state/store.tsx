@@ -406,6 +406,8 @@ export interface Bot {
   composio?: boolean;
   /** false when the owner switched its team's brief off for this bot. */
   teamBrief?: false;
+  /** false when the owner switched About me off for this bot. */
+  aboutMe?: false;
   /** Set on bots that arrived from a bot package. `wireBot` (server/index.ts)
    * spreads the whole record, so this reaches the renderer on GET /api/bots,
    * on the import response and on every SSE bot frame; without it declared
@@ -604,6 +606,7 @@ export type AppSettingsSection =
   | "computer"
   | "skills"
   | "houseRules"
+  | "aboutMe"
   | "usage";
 
 /** Where the bot window opens: Skills with or without its picker open, or
