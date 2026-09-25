@@ -710,4 +710,56 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const instance = create({ reasoning: true });
     await expect(instance.generateText?.("hello")).resolves.toBe("helper thought");
   });
+
+  // FerroxLabs/murage#7: a local model with no plan channel writes its to-do
+  // list into the answer. It becomes the plan checklist and leaves the answer.
+  describe("a <todo> block in the answer", () => {
+    const assistantDeltas = (events: RuntimeEvent[]) =>
+      events.flatMap((event) => (event.type === "content.delta" && event.streamKind === "assistant_text" ? [event.delta] : []));
+    const plans = (events: RuntimeEvent[]) =>
+      events.flatMap((event) => (event.type === "plan.updated" ? [event.entries] : []));
+
+    it("becomes a plan update and is left out of the streamed and final answer, split anywhere", async () => {
+      const reply = "Let me look.\n\n<todo>\n- [ ] Explore the folder\n- [x] Read the notes\n</todo>\n\nI'll start by listing it.";
+      const pieces = ["Let me look.\n\n<to", "do>\n- [ ] Explore the fol", "der\n- [x] Read the notes\n</to", "do>\n\nI'll start by listing it."];
+      const { completed, events } = await runTurn("t-todo-block", [() => sse([
+        ...pieces.map((piece, index) => contentFrame(piece, index === pieces.length - 1 ? "stop" : undefined)),
+        DONE,
+      ])]);
+      expect(pieces.join("")).toBe(reply);
+      expect(completed).toMatchObject({ ok: true });
+      expect(plans(events)).toEqual([[
+        { content: "Explore the folder", status: "pending" },
+        { content: "Read the notes", status: "completed" },
+      ]]);
+      expect(assistantDeltas(events).join("")).toBe("Let me look.\n\nI'll start by listing it.");
+      expect(replies(events)).toEqual(["Let me look.\n\nI'll start by listing it."]);
+      const types = events.map((event) => event.type);
+      expect(types.indexOf("plan.updated")).toBeLessThan(types.indexOf("item.completed"));
+    });
+
+    it("keeps a block that is not a checklist, word for word", async () => {
+      const reply = "Here:\n<todo>\nnot a list\n</todo>\nand <todo> mid-line";
+      const { events } = await runTurn("t-todo-prose", [() => sse([contentFrame(reply, "stop"), DONE])]);
+      expect(plans(events)).toEqual([]);
+      expect(assistantDeltas(events).join("")).toBe(reply);
+      expect(replies(events)).toEqual([reply]);
+    });
+
+    it("keeps an unclosed block when the stream is cut off", async () => {
+      const partial = "Plan:\n<todo>\n- [ ] a\n- [ ] b";
+      const { completed, events } = await runTurn("t-todo-cut", [() => sse([contentFrame(partial)])]);
+      expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+      expect(plans(events)).toEqual([]);
+      expect(replies(events)).toEqual([partial]);
+    });
+
+    it("a reply that is only a to-do list shows the plan and no empty message", async () => {
+      const { completed, events } = await runTurn("t-todo-only", [() => sse([contentFrame("<todo>\n- [ ] a\n</todo>", "stop"), DONE])]);
+      expect(completed).toMatchObject({ ok: true });
+      expect(errors(events)).toEqual([]);
+      expect(plans(events)).toEqual([[{ content: "a", status: "pending" }]]);
+      expect(replies(events)).toEqual([]);
+    });
+  });
 });

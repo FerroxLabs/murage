@@ -5,7 +5,7 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | editor | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | editor | interleave | todo | turn-error | no-models | exit-early
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
 //                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
 //                  shape; question = an `input` ask; editor = an `editor` ask with prefill
@@ -207,6 +207,21 @@ const streamInterleaveTurn = () => {
   send({ type: "agent_end" });
 };
 
+/** A local model writing its to-do list into the answer (issue #7), split
+ * mid-tag, with a tool call after it. */
+const streamTodoTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  for (const delta of ["On it.\n\n<to", "do>\n- [ ] List the folder\n- [ ] Rep", "ort back\n</todo>\n\nListing now."]) {
+    send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
+  }
+  send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } });
+  send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "<todo>\n- [x] List the folder\n- [ ] Report back\n</todo>\nFound two files." } });
+  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+  send({ type: "agent_end" });
+};
+
 const finishPermissionTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
@@ -350,6 +365,7 @@ function handle(cmd: any) {
       else if (mode === "question") streamQuestionTurn();
       else if (mode === "editor") streamEditorTurn();
       else if (mode === "interleave") streamInterleaveTurn();
+      else if (mode === "todo") streamTodoTurn();
       else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
       return;
