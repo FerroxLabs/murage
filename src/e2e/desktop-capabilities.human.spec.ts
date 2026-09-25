@@ -74,7 +74,12 @@ test.beforeAll(async () => {
           } else if (which === 'inspector') {
             const { InspectorPanel } = await import('/src/components/InspectorPanel.tsx');
             element = React.createElement(InspectorPanel,{bot});
-          } else if (which === 'approval' || which.startsWith('routine-')) {
+          } else if (which === 'grants') {
+            const { RememberedApprovals } = await import('/src/components/RememberedApprovals.tsx');
+            state.instances[0].instanceId = 'fixture';
+            const granted = {...bot, alwaysAllow:['Bash:git','exact:["fixture","/Users/ada/project","npm test && npm run build"]'], tasks:[{threadId:'thread-a',title:'Fixture',createdAt:1,alwaysAllow:['stop:delete:/Users/ada/old']}]};
+            element = React.createElement(RememberedApprovals,{bot:granted,desktop:new URL(location.href).searchParams.get('desktop') === '1'});
+          } else if (which === 'approval' || which === 'approval-exact' || which.startsWith('routine-')) {
             const { PendingApprovalActions, PendingApprovalPanel } = await import('/src/components/PendingApproval.tsx');
             const card = {title:'Review command',subtitle:'git status',tool:'Bash',requestId:'request-a',options:['Allow','Deny']};
             if (which.startsWith('routine-')) {
@@ -82,7 +87,8 @@ test.beforeAll(async () => {
               if (which === 'routine-ready') card.routineProposalDigest = 'a'.repeat(64);
               if (which === 'routine-invalid') card.routineProposalDigest = 'incorrect';
             }
-            const pending = {requestId:'request-a',tool:card.tool,allowKey:'Bash:git',detail:card.subtitle,message:{id:'message-a',role:'bot',kind:'options',at:1,card}};
+            if (which === 'approval-exact') { card.subtitle = 'git status | head -5'; card.exactAllowKey = 'exact:["fixture","/Users/ada/project","git status | head -5"]'; }
+            const pending = {requestId:'request-a',tool:card.tool,allowKey:'Bash:git',exactAllowKey:card.exactAllowKey,detail:card.subtitle,message:{id:'message-a',role:'bot',kind:'options',at:1,card}};
             element = React.createElement(React.Fragment,{},React.createElement(PendingApprovalPanel,{pending,count:1,index:0}),React.createElement(PendingApprovalActions,{bot,threadId:'thread-a',onCancelTurn:()=>{},pending}));
           } else {
             const { RoutinesPage } = await import('/src/components/RoutineCalendarPage.tsx');
@@ -123,7 +129,7 @@ async function mount(page: Page, component: string, desktop = false, { claudeAcc
     if (path === "/api/mcp/servers") return route.fulfill({ json: { servers: [] } });
     return route.fulfill({ json: { calls: [] } });
   });
-  await page.goto(`${origin}/__capabilities?component=${component}`);
+  await page.goto(`${origin}/__capabilities?component=${component}${desktop ? "&desktop=1" : ""}`);
 }
 
 async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
@@ -442,7 +448,7 @@ test("desktop profile reports pending, failed and successful saves without dispa
 
 test("confirmed desktop retains persistent approvals, MCP and routine editing", async ({ page }) => {
   await mount(page, "approval", true);
-  await page.getByRole("button", { name: "Always allow", exact: true }).click();
+  await page.getByRole("button", { name: "Always allow any git command", exact: true }).click();
   expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest').alwaysAllow")).toEqual({ botId: "bot-a", key: "Bash:git" });
   await mount(page, "plugins", true);
   await page.getByRole("tab", { name: "MCP servers" }).click();
@@ -497,3 +503,50 @@ for (const variant of ["legacy", "invalid", "ready"]) {
     }
   });
 }
+
+test("an exact command card recommends the narrow grant and records exactly that key", async ({ page }, testInfo) => {
+  await mount(page, "approval-exact", true);
+  const exact = page.getByRole("button", { name: "Always allow this exact command here", exact: true });
+  await expect(exact).toBeVisible();
+  await expect(page.getByRole("button", { name: "Always allow any git command", exact: true })).toBeVisible();
+  // the recommended grant sits next to Allow once, ahead of the wider one
+  const labels = await page.getByRole("button").allTextContents();
+  expect(labels.indexOf("Always allow this exact command here")).toBe(labels.indexOf("Allow once") - 1);
+  await page.screenshot({ path: testInfo.outputPath("approval-exact.png") });
+  await exact.click();
+  expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest')")).toMatchObject({
+    behavior: "allow",
+    alwaysAllow: { botId: "bot-a", key: 'exact:["fixture","/Users/ada/project","git status | head -5"]' },
+  });
+});
+
+test("remote approvals offer no exact command grant either", async ({ page }) => {
+  await mount(page, "approval-exact");
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Always allow/ })).toHaveCount(0);
+});
+
+test("remembered grants show command, folder and engine, and remove from the desktop", async ({ page }, testInfo) => {
+  await mount(page, "grants", true);
+  const removals: Array<{ body: unknown; proof: string }> = [];
+  await page.route("**/api/bots/bot-a/always-allow/remove", async (route) => {
+    removals.push({ body: route.request().postDataJSON(), proof: route.request().headers()["x-murage-surface-secret"] ?? "" });
+    await route.fulfill({ json: { bot: {} } });
+  });
+  const list = page.getByRole("region", { name: "Always allowed" });
+  await expect(list.getByText("npm test && npm run build", { exact: true })).toBeVisible();
+  await expect(list.getByText("/Users/ada/project", { exact: true })).toBeVisible();
+  await expect(list.getByText(/Fixture engine/)).toBeVisible();
+  await expect(list.getByText("Any git command", { exact: true })).toBeVisible();
+  await expect(list.getByText("Deleting in /Users/ada/old", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("remembered-grants.png") });
+  await list.getByRole("button", { name: "Remove always allow for npm test && npm run build" }).click();
+  await expect(list.getByText("npm test && npm run build", { exact: true })).toHaveCount(0);
+  expect(removals).toEqual([{ body: { key: 'exact:["fixture","/Users/ada/project","npm test && npm run build"]' }, proof: "fixture-proof" }]);
+  await expect(list.getByText("Any git command", { exact: true })).toBeVisible();
+});
+
+test("remembered grants are not shown off the desktop", async ({ page }) => {
+  await mount(page, "grants");
+  await expect(page.getByRole("region", { name: "Always allowed" })).toHaveCount(0);
+});

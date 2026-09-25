@@ -24,6 +24,8 @@ export interface Pending {
   tool: string;
   /** the narrow grant "always allow" writes, computed server-side */
   allowKey?: string;
+  /** "Always allow this exact command here", computed server-side */
+  exactAllowKey?: string;
   detail: string;
   held?: string;
 }
@@ -58,6 +60,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       requestId: m.card!.requestId!,
       tool: m.card!.tool!,
       allowKey: m.card!.allowKey,
+      exactAllowKey: m.card!.exactAllowKey,
       detail: m.card!.subtitle,
       held: m.card!.held,
     }));
@@ -202,13 +205,24 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
  * the one it would record. A stop-line card (deleting outside its folder,
  * paying, messaging someone new) also offers "Allow for this task": the same
  * kind of action in the same place until the task ends. */
-export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; forTask: boolean } {
+export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; exact: boolean; forTask: boolean } {
   const durable = isRoutineApproval(pending) || isSkillApproval(pending);
-  if (durable || isHostConsentApproval(pending)) return { always: false, forTask: false };
+  if (durable || isHostConsentApproval(pending)) return { always: false, exact: false, forTask: false };
   return {
     always: opts.desktop === true && opts.hasBot && Boolean(pending.allowKey),
+    // the narrow grant: this command, in this folder, on this engine
+    exact: opts.desktop === true && opts.hasBot && Boolean(pending.exactAllowKey),
     forTask: opts.hasBot && Boolean(pending.message.card?.taskAllowKey),
   };
+}
+
+const PROGRAM_GRANT = /^(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal):([^:\s]+)$/i;
+
+/** The per-program grant's button, naming what it covers so it reads apart
+ * from the exact one beside it. */
+export function alwaysAllowLabel(pending: Pending): string {
+  const program = pending.allowKey?.startsWith(`${pending.tool}:`) ? PROGRAM_GRANT.exec(pending.allowKey)?.[1] : undefined;
+  return program ? `Always allow any ${program} command` : "Always allow";
 }
 
 export function PendingApprovalActions({
@@ -233,7 +247,8 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
   const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot) });
-  const decide = (behavior: "allow" | "deny", always = false, forTask = false) =>
+  const decide = (behavior: "allow" | "deny", always: false | "program" | "exact" = false, forTask = false) => {
+    const key = always === "exact" ? pending.exactAllowKey : always === "program" ? pending.allowKey : undefined;
     dispatch({
       type: "decideRequest",
       threadId,
@@ -241,9 +256,10 @@ export function PendingApprovalActions({
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      alwaysAllow: desktop === true && always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
+      alwaysAllow: desktop === true && bot && key ? { botId: bot.id, key } : undefined,
       ...(behavior === "allow" && forTask && grants.forTask ? { allowForTask: true } : {}),
     });
+  };
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
   return (
@@ -261,11 +277,11 @@ export function PendingApprovalActions({
       </button>
       {grants.always && bot && pending.allowKey && (
         <button
-          onClick={() => decide("allow", true)}
+          onClick={() => decide("allow", "program")}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}
           className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
         >
-          Always allow
+          {alwaysAllowLabel(pending)}
         </button>
       )}
       {grants.forTask && (
@@ -275,6 +291,16 @@ export function PendingApprovalActions({
           className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
         >
           Allow for this task
+        </button>
+      )}
+      {/* the recommended remembered grant: nothing wider than this command */}
+      {grants.exact && bot && (
+        <button
+          onClick={() => decide("allow", "exact")}
+          title={`Stop asking ${bot.name} about this command, only in this folder and only on this engine`}
+          className={cn(base, "border border-accent/60 text-ink hover:bg-accent/10")}
+        >
+          Always allow this exact command here
         </button>
       )}
       <button

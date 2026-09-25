@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { approvalGrants, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
+import { alwaysAllowLabel, approvalGrants, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
 
@@ -410,20 +410,50 @@ describe("the stop line's grants on a pending approval", () => {
     requestId: "r",
     tool: "Bash",
     allowKey: card.allowKey,
+    exactAllowKey: card.exactAllowKey,
     detail: "rm -rf ~/Documents/old",
   });
 
   it("offers Allow for this task when the server scoped one, on any surface", () => {
     const stop = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
-    expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, forTask: true });
-    expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, forTask: true });
+    expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: true });
+    expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, exact: false, forTask: true });
   });
 
   it("keeps Always allow but offers no task grant on an ordinary card", () => {
-    expect(approvalGrants(pending({ allowKey: "Bash:git" }), { desktop: true, hasBot: true })).toEqual({ always: true, forTask: false });
+    expect(approvalGrants(pending({ allowKey: "Bash:git" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: false });
   });
 
   it("offers neither when the stop line could not say where", () => {
-    expect(approvalGrants(pending({}), { desktop: true, hasBot: true })).toEqual({ always: false, forTask: false });
+    expect(approvalGrants(pending({}), { desktop: true, hasBot: true })).toEqual({ always: false, exact: false, forTask: false });
+  });
+});
+
+describe("the exact command grant on a pending approval", () => {
+  const exactAllowKey = 'exact:["claude","/Users/ada/project","npm test | tee log"]';
+  const pending = (card: Partial<NonNullable<Message["card"]>>): Pending => ({
+    message: { id: "m", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: "npm test | tee log", options: ["Allow", "Deny"], tool: "Bash", requestId: "r", ...card } },
+    requestId: "r",
+    tool: "Bash",
+    allowKey: card.allowKey,
+    exactAllowKey: card.exactAllowKey,
+    detail: "npm test | tee log",
+  });
+
+  it("offers the exact grant on the desktop, beside a per-program grant or alone", () => {
+    expect(approvalGrants(pending({ exactAllowKey }), { desktop: true, hasBot: true })).toEqual({ always: false, exact: true, forTask: false });
+    expect(approvalGrants(pending({ exactAllowKey, allowKey: "Bash:npm" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: true, forTask: false });
+  });
+
+  it("never offers it off the desktop or without a bot", () => {
+    expect(approvalGrants(pending({ exactAllowKey }), { desktop: false, hasBot: true }).exact).toBe(false);
+    expect(approvalGrants(pending({ exactAllowKey }), { desktop: undefined, hasBot: true }).exact).toBe(false);
+    expect(approvalGrants(pending({ exactAllowKey }), { desktop: true, hasBot: false }).exact).toBe(false);
+  });
+
+  it("names what the per-program grant covers", () => {
+    expect(alwaysAllowLabel(pending({ allowKey: "Bash:git" }))).toBe("Always allow any git command");
+    expect(alwaysAllowLabel(pending({ allowKey: "stop:delete:/Users/ada/old" }))).toBe("Always allow");
+    expect(alwaysAllowLabel({ ...pending({ allowKey: "mcp__box__read" }), tool: "mcp__box__read" })).toBe("Always allow");
   });
 });
