@@ -9,10 +9,11 @@
 // token is generated once, handed to the phone at pairing, and never stored
 // — devices.json keeps only its SHA-256. A stolen devices.json is not a
 // stolen fleet.
-import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { loadSessionSecret } from "./session-secret.ts";
 import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
 
 /** A successor credential that has been handed out and not yet used.
@@ -367,9 +368,8 @@ function sessionExpired(session: BrowserSession, now: number): boolean {
   return session.expiresAt <= now || now - session.lastSeenAt > SESSION_IDLE_MS;
 }
 
-/** Whether an unused successor has aged out. Exported only until
- * `renewSession` refuses stale successors with it; nothing else should. */
-export function pendingExpired(pending: PendingSuccessor, now: number): boolean {
+/** Whether an unused successor has aged out. */
+function pendingExpired(pending: PendingSuccessor, now: number): boolean {
   return now - pending.issuedAt > PENDING_TTL_MS;
 }
 
@@ -396,6 +396,32 @@ function publicDevice(device: DeviceRecord): PublicDevice {
   return rest;
 }
 
+/** What a renewal hands the door: the value to set as the cookie, and the cap
+ * that value will have once it is current (the cookie's Max-Age). */
+export interface SessionRenewal {
+  value: string;
+  session: BrowserSession;
+  expiresAt: number;
+}
+
+/** The successor a session's current credential leads to, at one generation.
+ *
+ * An HMAC, so the server can compute it again for a retry without ever
+ * storing it. The input names the session (`id`), when it was opened
+ * (`createdAt`) and what it currently holds (`hash`) as well as the
+ * generation, so no other session, and no later sign-in on this one, can
+ * arrive at the same value. */
+export function successorValue(
+  secret: Buffer,
+  session: Pick<BrowserSession, "id" | "createdAt" | "hash">,
+  generation: number,
+): string {
+  const mac = createHmac("sha256", secret)
+    .update(`murage-session-successor/1\n${session.id}\n${session.createdAt}\n${session.hash}\n${generation}`)
+    .digest("base64url");
+  return `murage_browser_${mac}`;
+}
+
 /** Device names come from the phone, so they are untrusted display text:
  * clamp the length and drop control characters before they reach a UI. */
 export function cleanDeviceName(raw: unknown): string {
@@ -412,6 +438,41 @@ export function cleanDeviceName(raw: unknown): string {
 const timestamp = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HEX_DIGEST = /^[0-9a-f]{64}$/;
+/** How far ahead of this clock a stored successor's issue time may be and
+ * still be believed: clock skew between the process that wrote the file and
+ * this one. Any further and `pendingExpired` would keep it alive for longer
+ * than `PENDING_TTL_MS`. */
+const PENDING_CLOCK_SKEW_MS = 5 * 60_000;
+
+/** A stored generation, read as generously as it can be without inventing
+ * one. A count that is merely the wrong type ("5", 5.0001) is still the
+ * count; reading it as 0 would let the next successor reuse a generation. */
+function storedGeneration(raw: unknown): number {
+  const generation = Math.floor(Number(raw));
+  return Number.isFinite(generation) && generation > 0 ? generation : 0;
+}
+
+/** A stored successor, or nothing when any part of it is not believable. */
+function storedPending(raw: unknown, now: number): PendingSuccessor | undefined {
+  const pending = raw as Partial<PendingSuccessor> | null | undefined;
+  if (
+    pending &&
+    typeof pending.hash === "string" &&
+    HEX_DIGEST.test(pending.hash) &&
+    Number.isSafeInteger(pending.generation) &&
+    (pending.generation as number) > 0 &&
+    typeof pending.issuedAt === "number" &&
+    Number.isFinite(pending.issuedAt) &&
+    pending.issuedAt >= 0 &&
+    pending.issuedAt <= now + PENDING_CLOCK_SKEW_MS
+  ) {
+    return { hash: pending.hash, generation: pending.generation as number, issuedAt: pending.issuedAt };
+  }
+  return undefined;
+}
+
 /** Complete a stored record, whatever shape the file had. `lastSeenAt` falls
  * back to `createdAt` rather than to the clock: a device we have never heard
  * from since pairing was last seen when it paired. */
@@ -424,28 +485,41 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
     createdAt,
     lastSeenAt: timestamp(record.lastSeenAt, createdAt),
     cloudDesktopAccess: record.cloudDesktopAccess === true,
-    sessionGeneration:
-      Number.isSafeInteger(record.sessionGeneration) && (record.sessionGeneration as number) > 0
-        ? (record.sessionGeneration as number)
-        : 0,
+    sessionGeneration: storedGeneration(record.sessionGeneration),
   };
   const installId = cleanInstallId(record.installId);
   if (installId) device.installId = installId;
+  const sessions = Array.isArray(record.sessions) ? record.sessions : [];
+  // A hand-edited or partly restored file can hold a successor from a later
+  // generation than the device says. Never derive at or below one that
+  // already exists — including on a row dropped below, or cut by the cap,
+  // or whose successor is itself unusable: its generation was still spent.
+  for (const s of sessions) {
+    const generation = storedGeneration((s as Partial<BrowserSession> | null)?.pending?.generation);
+    device.sessionGeneration = Math.max(device.sessionGeneration, generation);
+  }
+  const now = Date.now();
+  const ids = new Set<string>();
   // A session without a hash cannot authenticate and cannot be signed out;
   // it is a row that would sit in the file forever doing nothing. Drop it
   // rather than complete it, which is the opposite call from the device
   // fields above and for the opposite reason: those decorate a working
   // credential, this one *is* the credential.
-  const sessions = Array.isArray(record.sessions) ? record.sessions : [];
   const kept = sessions
     .filter((s): s is BrowserSession => typeof (s as BrowserSession)?.hash === "string")
     .map((s) => {
       const sessionCreatedAt = timestamp(s.createdAt, createdAt);
+      // A session written before ids existed gets one here. It reaches the
+      // file with the first successor derived from it, which is the only
+      // moment the id has to be the same after a restart. So does one whose
+      // id is not a UUID, or is another session's on this device: two
+      // sessions sharing an id would differ only by hash in what their
+      // successors are derived from.
+      let id = typeof s.id === "string" && UUID.test(s.id) && !ids.has(s.id) ? s.id : randomUUID();
+      while (ids.has(id)) id = randomUUID();
+      ids.add(id);
       const session: BrowserSession = {
-        // A session written before ids existed gets one here. It reaches the
-        // file with the first successor derived from it, which is the only
-        // moment the id has to be the same after a restart.
-        id: typeof s.id === "string" && s.id ? s.id : randomUUID(),
+        id,
         hash: s.hash,
         label: cleanDeviceName(s.label),
         createdAt: sessionCreatedAt,
@@ -455,27 +529,12 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
         // session is due for renewal at once rather than a day after upgrade.
         committedAt: timestamp(s.committedAt, sessionCreatedAt),
       };
-      const pending = s.pending as Partial<PendingSuccessor> | undefined;
-      if (
-        pending &&
-        typeof pending.hash === "string" &&
-        Number.isSafeInteger(pending.generation) &&
-        (pending.generation as number) > 0 &&
-        typeof pending.issuedAt === "number" &&
-        Number.isFinite(pending.issuedAt)
-      ) {
-        session.pending = { hash: pending.hash, generation: pending.generation as number, issuedAt: pending.issuedAt };
-      }
+      const pending = storedPending(s.pending, now);
+      if (pending) session.pending = pending;
       return session;
     })
     .slice(0, MAX_SESSIONS_PER_DEVICE);
   if (kept.length) device.sessions = kept;
-  // A hand-edited or partly restored file can hold a successor from a later
-  // generation than the device says. Never derive at or below one that
-  // already exists.
-  for (const session of kept) {
-    if (session.pending) device.sessionGeneration = Math.max(device.sessionGeneration, session.pending.generation);
-  }
   return device;
 }
 
@@ -502,6 +561,9 @@ export class DeviceRegistry {
   /** Why the file on disk could not be used, or null when it could. */
   private unavailable: string | null = null;
   private lastLoadAttempt = 0;
+  /** Loaded on the first renewal that needs it, not at construction: a
+   * registry that never renews anything never needs the file. */
+  private secret: Buffer | null = null;
 
   constructor() {
     this.load();
@@ -866,6 +928,83 @@ export class DeviceRegistry {
     return id;
   }
 
+  /** The successor secret. Throws when it cannot be read; callers fail closed. */
+  private sessionSecret(): Buffer {
+    this.secret ??= loadSessionSecret();
+    return this.secret;
+  }
+
+  /** Which of a session's two values `hash` is, if either. */
+  private match(session: BrowserSession, hash: string): "current" | "pending" | null {
+    if (sameDigest(session.hash, hash)) return "current";
+    if (session.pending && sameDigest(session.pending.hash, hash)) return "pending";
+    return null;
+  }
+
+  /** Make the successor current. The old value dies here and nowhere else.
+   *
+   * False, having changed nothing, when it cannot be written down: the
+   * successor stays pending on disk, so whoever presented it is still
+   * authorised and the next request commits it. */
+  private commit(session: BrowserSession, now: number): boolean {
+    const pending = session.pending;
+    if (!pending) return false;
+    const previous = {
+      hash: session.hash,
+      committedAt: session.committedAt,
+      lastSeenAt: session.lastSeenAt,
+      expiresAt: session.expiresAt,
+    };
+    session.hash = pending.hash;
+    delete session.pending;
+    session.committedAt = now;
+    session.lastSeenAt = now;
+    session.expiresAt = renewedExpiry(session, now);
+    try {
+      this.persist();
+      return true;
+    } catch {
+      Object.assign(session, previous);
+      session.pending = pending;
+      return false;
+    }
+  }
+
+  /** Derive and record a new successor at the next generation.
+   *
+   * Written down BEFORE it is returned. A successor the file does not know
+   * about is one a retry cannot be given again and a restart cannot accept. */
+  private derive(device: DeviceRecord, session: BrowserSession, now: number): SessionRenewal | null {
+    const generation = device.sessionGeneration + 1;
+    // A counter hand-edited past what a double counts exactly would stop
+    // moving, and a generation that does not move is one used twice.
+    if (!Number.isSafeInteger(generation)) return null;
+    let secret: Buffer;
+    try {
+      secret = this.sessionSecret();
+    } catch {
+      return null;
+    }
+    const value = successorValue(secret, session, generation);
+    const previous = { generation: device.sessionGeneration, pending: session.pending, lastSeenAt: session.lastSeenAt };
+    device.sessionGeneration = generation;
+    session.pending = { hash: sha256(value), generation, issuedAt: now };
+    session.lastSeenAt = now;
+    try {
+      this.persist();
+    } catch {
+      // Rolled back, and that generation is free to be derived again: this
+      // value was never sent anywhere, so deriving it again later reuses
+      // nothing that ever left the process.
+      device.sessionGeneration = previous.generation;
+      if (previous.pending) session.pending = previous.pending;
+      else delete session.pending;
+      session.lastSeenAt = previous.lastSeenAt;
+      return null;
+    }
+    return { value, session, expiresAt: renewedExpiry(session, now) };
+  }
+
   /** Be told when a browser session stops being an authorisation: signed out,
    * evicted by a newer sign-in, found expired, or taken with its device.
    *
@@ -969,7 +1108,9 @@ export class DeviceRegistry {
    *
    * Expiry is evaluated on read, both bounds: the absolute cap, and the
    * rolling idle window. `lastSeenAt` is written at most once an hour, and a
-   * failed write must never fail the request. */
+   * failed write must never fail the request. Presenting a live successor
+   * commits it (`commit`); presenting one past `PENDING_TTL_MS` is refused and
+   * changes nothing. */
   resolveSession(
     value: string | undefined,
     now = Date.now(),
@@ -978,89 +1119,101 @@ export class DeviceRegistry {
     this.recover();
     const hash = sha256(value);
     for (const device of this.devices) {
-      const session = device.sessions?.find((s) => sameDigest(s.hash, hash));
-      if (!session) continue;
-      if (sessionExpired(session, now)) {
-        // Take it out on the way past. An expired row that stays is a row
-        // that has to be re-judged on every later request.
-        device.sessions = device.sessions?.filter((s) => s !== session);
-        try {
-          this.persist();
-        } catch {
-          /* it is already refused; the file can catch up */
+      for (const session of device.sessions ?? []) {
+        const which = this.match(session, hash);
+        if (!which) continue;
+        if (sessionExpired(session, now)) {
+          // Take it out on the way past. An expired row that stays is a row
+          // that has to be re-judged on every later request.
+          device.sessions = device.sessions?.filter((s) => s !== session);
+          try {
+            this.persist();
+          } catch {
+            /* it is already refused; the file can catch up */
+          }
+          // Expiry is a fact about the clock, not about the file, so its
+          // streams end whether or not the write above landed.
+          this.sessionsEnded(device.id, [session]);
+          return null;
         }
-        // Expiry is a fact about the clock, not about the file, so its
-        // streams end whether or not the write above landed.
-        this.sessionsEnded(device.id, [session]);
-        return null;
-      }
-      if (now - session.lastSeenAt > LAST_SEEN_WRITE_MS) {
-        session.lastSeenAt = now;
-        try {
-          this.persist();
-        } catch {
-          /* the session is still good; the timestamp can wait */
+        if (which === "pending") {
+          // An unused successor past its week is refused, and nothing else
+          // changes: the value it would have replaced is still good.
+          if (pendingExpired(session.pending!, now)) return null;
+          // Commit on first use. A failed write still serves this request —
+          // the successor is on disk as pending, which authorises it — and
+          // the next request tries the commit again.
+          this.commit(session, now);
+        } else if (now - session.lastSeenAt > LAST_SEEN_WRITE_MS) {
+          session.lastSeenAt = now;
+          try {
+            this.persist();
+          } catch {
+            /* the session is still good; the timestamp can wait */
+          }
         }
+        return { device, session, sessionId: this.sessionId(session) };
       }
-      return { device, session, sessionId: this.sessionId(session) };
     }
     return null;
   }
 
-  /** Rotate a live session's credential in place, and push its cap forward.
+  /** Renewal, made recoverable.
    *
-   * Three properties, and each of them is why this is a method on the
-   * registry rather than "close the old session and open a new one":
+   * A phone loses renewal responses: the app is suspended mid-reply, the
+   * network drops. The old design rotated on every call, so a lost reply left
+   * the phone holding a value the server had already killed. Now each session
+   * holds its `current` value and at most one `pending` successor, derived
+   * rather than random (`successorValue`), and:
    *
-   *  1. **Revocation survives renewal.** The row is mutated where it already
-   *     sits, inside `device.sessions`, so the identity of the record does
-   *     not change and `revoke()` still takes every session on the device
-   *     with it. Minting a fresh session would have been three fewer lines
-   *     and would have made revocation defeatable by anyone able to renew —
-   *     which, since renewal is the one thing a browser does automatically,
-   *     means defeatable by the browser being revoked.
-   *  2. **The old value dies.** One hash per row, overwritten. A renewal that
-   *     left the previous cookie working would turn every rotation into an
-   *     extra live credential.
-   *  3. **`createdAt` is never rewritten.** It is the anchor the ceiling in
-   *     `SESSION_MAX_LIFETIME_MS` is measured from, and the only reason that
-   *     ceiling is a wall rather than a suggestion.
+   *  - presented `current`, with a live `pending`: the same `pending` again.
+   *    Every retry gets an identical value, so replies that arrive out of
+   *    order cannot disagree.
+   *  - presented `current`, no `pending`, due (`SESSION_RENEWAL_DUE_MS` after
+   *    the last commit): a new `pending`, written down first.
+   *  - presented `pending`: commit it, and return it so the door can refresh
+   *    the cookie's lifetime.
+   *  - anything else, including "not due yet": null.
    *
-   * Fails CLOSED, and silently: an unknown, expired or unpersistable session
-   * returns `null` having changed nothing at all. The caller's contract is
-   * that a failed renewal leaves the browser exactly as signed in as it was —
-   * never signed out early, never shown an error. */
-  renewSession(
-    value: string | undefined,
-    now = Date.now(),
-  ): { value: string; session: BrowserSession } | null {
+   * `current` stays valid until `pending` is committed. Revocation still wins:
+   * both values live inside the device record, so `revoke()` takes both, and
+   * `createdAt` is never rewritten, so the ceiling stays a wall.
+   *
+   * Fails CLOSED, and silently: null means "nothing changed", and the door
+   * turns it into a 204, never a sign-out. */
+  renewSession(value: string | undefined, now = Date.now()): SessionRenewal | null {
     if (!value) return null;
     const hash = sha256(value);
     for (const device of this.devices) {
-      const session = device.sessions?.find((s) => sameDigest(s.hash, hash));
-      if (!session) continue;
-      // Not reaped here, deliberately. `resolveSession` owns taking a dead
-      // row out; renewal's only job on failure is to change nothing.
-      if (sessionExpired(session, now)) return null;
-
-      const next = `murage_browser_${randomBytes(32).toString("base64url")}`;
-      const previous = { hash: session.hash, lastSeenAt: session.lastSeenAt, expiresAt: session.expiresAt };
-      session.hash = sha256(next);
-      session.lastSeenAt = now;
-      session.expiresAt = renewedExpiry(session, now);
-      try {
-        this.persist();
-      } catch {
-        // The rotation only counts if it is on disk. A hash that lives in
-        // memory and not in the file signs this browser out at the next
-        // restart — the exact silent logout renewal exists to prevent — so
-        // put the row back and let the caller keep the cookie it has.
-        session.hash = previous.hash;
-        session.lastSeenAt = previous.lastSeenAt;
-        session.expiresAt = previous.expiresAt;
-        return null;
+      for (const session of device.sessions ?? []) {
+        const which = this.match(session, hash);
+        if (!which) continue;
+        // Not reaped here, deliberately. `resolveSession` owns taking a dead
+        // row out; renewal's only job on failure is to change nothing.
+        if (sessionExpired(session, now)) return null;
+        if (which === "pending") {
+          if (pendingExpired(session.pending!, now)) return null;
+          return this.commit(session, now) ? { value, session, expiresAt: session.expiresAt } : null;
+        }
+        const pending = session.pending && !pendingExpired(session.pending, now) ? session.pending : undefined;
+        if (pending) {
+          let resent: string | null = null;
+          try {
+            resent = successorValue(this.sessionSecret(), session, pending.generation);
+          } catch {
+            return null;
+          }
+          if (sameDigest(sha256(resent), pending.hash)) {
+            return { value: resent, session, expiresAt: renewedExpiry(session, now) };
+          }
+          // The secret changed under it (the file was lost and recreated).
+          // That successor can still be committed by its hash if anyone holds
+          // it, but it cannot be sent again, so derive the next one.
+        } else if (now - session.committedAt < SESSION_RENEWAL_DUE_MS) {
+          return null;
+        }
+        return this.derive(device, session, now);
       }
-      return { value: next, session };
     }
     return null;
   }
@@ -1075,7 +1228,9 @@ export class DeviceRegistry {
       const before = device.sessions?.length ?? 0;
       if (!before) continue;
       const previous = device.sessions!;
-      const kept = previous.filter((s) => !sameDigest(s.hash, hash));
+      // Either value signs the browser out: a cookie jar holding the
+      // successor is the same browser as one still holding `current`.
+      const kept = previous.filter((s) => !this.match(s, hash));
       if (kept.length === before) continue;
       const ended = previous.filter((s) => !kept.includes(s));
       device.sessions = kept.length ? kept : undefined;

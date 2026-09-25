@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "../src/state.ts";
+import * as devicesModule from "../src/devices.ts";
 import {
   bearerToken,
   cleanDeviceName,
+  cleanInstallId,
   DeviceRegistry,
   MAX_PAIRING_ATTEMPTS,
+  MAX_SESSIONS_PER_DEVICE,
   PAIRING_TTL_MS,
   REGISTRY_RETRY_MS,
 } from "../src/devices.ts";
@@ -672,5 +675,142 @@ describe("session records written before derived renewal", () => {
     expect(listed).not.toHaveProperty("sessionGeneration");
     expect(listed).not.toHaveProperty("sessions");
     expect(listed).not.toHaveProperty("installId");
+  });
+});
+
+describe("hand-edited or damaged session records", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const file = () => join(DATA_DIR, "devices.json");
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // SAFETY: private field, read only.
+  const generationOf = (registry: DeviceRegistry) =>
+    (registry as unknown as { devices: Array<{ sessionGeneration: number }> }).devices[0].sessionGeneration;
+  const edit = (change: (stored: { devices: Array<Record<string, any>> }) => void) => {
+    const stored = JSON.parse(readFileSync(file(), "utf8"));
+    change(stored);
+    writeFileSync(file(), JSON.stringify(stored));
+  };
+
+  it("keeps a generation that is merely the wrong type, rather than running it back to zero", () => {
+    const registry = new DeviceRegistry();
+    pair(registry);
+    const cases: Array<[unknown, number]> = [
+      ["5", 5],
+      [7.9, 7],
+      [" 12 ", 12],
+      ["abc", 0],
+      [-3, 0],
+      [0, 0],
+      [null, 0],
+      ["Infinity", 0],
+    ];
+    for (const [raw, expected] of cases) {
+      edit((stored) => {
+        stored.devices[0].sessionGeneration = raw;
+      });
+      expect(generationOf(new DeviceRegistry()), `sessionGeneration ${JSON.stringify(raw)}`).toBe(expected);
+    }
+  });
+
+  it("raises the generation for a successor on a session the cap drops", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    for (let i = 0; i < MAX_SESSIONS_PER_DEVICE; i += 1) registry.openSession(device.id, `Browser ${i}`);
+    edit((stored) => {
+      const sessions = stored.devices[0].sessions;
+      sessions.push({
+        ...sessions[0],
+        id: "0f0f0f0f-1111-2222-3333-444444444444",
+        hash: "ef".repeat(32),
+        pending: { hash: "12".repeat(32), generation: 12, issuedAt: Date.now() },
+      });
+      stored.devices[0].sessionGeneration = 3;
+    });
+    const reloaded = new DeviceRegistry();
+    const sessions = (reloaded as unknown as { devices: Array<{ sessions: unknown[] }> }).devices[0].sessions;
+    expect(sessions).toHaveLength(MAX_SESSIONS_PER_DEVICE);
+    expect(generationOf(reloaded)).toBe(12);
+  });
+
+  it("drops a successor whose issue time is impossible, but still never reuses its generation", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    const { value } = registry.openSession(device.id, "Safari on iPhone")!;
+    const now = Date.now();
+    const bad: unknown[] = ["soon", null, -1, now + 6 * 60_000, 1e20];
+    for (const [i, issuedAt] of bad.entries()) {
+      edit((stored) => {
+        stored.devices[0].sessionGeneration = 0;
+        stored.devices[0].sessions[0].pending = { hash: "ab".repeat(32), generation: 20 + i, issuedAt };
+      });
+      const reloaded = new DeviceRegistry();
+      expect(reloaded.resolveSession(value)!.session.pending, `issuedAt ${JSON.stringify(issuedAt)}`).toBeUndefined();
+      expect(generationOf(reloaded)).toBe(20 + i);
+    }
+    // A clock a little behind the one that wrote the file is not damage.
+    edit((stored) => {
+      stored.devices[0].sessions[0].pending = { hash: "ab".repeat(32), generation: 30, issuedAt: now + 4 * 60_000 };
+    });
+    expect(new DeviceRegistry().resolveSession(value)!.session.pending?.generation).toBe(30);
+    // Nor is a hash that is not a sha256 digest a successor anyone holds.
+    edit((stored) => {
+      stored.devices[0].sessions[0].pending = { hash: "zz".repeat(32), generation: 31, issuedAt: now };
+    });
+    expect(new DeviceRegistry().resolveSession(value)!.session.pending).toBeUndefined();
+  });
+
+  it("gives a session a fresh id when the stored one is not a UUID or is shared with another session", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    const first = registry.openSession(device.id, "Safari on iPhone")!;
+    const second = registry.openSession(device.id, "Chrome on iPhone")!;
+    const third = registry.openSession(device.id, "Firefox on iPhone")!;
+    const kept = first.session.id;
+    edit((stored) => {
+      const [a, b, c] = stored.devices[0].sessions;
+      b.id = a.id;
+      c.id = "not-a-uuid";
+    });
+    const reloaded = new DeviceRegistry();
+    const ids = [first, second, third].map((s) => reloaded.resolveSession(s.value)!.session.id);
+    expect(ids[0]).toBe(kept);
+    for (const id of ids) expect(id).toMatch(UUID);
+    expect(new Set(ids).size).toBe(3);
+
+    // A number, an empty string and a UUID with trailing text are all refused.
+    for (const raw of [42, "", `${kept}\n`, `${kept}x`]) {
+      edit((stored) => {
+        stored.devices[0].sessions[0].id = raw;
+      });
+      const id = new DeviceRegistry().resolveSession(first.value)!.session.id;
+      expect(id, `id ${JSON.stringify(raw)}`).toMatch(UUID);
+      expect(id).not.toBe(raw);
+    }
+  });
+
+  it("does not expose the stale-successor check outside the registry", () => {
+    expect("pendingExpired" in devicesModule).toBe(false);
+  });
+});
+
+describe("cleanInstallId", () => {
+  it("keeps a well-formed install id", () => {
+    expect(cleanInstallId("a".repeat(16))).toBe("a".repeat(16));
+    expect(cleanInstallId("A1._-".repeat(25).slice(0, 128))).toBe("A1._-".repeat(25).slice(0, 128));
+  });
+
+  it("refuses anything else", () => {
+    expect(cleanInstallId("a".repeat(15))).toBeUndefined();
+    expect(cleanInstallId("a".repeat(129))).toBeUndefined();
+    expect(cleanInstallId(`${"a".repeat(16)}\n`)).toBeUndefined();
+    expect(cleanInstallId(`${"a".repeat(8)} ${"a".repeat(8)}`)).toBeUndefined();
+    expect(cleanInstallId(`${"a".repeat(16)}/`)).toBeUndefined();
+    expect(cleanInstallId(`${"a".repeat(16)}é`)).toBeUndefined();
+    expect(cleanInstallId(1234567890123456789)).toBeUndefined();
+    expect(cleanInstallId(undefined)).toBeUndefined();
+    expect(cleanInstallId({ toString: () => "a".repeat(16) })).toBeUndefined();
   });
 });
