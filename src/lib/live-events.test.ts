@@ -613,3 +613,37 @@ describe("a stream that died because the session did", () => {
     stop();
   });
 });
+
+describe("the phone app coming back to the front", () => {
+  it("replaces even a stream that looks healthy, since iOS can freeze a socket without an error", () => {
+    const fixture = harness();
+    let resume: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const onError = vi.fn();
+    const stop = openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true, onError },
+      { ...fixture.platform, resumeSignal: (listener) => { resume = listener; return unsubscribe; } },
+    );
+    fixture.sources[0]!.open();
+    resume!();
+    expect(fixture.sources[0]!.close).toHaveBeenCalled();
+    expect(fixture.sources).toHaveLength(2);
+    expect(onError).toHaveBeenCalledOnce(); // the old stream is reported gone, then replaced
+    stop();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    resume!();
+    expect(fixture.sources).toHaveLength(2);
+  });
+
+  it("does nothing on resume while offline; the online event reconnects instead", () => {
+    const fixture = harness();
+    let resume: (() => void) | undefined;
+    openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true },
+      { ...fixture.platform, resumeSignal: (listener) => { resume = listener; return () => {}; } },
+    );
+    fixture.setOnline(false);
+    resume!();
+    expect(fixture.sources).toHaveLength(1);
+  });
+});

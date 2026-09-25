@@ -1,3 +1,5 @@
+import { onNativeEvent } from "./native-shell";
+
 /**
  * Supervise one browser EventSource for `/api/events`.
  *
@@ -42,6 +44,8 @@ export interface LiveEventsPlatform {
   isVisible: () => boolean;
   isOnline: () => boolean;
   now: () => number;
+  /** The phone app's `resume` (spec §3.6). Absent everywhere else. */
+  resumeSignal?: (listener: () => void) => () => void;
 }
 
 export interface LiveEventsHandlers {
@@ -294,6 +298,7 @@ function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlat
       overrides.isVisible ?? (() => !browserDocument || browserDocument.visibilityState === "visible"),
     isOnline: overrides.isOnline ?? (() => globalThis.navigator?.onLine !== false),
     now: overrides.now ?? Date.now,
+    resumeSignal: overrides.resumeSignal ?? ((listener) => onNativeEvent("resume", listener)),
   };
 }
 
@@ -538,6 +543,17 @@ export function openLiveEvents(
   platform.windowTarget?.addEventListener("focus", onFocus);
   platform.documentTarget?.addEventListener("visibilitychange", onVisibilityChange);
 
+  // Resume is the phone app's own word that the page is back in front. A
+  // suspended iOS WebView can hand back a socket that died without an error,
+  // and the 40 s stale watchdog would leave the person looking at old state
+  // for that long; replace it now, and forgive earlier backoff.
+  const stopResume =
+    platform.resumeSignal?.(() => {
+      if (stopped) return;
+      retryAttempt = 0;
+      reconnectNow(source !== null);
+    }) ?? null;
+
   stop = () => {
     if (stopped) return;
     stopped = true;
@@ -547,6 +563,7 @@ export function openLiveEvents(
     platform.windowTarget?.removeEventListener("online", onOnline);
     platform.windowTarget?.removeEventListener("focus", onFocus);
     platform.documentTarget?.removeEventListener("visibilitychange", onVisibilityChange);
+    stopResume?.();
   };
   return stop;
 }
