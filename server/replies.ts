@@ -1,3 +1,4 @@
+import { routineRunHistoryLabel } from "../shared/routine-run-marker.ts";
 import type { Message } from "./store.ts";
 
 const MAX_REPLY_EXCERPT = 900;
@@ -32,6 +33,11 @@ export function promptWithReply(text: string, target: Message | undefined, userN
 
 /** Compact relationship marker used while replaying room/direct history. */
 export function transcriptText(message: Message, messagesById: ReadonlyMap<string, Message>, userName = "User"): string {
+  // an earlier routine run's standing instruction reads as that run, not as
+  // the owner asking again
+  if (message.text && message.routineRunPrompt) {
+    return `${routineRunHistoryLabel(message.routineRunPrompt.trigger, message.routineRunPrompt.routineName)}\n${message.text}`;
+  }
   if (!message.text || !message.replyToId) return message.text ?? "";
   const target = messagesById.get(message.replyToId);
   if (!target?.text) return message.text;

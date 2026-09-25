@@ -1,4 +1,5 @@
 import type { SkillProcedureContext } from "./skills.ts";
+import { routineRunMarkerName, routineRunPromptNote } from "../shared/routine-run-marker.ts";
 import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { createProcedureReviewHost } from "./procedure-review-host.ts";
 import { pendingProcedureReviews, processProcedureReview } from "./memory/procedure-review.ts";
@@ -5488,6 +5489,13 @@ async function startTurn(
   // turn runs at too. Still the owner's turn in every other respect.
   const conversationMode = !routineLevel && humanIsOwner && opts?.automationSource === undefined ? routineConversationMode(threadId) : null;
   if (conversationMode) Object.assign(bot, applyRoutinePermissionMode(bot, conversationMode));
+  // A routine run in the routine's own conversation: its instruction is
+  // labelled as this run, for the engine now and in later replays, so the
+  // same instruction run after run never reads as the owner asking again.
+  const routineRunName = routineLevel ? routines?.listRoutines().find((routine) => routine.id === routineLevel.routineId)?.name : undefined;
+  const routineRunPrompt = routineRunName && (opts?.automationSource === "schedule" || opts?.automationSource === "manual")
+    ? { trigger: opts.automationSource, routineName: redactSecretsInText(routineRunName) }
+    : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
     : opts?.automationSource === "channel" ? "owner-channel"
@@ -5568,6 +5576,7 @@ async function startTurn(
           sendId: opts?.sendId,
           attachments: turnImages.promote(threadId, text),
           ...(opts?.origin ? { origin: opts.origin } : {}),
+          ...(routineRunPrompt ? { routineRunPrompt } : {}),
         });
   }
 
@@ -5630,7 +5639,11 @@ async function startTurn(
     commsDepth < MAX_COMMS_DEPTH &&
     instance.adapter.capabilities.agentsMcp === true;
   const turnPrompt = withExternalDelivery(
-    promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    promptWithReply(
+      routineRunPrompt ? `${routineRunPromptNote(routineRunPrompt.trigger, routineRunPrompt.routineName)}\n\n${text}` : skillAuthoring ? expandLearnTurnText(text) : text,
+      opts?.replyTo,
+      cfg.profile?.name?.trim() || "User",
+    ),
     externalDelivery,
   );
   let { turnText, resume } = buildTurnContext({
@@ -6788,11 +6801,12 @@ routines = new RoutineManager({
       store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
       store.releaseTaskProcedures(run.botId, run.threadId);
     }
-    // the run marker: where one run ends and the next begins
+    // the run marker: where one run ends and the next begins, shown as a
+    // divider between runs (shared/routine-run-marker.ts)
     store.appendMessage(run.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `${run.manual ? "Run now" : "Scheduled run"}: ${redactSecretsInText(run.routineName)}`, ok: true },
+      tool: { name: routineRunMarkerName(run.manual ? "manual" : "schedule", redactSecretsInText(run.routineName)), ok: true },
     });
   },
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>

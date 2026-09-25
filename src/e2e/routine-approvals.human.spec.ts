@@ -32,8 +32,23 @@ test.beforeAll(async () => {
   const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as
     { launchVerificationServer: LaunchVerificationServer };
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
-    import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+    import {writeFileSync} from 'node:fs';import {join} from 'node:path';import {DatabaseSync} from 'node:sqlite';
     const at=Date.now();
+    // two earlier runs in the routine's conversation, each begun by the
+    // server's run marker, as the one-conversation-per-routine runs leave them
+    const db=new DatabaseSync(join(process.env.MURAGE_DATA_DIR,'messages.db'));
+    db.exec('CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT)');
+    const rows=[
+      {id:'mk1',role:'bot',kind:'activity',at:at-9000,tool:{name:'Scheduled run: RWA watch',ok:true}},
+      {id:'u1',role:'user',kind:'text',at:at-8900,text:'Sweep the RWA feeds.'},
+      {id:'b1',role:'bot',kind:'text',at:at-8800,text:'Swept: nothing new.'},
+      {id:'mk2',role:'bot',kind:'activity',at:at-5000,tool:{name:'Run now: RWA watch',ok:true}},
+      {id:'u2',role:'user',kind:'text',at:at-4900,text:'Sweep the RWA feeds.'},
+      {id:'b2',role:'bot',kind:'text',at:at-4800,text:'Swept: one new filing.'},
+    ];
+    let parent=null;
+    for(const row of rows){const message={...row,parentId:parent};parent=row.id;db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run('rwa-conversation',message.id,message.at,message.role,message.kind,message.text??null,JSON.stringify(message));}
+    db.prepare('INSERT INTO thread_state VALUES(?,?)').run('rwa-conversation',parent);db.close();
     const level={autoApprove:true,fullAccess:true,noLimits:true};
     writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'rwa-conversation',name:'Dax',title:'Research',description:'Fixture only',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},...level,fullAccessAcknowledgedAt:at,noLimitsAcknowledgedAt:at,alwaysAllow:[],tasks:[{threadId:'rwa-conversation',title:'RWA watch',createdAt:at,resumeCursors:{},...level,alwaysAllow:[]},{threadId:'dax-chat',title:'Chat',createdAt:at,resumeCursors:{},...level,alwaysAllow:[]}],composio:false,browser:false,computer:'off'}]));
     writeFileSync(join(process.env.MURAGE_DATA_DIR,'routines.json'),JSON.stringify({version:1,runs:[],routines:[{id:'rwa-watch',name:'RWA watch',prompt:'Sweep the RWA feeds.',target:'bot',botId:'${botId}',runOn:'ember',enabled:false,schedule:{type:'interval',everyMinutes:30,anchorAt:at},durationMinutes:30,timeoutMinutes:20,attachments:[],alwaysAllow:[${JSON.stringify(exactKey)}],threadId:'rwa-conversation',nextRunAt:null,createdAt:at,updatedAt:at}]}));
@@ -106,4 +121,15 @@ test("the routine editor shows its level and the approvals always allowed for it
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await expect(editor).toHaveCount(0);
   await expect.poll(async () => (await routine(page))?.permissionMode ?? "inherit").toBe("inherit");
+});
+
+test("each run in a routine's conversation begins with a visible divider", async ({ page }, info) => {
+  await start(page);
+  const sidebar = await openSidebar(page);
+  await sidebar.getByText("Dax", { exact: true }).first().click();
+  await expect(page.getByText("Swept: one new filing.").first()).toBeVisible();
+  // Tool calls are off by default: the dividers show anyway
+  await expect(page.getByRole("separator", { name: /^Scheduled run of RWA watch/ })).toBeVisible();
+  await expect(page.getByRole("separator", { name: /^Run now of RWA watch/ })).toBeVisible();
+  await page.screenshot({ path: info.outputPath("routine-run-dividers.png") });
 });

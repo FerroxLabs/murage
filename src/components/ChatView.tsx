@@ -71,6 +71,8 @@ import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
+import { routineRunMarker } from "../../shared/routine-run-marker";
+import { RoutineRunDivider } from "./RoutineRunDivider";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -1051,6 +1053,9 @@ const MessagesList = memo(function MessagesList({
               // plain tool runs stay out unless Settings → Tool calls is on.
               // Full access approvals, folded into one quiet line per run
               if (isApprovedStepsLine(m)) return <ApprovedStepsRow message={m} />;
+              // where one run of a routine begins in its own conversation
+              const runMarker = routineRunMarker(m);
+              if (runMarker) return <RoutineRunDivider trigger={runMarker.trigger} routineName={runMarker.routineName} at={m.at} />;
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               // the person's Stop caught a desktop action mid-flight: say to

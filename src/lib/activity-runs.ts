@@ -11,6 +11,7 @@ import { isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
+import { routineRunMarker } from "../../shared/routine-run-marker";
 
 export type ActivityTranscriptItem =
   | { kind: "message"; message: Message }
@@ -29,7 +30,7 @@ function foldable(message: Message): boolean {
   if (message.kind !== "activity" || !tool) return false;
   if (message.comm) return false;
   if (tool.ok !== true) return false;
-  if (isQuietNote(tool.name)) return false;
+  if (isQuietNote(tool.name, message)) return false;
   return !tool.name.startsWith("error:");
 }
 
@@ -40,7 +41,8 @@ function foldable(message: Message): boolean {
  * so folding one would put it straight back behind the setting its own row
  * exists to escape. A host stop never reached here (it settles `ok: false`);
  * the rest did. */
-function isQuietNote(name: string): boolean {
+function isQuietNote(name: string, message?: Message): boolean {
+  if (message && routineRunMarker(message)) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name));
 }

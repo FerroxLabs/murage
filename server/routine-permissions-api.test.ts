@@ -15,7 +15,7 @@
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,7 +99,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
       instances: {
         deleter: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
+          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE, FAKE_ACP_PROMPT_DUMP: join(home, "last-prompt.json") },
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
@@ -147,6 +147,14 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     const messages = await threadMessages(first!.threadId);
     expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
     expect(messages.filter((m) => m.kind === "activity" && m.tool?.name === "Run now: RWA watch")).toHaveLength(2);
+    // the engine is told this is a new run, and the earlier run's copy of the
+    // instruction in the history is labelled as that run, not a new request
+    const prompt = JSON.parse(readFileSync(join(home, "last-prompt.json"), "utf8")) as Array<{ type: string; text?: string }>;
+    const sent = prompt.map((part) => part.text ?? "").join("\n");
+    expect(sent).toContain('[This is a new run of the routine "RWA watch" that the owner started with Run now.');
+    expect(sent).toMatch(/User: \[Earlier run of the routine "RWA watch", started with Run now\]\nSweep/);
+    // the owner's own bubble stays exactly what the routine says
+    expect(messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["Sweep", "Sweep"]);
     expect(messages.some((m) => m.kind === "activity" && Array.isArray(m.tool?.steps))).toBe(true);
   }, 90_000);
 

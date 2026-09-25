@@ -1,3 +1,4 @@
+import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 // Bot + thread persistence. bots.json holds bot records (including the
@@ -240,6 +241,10 @@ export interface Message {
   queueId?: string;
   /** user messages: see MessageOrigin. Server-written only. */
   origin?: MessageOrigin;
+  /** user messages: the standing instruction a scheduled or manual routine
+   * run started with (shared/routine-run-marker.ts). A replayed history
+   * labels it as that run. Server-written only. */
+  routineRunPrompt?: { trigger: RoutineRunMarkerTrigger; routineName: string };
 }
 
 export type GroupDefaultResponder =
