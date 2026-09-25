@@ -199,8 +199,10 @@ export function GroupCallButton({ group, members }: { group: Group; members: Bot
 export function CallOverlay({ bot }: { bot: Bot }) {
   const active = useOnCall() === bot.id;
   if (!active) return null;
+  // Close ends the call: a call screen that cannot load must not leave the
+  // app covered with a call still running.
   return (
-    <LazyBoundary onRetry={CallChunk.retry}>
+    <LazyBoundary onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>
       <Suspense fallback={<LazyFallback />}>
         <Call bot={bot} />
       </Suspense>
@@ -212,7 +214,7 @@ export function GroupCallOverlay({ group, members }: { group: Group; members: Bo
   const active = useOnCall() === group.id;
   if (!active) return null;
   return (
-    <LazyBoundary onRetry={GroupCallChunk.retry}>
+    <LazyBoundary onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>
       <Suspense fallback={<LazyFallback />}>
         <GroupCall group={group} members={members} />
       </Suspense>

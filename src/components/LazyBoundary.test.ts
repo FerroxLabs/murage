@@ -68,10 +68,30 @@ it("wraps every lazy surface: Settings, BotSettings, ComputerPanel, the calls an
   }
   expect(app).not.toMatch(/\blazy\(/);
   const calls = read("./CallControls.tsx");
-  expect(calls).toContain("<LazyBoundary onRetry={CallChunk.retry}>");
-  expect(calls).toContain("<LazyBoundary onRetry={GroupCallChunk.retry}>");
+  // Close on a call screen ends the call it belongs to (and only that one)
+  expect(calls).toContain("<LazyBoundary onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>");
+  expect(calls).toContain("<LazyBoundary onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>");
   expect(calls).not.toMatch(/\blazy\(/);
   const pane = read("./WorkspacePane.tsx");
   expect(pane).toContain("<LazyBoundary inline onRetry={Editor.retry}>");
   expect(pane).not.toMatch(/\blazy\(/);
+});
+
+it("a failed call screen's Close ends that call, and leaves a newer one alone", async () => {
+  vi.stubGlobal("window", { muragebox: { speechStop: vi.fn(async () => {}) } });
+  const call = await import("../lib/call");
+  const onDismiss = (id: string) => () => call.endCall(id);
+  call.startCall("bot-1");
+  const instance = new LazyBoundary({ children: null, onRetry: vi.fn(), onDismiss: onDismiss("bot-1") });
+  instance.state = { failed: true };
+  const overlay = instance.render() as ReactElement<{ children: ReactElement[] }>;
+  const close = (overlay.props.children as unknown as ReactElement<{ onClick: () => void; children: string }>[])
+    .find((child) => child && child.props?.children === "Close")!;
+  close.props.onClick();
+  expect(call.currentCall()).toBeNull();
+  call.startCall("bot-2");
+  onDismiss("bot-1")();
+  expect(call.currentCall()).toBe("bot-2");
+  call.endCall();
+  vi.unstubAllGlobals();
 });
