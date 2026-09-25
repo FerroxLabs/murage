@@ -26,6 +26,7 @@ import { standingContextParts, standingContextSourceIds } from "./standing-conte
 import { TURN_PROMPTS, botShapeRows, directPersona, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
+import { Announcements, announcementSource, handleAnnouncementsApi } from "./announcements.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
 import { engineCommandInText } from "../shared/engine-commands.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
@@ -12568,6 +12569,18 @@ const server = createServer(async (req, res) => {
       });
       if (answer) return json(res, answer.status, answer.body);
     }
+    // Announcements (server/announcements.ts): notices from the signed feed,
+    // filtered here. Desktop only, like What's new above.
+    if (path === "/api/announcements" || path.startsWith("/api/announcements/")) {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const answer = await handleAnnouncementsApi({ method, path, version: url.searchParams.get("version"), readBody: () => readBody(req, 4 * 1024) }, announcements);
+      if (answer && "bytes" in answer) {
+        res.writeHead(200, { "content-type": answer.contentType, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });
+        res.end(answer.bytes);
+        return;
+      }
+      if (answer) return json(res, answer.status, answer.body);
+    }
     // "What shapes <bot>" (server/bot-shapes.ts). Desktop only, like Skills
     // below: it shows the bot's whole prompt, its notes and brief included.
     {
@@ -16892,8 +16905,14 @@ try {
 } catch (error) {
   console.warn("Skill safety sweep could not finish:", error instanceof Error ? error.message : String(error));
 }
+// Notices from the Murage team (server/announcements.ts). With the key slots
+// still placeholders the source is null and nothing is ever fetched.
+const announcements = new Announcements({ source: announcementSource() });
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  // Announcements: once now, then every six hours. Never on the path to the
+  // port being open, and a failure keeps the cached copy silently.
+  announcements.start();
   // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
   //
   // With nowhere to post `subscribe()` returns "disabled" and the route below
@@ -16929,6 +16948,7 @@ server.listen(PORT, "127.0.0.1", () => {
 const gracefulShutdown = createGracefulShutdown({
   cleanup: [
     () => stopModelCatalogRefresh(),
+    () => announcements.stop(),
     async () => {
       revokeAllInternalTurns();
       server.close();
