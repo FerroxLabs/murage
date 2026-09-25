@@ -1,3 +1,5 @@
+// First: no schema may be built before Zod is told not to probe for eval.
+import "./lib/zod-config";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
