@@ -219,14 +219,28 @@ interface Word {
   /** holds an unquoted-or-double-quoted `$` or a backtick: its value is not
    * knowable from the text */
   dynamic: boolean;
+  /** A here-doc body, carried on the command that reads it as its input.
+   * Never an operand: `cat > f <<EOF` names f, not the text. */
+  heredoc?: true;
 }
+
+/** Programs that only read a here-doc as data: the body is the text going
+ * into a file or a pipe, and nothing in it runs. Shells are here too,
+ * because shellHit judges their body itself, as the line it is. */
+const HEREDOC_DATA = /^(cat|tee|head|tail|wc|sort|uniq|grep|egrep|fgrep|rg|jq|yq|pbcopy|base64|sed|awk|cut|tr|column|fold|less|more|diff|printf|echo|git|gh)$/;
+const SHELLS = /^(ba|z|da|k|fi)?sh$/;
 
 /** Split a shell line into simple commands of words. Deliberately small: it
  * understands quotes and the usual separators, and marks anything it cannot
  * know (expansion, substitution) instead of guessing. `complex` is set when
  * the line uses syntax this does not model (subshells, here-docs, braces). */
-function splitShell(line: string): { commands: Word[][]; complex: boolean } {
+function splitShell(line: string): { commands: Word[][]; complex: boolean; scan: string } {
   const commands: Word[][] = [];
+  // Here-docs waiting for the end of their line, and every body read, with
+  // the command that reads it, so `scan` can leave out the bodies that are
+  // only data.
+  let pendingDocs: Array<{ delim: string; dash: boolean; quoted: boolean; owner: Word[] }> = [];
+  const bodies: Array<{ start: number; end: number; owner: Word[] }> = [];
   let current: Word[] = [];
   let word = "";
   let dynamic = false;
@@ -263,6 +277,33 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean } {
     if (ch === "'" || ch === '"') { quote = ch; inWord = true; continue; }
     if (ch === "\\" && i + 1 < line.length) { word += line[++i]; inWord = true; continue; }
     if (ch === " " || ch === "\t") { endWord(); continue; }
+    if (ch === "\n" && pendingDocs.length) {
+      // THE BODY IS THE COMMAND'S INPUT, NOT MORE COMMANDS. Split on its
+      // newlines, a ledger note saying "not moved to trash" or "Sean's" was
+      // judged line by line as shell and read as a delete nobody could place.
+      endCommand();
+      let at = i + 1;
+      for (const doc of pendingDocs) {
+        const start = at;
+        let end = line.length;
+        let next = line.length;
+        while (at <= line.length) {
+          const nl = line.indexOf("\n", at);
+          const stop = nl === -1 ? line.length : nl;
+          const text = line.slice(at, stop);
+          if ((doc.dash ? text.replace(/^\t+/, "") : text) === doc.delim) { end = at; next = stop; break; }
+          if (nl === -1) { at = line.length + 1; break; }
+          at = nl + 1;
+        }
+        const body = line.slice(start, Math.max(start, end - 1));
+        doc.owner.push({ text: body, dynamic: !doc.quoted && /[$`]/.test(body), heredoc: true });
+        bodies.push({ start, end: next, owner: doc.owner });
+        at = next + 1;
+      }
+      pendingDocs = [];
+      i = at - 2;
+      continue;
+    }
     if (ch === "\n" || ch === ";" || ch === "|" || ch === "&") { endCommand(); continue; }
     if (ch === "(" || ch === ")" || ch === "{" || ch === "}") {
       // `$(`…`)` is a substitution inside a word; a bare paren is a subshell
@@ -275,8 +316,35 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean } {
       endCommand();
       continue;
     }
+    if (ch === "<" && line[i + 1] === "<" && line[i + 2] !== "<") {
+      // a here-doc: read its delimiter now, its body at the end of the line
+      complex = true;
+      endWord();
+      let j = i + 2;
+      const dash = line[j] === "-";
+      if (dash) j += 1;
+      while (line[j] === " " || line[j] === "\t") j += 1;
+      let delim = "";
+      let quoted = false;
+      const q = line[j];
+      if (q === "'" || q === '"') {
+        quoted = true;
+        const close = line.indexOf(q, j + 1);
+        delim = line.slice(j + 1, close === -1 ? line.length : close);
+        j = close === -1 ? line.length : close + 1;
+      } else {
+        while (j < line.length && !/[\s;&|<>()]/.test(line[j]!)) {
+          if (line[j] === "\\" || line[j] === "'" || line[j] === '"') quoted = true;
+          else delim += line[j];
+          j += 1;
+        }
+      }
+      if (delim) pendingDocs.push({ delim, dash, quoted, owner: current });
+      i = j - 1;
+      continue;
+    }
     if (ch === "<" || ch === ">") {
-      if (ch === "<" && line[i + 1] === "<") complex = true; // here-doc
+      if (ch === "<" && line[i + 1] === "<") complex = true; // here-string
       // a redirect is not an operand: drop its fd number (`2>`) and the file
       // it names (`> out.log`, `2>/dev/null`, `>&2`)
       if (inWord && /^\d+$/.test(word)) { word = ""; inWord = false; }
@@ -293,7 +361,19 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean } {
   }
   if (quote) complex = true;
   endCommand();
-  return { commands, complex };
+  // What the whole-line checks read: the line without the bodies that are
+  // only data (or that shellHit judges as a line of their own). A body fed
+  // to python, node, osascript or a database client stays: it is code.
+  let scan = "";
+  let from = 0;
+  for (const body of bodies) {
+    const name = program(body.owner.filter((word) => !word.heredoc))?.name ?? "";
+    if (!HEREDOC_DATA.test(name) && !SHELLS.test(name)) continue;
+    scan += line.slice(from, body.start);
+    from = body.end;
+  }
+  scan += line.slice(from);
+  return { commands, complex, scan };
 }
 
 const PREFIXES = new Set(["sudo", "doas", "command", "builtin", "nohup", "time", "nice", "exec", "env", "timeout", "caffeinate", "rtk", "stdbuf", "unbuffer", "ionice", "chronic"]);
@@ -323,6 +403,7 @@ function operands(args: Word[]): Word[] {
   const out: Word[] = [];
   let endOfOptions = false;
   for (const a of args) {
+    if (a.heredoc) continue;
     if (!endOfOptions && a.text === "--") { endOfOptions = true; continue; }
     if (!endOfOptions && a.text.startsWith("-") && a.text !== "-") continue;
     out.push(a);
@@ -352,10 +433,10 @@ function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
 }
 
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
-  const { commands, complex } = splitShell(line);
+  const { commands, complex, scan } = splitShell(line);
   let cwd = place.cwd;
   const found: Collected = { deletes: [] };
-  const sql = SQL_DESTRUCTIVE.exec(line);
+  const sql = SQL_DESTRUCTIVE.exec(scan);
   if (sql) return { kind: "delete", place: "sql:shell", what: `Delete database data (${sql[0].trim()}): ${short(line)}` };
   // Simple assignments earlier in the same line (`f="…"; rm "$f"`,
   // `export f=…`) are known values, so a target spelled through one is
@@ -394,10 +475,17 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
       continue;
     }
     // a line handed to another shell is judged as that line
-    if (/^(ba|z|da|k|fi)?sh$/.test(name)) {
+    if (SHELLS.test(name)) {
       const c = args.findIndex((a) => a.text === "-c" || a.text === "-lc" || a.text === "-lic" || a.text === "-ic");
       if (c !== -1 && args[c + 1] && depth < 3) {
         const inner = shellHit(args[c + 1]!.text, { ...place, cwd }, depth + 1);
+        if (inner) return inner;
+        continue;
+      }
+      // `bash <<'EOF'`: the body is the script
+      const body = args.find((a) => a.heredoc);
+      if (body && depth < 3) {
+        const inner = shellHit(body.text, { ...place, cwd }, depth + 1);
         if (inner) return inner;
         continue;
       }
@@ -408,12 +496,12 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   if (found.other) return found.other;
   // a delete through code (python -c, node -e): judged by the literal paths
   // it names, and by nothing at all when it names none
-  if (!found.deletes.length && !found.unknownDelete && complex && CODE_DELETE.test(line)) {
-    const literals = [...line.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
+  if (!found.deletes.length && !found.unknownDelete && complex && CODE_DELETE.test(scan)) {
+    const literals = [...scan.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
     if (!literals.length) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
   }
-  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(line) && !found.deletes.length) {
+  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(scan) && !found.deletes.length) {
     found.unknownDelete = short(line);
   }
   return deleteHit(found, place);

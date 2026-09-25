@@ -364,3 +364,43 @@ describe("PowerShell and cmd on Windows", () => {
     expect(classifyStopLine("Bash", { command: "rm -rf ~/Documents/old" }, "", place())).toMatchObject({ place: "/Users/ada/Documents/old", what: "Delete 1 item outside its folder: ~/Documents/old" });
   });
 });
+
+// Kessler, 2026-09-25, on Auto: three cards reading "Delete something Murage
+// cannot place" over commands that only appended notes to a ledger. The
+// parser split the heredoc body on its newlines and judged every line of the
+// NOTES as a command, so a word like "trash" in the text, or an apostrophe
+// opening a quote across lines, looked like a delete it could not place.
+describe("a heredoc body is the command's input, not more commands", () => {
+  const notes = [
+    "## GO PACKET 14 — CLAIMED 2026-09-25T00:38Z (Kessler). Sean's Gos, relayed by Dax.",
+    "",
+    "Nothing relabelled, moved, marked read or deleted. Two threads were in SPAM, not trash.",
+    "rm the old draft later; unlink nothing; shred nothing.",
+    "| 1 | Daniel | S1 | sent |",
+  ].join("\n");
+  const pass = [
+    `cat >> ~/notes/work/log.md <<'EOF'\n\n---\n\n${notes}\nEOF`,
+    `cat > ~/notes/queue/REPORT-SENT.md <<'EOF'\n${notes}\nEOF`,
+    `cd ~/notes/work && cp log.md log.md.bak && cat >> log.md <<'EOF'\n${notes}\nEOF`,
+    `tee -a notes.md <<EOF\n${notes}\nEOF\necho done`,
+    `cat <<-'END' > out.md\n\t${notes}\n\tEND`,
+  ];
+  for (const command of pass) {
+    it(`lets notes through: ${command.slice(0, 40).replace(/\n/g, " ")}`, () => {
+      expect(classifyStopLine("Bash", { command }, command, place())).toBeNull();
+    });
+  }
+  it("still judges a command after the body", () => {
+    const hit = classifyStopLine("Bash", { command: `cat >> notes.md <<'EOF'\n${notes}\nEOF\nrm -rf ~/Documents` }, "", place());
+    expect(hit?.kind).toBe("delete");
+  });
+  it("still judges a body fed to code as code", () => {
+    for (const command of [
+      "python3 - <<'EOF'\nimport shutil\nshutil.rmtree('/Users/ada/Documents')\nEOF",
+      "bash <<'EOF'\nrm -rf ~/Documents\nEOF",
+      "osascript <<'EOF'\ntell application \"Finder\" to delete POSIX file \"/Users/ada/Downloads/a.png\"\nEOF",
+      "sqlite3 app.db <<'EOF'\nDELETE FROM users;\nEOF",
+      "xargs rm <<'EOF'\n/Users/ada/Documents/a\nEOF",
+    ]) expect(classifyStopLine("Bash", { command }, "", place())?.kind, command).toBe("delete");
+  });
+});
