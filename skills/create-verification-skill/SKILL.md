@@ -38,19 +38,19 @@ which capability is missing.
 
 The proposed `SKILL.md` must contain YAML frontmatter and these sections:
 
-1. **Launch** — exact command, isolated data/profile, ready signal.
-2. **Doctor** — one read-only check with an actionable failure message.
-3. **Drive** — stable names, accessibility targets, routes, refs, or commands;
+1. **Launch**: exact command, isolated data/profile, ready signal.
+2. **Doctor**: one read-only check with an actionable failure message.
+3. **Drive**: stable names, accessibility targets, routes, refs, or commands;
    never recorded screen coordinates.
-4. **Evidence** — action plus resulting state and any important side effect.
-5. **Cleanup** — stop only what this run started; preserve the evidence.
-6. **Feature map** — at most three proven workflows, each with the user path,
+4. **Evidence**: action plus resulting state and any important side effect.
+5. **Cleanup**: stop only what this run started; preserve the evidence.
+6. **Feature map**: at most three proven workflows, each with the user path,
    control recipe, success proof, and known gotcha.
-7. **Maintenance** — re-run Doctor and the affected workflow when the app
+7. **Maintenance**: re-run Doctor and the affected workflow when the app
    changes; update drifted instructions but never hide a product failure.
 
 Keep it concise. A recording from Teach a skill may provide evidence for the
-user path, but it is input to the draft—not permission to retain secrets,
+user path, but it is input to the draft, not permission to retain secrets,
 audio, screenshots, or coordinates.
 
 ## 4. Stage it for review
