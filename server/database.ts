@@ -21,7 +21,9 @@ export function database(): DatabaseSync {
   try { chmodSync(file, 0o600); } catch { /* matches existing platform behavior */ }
   const db = new DatabaseSync(file);
   try {
-    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    // secure_delete: a deleted conversation's words are overwritten in the
+    // file, not left in free space for anyone reading the raw bytes.
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
     initializeMessageTables(db);
     migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT) });
     initializeInbox(db);
