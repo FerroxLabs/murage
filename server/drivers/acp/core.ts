@@ -675,6 +675,9 @@ export interface AcpConfig {
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
 export interface AcpSupport {
   driverKind: string;
+  /** Extra `_meta` on every session/prompt (Fuigo: `verbatim`, so the
+   * engine does not cut a long prompt and offload the rest to a file). */
+  promptMeta?: Record<string, unknown>;
   displayName: string;
   /** Omit for subscription CLIs (the default). Custom-only CLIs sit below
    *  the picker-rail divider and have no first-party cloud catalog. */
@@ -2493,6 +2496,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               {
                 sessionId,
                 prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
+                ...(support.promptMeta ? { _meta: support.promptMeta } : {}),
               },
               undefined,
               promptIdleMs,
