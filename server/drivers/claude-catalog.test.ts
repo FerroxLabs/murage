@@ -20,6 +20,17 @@ describe("readClaudeModelCatalog", () => {
     ]);
   });
 
+  it("gives Opus 5.5 its 1M context window and leaves the default alone", () => {
+    const ids = STATIC_CLAUDE_MODELS.options.map((option) => option.id);
+    expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-opus-5-5")]).toEqual({
+      id: "claude-opus-5-5",
+      label: "Claude Opus 5.5",
+      contextWindow: 1_000_000,
+    });
+    expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-opus-5")]).toEqual({ id: "claude-opus-5", label: "Claude Opus 5" });
+    expect(STATIC_CLAUDE_MODELS.default).toBe("claude-sonnet-5");
+  });
+
   it("tags extra settings models as custom and leaves official rows untagged", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-claude-catalog-"));
     scratchDirs.push(home);
