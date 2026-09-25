@@ -57,6 +57,7 @@ import {
 import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
+import { KeepAwakeOffer } from "./KeepAwakeOffer";
 
 export interface PhoneDevice {
   id: string;
@@ -1535,6 +1536,7 @@ export function PhoneSetupFlowView({
         <p className="mt-1.5 text-[13px] text-ink-secondary">
           It can now open chats, answer approvals, and send new work.
         </p>
+        <KeepAwakeOffer c={c} className="mt-5 w-full max-w-[420px] rounded-xl border border-hairline/50 px-3 py-3" />
         <button
           onClick={() => {
             c.finish();

@@ -28,6 +28,7 @@ import {
 import { companionPairingMode } from "../lib/phone-setup";
 import { useDesktopSurface } from "../lib/use-surface";
 import { Card, Switch } from "./SettingsPrimitives";
+import { KeepAwakeOffer } from "./KeepAwakeOffer";
 
 export {
   companionAccountActionError,
@@ -550,6 +551,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             ))}
           </ul>
         )}
+        {pairedCount > 0 && <KeepAwakeOffer c={c} className="mt-3 border-t border-hairline/30 pt-3" />}
       </Card>
 
       <Card title="Recent activity">
