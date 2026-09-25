@@ -269,12 +269,18 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean; scan:
       if (ch === quote) quote = undefined;
       else {
         if (quote === '"' && (ch === "$" || ch === "`")) dynamic = true;
+        // a backslash before a line break inside double quotes joins the lines
+        if (quote === '"' && ch === "\\" && line[i + 1] === "\n") { i += 1; continue; }
         if (quote === '"' && ch === "\\" && i + 1 < line.length) { word += line[++i]; continue; }
         word += ch;
       }
       continue;
     }
     if (ch === "'" || ch === '"') { quote = ch; inWord = true; continue; }
+    // A backslash at the end of a line: the command goes on on the next line
+    // (`touch a && \` then `rm a`). Read as the line break itself, the `rm`
+    // after it was never seen as a command.
+    if (ch === "\\" && line[i + 1] === "\n") { i += 1; continue; }
     if (ch === "\\" && i + 1 < line.length) { word += line[++i]; inWord = true; continue; }
     if (ch === " " || ch === "\t") { endWord(); continue; }
     if (ch === "\n" && pendingDocs.length) {

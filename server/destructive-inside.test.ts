@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { autoVerdict } from "./auto-approve.ts";
-import { deletesPlacedInside, type StopLinePlace } from "./stop-line.ts";
+import { classifyStopLine, deletesPlacedInside, type StopLinePlace } from "./stop-line.ts";
 
 const HOME = "/Users/ada";
 const CWD = "/Users/ada/Projects/site";
@@ -98,5 +98,45 @@ describe("Auto's destructive guard with the delete placed inside", () => {
 
   it("a webhook turn keeps its own rules", () => {
     expect(autoVerdict(auto, "Bash", "rm -f /tmp/dax/a.txt", { stopLine: null, unattended: true, deletesInside: true })).toMatchObject({ approve: null, source: "unattended-block" });
+  });
+});
+
+// 0.1.60 Mac pass: the Ask card for a routine run's own command said "Delete
+// something Murage cannot place, so it may be outside its folder" when the
+// only delete was of a file the command had just made in the bot's own
+// thread folder. The card reads the same inside-roots rule as Auto's guard.
+describe("the card's wording for a delete inside the bot's own folder", () => {
+  const thread = "/Users/ada/.murage/workspaces/dax/threads/t1";
+  const own: StopLinePlace = { cwd: thread, roots: [thread, "/Users/ada/.murage/workspaces/dax", "/tmp"], home: HOME, knownRecipients: new Set() };
+  const command = [
+    `cd "${thread}" && \\`,
+    "mkdir -p notes && \\",
+    `NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')" && \\`,
+    "cat >> notes/log.md <<EOF",
+    "$NOW",
+    "EOF",
+    "python3 - <<'PYEOF'",
+    'with open("notes/pipeline.md", "a") as f:',
+    '    f.write("cleanup step: use rm to send old files to trash\\n")',
+    "PYEOF",
+    "touch notes/tmp-delete-me.txt && \\",
+    "rm notes/tmp-delete-me.txt && \\",
+    'echo "=== log.md ===" && cat notes/log.md',
+  ].join("\n");
+
+  // The reader did not take a backslash at the end of a line as the line
+  // going on, so `rm` after `&& \` was never read as a command, and a line
+  // with a here-doc and an unread `rm` was "a delete it cannot place".
+  it("reads a line that goes on after a backslash, so the delete is placed inside", () => {
+    expect(classifyStopLine("Bash", { command }, command, own)).toBeNull();
+    const continued = "touch notes/a.txt && \\\nrm notes/a.txt && \\\necho done";
+    expect(classifyStopLine("Bash", { command: continued }, continued, own)).toBeNull();
+    expect(deletesPlacedInside(continued, own)).toBe(true);
+  });
+
+  it("still stops a continued delete outside the folder", () => {
+    const outside = "cat >> notes/log.md <<EOF\nx\nEOF\ntouch notes/a.txt && \\\nrm ~/Documents/b.txt";
+    expect(classifyStopLine("Bash", { command: outside }, outside, own)?.what).toBe("Delete 1 item outside its folder: ~/Documents/b.txt");
+    expect(deletesPlacedInside(outside, own)).toBe(false);
   });
 });
