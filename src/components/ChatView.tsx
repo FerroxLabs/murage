@@ -102,7 +102,8 @@ import {
   SHEET_PANEL,
   bubbleTapOpensActions,
 } from "@/lib/transcript-chrome";
-import { useNarrowViewport } from "@/lib/media-query";
+import { useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
+import { enterSends } from "@/lib/composer-enter";
 import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-screen-frame";
 import { isPhoneClient } from "@/lib/phone-client";
 import { useMessageById } from "@/lib/held-message";
@@ -369,7 +370,9 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
 }
 
 /** Inline editor a user bubble turns into: Enter sends (forking the
- * conversation), Esc cancels. Shift+Enter for a newline, like everywhere. */
+ * conversation), Esc cancels. Shift+Enter for a newline, like everywhere.
+ * On a touch screen Return is a newline and Send sends, exactly as in the
+ * composer (lib/composer-enter.ts). */
 function BubbleEditor({
   initial,
   onCancel,
@@ -380,6 +383,7 @@ function BubbleEditor({
   onSubmit: (text: string) => void;
 }) {
   const [draft, setDraft] = useState(initial);
+  const coarsePointer = useCoarsePointer();
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -398,12 +402,13 @@ function BubbleEditor({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           // isComposing: an IME confirm-Enter must not submit the edit
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing }, coarsePointer)) {
             e.preventDefault();
             submit();
           }
           if (e.key === "Escape") onCancel();
         }}
+        enterKeyHint={coarsePointer ? "enter" : "send"}
         rows={Math.min(10, Math.max(2, draft.split("\n").length))}
         className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink focus:outline-none"
       />

@@ -44,3 +44,14 @@ it("the composer asks enterSends, and tells the keyboard what Return does", () =
   expect(composer).not.toContain('e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing');
   expect(composer).toContain('enterKeyHint={coarsePointer ? "enter" : "send"}');
 });
+
+// D14: editing a sent message is the same keyboard, so the same rule.
+it("the message-edit box asks enterSends too, so Return is a newline on touch", () => {
+  const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8");
+  const editor = chat.slice(chat.indexOf("function BubbleEditor("), chat.indexOf("function Bubble("));
+  expect(editor).toContain("const coarsePointer = useCoarsePointer();");
+  expect(editor).toContain("if (enterSends(");
+  expect(editor).toContain("}, coarsePointer)) {");
+  expect(editor).not.toContain('e.key === "Enter" && !e.shiftKey');
+  expect(editor).toContain('enterKeyHint={coarsePointer ? "enter" : "send"}');
+});
