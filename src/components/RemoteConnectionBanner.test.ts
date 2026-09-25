@@ -7,13 +7,21 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { REMOTE_OFFLINE_GRACE_MS, remoteConnectionNotice } from "./RemoteConnectionBanner";
+import {
+  REMOTE_FIRST_CONNECT_GRACE_MS,
+  REMOTE_OFFLINE_GRACE_MS,
+  remoteConnectionNotice,
+} from "./RemoteConnectionBanner";
 
+// Defaults describe a connection that was lost after connecting at least
+// once — the 3 s grace. The never-connected / cold-start path (15 s grace)
+// is exercised separately below, since the two must not share a clock.
 const input = (over: Partial<Parameters<typeof remoteConnectionNotice>[0]> = {}) => ({
   connected: false,
   signedOut: false,
   offlineSince: 0,
   now: REMOTE_OFFLINE_GRACE_MS,
+  everConnected: true,
   ...over,
 });
 
@@ -32,6 +40,39 @@ describe("what a remote client is told", () => {
     expect(remoteConnectionNotice(input({ connected: true }))).toBeNull();
     expect(remoteConnectionNotice(input({ signedOut: true }))).toBeNull();
     expect(remoteConnectionNotice(input({ offlineSince: null }))).toBeNull();
+  });
+});
+
+describe("never-connected vs. lost (ruling R7)", () => {
+  // A slow cold start (Tailscale, cellular) has this page never connected at
+  // all: `connected` starts false at boot and the SSE only opens once
+  // `ensureDesktopSurfaceSecret()` resolves. That is not a loss, so it gets
+  // the longer first-connect grace, not the 3 s lost-connection grace.
+  it("stays quiet through a slow cold start, up to the 15 s first-connect grace", () => {
+    expect(
+      remoteConnectionNotice(input({ everConnected: false, offlineSince: 0, now: 14_000 })),
+    ).toBeNull();
+  });
+
+  it("speaks once a cold start passes 15 s without ever connecting", () => {
+    expect(
+      remoteConnectionNotice(input({ everConnected: false, offlineSince: 0, now: 16_000 })),
+    ).toMatch(/Can't reach your Murage/);
+  });
+
+  it("keeps the short 3 s grace once this page has connected before and then loses it", () => {
+    // Connected at t=0, lost at t=10_000 (offlineSince), everConnected true.
+    expect(
+      remoteConnectionNotice(input({ everConnected: true, offlineSince: 10_000, now: 12_000 })),
+    ).toBeNull();
+    expect(
+      remoteConnectionNotice(input({ everConnected: true, offlineSince: 10_000, now: 14_000 })),
+    ).toMatch(/Can't reach your Murage/);
+  });
+
+  it("the two grace constants are the ones the ruling names", () => {
+    expect(REMOTE_OFFLINE_GRACE_MS).toBe(3_000);
+    expect(REMOTE_FIRST_CONNECT_GRACE_MS).toBe(15_000);
   });
 });
 
