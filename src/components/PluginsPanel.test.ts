@@ -28,6 +28,7 @@ import {
   connectorActionLabel,
   connectorPanelFieldsFrom,
   connectorPrimaryAction,
+  connectedTabSummary,
   EMPTY_CONNECTOR_PANEL_FIELDS,
   FLUXROUTER_BILLING_URL,
   formatLegacyCutoff,
@@ -538,5 +539,28 @@ describe("when Murage's original connected-apps service has retired", () => {
       expect(copy).toMatch(/retired/);
       expect(copy.split(/(?<=\.)\s+/).length).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+// Linux customer pass, 0.1.60: the Connected tab said 12 while the bot,
+// asked, listed 11 apps. The tab counted every status entry with an account
+// in any state, plus plumbing the list never shows; the bot can use only the
+// apps with an account that works.
+describe("the Connected tab's count", () => {
+  const card = (slug: string) => ({ slug, label: slug, blurb: "", logo: null, domain: null });
+  const cards = ["gmail", "github", "slack", "notion"].map(card);
+  it("counts the apps a bot can use, and says how many more are not ready", () => {
+    const summary = connectedTabSummary(cards, {
+      gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }, { id: "b", status: "ACTIVE" }] },
+      github: { connected: true, accounts: [{ id: "c", status: "ACTIVE" }] },
+      slack: { connected: false, status: "EXPIRED", accounts: [{ id: "d", status: "EXPIRED" }] },
+      composio_search: { connected: true },
+      notion: { connected: false },
+    });
+    expect(summary).toEqual({ ready: 2, notReady: 1, note: "1 more app is not ready yet. Finish connecting it or reconnect it below." });
+  });
+  it("says nothing extra when every connection works", () => {
+    expect(connectedTabSummary(cards, { gmail: { connected: true } }).note).toBe("");
+    expect(connectedTabSummary(null, { gmail: { connected: true }, composio: { connected: true } }).ready).toBe(1);
   });
 });

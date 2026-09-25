@@ -39,6 +39,35 @@ export interface ConnectorStatus {
   }>;
 }
 
+/**
+ * What the Connected tab's count says, and the line under it.
+ *
+ * It counted every status entry with an account in any state, including the
+ * connection service's own plumbing that the list never shows, so the tab
+ * said 12 while a bot, asked, listed the 11 apps it could use (0.1.60 Linux
+ * customer pass). The count is now the apps a bot can use; an app whose only
+ * account is expired, failed or half connected is told apart in words.
+ */
+export function connectedTabSummary(
+  cards: ReadonlyArray<{ slug: string }> | null,
+  status: Record<string, ConnectorStatus>,
+): { ready: number; notReady: number; note: string } {
+  const apps = cards ? new Set(cards.map((card) => card.slug)) : null;
+  let ready = 0;
+  let notReady = 0;
+  for (const [slug, service] of Object.entries(status)) {
+    if (/composio/i.test(slug) || (apps && !apps.has(slug))) continue;
+    if (service.connected) ready++;
+    else if (service.accounts?.length) notReady++;
+  }
+  const note = notReady === 0
+    ? ""
+    : notReady === 1
+      ? "1 more app is not ready yet. Finish connecting it or reconnect it below."
+      : `${notReady} more apps are not ready yet. Finish connecting them or reconnect them below.`;
+  return { ready, notReady, note };
+}
+
 // The panel is a modal and unmounts whenever it closes. Keep the last known
 // account inventory at module scope so reopening never flashes every service
 // as disconnected while a fresh secure status check runs in the background.
@@ -826,7 +855,8 @@ export function PluginsPanel() {
   const visible = matching.filter((card) =>
     tab === "marketplace" || status[card.slug]?.connected || Boolean(status[card.slug]?.accounts?.length)
   );
-  const connectedCount = Object.values(status).filter((service) => service.connected || service.accounts?.length).length;
+  const connectedSummary = connectedTabSummary(cards, status);
+  const connectedCount = connectedSummary.ready;
   const connectedEmptyCopy = connectedInventoryCopy(inventoryPhase);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
@@ -1040,6 +1070,9 @@ export function PluginsPanel() {
               <div className="mb-3 text-[12px] font-medium text-ink-secondary">
                 {tab === "connected" ? "Your connections" : search ? "Search results" : "Available apps"}
               </div>
+              {tab === "connected" && connectedSummary.note && (
+                <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">{connectedSummary.note}</p>
+              )}
               <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
               {visible.map((card) => {
               const serviceStatus = status[card.slug];
