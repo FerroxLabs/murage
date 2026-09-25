@@ -62,6 +62,7 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
+import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./inbox-access.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
@@ -10267,7 +10268,11 @@ const server = createServer(async (req, res) => {
     if (origin && !isAllowedOrigin(origin)) {
       return json(res, 403, { error: "forbidden: cross-origin request" });
     }
-    if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
+    // The Inbox list and its state write also open to a request the companion
+    // proved it forwarded; the route then scopes it to what the phone's sidebar
+    // shows (inbox-access.ts). The marker alone still gets this 404.
+    if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop"
+      && !(companionInboxRoute(method, path) && inboxDoor(req.headers, url.searchParams) === "companion")) {
       return json(res, 404, { error: "no such route" });
     }
     const claudeAccountRoute = /^\/api\/claude-accounts(?:\/([\w-]+))?$/.exec(path);
@@ -10365,15 +10370,13 @@ const server = createServer(async (req, res) => {
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
-      const threads = [
-        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
-        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
-      ];
+      // A proven companion gets the Inbox of the conversations its sidebar
+      // shows, and can only mark items inside that list (inbox-access.ts).
       const result = inboxRequest(database(), { method, path,
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
-      }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
+      }, inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)));
       return json(res, result.status, result.body);
     }
     // The menu bar / system tray menu (electron/background-lifecycle.mjs).
@@ -10381,11 +10384,7 @@ const server = createServer(async (req, res) => {
     // ordinary approval through /api/threads/:id/respond like the app does.
     if (method === "GET" && path === "/api/desktop/tray") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
-      const threads = [
-        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
-        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
-      ];
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads });
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store) });
       if (result.status !== 200) return json(res, result.status, result.body);
       return json(res, 200, traySummary({
         page: result.body as InboxPage,
