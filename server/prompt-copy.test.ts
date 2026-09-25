@@ -40,7 +40,9 @@ import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import { channelProjectSystemLine } from "./project-channel.ts";
 import { groupGoalCoordinatorInstructions, groupGoalWorkerInstructions } from "./group-goal-run.ts";
 import { ensureWorkspace, memorySystemPrompt } from "./workspace.ts";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { aboutMePrompt, saveAboutMe } from "./about-me.ts";
 import { writeSectionContext, sectionContextSystemPrompt } from "./section-context.ts";
 
 /** Names the model must read exactly as written. Each is removed from the
@@ -96,6 +98,10 @@ const baseDirect: DirectTurnShapeInput = {
 };
 // The clock rides the message, not the system prompt, but the bot reads it.
 add("now", nowPrompt(new Date("2026-09-25T08:03:00Z"), "Europe/London"));
+// About me: the owner's own words, wrapped in the framing line bots read.
+const aboutDir = mkdtempSync(join(tmpdir(), "prompt-copy-about-"));
+saveAboutMe("I run a small studio and like short answers.", aboutDir);
+add("about-me", aboutMePrompt(aboutDir));
 add("persona (no title)", directPersona({ name: "Moss" }));
 for (const computerKind of ["box", "vps", "vm", "local", null] as const) {
   for (const vmPerBot of [true, false]) {
@@ -206,7 +212,7 @@ describe("prompt copy: every layer a bot can read", () => {
     // A new catalogue row needs its text added above before this passes.
     const covered = new Set([...texts.keys()].map((label) => label.split(" ")[0]));
     const byLabel: Record<string, string> = {
-      "house-rules": "house", persona: "persona", room: "room", computer: "direct", "computer-protected-input": "direct",
+      "house-rules": "house", "about-me": "about-me", persona: "persona", room: "room", computer: "direct", "computer-protected-input": "direct",
       "connected-apps": "connected-apps", "required-apps": "required-apps", browser: "browser", coordination: "chief",
       "speak-as": "speak-as", credential: "turn", images: "images", "web-search": "direct", routines: "turn", learn: "turn",
       goal: "goal", "skills-index": "imported", "team-brief": "team-brief", memory: "memory", capabilities: "primer", skill: "skill",
