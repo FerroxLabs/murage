@@ -160,8 +160,14 @@ describe("one image surface", () => {
 
   it("lets the browser pick a thumbnail width and keeps the original for the lightbox", () => {
     const media = read("./ImageMedia.tsx");
-    expect(media).toContain("const srcSet = thumbnailSrcSet(item.src);");
-    expect(media).toMatch(/srcSet=\{srcSet\}\s*sizes=\{srcSet \? THUMBNAIL_SIZES : undefined\}/);
+    expect(media).toContain("const srcSet = smallOriginal ? undefined : thumbnailSrcSet(item.src);");
+    expect(media).toMatch(/srcSet=\{srcSet\}\s*sizes=\{srcSet \? sizes : undefined\}/);
+  });
+
+  it("drops the srcset once the server is caught sending the original, and remembers it", () => {
+    const media = read("./ImageMedia.tsx");
+    expect(media).toContain("const [smallOriginal, setSmallOriginal] = useState(() => wasServedOriginal(item.src));");
+    expect(media).toMatch(/onLoad=\{\(event\) => \{[\s\S]{0,200}servedOriginal\(img\.currentSrc, img\.naturalWidth\)[\s\S]{0,200}rememberServedOriginal\(item\.src\)[\s\S]{0,50}setSmallOriginal\(true\)/);
   });
 
   it("routes Markdown images, attachment galleries and the Files preview the same way", () => {

@@ -24,3 +24,26 @@ export function screenFramePath(threadId: string, messageId: string, phone: bool
   const path = `/api/threads/${threadId}/messages/${messageId}/image`;
   return phone ? `${path}?w=${PHONE_SCREEN_FRAME_WIDTH}` : path;
 }
+
+/** True when a `?w=N` request came back narrower than N: the server (E12)
+ *  never upscales, so an image already at or below N sends the whole
+ *  original. Left un-dropped, the browser would treat those bytes as the
+ *  "Nw" candidate and draw them shrunken — small on a dense phone screen. */
+export function servedOriginal(currentSrc: string, naturalWidth: number): boolean {
+  const requested = Number(/[?&]w=(\d+)/.exec(currentSrc)?.[1]);
+  return naturalWidth > 0 && Number.isFinite(requested) && naturalWidth < requested;
+}
+
+/** Sources already found to have served the original for their widest `?w=`
+ *  candidate. Module-level and unbounded by design (chat image counts stay
+ *  small): remembered so a row that scrolls out and back in, or a fresh
+ *  mount of the same source, does not flash small-then-full-size again. */
+const knownOriginal = new Set<string>();
+
+export function rememberServedOriginal(src: string): void {
+  knownOriginal.add(src);
+}
+
+export function wasServedOriginal(src: string): boolean {
+  return knownOriginal.has(src);
+}

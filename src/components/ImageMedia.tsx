@@ -23,7 +23,7 @@ import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "luc
 
 import { attachmentImageUrl } from "@/lib/composer-attachments";
 import { artifactReferenceSource, attachmentReferenceSource } from "@/lib/image-reference";
-import { THUMBNAIL_SIZES, thumbnailSrcSet } from "@/lib/image-thumbnail";
+import { rememberServedOriginal, servedOriginal, THUMBNAIL_SIZES, thumbnailSrcSet, wasServedOriginal } from "@/lib/image-thumbnail";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
@@ -170,15 +170,23 @@ export function resolveMarkdownImage(src: string | undefined, alt: string | unde
 
 // ── Inline thumbnail ─────────────────────────────────────────────────────
 
-export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
+export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes = THUMBNAIL_SIZES }: {
   item: ImageMediaItem;
   label: string;
   onOpen: () => void;
   className?: string;
   imgClassName?: string;
+  /** The `sizes` this thumbnail renders at, for the srcset above. Callers
+   * whose layout is narrower than the shared default (a gallery capped at
+   * 260px, a Markdown column) pass their own. */
+  sizes?: string;
 }) {
   // callers key this by item.id, so a new image starts unfailed
   const [failed, setFailed] = useState(false);
+  // E12 never upscales: an image already at or below the widest `?w=` comes
+  // back as the original, which a srcset would draw shrunken (see
+  // servedOriginal). Sticky per source so a remount does not flash small.
+  const [smallOriginal, setSmallOriginal] = useState(() => wasServedOriginal(item.src));
   if (failed) {
     // stays visible: a missing image says so instead of silently vanishing
     return (
@@ -193,7 +201,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
       </span>
     );
   }
-  const srcSet = thumbnailSrcSet(item.src);
+  const srcSet = smallOriginal ? undefined : thumbnailSrcSet(item.src);
   return (
     <button
       type="button"
@@ -210,11 +218,18 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
       <img
         src={item.src}
         srcSet={srcSet}
-        sizes={srcSet ? THUMBNAIL_SIZES : undefined}
+        sizes={srcSet ? sizes : undefined}
         alt={item.alt}
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
+        onLoad={(event) => {
+          const img = event.currentTarget;
+          if (servedOriginal(img.currentSrc, img.naturalWidth)) {
+            rememberServedOriginal(item.src);
+            setSmallOriginal(true);
+          }
+        }}
         onError={() => setFailed(true)}
         className={cn(
           "block max-w-full transition-transform duration-200 group-hover/image:scale-[1.015] motion-reduce:transition-none motion-reduce:group-hover/image:scale-100",
@@ -232,11 +247,12 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
 }
 
 /** One image with its own lightbox. */
-export function ImageMedia({ item, label, className, imgClassName }: {
+export function ImageMedia({ item, label, className, imgClassName, sizes }: {
   item: ImageMediaItem;
   label?: string;
   className?: string;
   imgClassName?: string;
+  sizes?: string;
 }) {
   const [open, setOpen] = useState(false);
   const items = useMemo(() => [item], [item]);
@@ -249,6 +265,7 @@ export function ImageMedia({ item, label, className, imgClassName }: {
         onOpen={() => setOpen(true)}
         className={className}
         imgClassName={imgClassName}
+        sizes={sizes}
       />
       {open && <ImageLightbox items={items} index={0} onClose={() => setOpen(false)} />}
     </>
@@ -257,12 +274,13 @@ export function ImageMedia({ item, label, className, imgClassName }: {
 
 /** Several images from one message. Previous/next stays inside `items`: the
  * set the caller was already allowed to show, never a wider cache. */
-export function ImageGallery({ items, className, thumbClassName, imgClassName, label }: {
+export function ImageGallery({ items, className, thumbClassName, imgClassName, label, sizes }: {
   items: ImageMediaItem[];
   className?: string;
   thumbClassName?: string;
   imgClassName?: string;
   label: (item: ImageMediaItem) => string;
+  sizes?: string;
 }) {
   // selection by identity: if the set changes under an open dialog, a removed
   // image closes it instead of the index silently landing on a neighbour
@@ -279,6 +297,7 @@ export function ImageGallery({ items, className, thumbClassName, imgClassName, l
             label={label(item)}
             onOpen={() => setSelectedId(item.id)}
             className={thumbClassName}
+            sizes={sizes}
             imgClassName={imgClassName}
           />
         ))}
@@ -514,6 +533,11 @@ const CARD = "my-1 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1
 
 /** A Markdown `![alt](src)` inside a chat or room message. Rendered inside a
  * paragraph, so everything here is phrasing content (spans, buttons, img). */
+// A Markdown image sits in the message column, not the fixed-width gallery
+// grid: about 90% of a phone's viewport, or the bubble's own cap on wider
+// screens.
+const MARKDOWN_IMAGE_SIZES = "(max-width: 767.98px) 90vw, 640px";
+
 export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const resolved = useMemo(() => resolveMarkdownImage(src, alt), [src, alt]);
   // permission to fetch lasts as long as this rendered image, and only for
@@ -521,7 +545,7 @@ export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const [allowedUrl, setAllowedUrl] = useState<string | null>(null);
 
   if (resolved.kind === "inline") {
-    return <ImageMedia item={resolved.item} className="my-1 rounded-lg border border-hairline/30" imgClassName="max-h-96" />;
+    return <ImageMedia item={resolved.item} className="my-1 rounded-lg border border-hairline/30" imgClassName="max-h-96" sizes={MARKDOWN_IMAGE_SIZES} />;
   }
   if (resolved.kind === "external") {
     if (allowedUrl === resolved.url) {
@@ -531,6 +555,7 @@ export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
           item={{ id: `external:${resolved.url}`, src: resolved.url, name, alt: resolved.alt, source: "external-link", download: false }}
           className="my-1 rounded-lg border border-hairline/30"
           imgClassName="max-h-96"
+          sizes={MARKDOWN_IMAGE_SIZES}
         />
       );
     }

@@ -46,6 +46,7 @@ export function AttachedImageGallery({ paths, className }: { paths: string[]; cl
       thumbClassName="max-w-[260px] rounded-lg border border-hairline/40 bg-inset"
       imgClassName="max-h-[220px] w-full object-contain"
       label={(item) => t("media.thumb.openAttached", { name: item.name })}
+      sizes="260px"
     />
   );
 }
