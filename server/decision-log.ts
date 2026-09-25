@@ -20,6 +20,8 @@
 // store), so wiring them here would mean a second, parallel tap — a
 // separate change if it earns its keep.
 import { readFileSync } from "node:fs";
+
+import { writeFileAtomic } from "./atomic.ts";
 import { appendFile, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -218,4 +220,44 @@ export function readDecisions(dataDir: string, limit: number): DecisionRow[] {
     }
   }
   return rows.slice(-limit);
+}
+
+/** The thread id a redacted row carries once its conversation is deleted. */
+export const DELETED_CONVERSATION = "deleted-conversation";
+
+/** A deleted conversation keeps its audit trail (that an approval happened:
+ * when, which bot, which tool, what was decided) but loses what it said and
+ * where: summary, rule, request id and thread id go. Both the live file and
+ * the rotated `.1` are rewritten atomically after the write queue drains,
+ * with no await between the read and the rename, so no queued row is lost. */
+export async function redactDecisionsForThreads(dataDir: string, threadIds: readonly string[]): Promise<number> {
+  const gone = new Set(threadIds);
+  if (!gone.size) return 0;
+  await flushDecisionLog(dataDir);
+  let changed = 0;
+  const file = join(dataDir, FILE_NAME);
+  for (const path of [file, `${file}.1`]) {
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    let touched = false;
+    const lines = text.split("\n").map((line) => {
+      if (!line) return line;
+      try {
+        const value: unknown = JSON.parse(line);
+        if (!isDecisionRow(value) || !gone.has(value.threadId)) return line;
+        touched = true;
+        changed++;
+        const { at, botId, botName, tool, decision, source, unattended } = value;
+        return JSON.stringify({ at, threadId: DELETED_CONVERSATION, ...(botId ? { botId } : {}), ...(botName ? { botName } : {}), ...(tool ? { tool } : {}), decision, source, ...(unattended ? { unattended } : {}) });
+      } catch {
+        return line;
+      }
+    });
+    if (touched) writeFileAtomic(path, lines.join("\n"), { mode: 0o600 });
+  }
+  return changed;
 }

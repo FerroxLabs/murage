@@ -136,7 +136,7 @@ import {
   type BrowserCleanupWireRequest,
 } from "./browser-lifecycle-cleanup.ts";
 import * as checkpoints from "./checkpoints.ts";
-import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.ts";
+import { appendDecision, flushDecisionLog, readDecisions, redactDecisionsForThreads } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
@@ -1680,7 +1680,7 @@ const folderTrust = new FolderTrustStore(join(DATA_DIR, "folder-trust.json"));
 // Deleting a conversation removes its files and the engine's own transcript
 // of it, not only its rows (server/conversation-deletion.ts). A pending record
 // is written first; the boot pass below finishes one a crash interrupted.
-const conversationDeletions = new ConversationDeletions({ dataDir: DATA_DIR, database, deleteAttachment, forgetThreads: forgetDelegationsForThreads });
+const conversationDeletions = new ConversationDeletions({ dataDir: DATA_DIR, database, deleteAttachment, forgetThreads: async (threadIds) => { forgetDelegationsForThreads(threadIds); await redactDecisionsForThreads(DATA_DIR, threadIds); } });
 /** Where each configured local engine keeps its own history. */
 function deletionEngineHomes(): DeletionEngineHome[] {
   const homes: DeletionEngineHome[] = [];
@@ -3883,7 +3883,7 @@ reconcileInterruptedMemoryTurns();
 // A conversation delete that a crash interrupted finishes now: its rows go if
 // they are still there, then its files and engine transcripts.
 try {
-  conversationDeletions.reconcile(threadIsLive, deleteThreadRows);
+  await conversationDeletions.reconcile(threadIsLive, deleteThreadRows);
 } catch (error) {
   console.error("conversation deletion: boot reconcile failed", error);
 }

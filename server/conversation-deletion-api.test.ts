@@ -78,6 +78,7 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   const otherDesk = join(data, "workspaces", bot.id, "threads", keep);
   touch(join(data, ".fuigo", "sessions", rustUrlEncode(otherDesk), "s", "chat_history.jsonl"), "other conversation");
 
+  writeFileSync(join(data, "decisions.ndjson.1"), `${JSON.stringify({ at: new Date().toISOString(), threadId: doomed, botName: "Delete fixture", tool: "Bash", summary: MARKER, decision: "user-allowed", source: "user" })}\n`);
   const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${doomed}`);
   expect(deleted.status).toBe(200);
   expect(Array.isArray(deleted.body.leftovers)).toBe(true);

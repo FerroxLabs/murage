@@ -408,8 +408,9 @@ export interface DeletionServiceOptions {
   database: () => DatabaseSync;
   /** attachments go through the quota-aware remover when one is given */
   deleteAttachment?: (path: string) => void;
-  /** other per-conversation records to drop once the rows are gone */
-  forgetThreads?: (threadIds: string[]) => void;
+  /** other per-conversation records to drop once the rows are gone; runs
+   * before the pending record is cleared, so a crash repeats it */
+  forgetThreads?: (threadIds: string[]) => void | Promise<void>;
 }
 
 export class ConversationDeletions {
@@ -503,7 +504,6 @@ export class ConversationDeletions {
     const leftovers = [...entry.leftovers];
     const threadIds = entry.threadIds.filter((id) => ID.test(id));
     this.deleteArtifactRows(threadIds);
-    try { this.options.forgetThreads?.(threadIds); } catch (error) { console.error("conversation deletion: could not drop records", error); }
     for (const threadId of threadIds) {
       for (const dir of [dirs.events, dirs.native]) {
         for (const name of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) record(removeConfined(dir, nodePath.join(dir, name)), nodePath.join(dir, name), removed, failed);
@@ -561,7 +561,12 @@ export class ConversationDeletions {
 
   /** Finish every deletion a crash interrupted. A record whose thread is
    * still live never committed and is dropped; the owner can delete again. */
-  reconcile(isLive: (threadId: string) => boolean, deleteRows: (threadId: string) => void): number {
+  /** Drop the conversations' other records (handoffs, audit summaries). */
+  async forget(threadIds: string[]): Promise<void> {
+    try { await this.options.forgetThreads?.(threadIds.filter((id) => ID.test(id))); } catch (error) { console.error("conversation deletion: could not drop records", error); }
+  }
+
+  async reconcile(isLive: (threadId: string) => boolean, deleteRows: (threadId: string) => void): Promise<number> {
     let finished = 0;
     for (const entry of this.pending()) {
       if (entry.threadIds.some(isLive)) {
@@ -570,6 +575,7 @@ export class ConversationDeletions {
       }
       try {
         for (const threadId of entry.threadIds) deleteRows(threadId);
+        await this.forget(entry.threadIds);
         this.finish(entry);
         finished++;
       } catch (error) {
@@ -666,5 +672,6 @@ export async function runConversationDeletion<T>(deletions: ConversationDeletion
     return { result, report: { leftovers: [], failed: [] } };
   }
   try { await settle?.(); } catch { /* the files go regardless */ }
+  await deletions.forget(entry.threadIds);
   return { result, report: deletions.finish(entry) };
 }

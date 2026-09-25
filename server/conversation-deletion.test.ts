@@ -285,7 +285,7 @@ describe("ConversationDeletions", () => {
     expect(deletions.pending()).toEqual([]);
   });
 
-  it("finishes an interrupted delete at boot and drops one that never committed", () => {
+  it("finishes an interrupted delete at boot and drops one that never committed", async () => {
     const data = fresh("data");
     const db = messagesDb(data);
     const desk = join(data, "workspaces", BOT, "threads", THREAD);
@@ -299,7 +299,7 @@ describe("ConversationDeletions", () => {
     expect(deletions.pending()).toHaveLength(2);
     const rowsDeleted: string[] = [];
     const restarted = new ConversationDeletions({ dataDir: data, database: () => db });
-    expect(restarted.reconcile((threadId) => threadId === OTHER, (threadId) => rowsDeleted.push(threadId))).toBe(1);
+    expect(await restarted.reconcile((threadId) => threadId === OTHER, (threadId) => rowsDeleted.push(threadId))).toBe(1);
     expect(rowsDeleted).toEqual([THREAD]);
     expect(existsSync(desk)).toBe(false);
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(false);
