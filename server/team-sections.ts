@@ -52,9 +52,34 @@ export interface TeamView {
   hasInstructions: boolean;
 }
 
+/** The organization fields of every record a change touched, spelled out
+ * (null for "none"). Client frames merge, so a field that disappears from a
+ * record would never clear on screen; this is what the dialog applies. */
+export interface TeamChanges {
+  bots: Array<{ id: string; section: string | null; chiefOfStaff: boolean; chiefScope: "workspace" | null; individual: boolean | null; hidden: boolean | null }>;
+  groups: Array<{ id: string; name: string; section: string | null; hidden: boolean | null }>;
+}
+
+function changesFor(store: Store, botIds: Iterable<string>, groupIds: Iterable<string>): TeamChanges {
+  return {
+    bots: [...botIds].flatMap((id) => {
+      const bot = store.bot(id);
+      return bot
+        ? [{ id, section: bot.section ?? null, chiefOfStaff: bot.chiefOfStaff === true, chiefScope: bot.chiefScope ?? null, individual: bot.individual ?? null, hidden: bot.hidden ?? null }]
+        : [];
+    }),
+    groups: [...groupIds].flatMap((id) => {
+      const group = store.group(id);
+      return group ? [{ id, name: group.name, section: group.section ?? null, hidden: group.hidden ?? null }] : [];
+    }),
+  };
+}
+
 export class TeamChangeError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 const fail = (message: string, status = 409): never => {
@@ -119,7 +144,7 @@ export function describeTeam(store: Store, section: unknown): TeamView {
 
 const renameSchema = z.object({ section: sectionSchema, name: z.string().max(200), revision: z.string() }).strict();
 
-export function renameTeam(store: Store, input: unknown, deps: TeamDeps): TeamView {
+export function renameTeam(store: Store, input: unknown, deps: TeamDeps): { team: TeamView; changed: TeamChanges } {
   const parsed = renameSchema.safeParse(input);
   if (!parsed.success) return fail("Send the team, its new name and the revision you read.", 400);
   const from = existingKey(store, parsed.data.section);
@@ -130,7 +155,7 @@ export function renameTeam(store: Store, input: unknown, deps: TeamDeps): TeamVi
   if ([...to].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) fail("Team names cannot contain control characters.", 400);
   const reserved = RESERVED_TEAM_NAMES.find((name) => fold(name) === fold(to));
   if (reserved) fail(`"${reserved}" is already a heading in the sidebar. Choose another name.`, 400);
-  if (to === from) return describeTeam(store, from);
+  if (to === from) return { team: describeTeam(store, from), changed: changesFor(store, [], []) };
   if (fold(to) !== fold(from)) {
     const visible =
       store.bots.find((bot) => !bot.hidden && fold(sectionKey(bot.section)) === fold(to))?.section ??
@@ -171,7 +196,7 @@ export function renameTeam(store: Store, input: unknown, deps: TeamDeps): TeamVi
     writeSectionContext(to, instructions.text, instructions.updatedAt);
     writeSectionContext(from, "");
   }
-  return describeTeam(store, to);
+  return { team: describeTeam(store, to), changed: changesFor(store, bots.keys(), groups.keys()) };
 }
 
 // ── members and lead ───────────────────────────────────────────────────
@@ -187,8 +212,8 @@ const membersSchema = z
   })
   .strict();
 
-/** Returns the team after the change, or null when nothing is left in it. */
-export function changeTeamMembers(store: Store, input: unknown, deps: TeamDeps): TeamView | null {
+/** The team after the change (null when nothing is left in it) and what changed. */
+export function changeTeamMembers(store: Store, input: unknown, deps: TeamDeps): { team: TeamView | null; changed: TeamChanges } {
   const parsed = membersSchema.safeParse(input);
   if (!parsed.success) return fail("Send the team, the revision you read, and who to add, remove or lead.", 400);
   const key = existingKey(store, parsed.data.section);
@@ -244,10 +269,11 @@ export function changeTeamMembers(store: Store, input: unknown, deps: TeamDeps):
       patch(bot, { chiefOfStaff: leads, ...(leads && bot.individual ? { individual: undefined } : {}) });
     }
   }
-  if (!patches.size) return describeTeam(store, key);
+  if (!patches.size) return { team: describeTeam(store, key), changed: changesFor(store, [], []) };
   store.applyTeamChange(patches, new Map());
   deps.reachabilityChanged();
-  return teamBots(store, key).length || teamGroups(store, key).length ? describeTeam(store, key) : null;
+  const team = teamBots(store, key).length || teamGroups(store, key).length ? describeTeam(store, key) : null;
+  return { team, changed: changesFor(store, patches.keys(), []) };
 }
 
 // ── delete ─────────────────────────────────────────────────────────────
@@ -260,7 +286,7 @@ const deleteSchema = z.object({ section: sectionSchema, revision: z.string(), bo
  * team memory is kept but filed under a key no team label can carry (labels
  * are at most 60 characters), so a later team with the same name starts
  * clean. */
-export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots: number; channels: number } {
+export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots: number; channels: number; changed: TeamChanges } {
   const parsed = deleteSchema.safeParse(input);
   if (!parsed.success) return fail("Choose whether to keep or archive the team's bots.", 400);
   const key = existingKey(store, parsed.data.section);
@@ -295,5 +321,9 @@ export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots
   for (const group of archived) deps.channelArchived(store.group(group.id) ?? group);
   writeSectionContext(key, "");
   deps.reachabilityChanged();
-  return { bots: bots.length, channels: groups.filter((group) => !group.dm).length };
+  return {
+    bots: bots.length,
+    channels: groups.filter((group) => !group.dm).length,
+    changed: changesFor(store, botPatches.keys(), groupPatches.keys()),
+  };
 }

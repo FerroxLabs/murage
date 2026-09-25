@@ -84,7 +84,9 @@ describe("renameTeam", () => {
     expect(teamScopes()).toContain("Operations");
     const before = canReach(chief, lead);
 
-    const team = renameTeam(store, { section: "Operations", name: "Ops Crew", revision: revision() }, deps);
+    const { team, changed } = renameTeam(store, { section: "Operations", name: "Ops Crew", revision: revision() }, deps);
+    expect(changed.bots.map((bot) => bot.id).sort()).toEqual([lead.id, member.id, archived.id].sort());
+    expect(changed.groups.find((group) => group.id === channel.id)).toEqual({ id: channel.id, name: "Ops Crew", section: "Ops Crew", hidden: null });
 
     expect(team.name).toBe("Ops Crew");
     for (const bot of [lead, member, archived]) expect(store.bot(bot.id)?.section).toBe("Ops Crew");
@@ -148,12 +150,14 @@ describe("changeTeamMembers", () => {
   it("adds and removes bots, and a removed bot keeps its history as an ungrouped bot", () => {
     const { store, loose, member, deps, revision } = setup();
     store.appendMessage(member.threadId, { role: "user", kind: "text", text: "keep me" });
-    const team = changeTeamMembers(store, { section: "Operations", revision: revision(), add: [loose.id], remove: [member.id] }, deps)!;
+    const { team, changed } = changeTeamMembers(store, { section: "Operations", revision: revision(), add: [loose.id], remove: [member.id] }, deps);
+    // A removed bot's cleared team is spelled out, so a screen can clear it.
+    expect(changed.bots.find((bot) => bot.id === member.id)).toMatchObject({ section: null, chiefOfStaff: false });
     expect(store.bot(loose.id)?.section).toBe("Operations");
     expect(sectionKey(store.bot(member.id)?.section)).toBe("");
     expect(store.bot(member.id)?.hidden).toBeFalsy();
     expect(store.messagesFor(member.threadId).some((message) => message.text === "keep me")).toBe(true);
-    expect(team.members.map((bot) => bot.id)).toContain(loose.id);
+    expect(team!.members.map((bot) => bot.id)).toContain(loose.id);
     expect(deps.reachabilityChanged).toHaveBeenCalledTimes(1);
   });
 
@@ -162,8 +166,8 @@ describe("changeTeamMembers", () => {
     changeTeamMembers(store, { section: "Operations", revision: revision(), leadId: member.id }, deps);
     expect(store.bot(member.id)?.chiefOfStaff).toBe(true);
     expect(store.bot(lead.id)?.chiefOfStaff).toBe(false);
-    const team = changeTeamMembers(store, { section: "Operations", revision: revision(), leadId: null }, deps)!;
-    expect(team.leadId).toBeNull();
+    const { team } = changeTeamMembers(store, { section: "Operations", revision: revision(), leadId: null }, deps);
+    expect(team!.leadId).toBeNull();
     expect(store.bots.filter((bot) => bot.chiefOfStaff && sectionKey(bot.section) === "Operations")).toEqual([]);
   });
 
@@ -186,8 +190,8 @@ describe("changeTeamMembers", () => {
 
   it("removing the lead leaves the team without one and the bot stops leading", () => {
     const { store, lead, deps, revision } = setup();
-    const team = changeTeamMembers(store, { section: "Operations", revision: revision(), remove: [lead.id] }, deps)!;
-    expect(team.leadId).toBeNull();
+    const { team } = changeTeamMembers(store, { section: "Operations", revision: revision(), remove: [lead.id] }, deps);
+    expect(team!.leadId).toBeNull();
     expect(store.bot(lead.id)).toMatchObject({ chiefOfStaff: false });
     expect(sectionKey(store.bot(lead.id)?.section)).toBe("");
   });

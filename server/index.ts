@@ -13549,10 +13549,10 @@ const server = createServer(async (req, res) => {
           return json(res, 200, { team: describeTeam(store, url.searchParams.get("section") ?? "") });
         }
         if (method === "POST" && path === "/api/team-sections/rename") {
-          return json(res, 200, { team: renameTeam(store, await readBody(req), deps) });
+          return json(res, 200, renameTeam(store, await readBody(req), deps));
         }
         if (method === "POST" && path === "/api/team-sections/members") {
-          return json(res, 200, { team: changeTeamMembers(store, await readBody(req), deps) });
+          return json(res, 200, changeTeamMembers(store, await readBody(req), deps));
         }
         if (method === "POST" && path === "/api/team-sections/delete") {
           return json(res, 200, { ok: true, ...deleteTeam(store, await readBody(req), deps) });

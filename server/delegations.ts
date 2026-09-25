@@ -729,7 +729,7 @@ function dropIfUnreachable(
  * reports those. Returns how many were dropped. */
 export function dropUnreachableDelegations(bus: CommsBus): number {
   let dropped = 0;
-  for (const [threadId, items] of [...pendingDelegations]) {
+  for (const [threadId, items] of pendingDelegations) {
     const owner = bus.store.botByThread(threadId);
     const remaining = items.filter((item) => {
       const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? owner;

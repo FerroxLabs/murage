@@ -123,6 +123,8 @@ import { useTrayIntents } from "./useTrayIntents";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { TeamSettingsHost } from "./TeamSettingsDialog";
+import { openTeamSettings, renameSidebarLayout } from "@/lib/team-manage";
 import { NewFromTemplateDialog, type TemplateKind } from "./NewFromTemplateDialog";
 import { NewTeamDialog } from "./NewTeamDialog";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
@@ -2272,6 +2274,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     );
   };
 
+  // A renamed team keeps its place in the sidebar and stays open or closed.
+  const renameTeamLayout = (from: string, to: string) => {
+    const next = renameSidebarLayout(sectionOrder, collapsedSections, from, to);
+    setSectionOrder(next.order);
+    saveSectionOrder(next.order);
+    setCollapsedSections(next.collapsed);
+    saveCollapsedSections(next.collapsed);
+  };
+
   const moveSidebarSection = (id: string, direction: -1 | 1) => {
     const next = moveSection(sectionIds, id, direction);
     if (sameSectionOrder(next, sectionIds)) return;
@@ -2662,6 +2673,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     onEditInstructions={
                       sectionName ? () => setInstructionsEditor({ section: sectionName, label: sectionName }) : undefined
                     }
+                    onManage={sectionName ? (focus) => openTeamSettings(sectionName, focus) : undefined}
                   />
                 )}
                 {!collapsed && (
@@ -2939,6 +2951,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onRestored={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
+      <TeamSettingsHost onRenamed={renameTeamLayout} />
       {newTeamOpen && (
         <NewTeamDialog
           onClose={() => setNewTeamOpen(false)}

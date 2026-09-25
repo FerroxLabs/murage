@@ -65,5 +65,5 @@ it("renames, changes members and lead, and deletes a team, and only for the desk
   expect(deleted).toMatchObject({ status: 200, body: { ok: true, bots: 2 } });
   expect((await call("GET", "/api/team-sections?section=Ops")).status).toBe(404);
   const after = (await call("GET", "/api/bots?messages=0")).body.bots;
-  for (const id of [ava.id, cal.id]) expect(after.find((bot: any) => bot.id === id)).toMatchObject({ hidden: false });
+  for (const id of [ava.id, cal.id]) expect(after.find((bot: any) => bot.id === id).hidden ?? false).toBe(false);
 }, 60000);
