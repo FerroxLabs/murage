@@ -4,7 +4,7 @@
 // The voice list comes from the harness, which holds the key; the
 // renderer never talks to ElevenLabs itself.
 import { useEffect, useState } from "react";
-import { Check, Loader2, Square, Volume2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
@@ -12,7 +12,8 @@ import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
-import { tryButtonState, VoiceOptions, type PickerVoice } from "./VoiceOptions";
+import { VoicePicker } from "./VoicePicker";
+import { isVoicePreview, previewMessageId, rowPreview, type PickerVoice } from "./voice-picker-model";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 
@@ -111,19 +112,30 @@ export function VoiceSettings({
       .finally(() => setSaving(false));
   };
 
+  // Every row of the picker plays its own sample. The speaker plays one thing
+  // at a time, so starting one stops the last; each row reads its own state
+  // (Loading, Stop, or what went wrong) from the speaker's.
+  const speech = useSpeech();
+  const preview = (voiceId: string) => rowPreview(speech, previewMessageId(bot.id, voiceId));
+  const togglePreview = (voiceId: string) => {
+    const state = preview(voiceId).state;
+    if (state === "loading" || state === "playing") return speaker.stop();
+    void speaker.speak(SAMPLE, { voiceId: voiceId || undefined, botId: bot.id, messageId: previewMessageId(bot.id, voiceId) });
+  };
+  // Leaving the settings ends a sample still playing.
+  useEffect(() => () => {
+    if (isVoicePreview(speaker.state.messageId, bot.id)) speaker.stop();
+  }, [bot.id]);
+
   if (!tts) return null;
 
   const selectedVoice = bot.voice ?? "";
-  const ready = configured && Boolean(selectedVoice || tts.voice);
-  // Try gives feedback: Loading while the clip is made, Stop while it plays.
-  const speech = useSpeech();
-  const previewId = `voice-preview:${bot.id}`;
-  const [tried, setTried] = useState(false);
-  const previewStatus = speech.messageId === previewId ? speech.status : "idle";
-  const previewing = previewStatus !== "idle";
-  // A failed clip resets the speaker without saying whose it was, so the
-  // error shows only after this button was the last thing pressed.
-  const previewError = tried && speech.status === "idle" ? speech.error : undefined;
+  // Kept at the top of the list: the workspace's voice, and a saved voice the
+  // list no longer has.
+  const pinned: PickerVoice[] = [
+    ...(tts.voice ? [{ id: "", label: "Workspace default", description: "The voice set for the whole workspace" }] : []),
+    ...(selectedVoice && !loadingVoices && !voices.some((voice) => voice.id === selectedVoice) ? [{ id: selectedVoice, label: "Current voice", description: "Saved earlier, not in this list" }] : []),
+  ];
 
   return (
     <div className="rounded-xl bg-card p-4">
@@ -169,8 +181,8 @@ export function VoiceSettings({
         <div className="mt-3 text-[12.5px] text-ink-secondary">
           {fluxAvailable
             ? hostedVia === "openai"
-              ? "Speaks through your own OpenAI key, billed by OpenAI. No other key needed."
-              : "Speaks through your Flux account, billed per character. No other key needed."
+              ? "Speaks through your own OpenAI key. No other key needed."
+              : "Speaks through your Flux account. No other key needed."
             : "Add a Flux key, or an OpenAI key, in Settings to use these voices."}
         </div>
       )}
@@ -178,7 +190,7 @@ export function VoiceSettings({
       {provider === "xai" && (
         <div className="mt-3 text-[12.5px] text-ink-secondary">
           {xaiKey
-            ? "Speaks with xAI's voices through your own xAI key, billed by xAI. 28 voices."
+            ? "Speaks with xAI's voices through your own xAI key. 28 voices."
             : xaiAvailable
               ? "Speaks with xAI's voices through your Flux account. They are also in the Flux list."
               : "Connect an xAI key in Settings, Models, to use xAI's voices."}
@@ -226,43 +238,20 @@ export function VoiceSettings({
 
       {configured && (
         <div className="mt-4">
-          <div className="mb-1.5 text-[13px] text-ink-secondary">Voice</div>
-          <div className="flex gap-2">
-            <select
-              value={selectedVoice}
-              onChange={(e) => onPatch({ voice: e.target.value })}
-              aria-label={`${bot.name}'s voice`}
-              className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:border-hairline focus:outline-none"
-            >
-              <option value="">
-                {loadingVoices
-                  ? "Loading voices…"
-                  : tts.voice
-                    ? "Workspace default"
-                    : "Pick a voice"}
-              </option>
-              {selectedVoice && !voices.some((voice) => voice.id === selectedVoice) && (
-                <option value={selectedVoice}>Current voice</option>
-              )}
-              <VoiceOptions voices={voices} />
-            </select>
-            <button
-              onClick={() => { if (previewing) { speaker.stop(); return; } setTried(true); void speaker.speak(SAMPLE, { voiceId: bot.voice, botId: bot.id, messageId: previewId }); }}
-              disabled={!ready}
-              title={!ready ? "Pick a voice first" : previewing ? "Stop" : "Hear this voice"}
-              aria-label={tryButtonState(previewStatus).label}
-              aria-busy={previewStatus === "preparing"}
-              className={cn(
-                "flex w-[84px] shrink-0 items-center justify-center gap-1.5 rounded-lg py-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-50",
-                previewing ? "bg-accent/15 text-accent-text hover:bg-accent/25" : "bg-control text-ink hover:bg-raised-hover",
-              )}
-            >
-              {previewStatus === "preparing" ? <><Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> {tryButtonState(previewStatus).text}</>
-                : previewStatus === "speaking" ? <><Square size={12} fill="currentColor" /> {tryButtonState(previewStatus).text}</>
-                : <><Volume2 size={14} /> {tryButtonState(previewStatus).text}</>}
-            </button>
+          <div className="mb-1.5 flex items-baseline justify-between gap-3 text-[13px] text-ink-secondary">
+            <span>Voice</span>
+            {!selectedVoice && !tts.voice && !loadingVoices && <span className="text-[12px]">Pick a voice</span>}
           </div>
-          {previewError && <div role="alert" className="mt-1.5 text-[11.5px] text-danger">{previewError}</div>}
+          <VoicePicker
+            voices={voices}
+            pinned={pinned}
+            value={selectedVoice}
+            onChange={(voice) => onPatch({ voice })}
+            label={`${bot.name}'s voice`}
+            loading={loadingVoices}
+            preview={preview}
+            onPreview={togglePreview}
+          />
           {voices.some((v) => v.gender) && (
             <div className="mt-1.5 text-[11.5px] text-ink-secondary">Every voice speaks every language.</div>
           )}
