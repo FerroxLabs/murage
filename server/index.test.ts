@@ -55,6 +55,11 @@ const DESKTOP_HEADERS = {
   "x-murage-surface-secret": DESKTOP_SECRET,
 } as const;
 const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
+/** The per-launch credential the harness shares with its companion
+ * (`companion-authority.ts`). The door adds it next to the marker; the marker
+ * alone is a string any local process can type. */
+const COMPANION_TOKEN = "c".repeat(64);
+const PAIRED_PHONE = { "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN } as const;
 // State-only setup must not re-probe every installed engine for each bot.
 // Tests of default selection and actual turns retain their own selections.
 const STATE_ONLY_SELECTION = { instanceId: "ghost", model: "ghost-1" };
@@ -440,6 +445,29 @@ beforeAll(async () => {
         dm: true,
       },
       {
+        // The Inbox scoping test: one room a phone may see and one private
+        // bot-to-bot room it may not, each holding one open request.
+        id: "test-inbox-open-room",
+        threadId: "test-inbox-open-room-thread",
+        name: "Inbox open room",
+        memberIds: ["test-bot-a"],
+        defaultResponder: { kind: "member", botId: "test-bot-a" },
+        bulletin: "",
+        unread: false,
+        createdAt: 5,
+      },
+      {
+        id: "test-inbox-dm",
+        threadId: "test-inbox-dm-thread",
+        name: "Inbox private channel",
+        memberIds: ["test-bot-a", "test-bot-b"],
+        defaultResponder: { kind: "mentions" },
+        bulletin: "",
+        unread: false,
+        createdAt: 6,
+        dm: true,
+      },
+      {
         id: "test-stranded-room",
         threadId: "test-stranded-room-thread",
         name: "Stranded room",
@@ -526,6 +554,24 @@ beforeAll(async () => {
       ],
     }),
   );
+
+  for (const threadId of ["test-inbox-open-room-thread", "test-inbox-dm-thread"]) {
+    writeFileSync(
+      join(home, ".murage", `messages-${threadId}.json`),
+      JSON.stringify({
+        activeLeafId: `${threadId}-card`,
+        messages: [{
+          id: `${threadId}-card`,
+          at: 5,
+          parentId: null,
+          role: "bot",
+          kind: "options",
+          card: { title: "Approval needed", subtitle: "rm -rf /tmp/inbox", options: ["Allow", "Deny"], requestId: `${threadId}-request`, tool: "Bash", allowKey: "Bash:rm" },
+          from: { botId: "test-bot-a", name: "Test bot A", color: "purple" },
+        }],
+      }),
+    );
+  }
 
   boxStub = createServer(async (req, res) => {
     if (req.url === "/fixture-browser-event") {
@@ -633,6 +679,7 @@ beforeAll(async () => {
       // webServer use it: pin the secret so the caller can hold the same one
       // the harness minted. Refused outright in a packaged child.
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
+      MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: fakeClaudeDump,
       FAKE_CLAUDE_FINISH_GATE_DIR: join(home, "finish-fake"),
@@ -9453,6 +9500,80 @@ describe("remote surfaces see only the conversations a person can see", () => {
       headers: { "x-murage-companion": "1" },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// For the Inbox and for calls the harness, not the door, is the boundary: the
+// door only adds the launch credential. These drive the composition in
+// index.ts (the desktop-authority gate, inboxDoor, callAccess) with the real
+// companionAuthorized, over a socket. The marker alone proves nothing.
+describe("the Inbox and calls open only to a proven companion", () => {
+  const send = async (method: string, path: string, headers: Record<string, string>, body?: unknown) => {
+    const res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const inboxThreads = (body: any) => new Set((body.items as Array<{ id: string }>).map((item) => JSON.parse(Buffer.from(item.id, "base64url").toString())[0]));
+  const MARKER_ONLY = { "x-murage-companion": "1" };
+  const WRONG_TOKEN = { "x-murage-companion": "1", "x-murage-companion-token": "e".repeat(64) };
+
+  it("refuses the Inbox to the marker alone or a guessed credential, and scopes it for the real one", async () => {
+    expect((await send("GET", "/api/inbox?view=all", MARKER_ONLY)).status).toBe(404);
+    expect((await send("GET", "/api/inbox?view=all", WRONG_TOKEN)).status).toBe(404);
+
+    const desktop = await send("GET", "/api/inbox?view=all&pageSize=100", DESKTOP_HEADERS);
+    expect(desktop.status).toBe(200);
+    expect(inboxThreads(desktop.body).has("test-inbox-open-room-thread")).toBe(true);
+    expect(inboxThreads(desktop.body).has("test-inbox-dm-thread")).toBe(true);
+
+    const phone = await send("GET", "/api/inbox?view=all&pageSize=100", PAIRED_PHONE);
+    expect(phone.status).toBe(200);
+    expect(inboxThreads(phone.body).has("test-inbox-open-room-thread")).toBe(true);
+    // the private room is absent, not merely unlabeled, and not searchable
+    expect(inboxThreads(phone.body).has("test-inbox-dm-thread")).toBe(false);
+    expect(JSON.stringify(phone.body)).not.toContain("Inbox private channel");
+    const searched = await send("GET", "/api/inbox?view=all&query=private", PAIRED_PHONE);
+    expect(inboxThreads(searched.body).has("test-inbox-dm-thread")).toBe(false);
+
+    // A state write is scoped the same way: the private room's item is not
+    // found for the phone, and the marker alone never reaches the route.
+    const privateItem = desktop.body.items.find((item: { id: string }) => inboxThreads({ items: [item] }).has("test-inbox-dm-thread"));
+    const openItem = phone.body.items.find((item: { id: string }) => inboxThreads({ items: [item] }).has("test-inbox-open-room-thread"));
+    const mark = (item: { id: string; version: string }) => ({ id: item.id, version: item.version, read: true });
+    expect((await send("POST", "/api/inbox/state", MARKER_ONLY, mark(openItem))).status).toBe(404);
+    expect(await send("POST", "/api/inbox/state", PAIRED_PHONE, mark(privateItem))).toEqual({ status: 404, body: { error: "Inbox item is unavailable." } });
+    expect(await send("POST", "/api/inbox/state", PAIRED_PHONE, mark(openItem))).toEqual({ status: 200, body: { ok: true } });
+
+    // the rest of the /api/inbox prefix stays desktop-only for the phone too
+    expect((await send("GET", "/api/inbox/other", PAIRED_PHONE)).status).toBe(404);
+  });
+
+  it("answers a call to a hidden bot exactly like a missing one, and refuses the marker alone", async () => {
+    const visible = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const hidden = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${hidden.id}`, { hidden: true, chiefOfStaff: false })).status).toBe(200);
+      for (const route of ["voice-host", "call-note"]) {
+        const marker = await send("POST", `/api/bots/${visible.id}/${route}`, MARKER_ONLY, {});
+        expect(marker).toMatchObject({ status: 403, body: { error: "calls need a paired device" } });
+        expect((await send("POST", `/api/bots/${visible.id}/${route}`, WRONG_TOKEN, {})).status).toBe(403);
+
+        const hiddenCall = await send("POST", `/api/bots/${hidden.id}/${route}`, PAIRED_PHONE, {});
+        const missingCall = await send("POST", `/api/bots/no-such-bot/${route}`, PAIRED_PHONE, {});
+        expect(hiddenCall).toEqual({ status: 404, body: { error: "no such bot" } });
+        expect(hiddenCall).toEqual(missingCall);
+      }
+      // A visible bot reaches each handler, which answers its own next error
+      // (voice-host needs something said) or writes nothing for an empty log.
+      expect(await send("POST", `/api/bots/${visible.id}/voice-host`, PAIRED_PHONE, {})).toEqual({ status: 400, body: { error: "text required" } });
+      expect(await send("POST", `/api/bots/${visible.id}/call-note`, PAIRED_PHONE, { log: [] })).toEqual({ status: 200, body: { ok: true, written: false } });
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${visible.id}`);
+      await desktopApi("DELETE", `/api/bots/${hidden.id}`);
+    }
   });
 });
 
