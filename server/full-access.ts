@@ -112,10 +112,13 @@ export function fullAccessOptionsChange(
 
 /** May Full access approve a setup request raised in a turn from `origin`?
  * Only with the bot's setup option on, and only where Full access covers the
- * turn at all (so an owner's channel message needs both options). */
+ * turn at all (so an owner's channel message needs both options). A routine
+ * run never: a new routine, skill or trusted folder is new standing
+ * authority, and a routine granting itself more of it with nobody watching
+ * is the one thing its level was not chosen for. */
 export function fullAccessApprovesSetup(
   bot: (AutoApprover & { fullAccessSetupRequests?: boolean }) | null | undefined,
   origin: FullAccessOrigin,
 ): boolean {
-  return bot?.fullAccessSetupRequests === true && fullAccessCovers(bot, origin);
+  return bot?.fullAccessSetupRequests === true && origin !== "routine" && fullAccessCovers(bot, origin);
 }

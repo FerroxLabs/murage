@@ -158,7 +158,7 @@ export function projectedRoutineItems(
     .filter((run) => run.scheduledFor >= from && run.scheduledFor < to)
     .sort((left, right) => right.scheduledFor - left.scheduledFor)
     .filter((run) => {
-      if (run.status === "queued" || run.status === "running" || run.status === "waiting") {
+      if (run.status === "queued" || run.status === "running" || run.status === "waiting" || run.status === "needs-you") {
         return true;
       }
       // A routine may later be edited or deleted, so the current definition

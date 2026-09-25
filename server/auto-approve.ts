@@ -14,8 +14,15 @@ import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./s
 import { redactSecretsInText } from "./redact.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, type ExactCommand } from "../shared/exact-command.ts";
 
+/** The plain `rm` rule, the one a delete placed inside the bot's own roots
+ * is excused from (see `deletesInside` below). */
+const RM_RULE = /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i;
+/** Stopping processes stays destructive for that excuse: a command that
+ * kills something is guarded whatever else it deletes. */
+const KILLS = /\b(pkill|killall|kill)\b/;
+
 const DESTRUCTIVE = [
-  /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
+  RM_RULE, // rm -rf, rm -fr, rm -r -f
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
   /\bshutdown\b|\breboot\b|\bhalt\b/i,
   /:\(\)\s*\{.*\}\s*;?\s*:/, // fork bomb
@@ -271,15 +278,20 @@ export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
 
 /** Who started the turn, as Full access reads it: the owner at the desktop
  * (or a bot the owner's turn reached), the owner's own message from
- * Telegram, Slack or Discord, or anyone and anything else — a webhook, a
- * routine, another person's channel message. */
-export type FullAccessOrigin = "owner" | "owner-channel" | "other";
+ * Telegram, Slack or Discord, a scheduled or manual run of one of the owner's
+ * routines judged at that routine's own level (server/routine-permissions.ts),
+ * or anyone and anything else — a webhook, another person's channel message,
+ * a turn whose origin could not be proven. */
+export type FullAccessOrigin = "owner" | "owner-channel" | "routine" | "other";
 
 /** Does Full access cover a turn from this origin? The owner's channel
- * messages only when the bot's option says so; everything else never. */
+ * messages only when the bot's option says so. A routine run is covered when
+ * the level it is judged at is Full access or No limits: the caller has
+ * already applied the routine's level to `bot`, so the flags ARE that level.
+ * Everything else never. */
 export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin): boolean {
   if (!hasFullAccess(bot)) return false;
-  if (origin === "owner") return true;
+  if (origin === "owner" || origin === "routine") return true;
   return origin === "owner-channel" && bot?.fullAccessChannelMessages === true;
 }
 
@@ -305,6 +317,9 @@ export type AutoVerdictSource =
   /** The owner allowed this kind of action in this place for the task, from
    * the card's "Allow for this task" or by saying so in chat. */
   | "task-allowance"
+  /** "Always allow for this routine": an exact command or a stop-line place
+   * the owner allowed for one routine's runs (server/routine-permissions.ts). */
+  | "routine-allow"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
@@ -360,6 +375,23 @@ export interface AutoContext {
   /** the turn is the workspace owner's own Telegram, Slack or Discord
    * message (it is also unattended and automated) */
   channelOwner?: boolean;
+  /** The turn is a scheduled or manual run of one of the owner's routines,
+   * and the caller judged `bot` at that routine's level (its own, or the
+   * bot's level when the run started). Full access and No limits then cover
+   * it exactly as they cover a turn the owner started. Never set for a
+   * webhook or channel turn, and an `unattended` mark outranks it. */
+  routineLevel?: boolean;
+  /** The routine's own "Always allow for this routine" grants: exact-command
+   * and stop-line keys only. Honoured only with `routineLevel`, never on an
+   * unattended turn or for host control, and never over a guard. */
+  routineAllow?: readonly string[];
+  /** The caller established with the stop line's own reader
+   * (server/stop-line.ts deletesPlacedInside) that every delete this command
+   * names lands strictly inside the bot's own roots: its workspace and thread
+   * folders, the turn's folder, the temp folders. Such a delete is not
+   * "destructive" for Auto's guard, unless the command also stops processes
+   * or trips any other destructive rule. */
+  deletesInside?: boolean;
   /** The caller established — from the engine's STRUCTURED tool
    * input, never from the card text — that every filesystem path this
    * request names lies inside the directories Murage manages for THIS bot:
@@ -391,6 +423,13 @@ export interface AutoContext {
   stopAllowedForTask?: string;
 }
 
+/** Is the only destructive thing here an `rm` the caller placed inside the
+ * bot's own roots? Every other rule, and any process kill, still counts. */
+function excusedDelete(text: string, context: AutoContext | undefined): boolean {
+  if (context?.deletesInside !== true || KILLS.test(text)) return false;
+  return DESTRUCTIVE.every((rule) => rule === RM_RULE || !rule.test(text));
+}
+
 export function autoVerdict(
   bot: AutoApprover,
   tool: string,
@@ -409,12 +448,13 @@ export function autoVerdict(
   // own channel message joins the owner's turns only when the bot's option
   // says so.
   const origin: FullAccessOrigin = context?.unattended || context?.automated
-    ? context.channelOwner === true ? "owner-channel" : "other"
+    ? context.channelOwner === true ? "owner-channel"
+      : context.routineLevel === true && !context.unattended ? "routine" : "other"
     : "owner";
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const guarded = context?.exactCommand ? `${summary}\n${context.exactCommand.command}` : summary;
-  const destructive = matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
+  const destructive = excusedDelete(guarded, context) ? null : matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
   const sensitive = destructive ? null : matchFirst(SENSITIVE, guarded);
   // The stop line outranks every mode, Full access included: deleting
   // outside its folder, paying, and messaging someone new wait for the
@@ -426,6 +466,9 @@ export function autoVerdict(
   // No limits lifts the stop line for exactly the turns Full access covers;
   // a webhook, routine or someone else's turn is judged as before.
   const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
+  const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
+    ? context.routineAllow ?? []
+    : [];
   if (stop) {
     const attended = !context?.unattended && !context?.automated;
     const keyGuard = matchFirst(SENSITIVE, guarded);
@@ -433,6 +476,8 @@ export function autoVerdict(
     if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
       return { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
     }
+    const routineGrant = stopLineKey(stop) === undefined ? undefined : routineGrants.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
+    if (routineGrant) return { approve: `auto-approved ${tool} (always allowed for this routine)`, source: "routine-allow", rule: routineGrant };
     const granted = stopLineKey(stop) === undefined ? undefined : bot.alwaysAllow?.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
     if (granted && context?.scope !== "local-computer") {
       if (context?.unattended) return { approve: null, source: "unattended-block", rule: granted };
@@ -475,6 +520,8 @@ export function autoVerdict(
   const grant =
     destructive || sensitive
       ? null
+      : exactKey !== undefined && routineGrants.includes(exactKey)
+        ? { approve: `auto-approved this exact command (always allowed for this routine)`, source: "routine-allow" as const, rule: exactKey }
       : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
         ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command" as const, rule: exactKey }
       : key !== undefined && bot.alwaysAllow?.includes(key)

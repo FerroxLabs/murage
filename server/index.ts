@@ -118,9 +118,11 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict, approvalHoldNote, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
+import { applyRoutinePermissionMode, effectiveRoutinePermissionMode, type RoutinePermissionMode } from "./routine-permissions.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
-import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { classifyStopLine, deletesPlacedInside, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
+import { commandFromToolInput } from "../shared/exact-command.ts";
 import { extendStepLine, newStepLine, type StepLevel } from "./full-access-steps.ts";
 import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
@@ -411,7 +413,7 @@ import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
 import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, drainWaitingTeamIncidents, routineIncidentMuteKeys, teamIncidentChip, teamIncidentDispatchDeferred, teamIncidentText, teamIncidentTurnOptions, waitForFreeTurn, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
-import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
   applyDesktopBrowserConnectionMessage,
@@ -3981,6 +3983,24 @@ function stopLineFor(botId: string, threadId: string, event: { tool: string; sum
   }
 }
 
+/** Does every delete in this command land inside the bot's own roots (its
+ * workspace and thread folders, the turn's folder, temp)? Read from the
+ * engine's structured command with the stop line's own reader; the card text
+ * must say the same thing. Never throws: a failure is "no". */
+function deletesInsideFor(botId: string, threadId: string, event: { tool: string; summary: string; toolCall?: { name: string; input: unknown } }): boolean {
+  try {
+    if (!isCommandTool(event.tool)) return false;
+    const input = event.toolCall?.input;
+    const command = commandFromToolInput(input);
+    if (command === undefined) return false;
+    const commandCwd = input && typeof input === "object" && !Array.isArray(input) ? (input as { cwd?: unknown }).cwd : undefined;
+    const place = stopLinePlace(botId, threadId, commandCwd);
+    return deletesPlacedInside(command, place) && (event.summary.trim() === command.trim() || deletesPlacedInside(event.summary, place));
+  } catch {
+    return false;
+  }
+}
+
 /** A message the owner allowed (or a grant covered) goes to people who are
  * now known: the next message to them is not "someone new". */
 function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
@@ -4278,10 +4298,25 @@ bus.subscribe((event: RuntimeEvent) => {
         : undefined;
       // offered on ordinary command cards only; a stop-line card keeps its own scoped grants
       const exactAllowKey = stopHit ? undefined : exactAllowKeyFor(event.tool, event.summary, exactCommand);
-      const verdict = permission && asker && event.requestId
-        ? autoVerdict(asker, event.tool, event.summary, {
+      // A scheduled or manual routine run is judged at its routine's level
+      // (server/routine-permissions.ts); webhook, channel and unattended
+      // turns never are.
+      const routineLevel = permission && bot && event.requestId && !unattended ? routineRunLevel(event.threadId) : null;
+      const judged = routineLevel && asker ? applyRoutinePermissionMode(asker, routineLevel.mode) : asker;
+      // "Always allow for this routine": the same scoped key the card already
+      // offers (the stop-line place, or this exact command here), stored on
+      // the routine. Never a bare tool name; nothing when there is no scoped key.
+      const routineAllowKey = routineLevel && !questionAsk && !event.approvalScope
+        ? stopHit ? stopLineKey(stopHit) : exactAllowKey
+        : undefined;
+      const routineAllowCard = routineLevel && routineAllowKey ? { routineAllowKey, routineId: routineLevel.routineId } : {};
+      const verdict = permission && asker && judged && event.requestId
+        ? autoVerdict(judged, event.tool, event.summary, {
             exactCommand,
             stopLine: questionAsk ? undefined : stopHit,
+            // a delete the stop line placed inside the bot's own roots is not
+            // "destructive" for Auto's guard (a process kill still is)
+            ...(!questionAsk && stopHit === null && deletesInsideFor(asker.id, event.threadId, event) ? { deletesInside: true } : {}),
             stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
             unattended,
             scope: event.approvalScope,
@@ -4289,6 +4324,8 @@ bus.subscribe((event: RuntimeEvent) => {
             // Full access covers turns the owner started; a routine's turn
             // is judged as Auto would judge it
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
+            // ...unless it is a routine run judged at its routine's own level
+            ...(routineLevel ? { routineLevel: true, routineAllow: routineLevel.alwaysAllow } : {}),
             // ...and the owner's own channel message, if the bot allows it
             channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
             // The bot editing its own MEMORY.md or its own thread files
@@ -4364,6 +4401,7 @@ bus.subscribe((event: RuntimeEvent) => {
                   : stopHit ? stopLineKey(stopHit) : approvalKey(tool, summary, event.approvalScope),
                 ...(stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
                 ...(!event.approvalScope && exactAllowKey ? { exactAllowKey } : {}),
+                ...routineAllowCard,
                 held: "Auto mode couldn't answer this one.",
                 approvalScope: event.approvalScope,
               },
@@ -4421,6 +4459,7 @@ bus.subscribe((event: RuntimeEvent) => {
               : undefined,
           ...(permission && !event.approvalScope && stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
           ...(exactAllowKey ? { exactAllowKey } : {}),
+          ...(permission ? routineAllowCard : {}),
           held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
@@ -5435,9 +5474,24 @@ async function startTurn(
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  // A scheduled or manual routine run is judged at its routine's level (its
+  // own, or the bot's level right now), not at whatever this run's task
+  // copied when it was made. The level is applied here, before the run's
+  // snapshot is taken, so the engine's stop-line setting, folder trust and
+  // every approval in the turn read the same level.
+  const routineLevel = humanIsOwner && (opts?.automationSource === "schedule" || opts?.automationSource === "manual") && !opts?.unattended
+    ? routineRunLevel(threadId)
+    : null;
+  if (routineLevel) Object.assign(bot, applyRoutinePermissionMode(bot, routineLevel.mode));
+  // The owner talking in a routine's own conversation: the composer there
+  // shows (and sets) the routine's level, so that is the level the owner's
+  // turn runs at too. Still the owner's turn in every other respect.
+  const conversationMode = !routineLevel && humanIsOwner && opts?.automationSource === undefined ? routineConversationMode(threadId) : null;
+  if (conversationMode) Object.assign(bot, applyRoutinePermissionMode(bot, conversationMode));
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
     : opts?.automationSource === "channel" ? "owner-channel"
+    : routineLevel ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
@@ -5627,6 +5681,7 @@ async function startTurn(
       let browser: Extract<Awaited<ReturnType<typeof browserIntegration>>, { profileKey: string }> | null = null;
       const procedurePin = task.procedurePin ?? store.pinTaskProcedures(bot.id, threadId,
         createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
+      routines?.notePinnedBundle(threadId, procedurePin.bundleId);
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       // The Chief of Staff guide rides every turn of the workspace Chief
       // while it is switched on, and no other bot's (skill-library.ts).
@@ -6154,7 +6209,7 @@ async function startTurn(
       // inline concatenation sent (bot-shapes.test.ts), and kept as this
       // bot's last turn for "What shapes <bot>". Built in the same tick as
       // the dispatch, so every value is the one the engine receives.
-      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other", webhook: opts?.automationSource === "webhook" });
+      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" || fullAccessOrigin === "routine", webhook: opts?.automationSource === "webhook" });
       const systemLayers = directTurnLayers({
         // The owner's House Rules open every bot's prompt (house-rules.ts).
         houseRules: houseRulesPrompt(),
@@ -6546,7 +6601,9 @@ function drainTeamIncidents(): void {
 }
 
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
-  const visibleSummary = run.status === "waiting" ? run.attention : run.output;
+  const visibleSummary = run.status === "waiting" ? run.attention
+    : run.status === "needs-you" ? `Waiting on you: ${run.attention ?? "an approval"}. Answer it in the routine's conversation to let this run finish.`
+    : run.output;
   const summary = visibleSummary ? redactSecretsInText(visibleSummary).slice(0, 2_000) : undefined;
   const error = run.error ? redactSecretsInText(run.error).slice(0, 500) : undefined;
   const card: NonNullable<Message["routineRun"]> = {
@@ -6577,6 +6634,8 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
   const state = goalState ?? (
     card.status === "waiting"
       ? "needs your attention"
+      : card.status === "needs-you"
+        ? "is waiting on you"
       : card.status === "completed"
         ? "completed"
         : card.status === "failed"
@@ -6621,7 +6680,7 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
 
   // Merely queueing/running is ambient progress. Attention and terminal
   // states become unread in the conversation where the user asked for them.
-  if (statusChanged && ["waiting", "completed", "failed", "missed"].includes(run.status)) {
+  if (statusChanged && ["waiting", "needs-you", "completed", "failed", "missed"].includes(run.status)) {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchBot(source.bot.id, { unread: true });
   }
@@ -6712,6 +6771,25 @@ routines = new RoutineManager({
     return task;
   },
   createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
+  // One conversation per routine (see RoutineManager.tick)
+  taskExists: (botId, threadId) => Boolean(store.taskByThread(botId, threadId)),
+  onRunDispatch: (run, reused) => {
+    if (!run.threadId) return;
+    // Each run starts a fresh engine session in the routine's conversation:
+    // the engine gets this run's instructions and at most the recent history
+    // replay every fresh session gets, never an ever-growing session.
+    // It also pins the skills and instruction current now, not the first run's.
+    if (reused) {
+      store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
+      store.releaseTaskProcedures(run.botId, run.threadId);
+    }
+    // the run marker: where one run ends and the next begins
+    store.appendMessage(run.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `${run.manual ? "Run now" : "Scheduled run"}: ${redactSecretsInText(run.routineName)}`, ok: true },
+    });
+  },
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>
     startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError, eventId, waitForThreadSlot: true })
       .then(() => undefined),
@@ -6725,6 +6803,15 @@ routines = new RoutineManager({
   interruptTurn: async (botId, threadId) => { await interruptDirectThread(botId,threadId); },
   interruptGoal: interruptRoutineGroupGoal,
   onRunChanged: syncRoutineRunToSource,
+  // The run limit came while a card waited on the owner: the card already
+  // rang when it opened; this says the run has stopped working and is only
+  // waiting on them now, and where.
+  onRunNeedsYou: (run) => {
+    const bot = store.bot(run.botId);
+    if (!bot) return;
+    notify(buildNotification("approval", bot, run.threadId ?? routineSourceThread(run) ?? bot.threadId,
+      `${run.routineName} is waiting on you: ${redactSecretsInText(run.attention ?? "an approval")}`));
+  },
   onRunFailed: (run) => {
     const bot = store.bot(run.watch?.ownerBotId ?? run.botId);
     if (!bot) return;
@@ -6907,7 +6994,7 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     revokeHumanConnection("telegram",connectionId);
     for (const run of routines!.listRuns().filter(run => run.telegramConnectionId === connectionId)) {
       routines!.closeEventBudget(run.id);
-      if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+      if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
     }
   },
 });
@@ -6961,7 +7048,7 @@ function makeSlack(targetBotId: string) {
       revokeHumanConnection("slack",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "slack" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
-        if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+        if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
       }
     },
   });
@@ -7020,7 +7107,7 @@ function makeDiscord(targetBotId: string) {
       revokeHumanConnection("discord",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "discord" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
-        if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+        if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
       }
     },
   });
@@ -8747,6 +8834,40 @@ function peerContactSettings(botId: string, threadId: string) {
   return conversation.group ? conversation.bot : botForDirectThread(botId, threadId);
 }
 
+/** The level a scheduled or manual routine run working in this thread is
+ * judged at: the routine's own, or its bot's current level (inherit). Null
+ * for anything else, and for a thread someone outside the desktop reached
+ * (an unattended mark outranks a routine's level, so a webhook's or another
+ * bot's unattended turn keeps its own rules). */
+function routineRunLevel(threadId: string): { routineId: string; mode: RoutinePermissionMode; alwaysAllow: string[] } | null {
+  if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return null;
+  const run = routines?.routineRunForThread(threadId);
+  if (!run || isUnattended(threadId)) return null;
+  const profile = store.bot(run.botId);
+  if (!profile) return null;
+  return { routineId: run.routineId, mode: effectiveRoutinePermissionMode(run, profile), alwaysAllow: run.alwaysAllow };
+}
+
+/** The level of the routine whose own conversation this is, or null. */
+function routineConversationMode(threadId: string): RoutinePermissionMode | null {
+  const routine = routines?.routineForConversation(threadId);
+  const profile = routine ? store.bot(routine.botId) : undefined;
+  return routine && profile && store.taskByThread(profile.id, threadId) ? effectiveRoutinePermissionMode(routine, profile) : null;
+}
+
+/** Full access and No limits for a routine need the same one-time warning
+ * the bot's own switch needs (server/full-access.ts). Null when allowed. */
+function routineLevelRefusal(body: unknown, routineBotId?: string): string | null {
+  if (!body || typeof body !== "object") return null;
+  const { permissionMode, botId } = body as { permissionMode?: unknown; botId?: unknown };
+  if (permissionMode !== "full" && permissionMode !== "unlimited") return null;
+  const bot = store.bot(typeof botId === "string" ? botId : routineBotId ?? "");
+  if (!bot) return null;
+  if (permissionMode === "unlimited" && bot.noLimitsAcknowledgedAt === undefined) return `Turn on No limits for ${bot.name} once in its settings first, then choose it for this routine.`;
+  if (permissionMode === "full" && bot.fullAccessAcknowledgedAt === undefined && bot.noLimitsAcknowledgedAt === undefined) return `Turn on Full access for ${bot.name} once in its settings first, then choose it for this routine.`;
+  return null;
+}
+
 /** Who started the turn now running in this thread, as Full access reads
  * it (server/auto-approve.ts). Only the workspace owner's conversation can be
  * anything but "other"; inside a routine run only the owner's own channel
@@ -8755,7 +8876,8 @@ function peerContactSettings(botId: string, threadId: string) {
 function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel" : "other";
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+    : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
 
@@ -10551,7 +10673,7 @@ const server = createServer(async (req, res) => {
           procedureEvolution,
           runtimeStatus:()=>memoryWorker.status(),
           humanBindingChanged:async(bindingId)=>{
-            const roots=routines!.listRuns().filter(run=>run.humanPrincipal?.bindingId===bindingId&&["queued","running","waiting"].includes(run.status));
+            const roots=routines!.listRuns().filter(run=>run.humanPrincipal?.bindingId===bindingId&&isOpenRoutineRunStatus(run.status));
             const rootThreads=new Set(roots.map(run=>run.threadId));
             for(const run of roots)await routines!.cancelRun(run.id);
             for(const bot of store.bots)for(const run of directRuns.forBot(bot.id)){if(!rootThreads.has(run.threadId)&&threadHumanPrincipal(run.threadId).bindingId===bindingId)await interruptDirectThread(bot.id,run.threadId);}
@@ -11861,7 +11983,10 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "no such route" });
     }
     if (path === "/api/routines" && method === "POST") {
-      return json(res, 201, { routine: routines!.create(await readBody(req)) });
+      const body = await readBody(req);
+      const refusal = routineLevelRefusal(body);
+      if (refusal) return json(res, 409, { error: refusal });
+      return json(res, 201, { routine: routines!.create(body) });
     }
     const instructionRollback = path.match(/^\/api\/routines\/([\w-]+)\/instructions\/rollback$/);
     if (instructionRollback && method === "POST") {
@@ -11881,14 +12006,50 @@ const server = createServer(async (req, res) => {
         return json(res, detail === "ROUTINE_INSTRUCTION_CONFLICT" ? 409 : 400, { error: detail });
       }
     }
-    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+    // "Always allow for this routine", from a card one of its runs raised.
+    // Desktop only (desktop-policy.ts), and only a key the server itself put
+    // on a card that is still waiting for an answer.
+    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/always-allow(\/remove)?$/);
+    if (routineMatch && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const routineId = routineMatch[1]!;
+      const routine = routines!.listRoutines().find((candidate) => candidate.id === routineId);
+      if (!routine) return json(res, 404, { error: "no such routine" });
+      const body = await readBody(req);
+      if (routineMatch[2]) {
+        const key = typeof body?.key === "string" ? body.key : "";
+        if (!key) return json(res, 400, { error: "key required" });
+        return json(res, 200, { routine: routines!.revokeAlwaysAllow(routineId, key) });
+      }
+      const allowKey = typeof body?.allowKey === "string" ? body.allowKey : "";
+      const threadId = typeof body?.threadId === "string" ? body.threadId : "";
+      if (!allowKey || !threadId) return json(res, 400, { error: "allowKey and threadId required" });
+      if (!store.taskByThread(routine.botId, threadId)) return json(res, 404, { error: "no such conversation for this routine" });
+      const pending = store.messagesFor(threadId).some((message) =>
+        message.card?.requestId &&
+        !message.card.answered &&
+        message.card.dismissed !== true &&
+        message.card.routineId === routineId &&
+        message.card.routineAllowKey === allowKey);
+      if (!pending) return json(res, 409, { error: "that grant is not on a pending approval for this routine" });
+      try {
+        return json(res, 200, { routine: routines!.grantAlwaysAllow(routineId, allowKey) });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 400;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
       const run = routines!.runNow(routineMatch[1]);
       return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
     }
     routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
     if (routineMatch && method === "PATCH") {
-      const routine = routines!.update(routineMatch[1], await readBody(req));
+      const body = await readBody(req);
+      const refusal = routineLevelRefusal(body, routines!.listRoutines().find((candidate) => candidate.id === routineMatch![1])?.botId);
+      if (refusal) return json(res, 409, { error: refusal });
+      const routine = routines!.update(routineMatch[1], body);
       return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
     }
     if (routineMatch && method === "DELETE") {
@@ -13408,7 +13569,7 @@ const server = createServer(async (req, res) => {
           (run) =>
             run.target === "room-goal" &&
             run.groupId === existing.id &&
-            ["queued", "running", "waiting"].includes(run.status) &&
+            isOpenRoutineRunStatus(run.status) &&
             !roster.memberIds.includes(run.botId),
         );
         if (removedGoalLead) {
@@ -17272,7 +17433,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 /** The scheduler has already pinned instructions and assigned this thread. */
 function procedureRoutineSnapshot(threadId:string):{id:string;instructionRevision:string}|undefined {
-  const run=routines?.listRuns().find(item=>item.threadId===threadId && (item.status==="running"||item.status==="waiting"));
+  const run=routines?.listRuns().find(item=>item.threadId===threadId && isLiveRoutineRunStatus(item.status));
   return run?.instructionRevision ? {id:run.routineId,instructionRevision:run.instructionRevision} : undefined;
 }
 

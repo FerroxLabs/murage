@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { FULL_ACCESS_DESKTOP_ONLY, FULL_ACCESS_OPTIONS_DESKTOP_ONLY, fullAccessRefusalMessage, PEER_CONTACT_LABEL, peerContactHint } from "./permission-mode";
+import { routineEffectiveMode, routineOfConversation, FULL_ACCESS_DESKTOP_ONLY, FULL_ACCESS_OPTIONS_DESKTOP_ONLY, fullAccessRefusalMessage, PEER_CONTACT_LABEL, peerContactHint } from "./permission-mode";
 
 const refused = (status: number, message = "not found") => Object.assign(new Error(message), { status });
 
@@ -71,5 +71,27 @@ describe("Ask me before contacting other bots: label and description agree", () 
     expect(hint - label).toBeLessThan(300);
     expect(source).toContain("aria-label={PEER_CONTACT_LABEL}");
     expect(source).not.toContain("Let this bot talk to teammates on its own");
+  });
+});
+
+describe("a routine's own conversation", () => {
+  const routines = [
+    { id: "r1", botId: "dax", threadId: "conv-1", target: "bot" as const },
+    { id: "r2", botId: "dax", threadId: "goal-1", target: "room-goal" as const },
+    { id: "r3", botId: "dax" },
+  ];
+
+  it("is found by bot and thread, bot routines only", () => {
+    expect(routineOfConversation(routines, "dax", "conv-1")?.id).toBe("r1");
+    expect(routineOfConversation(routines, "other", "conv-1")).toBeUndefined();
+    expect(routineOfConversation(routines, "dax", "goal-1")).toBeUndefined();
+    expect(routineOfConversation(routines, "dax", undefined)).toBeUndefined();
+  });
+
+  it("shows the level the routine's runs actually get", () => {
+    const noLimitsBot = { autoApprove: true, fullAccess: true, noLimits: true };
+    expect(routineEffectiveMode({}, noLimitsBot)).toBe("unlimited");
+    expect(routineEffectiveMode({ permissionMode: "auto" }, noLimitsBot)).toBe("auto");
+    expect(routineEffectiveMode({}, { autoApprove: false, fullAccess: false })).toBe("ask");
   });
 });

@@ -81,6 +81,11 @@ export interface OptionCardData {
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
+  /** "Always allow for this routine" on a card a routine run raised: the
+   * scoped key (the stop-line place or this exact command here) and the
+   * routine it is stored on. */
+  routineAllowKey?: string;
+  routineId?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
   /** 0.1.52 ASK2: a provider question's structured questions, persisted
@@ -2566,6 +2571,17 @@ export class Store {
     task.procedurePin=structuredClone(pin);
     try{this.saveBots();}catch(error){delete task.procedurePin;throw error;}
     return task.procedurePin;
+  }
+
+  /** A new routine run in the routine's own conversation is a fresh start:
+   *  its first turn pins the skills and routine instruction current then,
+   *  not the ones an earlier run pinned. Earlier bundles stay on disk. */
+  releaseTaskProcedures(botId:string, threadId:string):void {
+    const task=this.bot(botId)?.tasks?.find(item=>item.threadId===threadId);
+    if(!task?.procedurePin)return;
+    const prior=task.procedurePin;
+    delete task.procedurePin;
+    try{this.saveBots();}catch(error){task.procedurePin=prior;throw error;}
   }
 
   pinGroupProcedures(groupId:string, threadId:string, botId:string, pin:ProcedurePin):ProcedurePin {

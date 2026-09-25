@@ -650,10 +650,12 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   const run2 = await runRoutine(ctx, state, routineId, "Q14 next routine run completed", diag);
   const R2: string = run2.threadId;
   const r2Pin = await waitPin(ctx, botB.id, R2, "Q14 next routine run pinned", diag);
-  const r2Bundle = bundleAt(ctx.dataDir, botB.id, R2, r2Pin.bundleId), r1Now = await pinnedBundle(ctx, botB.id, R1);
+  // One conversation per routine: the next run works in the first run's
+  // conversation, re-pins there, and the first run's bundle stays on disk.
+  const r2Bundle = bundleAt(ctx.dataDir, botB.id, R2, r2Pin.bundleId), r1Now = { bundle: bundleAt(ctx.dataDir, botB.id, R1, R1_BUNDLE) };
   gate(ctx, "q14-routine-next-run-uses-published", run2.prompt === learnedRoutine && run2.instructionRevision === L && run2.instructionEvaluationReceiptId === RID_T
     && Array.isArray(run2.instructionEvidence) && run2.instructionEvidence.length > 0 && r2Bundle?.routine?.id === routineId && r2Bundle.routine.instructionRevision === L
-    && r1Now.pin?.bundleId === R1_BUNDLE && r1Now.bundle?.routine?.instructionRevision === B0,
+    && R2 === R1 && r2Pin.bundleId !== R1_BUNDLE && r1Now.bundle?.routine?.instructionRevision === B0,
     `next run uses published instruction and receipt ${flag(run2.instructionRevision === L && run2.instructionEvaluationReceiptId === RID_T)}; run bundle pins it ${flag(r2Bundle?.routine?.instructionRevision === L)}; earlier run kept base ${flag(r1Now.bundle?.routine?.instructionRevision === B0)}`);
 
   // D5. The owner rolls the routine instruction back to the base (routines.ts:912-931).
@@ -674,10 +676,10 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   const R3: string = run3.threadId;
   const r3Pin = await waitPin(ctx, botB.id, R3, "Q14 post rollback routine run pinned", diag);
   const r3Bundle = bundleAt(ctx.dataDir, botB.id, R3, r3Pin.bundleId);
-  const r1Later = await pinnedBundle(ctx, botB.id, R1), r2Later = await pinnedBundle(ctx, botB.id, R2);
+  const r1Later = { bundle: bundleAt(ctx.dataDir, botB.id, R1, R1_BUNDLE) }, r2Later = { bundle: bundleAt(ctx.dataDir, botB.id, R2, r2Pin.bundleId) };
   gate(ctx, "q14-routine-post-rollback-run-uses-rollback", run3.instructionRevision === K && run3.prompt === routineBase && run3.instructionEvidence === undefined
-    && r3Bundle?.routine?.id === routineId && r3Bundle.routine.instructionRevision === K && r1Later.pin?.bundleId === R1_BUNDLE && r1Later.bundle?.routine?.instructionRevision === B0
-    && r2Later.pin?.bundleId === r2Pin.bundleId && r2Later.bundle?.routine?.instructionRevision === L,
+    && r3Bundle?.routine?.id === routineId && r3Bundle.routine.instructionRevision === K && R3 === R1 && r1Later.bundle?.routine?.instructionRevision === B0
+    && r2Later.bundle?.routine?.instructionRevision === L,
     `post-rollback run uses rollback revision ${flag(run3.instructionRevision === K && run3.prompt === routineBase)}; run bundle pins it ${flag(r3Bundle?.routine?.instructionRevision === K)}; earlier runs kept base and published ${flag(r1Later.bundle?.routine?.instructionRevision === B0 && r2Later.bundle?.routine?.instructionRevision === L)}`);
 
   // D7. Later turns settle; their reviews are never evaluated.
@@ -716,6 +718,7 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   if (!pinTE || !pinTN || !pinTR || !pinR1 || !pinR2 || !pinR3 || N < 0 || !finalRoutine || mL < 0 || mK < 0)
     gate(ctx, "q14-final-readbacks-asserted", false, `final indexes: task pins ${[pinTE, pinTN, pinTR, pinR1, pinR2, pinR3].filter(Boolean).length}/6; history ${N}; routine ${n}; entries ${mL}/${mK}`);
   const pinPointer = (pin: PinRef) => `/bots/${pin.i}/tasks/${pin.j}/procedurePin/bundleId`;
+  const runPinPointer = (runId: string) => `/runs/${(Array.isArray(routinesBody?.runs) ? routinesBody.runs : []).findIndex((item: Json) => item?.id === runId)}/procedureBundleId`;
   const revisionOfPin = (botId: string, threadId: string, pin: PinRef | undefined, kind: "skill" | "routine") => {
     const bundle = bundleAt(ctx.dataDir, botId, threadId, pin?.bundleId);
     const revision = kind === "skill" ? skillEntry(bundle, skillName)?.revision : bundle?.routine?.id === routineId ? bundle.routine.instructionRevision : undefined;
@@ -757,8 +760,10 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
       apiRead("current-revision", ROUTINES_PATH, `${routineRoot}/instructionRevision`, String(pointed(routinesBody, `${routineRoot}/instructionRevision`))),
       apiRead("published-revision-in-history", ROUTINES_PATH, `${learnedAt}/id`, String(pointed(routinesBody, `${learnedAt}/id`))),
       apiRead("rollback-history-entry", ROUTINES_PATH, `${rollbackAt}/rollbackOf`, String(pointed(routinesBody, `${rollbackAt}/rollbackOf`))),
-      apiRead("earlier-task-pin", BOTS_PATH, pinPointer(pinR1!), pinR1!.bundleId),
-      apiRead("next-task-pin", BOTS_PATH, pinPointer(pinR2!), pinR2!.bundleId),
+      // A routine's runs share one conversation, which carries only the
+      // latest run's pin; each run keeps the bundle it pinned.
+      apiRead("earlier-task-pin", ROUTINES_PATH, runPinPointer(run1.id), String(pointed(routinesBody, runPinPointer(run1.id)))),
+      apiRead("next-task-pin", ROUTINES_PATH, runPinPointer(run2.id), String(pointed(routinesBody, runPinPointer(run2.id)))),
       apiRead("post-rollback-task-pin", BOTS_PATH, pinPointer(pinR3!), pinR3!.bundleId),
       ledgerRead(day, leaseCharge),
     ],
