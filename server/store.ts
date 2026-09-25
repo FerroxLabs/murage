@@ -1902,8 +1902,10 @@ export class Store {
   }
 
   /** Fork the conversation: a new user message that replaces `sourceId`
-   * (same parent, new text) and becomes the active leaf. */
-  branchMessage(threadId: string, sourceId: string, text: string, origin?: MessageOrigin): Message | null {
+   * (same parent, new text) and becomes the active leaf. `sendId` is the
+   * client's identity for this edit, so a network retry answers with this
+   * fork instead of forking and rerunning again (upstream #1387). */
+  branchMessage(threadId: string, sourceId: string, text: string, origin?: MessageOrigin, sendId?: string): Message | null {
     const t = this.thread(threadId);
     const source = t.messages.find((m) => m.id === sourceId);
     if (!source) return null;
@@ -1916,6 +1918,7 @@ export class Store {
       parentId: source.parentId ?? null,
       replyToId: source.replyToId,
       ...(origin ? { origin } : {}),
+      ...(sendId ? { sendId } : {}),
     };
     mdb.appendMessage(threadId, full);
     t.messages.push(full);
