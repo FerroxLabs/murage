@@ -6,6 +6,7 @@ import {
   isAppleMobile,
   type InstallInvite,
 } from "./install-prompt";
+import { inNativeShell } from "./native-shell";
 
 /** The event Chromium fires when a site is installable. Not in lib.dom. */
 interface BeforeInstallPromptEvent extends Event {
@@ -91,6 +92,7 @@ export function useInstallPrompt(): {
     captured: captured !== null,
     ios: isAppleMobile(navigator.userAgent, navigator.maxTouchPoints ?? 0),
     dismissed,
+    nativeShell: inNativeShell(),
   });
 
   return { invite, install, dismiss };

@@ -32,6 +32,8 @@ export interface InstallFacts {
   ios: boolean;
   /** The person already said no. */
   dismissed: boolean;
+  /** Inside the Murage phone app, which is already the app. */
+  nativeShell: boolean;
 }
 
 /** Which invitation, if any, this browser should be shown.
@@ -43,7 +45,7 @@ export interface InstallFacts {
  * something that cannot happen, and the person would follow them and get
  * nothing. Silence is the honest answer until the address is HTTPS. */
 export function installInvite(facts: InstallFacts): InstallInvite {
-  if (facts.standalone || !facts.secure || facts.dismissed) return "hidden";
+  if (facts.nativeShell || facts.standalone || !facts.secure || facts.dismissed) return "hidden";
   if (facts.captured) return "prompt";
   return facts.ios ? "manual" : "hidden";
 }
