@@ -78,7 +78,7 @@ export function RoutineGrants({ routine }: { routine: Pick<Routine, "id" | "alwa
       <div className="text-[12px] text-ink">Always allowed for this routine</div>
       <div className="mt-0.5 text-[10.5px] leading-relaxed text-ink-secondary">
         {keys.length
-          ? "Runs of this routine do these without asking. Reading your keys still asks."
+          ? "Runs of this routine do these without asking. A command still matches when only the dates and times in it change. Reading your keys still asks."
           : "Nothing yet. Choose Always allow for this routine on an approval from one of its runs."}
       </div>
       {error && <div role="alert" className="mt-1.5 text-[11px] text-danger">{error}</div>}
