@@ -84,13 +84,9 @@ function withoutCompanionAccount(credentials) {
   return next;
 }
 
-function withProvisionedAccount(credentials, { accountToken, user, installation, provision }) {
-  const withEndpoint = withManagedCompanionTunnelAccess(credentials, provision);
+function withInstallationCredentials(credentials, installation) {
   const next = {
-    ...withEndpoint,
-    [COMPANION_ACCOUNT_TOKEN_FIELD]: accountToken,
-    [COMPANION_ACCOUNT_USER_ID_FIELD]: user.id,
-    [COMPANION_ACCOUNT_EMAIL_FIELD]: user.email,
+    ...credentials,
     [COMPANION_INSTALLATION_ID_FIELD]: installation.installation.id,
     [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: installation.credential,
   };
@@ -99,6 +95,16 @@ function withProvisionedAccount(credentials, { accountToken, user, installation,
   } else {
     delete next[COMPANION_INSTALLATION_EXPIRY_FIELD];
   }
+  return next;
+}
+
+function withProvisionedAccount(credentials, { accountToken, user, installation, provision }) {
+  const next = {
+    ...withInstallationCredentials(withManagedCompanionTunnelAccess(credentials, provision), installation),
+    [COMPANION_ACCOUNT_TOKEN_FIELD]: accountToken,
+    [COMPANION_ACCOUNT_USER_ID_FIELD]: user.id,
+    [COMPANION_ACCOUNT_EMAIL_FIELD]: user.email,
+  };
   delete next[COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD];
   return next;
 }
@@ -421,6 +427,21 @@ export function createCompanionAccountService({
       platform: identity.platform,
       appVersion: identity.appVersion,
     });
+    // Save the verified installation before asking for the hosted address.
+    // Otherwise a service failure makes every Retry recover by rotating the
+    // credential, until an otherwise valid installation hits the rate limit
+    // (upstream OpenMausBot #1712).
+    try {
+      await updateCredentials((document) => withInstallationCredentials(document, installation));
+    } catch (error) {
+      // A newly created installation must not keep using account quota when
+      // its recovery credential cannot be saved. One this computer already
+      // knew can still serve an existing address and stays intact.
+      if (previous?.installationId !== installation.installation.id) {
+        await client.revokeInstallation(accountToken, installation.installation.id).catch(() => {});
+      }
+      throw error;
+    }
     const endpoint = await client.ensureEndpoint(installation.credential);
     try {
       await updateCredentials((document) =>
