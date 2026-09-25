@@ -1,14 +1,33 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { afterSignOut, signOutThisDevice } from "../lib/remote-sign-out";
+import { doorSessionConfirmed } from "../lib/session-check";
 import { Card } from "./SettingsPrimitives";
+
+/** Shown only once the door's `GET /session` has answered for this device.
+ * A plain browser at the harness's own port is `desktop === false` too, but
+ * has no door and no device to sign out; there the button could only fail
+ * with "no such route" (final review M9). */
+export function RemoteSignOut() {
+  const [paired, setPaired] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void doorSessionConfirmed().then((confirmed) => {
+      if (live) setPaired(confirmed);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return paired ? <RemoteSignOutCard /> : null;
+}
 
 /** The one piece of device management that belongs on the device: removing
  * itself. Everything else about paired devices lives on the computer.
  *
  * Two taps, because the way back is a QR code on a computer that may be at
  * home. */
-export function RemoteSignOut() {
+export function RemoteSignOutCard() {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

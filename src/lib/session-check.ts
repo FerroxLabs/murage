@@ -28,6 +28,26 @@ export function sessionVerdict(status: number | null): SessionVerdict {
   return "unknown";
 }
 
+/** Whether a browser door is in front of this page and signed in: its
+ * `GET /session` answers 200 with JSON naming the device (browser.ts). The
+ * status alone is not enough — with no door, the harness answers every
+ * unknown GET, `/session` included, with the SPA shell and a 200. Used to
+ * decide whether "Sign out this device" can mean anything here (final
+ * review M9); `false` for every other answer, including a failed request. */
+export async function doorSessionConfirmed(
+  fetchImpl: (path: string, init: RequestInit) => Promise<Pick<Response, "status" | "headers" | "json">> = (path, init) => globalThis.fetch(path, init),
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(SESSION_PATH, { credentials: "same-origin", cache: "no-store" });
+    if (sessionVerdict(response.status) !== "signed-in") return false;
+    if (!/\bjson\b/i.test(response.headers.get("content-type") ?? "")) return false;
+    const body = (await response.json()) as { device?: { name?: unknown } } | null;
+    return typeof body?.device?.name === "string";
+  } catch {
+    return false;
+  }
+}
+
 export interface SessionWatchDeps {
   fetch: (path: string, init: RequestInit) => Promise<{ status: number }>;
   now: () => number;
