@@ -25,6 +25,7 @@ import {
 } from "./container-computer.ts";
 import { isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 import { augmentedPath } from "./env-path.ts";
+import { awaitCliTreeStopped, spawnCli } from "./procs.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
 export const VPS_IMAGE = CUA_IMAGE;
@@ -36,6 +37,13 @@ export const VPS_CONTAINER_PREFIX = "murage-vps";
 // SIGKILL escalation; 1s was routinely too short over a WAN round-trip, and an
 // orphaned remote exec keeps the driver socket busy for the next command.
 const COMMAND_TIMEOUT_KILL_GRACE_MS = 5_000;
+// Turn preparation (provision, Auto's inspection) waits this long for a
+// lifecycle action already running on the same VPS, where Stop, Start and
+// Remove keep the short refusal below. Long enough for a Start from the
+// Computer panel (its start command plus the readiness wait); overlapping
+// provisions share one operation instead of queueing behind their own image
+// build (upstream #1772).
+const PREPARATION_LOCK_TIMEOUT_MS = 3 * 60_000;
 
 const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/;
 const CONTAINER_ID = /^[a-f0-9]{12,64}$/i;
@@ -46,14 +54,16 @@ const INTERNAL_VIEWER_PORT = 6901;
 const VIEWER_VERSION = "1";
 const lifecycleLocks = new Map<string, Promise<void>>();
 // A held lock means a lifecycle mutation (worst case: a 10-minute image
-// build) is running. Waiting it out would wedge Sleep and the screenshot
-// poll behind it, so acquisition fails fast instead.
+// build) is running. Waiting it out would wedge Sleep and the panel behind
+// it, so their acquisition fails fast instead. Turn preparation waits longer
+// (PREPARATION_LOCK_TIMEOUT_MS above).
 const LOCK_ACQUIRE_TIMEOUT_MS = 5_000;
 // The panel polls status every 4-6s and the screen poller re-checks it before
 // every frame; each full status is several docker-over-SSH processes. Same
 // pattern as container-computer's screenshotStatusCache, and the same TTL.
 const STATUS_CACHE_TTL_MS = 10_000;
 const statusCache = new Map<string, { status: VpsComputerStatus; expiresAt: number }>();
+const pendingProvisions = new Map<string, Promise<VpsComputerStatus>>();
 const viewerConnections = new Map<string, { privateIp: string; password: string }>();
 const desktopTunnels = new Map<
   string,
@@ -218,7 +228,9 @@ function tailCollector() {
 
 export function defaultRunner(args: string[], options: VpsCommandOptions = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("docker", args, {
+    // spawnCli gives docker its own process group, so a failed command can
+    // stop docker AND the ssh it launched, not only docker (upstream #1772).
+    const child = spawnCli("docker", args, {
       shell: false,
       env: { ...process.env, PATH: augmentedPath() },
       stdio: ["pipe", "pipe", "pipe"],
@@ -226,27 +238,32 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     const stdout = tailCollector();
     const stderr = tailCollector();
     let settled = false;
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let failure: Error | null = null;
     let timeout: ReturnType<typeof setTimeout>;
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
       finish();
     };
-    timeout = setTimeout(() => {
-      if (settled) return;
-      timedOut = true;
-      killTimer = setTimeout(() => {
-        if (settled) return;
-        child.kill("SIGKILL");
-        settle(() => reject(new Error("Docker-over-SSH command timed out")));
-      }, COMMAND_TIMEOUT_KILL_GRACE_MS);
-      killTimer.unref?.();
-      child.kill("SIGTERM");
-    }, options.timeoutMs ?? 120_000);
+    const fail = (error: Error) => {
+      if (settled || failure) return;
+      failure = error;
+      clearTimeout(timeout);
+      // Docker launches ssh, which can keep these pipes open after docker
+      // exits. Stop this command's own process group (an ssh master that
+      // detached from it is left alone) and settle only once that is done,
+      // so the caller keeps the lifecycle lock while the remote exec tears
+      // down.
+      const cleaned = () => {
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        settle(() => reject(error));
+      };
+      void awaitCliTreeStopped(child, COMMAND_TIMEOUT_KILL_GRACE_MS).then(cleaned, cleaned);
+    };
+    timeout = setTimeout(() => fail(new Error("Docker-over-SSH command timed out")), options.timeoutMs ?? 120_000);
     timeout.unref?.();
 
     child.stdout.setEncoding("utf8");
@@ -258,17 +275,13 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
       stderr.push(chunk);
     });
     child.stdin.on("error", (error) => {
-      if (timedOut) return;
-      settle(() => reject(new Error(`Docker-over-SSH stdin failed: ${error.message}`)));
+      fail(new Error(`Docker-over-SSH stdin failed: ${error.message}`));
     });
     child.on("error", (error) => {
-      settle(() => reject(new Error(`Docker-over-SSH could not start: ${error.message}`)));
+      fail(new Error(`Docker-over-SSH could not start: ${error.message}`));
     });
     child.on("close", (code, signal) => {
-      if (timedOut) {
-        settle(() => reject(new Error("Docker-over-SSH command timed out")));
-        return;
-      }
+      if (failure) return;
       settle(() => {
         if (code === 0) return resolve({ stdout: stdout.text(), stderr: stderr.text() });
         const detail = stderr.text().trim().slice(-1000);
@@ -278,7 +291,7 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     try {
       child.stdin.end(options.input);
     } catch (error) {
-      settle(() => reject(new Error(`Docker-over-SSH stdin failed: ${error instanceof Error ? error.message : String(error)}`)));
+      fail(new Error(`Docker-over-SSH stdin failed: ${error instanceof Error ? error.message : String(error)}`));
     }
   });
 }
@@ -705,7 +718,7 @@ async function waitForVpsReady(
   return status;
 }
 
-async function withVpsLifecycleLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+async function withVpsLifecycleLock<T>(key: string, operation: () => Promise<T>, acquireTimeoutMs = LOCK_ACQUIRE_TIMEOUT_MS): Promise<T> {
   const previous = lifecycleLocks.get(key);
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
@@ -717,7 +730,7 @@ async function withVpsLifecycleLock<T>(key: string, operation: () => Promise<T>)
     const acquired = await Promise.race([
       previous.then(() => true),
       new Promise<boolean>((resolve) => {
-        acquireTimer = setTimeout(() => resolve(false), LOCK_ACQUIRE_TIMEOUT_MS);
+        acquireTimer = setTimeout(() => resolve(false), acquireTimeoutMs);
         acquireTimer.unref?.();
       }),
     ]);
@@ -755,6 +768,10 @@ export async function vpsComputerAction(
   const alias = vpsSshAlias(cfg);
   if (!alias) throw Object.assign(new Error("VPS is not configured — add an SSH config alias in App Settings → Connections"), { status: 409 });
   const key = `${alias}:${vpsContainerName(botId)}`;
+  // A provision already running for this VPS (another turn, or the panel)
+  // is the answer this one wants too: share it rather than queue behind it.
+  const pending = action === "provision" ? pendingProvisions.get(key) : undefined;
+  if (pending) return pending;
   const operation = async () => {
     // A mutation invalidates every cached poll answer, before and after: the
     // panel must never keep showing the pre-action world for a TTL.
@@ -813,7 +830,11 @@ export async function vpsComputerAction(
       statusCache.delete(key);
     }
   };
-  return withVpsLifecycleLock(key, operation);
+  if (action !== "provision") return withVpsLifecycleLock(key, operation);
+  const preparation = withVpsLifecycleLock(key, operation, PREPARATION_LOCK_TIMEOUT_MS);
+  pendingProvisions.set(key, preparation);
+  try { return await preparation; }
+  finally { if (pendingProvisions.get(key) === preparation) pendingProvisions.delete(key); }
 }
 
 /** Auto is intentionally read-only: it can attach only to an existing ready
@@ -838,7 +859,7 @@ export async function inspectVpsForAuto(
 ): Promise<VpsComputerStatus> {
   const key = vpsLockKey(cfg, botId);
   return key
-    ? withVpsLifecycleLock(key, () => computeVpsComputerStatus(cfg, botId, runner))
+    ? withVpsLifecycleLock(key, () => computeVpsComputerStatus(cfg, botId, runner), PREPARATION_LOCK_TIMEOUT_MS)
     : computeVpsComputerStatus(cfg, botId, runner);
 }
 
