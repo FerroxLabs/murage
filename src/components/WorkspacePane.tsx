@@ -44,6 +44,7 @@ import {
   type DocumentSessionStore,
 } from "@/lib/document-session";
 import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDraftStore } from "@/lib/markdown-drafts";
+import { saveBlob } from "@/lib/save-file";
 import { MarkdownEditor, MarkdownEditorController } from "./MarkdownEditor";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
@@ -736,9 +737,8 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
   const download = () => {
     const text = currentText();
     const blob = new Blob([currentBom() ? "﻿" + text : text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob), link = document.createElement("a");
-    link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    // Over 25 MB inside the phone app is refused with a sentence; show it.
+    void saveBlob(blob, name).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
   };
   const native = (action: "open" | "reveal") => act(async () => {
     if (!nativeAction) return;

@@ -1,4 +1,6 @@
 // Small display-only adaptation of OpenMausBot PR #948. Code bytes are never normalized here.
+import { nativeHas } from "./native-shell";
+import { saveBlob } from "./save-file";
 const LANGUAGES: Record<string, string> = {
   js: "JavaScript", javascript: "JavaScript", jsx: "JavaScript (JSX)", ts: "TypeScript", typescript: "TypeScript", tsx: "TypeScript (TSX)",
   py: "Python", python: "Python", rs: "Rust", rust: "Rust", sh: "Shell", bash: "Bash", zsh: "Zsh", ps1: "PowerShell", powershell: "PowerShell",
@@ -60,6 +62,13 @@ export const SNIPPET_URL_LIFETIME_MS = 1000;
  * network request; the anchor and the object URL are always cleaned up.
  */
 export function saveCodeSnippet(fileName: string, code: string): boolean {
+  // Inside the phone app a blob anchor goes nowhere. This stays synchronous
+  // for ChatMarkdown's boolean contract: the feature list was fetched at boot.
+  if (nativeHas("saveFile")) {
+    void saveBlob(new Blob([code], { type: "text/plain;charset=utf-8" }), fileName).catch((error) =>
+      console.warn("murage: the phone app could not save the snippet", error));
+    return true;
+  }
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return false;
   // Chromium appends ".txt" to an extensionless name typed text/plain, which
   // turned "Dockerfile" into "Dockerfile.txt"; an untyped blob keeps the name.

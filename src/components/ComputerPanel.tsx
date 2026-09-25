@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import type { Routine } from "@/lib/routines";
+import { callNative, nativeHas } from "@/lib/native-shell";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
@@ -796,7 +797,7 @@ export function ComputerPanel({
     // A plain-web development session still needs a synchronous blank tab;
     // the packaged app uses the reliable Electron viewer window below.
     let fallbackTab: Window | null = null;
-    if (!window.muragebox?.desktopViewer && !window.muragebox?.openExternal) {
+    if (!window.muragebox?.desktopViewer && !window.muragebox?.openExternal && !nativeHas("openExternal")) {
       fallbackTab = window.open("", "_blank");
       if (fallbackTab) fallbackTab.opener = null;
     }
@@ -818,6 +819,9 @@ export function ComputerPanel({
         if (!opened) throw new Error("Murage could not open the live desktop");
       } else if (fallbackTab) {
         fallbackTab.location.replace(viewerUrl);
+      } else if (nativeHas("openExternal")) {
+        // The phone app: the live desktop opens in the system browser.
+        await callNative("openExternal", viewerUrl);
       } else if (window.muragebox?.openExternal) {
         const opened = await window.muragebox.openExternal(viewerUrl);
         if (!opened) throw new Error("Murage could not open the live desktop link");
