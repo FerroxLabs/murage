@@ -147,7 +147,7 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
           aria-label="Search voices"
           aria-controls={listId}
           autoComplete="off"
-          className="h-11 w-full rounded-lg border border-hairline/40 bg-inset pl-9 pr-3 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="h-11 w-full rounded-lg border border-hairline/40 bg-inset pl-9 pr-3 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
         />
       </div>
 
@@ -178,7 +178,7 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
 
       <div
         ref={scroller}
-        className="relative mt-2 max-h-[min(364px,50dvh)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/40 bg-inset"
+        className="relative mt-2 max-h-[min(364px,50dvh)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-card"
       >
         <div
           id={listId}
@@ -214,8 +214,8 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
                 className={cn(
                   "relative flex cursor-pointer items-center gap-2.5 pl-3 pr-14 outline-none",
                   "focus-visible:z-[1] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
-                  selected ? "bg-accent/12 hover:bg-accent/18" : "hover:bg-raised-hover/60",
-                  index > 0 && "border-t border-hairline/25",
+                  selected ? "bg-accent/10 hover:bg-accent/15" : "hover:bg-raised-hover",
+                  index > 0 && "border-t border-hairline/35",
                 )}
               >
                 <span aria-hidden className={cn("absolute inset-y-2 left-0 w-[3px] rounded-r-full", selected ? "bg-accent" : "bg-transparent")} />
@@ -311,9 +311,9 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
       onClick={onClick}
       // 32px to look at, 44px to hit: the ::after reaches 6px above and below
       className={cn(
-        "relative h-8 rounded-full px-3 text-[12.5px] outline-none transition-colors after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']",
+        "relative h-8 rounded-full border px-3 text-[12.5px] outline-none transition-colors after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']",
         "focus-visible:ring-2 focus-visible:ring-accent",
-        pressed ? "bg-accent/15 font-medium text-accent-text" : "bg-control text-ink-secondary hover:text-ink",
+        pressed ? "border-accent/40 bg-accent/10 font-medium text-accent-text" : "border-hairline/60 text-ink-secondary hover:bg-raised-hover hover:text-ink",
       )}
     >
       {children}

@@ -116,6 +116,10 @@ describe("the Voice & alerts copy", () => {
     expect(voice).toContain("Give this bot a voice");
   });
 
+  it("never talks about price", () => {
+    for (const text of [voice, picker]) expect(text).not.toMatch(/billed|per character|price|\bcosts?\b/i);
+  });
+
   it("says every voice speaks every language once, under the picker", () => {
     expect(voice.match(/Every voice speaks every language\./g)).toHaveLength(1);
     expect(picker).not.toContain("every language");

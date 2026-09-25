@@ -181,8 +181,8 @@ export function VoiceSettings({
         <div className="mt-3 text-[12.5px] text-ink-secondary">
           {fluxAvailable
             ? hostedVia === "openai"
-              ? "Speaks through your own OpenAI key, billed by OpenAI. No other key needed."
-              : "Speaks through your Flux account, billed per character. No other key needed."
+              ? "Speaks through your own OpenAI key. No other key needed."
+              : "Speaks through your Flux account. No other key needed."
             : "Add a Flux key, or an OpenAI key, in Settings to use these voices."}
         </div>
       )}
@@ -190,7 +190,7 @@ export function VoiceSettings({
       {provider === "xai" && (
         <div className="mt-3 text-[12.5px] text-ink-secondary">
           {xaiKey
-            ? "Speaks with xAI's voices through your own xAI key, billed by xAI. 28 voices."
+            ? "Speaks with xAI's voices through your own xAI key. 28 voices."
             : xaiAvailable
               ? "Speaks with xAI's voices through your Flux account. They are also in the Flux list."
               : "Connect an xAI key in Settings, Models, to use xAI's voices."}
