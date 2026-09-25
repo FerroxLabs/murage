@@ -114,6 +114,11 @@ export function previewMessageId(botId: string, voiceId: string): string {
   return `voice-preview:${botId}:${voiceId || "default"}`;
 }
 
+/** Whether the speaker's message is one of this bot's voice previews. */
+export function isVoicePreview(messageId: string | undefined, botId: string): boolean {
+  return Boolean(messageId?.startsWith(`voice-preview:${botId}:`));
+}
+
 export type RowPreviewState = "idle" | "loading" | "playing" | "error";
 
 export function rowPreview(speech: SpeechSnapshot, messageId: string): { state: RowPreviewState; error?: string } {

@@ -6,6 +6,7 @@ import { XAI_VOICES } from "../../server/tts/xai-speech.ts";
 import { Speaker } from "@/lib/tts";
 import {
   filterVoices,
+  isVoicePreview,
   listKey,
   pickerFilters,
   previewButton,
@@ -128,6 +129,10 @@ describe("previews", () => {
     expect(previewMessageId("bot-1", "marin")).toBe("voice-preview:bot-1:marin");
     expect(previewMessageId("bot-1", "")).toBe("voice-preview:bot-1:default");
     expect(previewMessageId("bot-1", "marin")).not.toBe(previewMessageId("bot-2", "marin"));
+    expect(isVoicePreview(previewMessageId("bot-1", "marin"), "bot-1")).toBe(true);
+    expect(isVoicePreview(previewMessageId("bot-10", "marin"), "bot-1")).toBe(false);
+    expect(isVoicePreview("message-7", "bot-1")).toBe(false);
+    expect(isVoicePreview(undefined, "bot-1")).toBe(false);
   });
 
   it("reads each row's state from the one speaker", () => {
