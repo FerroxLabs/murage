@@ -403,7 +403,7 @@ Key themes to explore: [List 3-4 topic areas]
 
 6. **A pilot session is mandatory before the main study.** Researchers who skip the pilot discover broken prototype links, ambiguous questions, and timing overruns during real sessions with real participants. The pilot does not need to be with a perfect participant -- a colleague or a volunteer user is sufficient. Budget 1-2 hours for the pilot and the debrief.
 
-7. **Observers must be briefed before attending sessions.** Unmanaged observers interrupt sessions, send chat messages that distract participants, and draw conclusions from single sessions that contradict patterns across the full sample. Every observer gets the pre-session briefing and follows the silence rule. Limit observers to 2-3 per session.
+7. **Observers must be briefed before attending sessions.** Unmanaged observers interrupt sessions, post in the session chat in ways that distract participants, and draw conclusions from single sessions that contradict patterns across the full sample. Every observer gets the pre-session briefing and follows the silence rule. Limit observers to 2-3 per session.
 
 8. **Analysis is complete only when contradictions and negative cases are documented.** Research reports that present a clean, unified narrative are almost always incomplete. Real user behavior contains contradictions. Document participants whose experience contradicts the prevailing theme. Unresolved contradictions are honest research; concealed contradictions are misleading research.
 

@@ -13275,11 +13275,13 @@ const server = createServer(async (req, res) => {
           // `installed`). This one carries the bot and the skill id too,
           // because a team import spans many bots and a bare sentence could
           // not say which assistant is short of what.
+          const offSkills: string[] = [];
           for (const skillId of source.skillIds) {
             const installed = installSkillFromLibrary(created.id, skillId, SKILL_LIBRARY_ROOT);
             if ("error" in installed) {
               console.error(JSON.stringify({ message: "library skill not installed", bot: created.id, skillId, error: installed.error }));
               skillErrors.push({ botId: created.id, botName: created.name, skillId, stage: "install", error: installed.error });
+              offSkills.push(`${skillId} (it could not be installed)`);
               continue;
             }
             const enabled = setSkillEnabled(created.id, installed.name, true);
@@ -13288,7 +13290,17 @@ const server = createServer(async (req, res) => {
               // Installed but switched off — a different, smaller failure
               // than "not installed at all", and worth telling apart.
               skillErrors.push({ botId: created.id, botName: created.name, skillId, stage: "enable", error: enabled.error });
+              offSkills.push(`${installed.name} (${enabled.code === "blocked" ? "the skill check blocked it" : enabled.code === "needs-review" ? "it needs a look before it can be switched on" : "it could not be switched on"})`);
             }
+          }
+          // The toast that reports a short import goes away. The bot's own
+          // conversation keeps the note, where the owner will look for it.
+          if (offSkills.length) {
+            store.appendMessage(created.threadId, {
+              role: "bot",
+              kind: "text",
+              text: `${offSkills.length === 1 ? "One skill I came with is" : `${offSkills.length} skills I came with are`} not switched on yet: ${offSkills.join(", ")}. You can check my skills in my settings, under Skills.`,
+            });
           }
           store.patchBot(created.id, {
             composio: false,

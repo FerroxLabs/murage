@@ -3490,6 +3490,13 @@ describe("harness HTTP API", () => {
       // the reason is carried through rather than invented here
       expect(typeof short.body.skillErrors[0].error).toBe("string");
       expect(short.body.skillErrors[0].error.length).toBeGreaterThan(0);
+      // and the owner sees it where they will look: the bot's own
+      // conversation says which skill is missing, not only a toast that
+      // goes away (0.1.60 Linux customer pass, D7)
+      const thread = short.body.bots[0].threadId;
+      const messages = (await desktopApi("GET", `/api/threads/${thread}/messages?limit=50`)).body.messages as Array<{ role: string; kind?: string; text?: string }>;
+      const note = messages.find(message => message.role === "bot" && message.text?.includes("no-such-library-skill"));
+      expect(note?.text).toBe("One skill I came with is not switched on yet: no-such-library-skill (it could not be installed). You can check my skills in my settings, under Skills.");
     } finally {
       for (const bot of short.body.bots ?? []) await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -3500,6 +3507,8 @@ describe("harness HTTP API", () => {
     try {
       expect(clean.status).toBe(201);
       expect(clean.body.skillErrors).toEqual([]);
+      const cleanMessages = (await desktopApi("GET", `/api/threads/${clean.body.bots[0].threadId}/messages?limit=50`)).body.messages as Array<{ text?: string }>;
+      expect(cleanMessages.some(message => message.text?.includes("not switched on"))).toBe(false);
     } finally {
       for (const bot of clean.body.bots ?? []) await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
