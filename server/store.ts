@@ -81,6 +81,11 @@ export interface OptionCardData {
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
+  /** "Always allow for this routine" on a card a routine run raised: the
+   * scoped key (the stop-line place or this exact command here) and the
+   * routine it is stored on. */
+  routineAllowKey?: string;
+  routineId?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
   /** 0.1.52 ASK2: a provider question's structured questions, persisted

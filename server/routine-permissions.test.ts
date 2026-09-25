@@ -9,11 +9,14 @@ import { describe, expect, it } from "vitest";
 
 import { autoVerdict, fullAccessCovers, type AutoContext } from "./auto-approve.ts";
 import { fullAccessApprovesSetup } from "./full-access.ts";
+import { exactCommandKey } from "../shared/exact-command.ts";
 import {
   applyRoutinePermissionMode,
   botPermissionMode,
   effectiveRoutinePermissionMode,
+  isRoutineGrantKey,
   loadRoutinePermissionMode,
+  routineGrantKeys,
   routinePermissionModeInput,
   type RoutinePermissionMode,
 } from "./routine-permissions.ts";
@@ -113,5 +116,49 @@ describe("a routine run's verdict at each level", () => {
     expect(autoVerdict(at("full"), "Bash", "ls", webhookish)).toMatchObject({ approve: null, source: "unattended-block" });
     expect(autoVerdict(at("unlimited"), "Bash", "x", { ...webhookish, stopLine: outside }).approve).toBeNull();
     expect(autoVerdict(at("unlimited"), "Bash", "ls", webhookish).approve).toBeNull();
+  });
+});
+
+describe("Always allow for this routine", () => {
+  const routine: AutoContext = { automated: true, routineLevel: true, stopLine: null };
+  const exact = { engine: "claude", cwd: "/Users/ada/work", command: "curl -s https://example.com/rwa | jq ." };
+  const exactKey = exactCommandKey(exact)!;
+  const outside = { kind: "delete" as const, place: "/Users/ada/Documents/old", what: "Delete 1 item outside its folder: ~/Documents/old" };
+
+  it("covers the same exact command in the same folder on the same engine", () => {
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, exactCommand: exact, routineAllow: [exactKey] })).toMatchObject({ source: "routine-allow", rule: exactKey });
+    const elsewhere = { ...exact, cwd: "/Users/ada" };
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, exactCommand: elsewhere, routineAllow: [exactKey] }).source).toBe("no-grant");
+  });
+
+  it("covers a stop-line card through its scoped key, like a task allowance", () => {
+    expect(autoVerdict(ask, "Bash", "rm -rf ~/Documents/old/x", { ...routine, stopLine: { ...outside, place: "/Users/ada/Documents/old/x" }, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }))
+      .toMatchObject({ source: "routine-allow", rule: "stop:delete:/Users/ada/Documents/old" });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, stopLine: { ...outside, place: "/Users/ada/Desktop" }, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).source).toBe("stop-line");
+  });
+
+  it("is never a bare tool name or a program grant", () => {
+    expect(autoVerdict(ask, "Bash", "git status", { ...routine, routineAllow: ["Bash", "Bash:git"] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "mcp__x__send", "{}", { ...routine, routineAllow: ["mcp__x__send"] }).source).toBe("no-grant");
+  });
+
+  it("the guards still outrank it", () => {
+    const secret = { ...exact, command: "cat ~/.zshrc" };
+    expect(autoVerdict(ask, "Bash", secret.command, { ...routine, exactCommand: secret, routineAllow: [exactCommandKey(secret)!] }).source).toBe("sensitive-guard");
+    const wipe = { ...exact, command: "git reset --hard" };
+    expect(autoVerdict(ask, "Bash", wipe.command, { ...routine, exactCommand: wipe, routineAllow: [exactCommandKey(wipe)!] }).source).toBe("destructive-guard");
+    expect(autoVerdict(ask, "Bash", "cat ~/.ssh/id_rsa", { ...routine, stopLine: outside, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).source).toBe("sensitive-guard");
+  });
+
+  it("counts only in a routine run nobody reached from outside", () => {
+    expect(autoVerdict(ask, "Bash", exact.command, { exactCommand: exact, routineAllow: [exactKey] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, unattended: true, exactCommand: exact, routineAllow: [exactKey] }).approve).toBeNull();
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, unattended: true, stopLine: outside, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).approve).toBeNull();
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, scope: "local-computer", exactCommand: exact, routineAllow: [exactKey] }).approve).toBeNull();
+  });
+
+  it("keeps only exact-command and stop-line keys", () => {
+    expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1"]);
+    expect(isRoutineGrantKey("Bash:git")).toBe(false);
   });
 });

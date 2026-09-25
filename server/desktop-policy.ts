@@ -63,6 +63,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["PUT", "PATCH", "DELETE"], path: /^\/api\/mcp\/servers\/[a-z][a-z0-9_-]{0,31}$/, purpose: "change MCP launch configuration" },
   { methods: ["POST"], path: /^\/api\/(routines|calendar-calls)$/, purpose: "create a durable spawn schedule" },
   { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/instructions\/rollback$/, purpose: "restore a retained routine instruction version" },
+  { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/, purpose: "remember or remove a routine's own permission grant" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/(routines|calendar-calls)\/[\w-]+$/, purpose: "change a durable spawn schedule" },
   { methods: ["POST"], path: /^\/api\/webhooks(?:\/[\w-]+\/(rotate|test))?$/, purpose: "create or exercise external triggers" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/webhooks\/[\w-]+$/, purpose: "change external trigger configuration" },

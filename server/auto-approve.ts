@@ -310,6 +310,9 @@ export type AutoVerdictSource =
   /** The owner allowed this kind of action in this place for the task, from
    * the card's "Allow for this task" or by saying so in chat. */
   | "task-allowance"
+  /** "Always allow for this routine": an exact command or a stop-line place
+   * the owner allowed for one routine's runs (server/routine-permissions.ts). */
+  | "routine-allow"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
@@ -371,6 +374,10 @@ export interface AutoContext {
    * it exactly as they cover a turn the owner started. Never set for a
    * webhook or channel turn, and an `unattended` mark outranks it. */
   routineLevel?: boolean;
+  /** The routine's own "Always allow for this routine" grants: exact-command
+   * and stop-line keys only. Honoured only with `routineLevel`, never on an
+   * unattended turn or for host control, and never over a guard. */
+  routineAllow?: readonly string[];
   /** The caller established — from the engine's STRUCTURED tool
    * input, never from the card text — that every filesystem path this
    * request names lies inside the directories Murage manages for THIS bot:
@@ -438,6 +445,9 @@ export function autoVerdict(
   // No limits lifts the stop line for exactly the turns Full access covers;
   // a webhook, routine or someone else's turn is judged as before.
   const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
+  const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
+    ? context.routineAllow ?? []
+    : [];
   if (stop) {
     const attended = !context?.unattended && !context?.automated;
     const keyGuard = matchFirst(SENSITIVE, guarded);
@@ -445,6 +455,8 @@ export function autoVerdict(
     if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
       return { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
     }
+    const routineGrant = stopLineKey(stop) === undefined ? undefined : routineGrants.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
+    if (routineGrant) return { approve: `auto-approved ${tool} (always allowed for this routine)`, source: "routine-allow", rule: routineGrant };
     const granted = stopLineKey(stop) === undefined ? undefined : bot.alwaysAllow?.find((key) => isStopLineKey(key) && stopLineKeyCovers(key, stop));
     if (granted && context?.scope !== "local-computer") {
       if (context?.unattended) return { approve: null, source: "unattended-block", rule: granted };
@@ -487,6 +499,8 @@ export function autoVerdict(
   const grant =
     destructive || sensitive
       ? null
+      : exactKey !== undefined && routineGrants.includes(exactKey)
+        ? { approve: `auto-approved this exact command (always allowed for this routine)`, source: "routine-allow" as const, rule: exactKey }
       : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
         ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command" as const, rule: exactKey }
       : key !== undefined && bot.alwaysAllow?.includes(key)

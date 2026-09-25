@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { exactCommandKey } from "../shared/exact-command.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -87,7 +88,7 @@ describe("the routine behind a working thread", () => {
     h.manager.runNow(routine.id);
     await h.manager.tick();
     const threadId = h.started[0]!.threadId;
-    expect(h.manager.routineRunForThread(threadId)).toEqual({ routineId: routine.id, botId: "dax" });
+    expect(h.manager.routineRunForThread(threadId)).toEqual({ routineId: routine.id, botId: "dax", alwaysAllow: [] });
     h.manager.update(routine.id, { permissionMode: "auto" });
     expect(h.manager.routineRunForThread(threadId)?.permissionMode).toBe("auto");
   });
@@ -98,5 +99,44 @@ describe("the routine behind a working thread", () => {
     await h.manager.tick();
     expect(h.started).toHaveLength(1);
     expect(h.manager.routineRunForThread(h.started[0]!.threadId)).toBeNull();
+  });
+});
+
+describe("a routine's own always-allow list", () => {
+  const exact = exactCommandKey({ engine: "claude", cwd: "/Users/ada/work", command: "curl -s https://example.com | jq ." })!;
+
+  it("keeps scoped keys only, survives a reload, and is reported for a run", async () => {
+    const h = harness();
+    const routine = h.manager.create(input(h.now(), { enabled: false }));
+    expect(h.manager.grantAlwaysAllow(routine.id, exact)?.alwaysAllow).toEqual([exact]);
+    expect(h.manager.grantAlwaysAllow(routine.id, exact)?.alwaysAllow).toEqual([exact]);
+    expect(h.manager.grantAlwaysAllow(routine.id, "stop:delete:/Users/ada/Documents/old")?.alwaysAllow).toHaveLength(2);
+    expect(() => h.manager.grantAlwaysAllow(routine.id, "Bash")).toThrow(/exact command/);
+    expect(() => h.manager.grantAlwaysAllow(routine.id, "Bash:git")).toThrow(/exact command/);
+    expect(h.manager.grantAlwaysAllow("missing", exact)).toBeNull();
+    const reloaded = new RoutineManager({ ...h.options });
+    expect(reloaded.listRoutines()[0]?.alwaysAllow).toEqual([exact, "stop:delete:/Users/ada/Documents/old"]);
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    expect(h.manager.routineRunForThread(h.started[0]!.threadId)?.alwaysAllow).toEqual([exact, "stop:delete:/Users/ada/Documents/old"]);
+  });
+
+  it("is not something an edit can write, and removing the last one clears it", () => {
+    const h = harness();
+    const routine = h.manager.create({ ...input(h.now()), alwaysAllow: [exact] } as never);
+    expect(routine).not.toHaveProperty("alwaysAllow");
+    expect(h.manager.update(routine.id, { alwaysAllow: [exact] } as never)).not.toHaveProperty("alwaysAllow");
+    h.manager.grantAlwaysAllow(routine.id, exact);
+    expect(h.manager.update(routine.id, { name: "Renamed" })?.alwaysAllow).toEqual([exact]);
+    expect(h.manager.revokeAlwaysAllow(routine.id, exact)).not.toHaveProperty("alwaysAllow");
+  });
+
+  it("drops a bare or unknown key a file was edited to hold", () => {
+    const h = harness();
+    h.manager.create(input(h.now()));
+    const disk = JSON.parse(readFileSync(h.file, "utf8"));
+    disk.routines[0].alwaysAllow = ["Bash", exact, "Bash:rm"];
+    writeFileSync(h.file, JSON.stringify(disk));
+    expect(new RoutineManager({ ...h.options }).listRoutines()[0]?.alwaysAllow).toEqual([exact]);
   });
 });

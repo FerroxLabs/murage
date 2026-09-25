@@ -4284,6 +4284,13 @@ bus.subscribe((event: RuntimeEvent) => {
       // turns never are.
       const routineLevel = permission && bot && event.requestId && !unattended ? routineRunLevel(event.threadId) : null;
       const judged = routineLevel && asker ? applyRoutinePermissionMode(asker, routineLevel.mode) : asker;
+      // "Always allow for this routine": the same scoped key the card already
+      // offers (the stop-line place, or this exact command here), stored on
+      // the routine. Never a bare tool name; nothing when there is no scoped key.
+      const routineAllowKey = routineLevel && !questionAsk && !event.approvalScope
+        ? stopHit ? stopLineKey(stopHit) : exactAllowKey
+        : undefined;
+      const routineAllowCard = routineLevel && routineAllowKey ? { routineAllowKey, routineId: routineLevel.routineId } : {};
       const verdict = permission && asker && judged && event.requestId
         ? autoVerdict(judged, event.tool, event.summary, {
             exactCommand,
@@ -4296,7 +4303,7 @@ bus.subscribe((event: RuntimeEvent) => {
             // is judged as Auto would judge it
             automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
             // ...unless it is a routine run judged at its routine's own level
-            ...(routineLevel ? { routineLevel: true } : {}),
+            ...(routineLevel ? { routineLevel: true, routineAllow: routineLevel.alwaysAllow } : {}),
             // ...and the owner's own channel message, if the bot allows it
             channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
             // The bot editing its own MEMORY.md or its own thread files
@@ -4372,6 +4379,7 @@ bus.subscribe((event: RuntimeEvent) => {
                   : stopHit ? stopLineKey(stopHit) : approvalKey(tool, summary, event.approvalScope),
                 ...(stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
                 ...(!event.approvalScope && exactAllowKey ? { exactAllowKey } : {}),
+                ...routineAllowCard,
                 held: "Auto mode couldn't answer this one.",
                 approvalScope: event.approvalScope,
               },
@@ -4429,6 +4437,7 @@ bus.subscribe((event: RuntimeEvent) => {
               : undefined,
           ...(permission && !event.approvalScope && stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
           ...(exactAllowKey ? { exactAllowKey } : {}),
+          ...(permission ? routineAllowCard : {}),
           held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
@@ -8770,13 +8779,13 @@ function peerContactSettings(botId: string, threadId: string) {
  * for anything else, and for a thread someone outside the desktop reached
  * (an unattended mark outranks a routine's level, so a webhook's or another
  * bot's unattended turn keeps its own rules). */
-function routineRunLevel(threadId: string): { routineId: string; mode: RoutinePermissionMode } | null {
+function routineRunLevel(threadId: string): { routineId: string; mode: RoutinePermissionMode; alwaysAllow: string[] } | null {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return null;
   const run = routines?.routineRunForThread(threadId);
   if (!run || isUnattended(threadId)) return null;
   const profile = store.bot(run.botId);
   if (!profile) return null;
-  return { routineId: run.routineId, mode: effectiveRoutinePermissionMode(run, profile) };
+  return { routineId: run.routineId, mode: effectiveRoutinePermissionMode(run, profile), alwaysAllow: run.alwaysAllow };
 }
 
 /** Who started the turn now running in this thread, as Full access reads
@@ -11914,7 +11923,40 @@ const server = createServer(async (req, res) => {
         return json(res, detail === "ROUTINE_INSTRUCTION_CONFLICT" ? 409 : 400, { error: detail });
       }
     }
-    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+    // "Always allow for this routine", from a card one of its runs raised.
+    // Desktop only (desktop-policy.ts), and only a key the server itself put
+    // on a card that is still waiting for an answer.
+    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/always-allow(\/remove)?$/);
+    if (routineMatch && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const routineId = routineMatch[1]!;
+      const routine = routines!.listRoutines().find((candidate) => candidate.id === routineId);
+      if (!routine) return json(res, 404, { error: "no such routine" });
+      const body = await readBody(req);
+      if (routineMatch[2]) {
+        const key = typeof body?.key === "string" ? body.key : "";
+        if (!key) return json(res, 400, { error: "key required" });
+        return json(res, 200, { routine: routines!.revokeAlwaysAllow(routineId, key) });
+      }
+      const allowKey = typeof body?.allowKey === "string" ? body.allowKey : "";
+      const threadId = typeof body?.threadId === "string" ? body.threadId : "";
+      if (!allowKey || !threadId) return json(res, 400, { error: "allowKey and threadId required" });
+      if (!store.taskByThread(routine.botId, threadId)) return json(res, 404, { error: "no such conversation for this routine" });
+      const pending = store.messagesFor(threadId).some((message) =>
+        message.card?.requestId &&
+        !message.card.answered &&
+        message.card.dismissed !== true &&
+        message.card.routineId === routineId &&
+        message.card.routineAllowKey === allowKey);
+      if (!pending) return json(res, 409, { error: "that grant is not on a pending approval for this routine" });
+      try {
+        return json(res, 200, { routine: routines!.grantAlwaysAllow(routineId, allowKey) });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 400;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
       const run = routines!.runNow(routineMatch[1]);
       return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });

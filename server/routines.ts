@@ -16,7 +16,7 @@ import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, 
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
-import { loadRoutinePermissionMode, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
+import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -99,6 +99,11 @@ export interface Routine {
    * at (server/routine-permissions.ts). Absent means inherit: the bot's own
    * level when the run starts. Older files have none and inherit. */
   permissionMode?: RoutinePermissionMode;
+  /** "Always allow for this routine": exact-command and stop-line keys the
+   * owner allowed from a card in one of this routine's runs. Only granted
+   * through the desktop from a pending card, removable in the editor, and
+   * never a bare tool name. Absent means none. */
+  alwaysAllow?: string[];
   /** How many scheduled occurrences were skipped because a run was still
    * active, and when the last one was due. Absent means none. */
   skippedRuns?: number;
@@ -439,6 +444,7 @@ function cloneRoutine(routine: Routine): Routine {
     ...routine,
     ...(routine.instructionHistory ? { instructionHistory: structuredClone(routine.instructionHistory) } : {}),
     ...(routine.watch ? { watch: structuredClone(routine.watch) } : {}),
+    ...(routine.alwaysAllow ? { alwaysAllow: [...routine.alwaysAllow] } : {}),
     schedule: cloneSchedule(routine.schedule),
     attachments: cloneAttachments(routine.attachments),
   };
@@ -622,12 +628,14 @@ export class RoutineManager {
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode),
+              alwaysAllow: routineGrantKeys(routine.alwaysAllow),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
             // Absent rather than undefined keys, so a load and save round-trip
             // leaves an older file's routines byte-for-byte shaped as before.
             for (const key of ["overlap", "permissionMode", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            if (!loaded.alwaysAllow?.length) delete loaded.alwaysAllow;
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
               try { loaded.watch = readRoutineWatchBinding(routine.watch, routine.id); }
@@ -847,14 +855,44 @@ export class RoutineManager {
    * and the level it chose (absent = inherit), so the host can judge the run
    * at that level. Null for webhook and channel work, room goals, and a
    * routine that no longer exists: those keep their own rules. */
-  routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode } | null {
+  routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && ["running", "waiting"].includes(candidate.status));
     if (!run || run.target !== "bot") return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
     if (!routine || routine.botId !== run.botId) return null;
-    return { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}) };
+    return { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+  }
+
+  /** Remember "Always allow for this routine". The caller has proved the key
+   * sits on a pending card this routine's run raised; this only refuses a
+   * key that is not one of the two scoped kinds, and a full list. */
+  grantAlwaysAllow(id: string, key: string): Routine | null {
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    if (!isRoutineGrantKey(key)) throw Object.assign(new Error("Only an exact command or a scoped place can be always allowed for a routine"), { status: 400 });
+    const held = routine.alwaysAllow ?? [];
+    if (held.includes(key)) return this.routineWithHealth(routine);
+    if (held.length >= ROUTINE_GRANTS_MAX) throw Object.assign(new Error(`This routine already remembers ${ROUTINE_GRANTS_MAX} approvals. Remove some in the routine editor, then try again.`), { status: 409 });
+    // A grant is not a definition edit: `updatedAt` stays, so a pending
+    // routine confirmation card is not made stale by it.
+    this.commitMutation(() => { routine.alwaysAllow = [...held, key]; });
+    this.emitRoutine(routine);
+    return this.routineWithHealth(routine);
+  }
+
+  revokeAlwaysAllow(id: string, key: string): Routine | null {
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    if (!routine.alwaysAllow?.includes(key)) return this.routineWithHealth(routine);
+    this.commitMutation(() => {
+      const kept = routine.alwaysAllow!.filter((held) => held !== key);
+      if (kept.length) routine.alwaysAllow = kept;
+      else delete routine.alwaysAllow;
+    });
+    this.emitRoutine(routine);
+    return this.routineWithHealth(routine);
   }
 
   create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {

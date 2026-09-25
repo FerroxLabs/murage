@@ -13,6 +13,12 @@
 // the key guard holds at every level and the stop line holds below No limits.
 
 import type { AutoApprover } from "./auto-approve.ts";
+import { isStopLineKey } from "./stop-line.ts";
+import { parseExactCommandKey } from "../shared/exact-command.ts";
+
+/** How many "Always allow for this routine" grants one routine keeps, the
+ * same cap a bot's own list has. */
+export const ROUTINE_GRANTS_MAX = 200;
 
 export type RoutinePermissionMode = "ask" | "auto" | "full" | "unlimited";
 
@@ -59,4 +65,19 @@ export function routinePermissionModeInput(value: unknown): RoutinePermissionMod
   if (value === null || value === "inherit") return null;
   if (isMode(value)) return value;
   throw new Error("Choose an approval level for this routine");
+}
+
+/** Is this a grant "Always allow for this routine" may hold? Only the two
+ * scoped kinds: an exact command in one folder on one engine
+ * (shared/exact-command.ts), or a stop-line place (server/stop-line.ts).
+ * Never a bare tool name or a per-program key: a routine runs with nobody
+ * watching, so what it is allowed must name exactly what the owner saw. */
+export function isRoutineGrantKey(key: unknown): key is string {
+  return typeof key === "string" && key.length <= 6_000 && (isStopLineKey(key) || parseExactCommandKey(key) !== undefined);
+}
+
+/** A routine's stored grants, cleaned: scoped keys only, no repeats, capped. */
+export function routineGrantKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter(isRoutineGrantKey))].slice(0, ROUTINE_GRANTS_MAX);
 }
