@@ -26,9 +26,11 @@ import {
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
+import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
 export {
   companionAccountActionError,
@@ -130,6 +132,7 @@ export function remoteAccessSummary(remote: CompanionRemoteAccess, doorAddress: 
   if (remote.on) {
     return `On. Any device signed into your tailnet can open ${remote.url ?? doorAddress ?? "this computer"}.`;
   }
+  if (remote.reason === "no-certificates") return "Off. Your tailnet needs HTTPS turned on first. The steps are below.";
   if (remote.problem) return remote.problem;
   if (remote.available === false) {
     return "Tailscale is not installed on this computer, so there is no secure address to serve.";
@@ -363,6 +366,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   const doorAddress = doorAddressLabel(c.browserDoor);
   const doorUrl = companionDoorUrl(c.browserDoor);
   const steps = webUiSteps({ state, remoteAccess: remote, doorAddress });
+  const httpsHelp = tailnetHttpsHelp(remote);
   const pairedCount = state.devices.length;
   const accountActionError = companionAccountActionError(c.account, c.accountError);
   const connected = new Set(state.connectedDeviceIds ?? []);
@@ -472,11 +476,15 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
           </div>
         )}
 
-        {!remote.on && remote.problem && (
-          <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-hairline/40 px-3 py-2.5">
-            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
-            <div className="text-[11.5px] leading-relaxed text-ink-secondary">{remote.problem}</div>
-          </div>
+        {httpsHelp ? (
+          <TailnetHttpsHelpCard help={httpsHelp} className="mt-4" />
+        ) : (
+          !remote.on && remote.problem && (
+            <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-hairline/40 px-3 py-2.5">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
+              <div className="text-[11.5px] leading-relaxed text-ink-secondary">{remote.problem}</div>
+            </div>
+          )
         )}
 
         <div className="mt-3 flex items-center gap-3">

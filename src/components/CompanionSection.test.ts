@@ -13,6 +13,7 @@ import {
   companionPairingMode,
   deriveCompanionPanelStatus,
   loadCompanionBridgeState,
+  remoteAccessSummary,
   shouldHydrateCompanionEmail,
 } from "./CompanionSection";
 
@@ -242,5 +243,13 @@ describe("the three-step strip fits the modal it lives in", () => {
     );
     const strip = source.slice(source.indexOf("function StepStrip"));
     expect(strip.slice(0, strip.indexOf("</ol>"))).toContain("truncate");
+  });
+});
+
+describe("the remote access line when the tailnet has no certificates", () => {
+  it("points at the steps rather than repeating the whole error above them", () => {
+    const line = remoteAccessSummary({ on: false, desired: true, url: null, available: true, reason: "no-certificates",
+      problem: "Your tailnet does not have HTTPS certificates turned on, so … https://login.tailscale.com/admin/dns …" }, null);
+    expect(line).toBe("Off. Your tailnet needs HTTPS turned on first. The steps are below.");
   });
 });

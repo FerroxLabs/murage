@@ -54,10 +54,12 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
+import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
 export interface PhoneDevice {
   id: string;
@@ -1302,6 +1304,7 @@ export function PhoneSetupFlowView({
 
   if (c.phase === "intro") {
     const readiness = webUiReadiness(c);
+    const httpsHelp = tailnetHttpsHelp(c.remoteAccess);
     return (
       <div className="flex flex-col items-center text-center">
         <div className="flex size-14 items-center justify-center rounded-2xl bg-accent/12 text-accent">
@@ -1318,6 +1321,7 @@ export function PhoneSetupFlowView({
           onRecheck={c.refreshTailscale}
           desktop={desktop}
         />
+        {httpsHelp && <TailnetHttpsHelpCard help={httpsHelp} className="mt-3 w-full max-w-[420px]" />}
         <button
           onClick={c.start}
           disabled={!c.state || c.busy || c.accountBusy || !readiness.ready}
