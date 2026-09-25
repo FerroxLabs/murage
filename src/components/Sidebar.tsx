@@ -116,6 +116,7 @@ import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { SidebarNeedsYou } from "./SidebarNeedsYou";
 import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 import { WhatsNewHost } from "./WhatsNewHost";
+import { AnnouncementsHost } from "./Announcements";
 import { useWhatsNew } from "@/lib/whats-new";
 import { usePendingApprovals } from "./usePendingApprovals";
 import { InboxDialog } from "./InboxDialog";
@@ -2718,6 +2719,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
       {/* Footer */}
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
+        {/* Announcements: an info notice is a banner here; an important or
+            security one opens as a card, after What's new has closed. */}
+        <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />
         {/* The icon rail is already one icon per destination, so folding those
             icons behind a hover menu inside an icon rail helps nobody: in that
             density the four rows stay exactly as they were. */}

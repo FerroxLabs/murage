@@ -1085,7 +1085,8 @@ button:disabled.bg-danger {
   font-style: normal;
   font-display: swap;
 }
-.whats-new {
+.whats-new,
+.announce {
   --wn-font-display: "Instrument Serif", Georgia, serif;
   --wn-accent: #ff6b35;
   --wn-accent-ink: #ff8255;
@@ -1129,13 +1130,15 @@ button:disabled.bg-danger {
 /* The global :focus-visible ring (above) in the panels' own accent. A card's
    title takes focus only so a screen reader announces the new card; it is
    not a control, so it shows no ring. */
-.whats-new :focus-visible {
+.whats-new :focus-visible,
+.announce :focus-visible {
   outline-color: var(--wn-accent);
 }
 .whats-new [data-whats-new-card="projects"] :focus-visible {
   outline-color: var(--wn-paper-accent);
 }
-.whats-new h2[tabindex="-1"]:focus-visible {
+.whats-new h2[tabindex="-1"]:focus-visible,
+.announce h2[tabindex="-1"]:focus-visible {
   outline: none;
 }
 .whats-new-display {
@@ -1151,4 +1154,74 @@ button:disabled.bg-danger {
 }
 @media (prefers-reduced-motion: reduce) {
   .whats-new-card { animation: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ANNOUNCEMENTS (src/components/Announcements.tsx)
+
+   The same art-panel palette as What's new (the `.announce` class shares the
+   `--wn-*` tokens above), and five accents a notice can pick so that the
+   sidebar does not show the same orange card every time. `paper` is the
+   Projects card's cream ground. Accent values are the What's new art dots.
+   ───────────────────────────────────────────────────────────────────────── */
+.announce[data-accent="blue"] {
+  --wn-accent: #7cc4ff;
+  --wn-accent-ink: #9dd3ff;
+  --wn-accent-ink-hover: #c2e4ff;
+  --wn-on-accent: #06223a;
+  --wn-chip-edge: rgba(124, 196, 255, 0.35);
+  --wn-ring: rgba(124, 196, 255, 0.2);
+}
+.announce[data-accent="gold"] {
+  --wn-accent: #e0b15a;
+  --wn-accent-ink: #eac27a;
+  --wn-accent-ink-hover: #f3d9a6;
+  --wn-on-accent: #2a1d05;
+  --wn-chip-edge: rgba(224, 177, 90, 0.35);
+  --wn-ring: rgba(224, 177, 90, 0.2);
+}
+.announce[data-accent="violet"] {
+  --wn-accent: #b69cff;
+  --wn-accent-ink: #c8b4ff;
+  --wn-accent-ink-hover: #ddd0ff;
+  --wn-on-accent: #1c1236;
+  --wn-chip-edge: rgba(182, 156, 255, 0.35);
+  --wn-ring: rgba(182, 156, 255, 0.2);
+}
+.announce[data-accent="mint"] {
+  --wn-accent: #5fd4a4;
+  --wn-accent-ink: #85e0ba;
+  --wn-accent-ink-hover: #b3eed5;
+  --wn-on-accent: #062a1c;
+  --wn-chip-edge: rgba(95, 212, 164, 0.35);
+  --wn-ring: rgba(95, 212, 164, 0.2);
+}
+.announce[data-accent="paper"] {
+  --wn-accent: #a83c14;
+  --wn-accent-ink: #a83c14;
+  --wn-accent-ink-hover: #7f2c0d;
+  --wn-on-accent: #fffdf8;
+  --wn-ground: #eadfcb;
+  --wn-panel: #f6f1e7;
+  --wn-panel-deep: #f6f1e7;
+  --wn-edge: #cfc3ae;
+  --wn-edge-soft: #d9ceba;
+  --wn-ghost-edge: #cfc3ae;
+  --wn-ink: #1c1a17;
+  --wn-ink-strong: #1c1a17;
+  --wn-ink-body: #4a443b;
+  --wn-ink-list: #2b2721;
+  --wn-ink-muted: #5f574b;
+  --wn-ink-faint: #6b6255;
+  --wn-close-ink: #5a5146;
+  --wn-close-ground: rgba(246, 241, 231, 0.82);
+  --wn-chip-ground: rgba(168, 60, 20, 0.1);
+  --wn-chip-edge: transparent;
+  --wn-ring: rgba(168, 60, 20, 0.16);
+}
+.announce-in {
+  animation: whats-new-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .announce-in { animation: none; }
 }
