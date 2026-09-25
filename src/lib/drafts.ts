@@ -8,6 +8,9 @@ const KEY = "murage-drafts";
 const ATTACHMENTS_KEY = "murage-draft-attachments";
 const SEND_IDS_KEY = "murage-draft-send-ids";
 const CHANNEL_MODES_KEY = "murage-draft-channel-modes";
+const FAILED_SENDS_KEY = "murage-draft-failed-sends";
+/** A conversation's failed list is for retrying by hand, not an archive. */
+const MAX_FAILED_SENDS_PER_DRAFT = 20;
 // A task can be unmounted and mounted again while its POST is still in
 // flight. Keep the edit generation outside React so a late failure from the
 // old component cannot overwrite a newer draft created by the new one.
@@ -40,6 +43,38 @@ const failedSends = new Map<string, FailedComposerSend[]>();
 const failedSendListeners = new Map<string, Set<(sends: FailedComposerSend[]) => void>>();
 const restoredSendIds = new Map<string, string>();
 let failedSendSequence = 0;
+
+// Drafts whose stored failed list has been read into `failedSends`. Read
+// lazily, per conversation, the way restoredSendId reads its stored id.
+const loadedFailedSends = new Set<string>();
+
+function isFailedSend(value: unknown): value is FailedComposerSend {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const send = value as Record<string, unknown>;
+  return (
+    typeof send.id === "string" &&
+    typeof send.sendId === "string" &&
+    typeof send.text === "string" &&
+    typeof send.requestText === "string" &&
+    typeof send.threadId === "string" &&
+    (send.replyToId === undefined || typeof send.replyToId === "string") &&
+    (send.channelMode === undefined || send.channelMode === "chat" || send.channelMode === "goal")
+  );
+}
+
+/** Best-effort, like every other draft write: a refused write leaves the
+ * list in memory for this session, which is what it always was. */
+function storeFailedSends(id: string, sends: FailedComposerSend[]): void {
+  const store = getStore();
+  const all = read(store, FAILED_SENDS_KEY);
+  if (sends.length) all[id] = sends.slice(-MAX_FAILED_SENDS_PER_DRAFT);
+  else delete all[id];
+  try {
+    store?.setItem(FAILED_SENDS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota / private mode — the list still lives for this session */
+  }
+}
 
 type Values = Record<string, unknown>;
 type Store = Pick<Storage, "getItem" | "setItem"> | undefined;
@@ -300,6 +335,14 @@ function publishFailedSends(id: string): void {
 }
 
 export function failedComposerSends(id: string): FailedComposerSend[] {
+  if (!loadedFailedSends.has(id)) {
+    loadedFailedSends.add(id);
+    const stored = read(getStore(), FAILED_SENDS_KEY)[id];
+    if (Array.isArray(stored) && !failedSends.has(id)) {
+      const valid = stored.filter(isFailedSend).slice(-MAX_FAILED_SENDS_PER_DRAFT);
+      if (valid.length) failedSends.set(id, valid);
+    }
+  }
   return failedSends.get(id) ?? [];
 }
 
@@ -308,7 +351,9 @@ export function rememberFailedComposerSend(
   input: FailedComposerSendInput,
 ): FailedComposerSend {
   const failed = { ...input, id: `${Date.now().toString(36)}-${++failedSendSequence}` };
-  failedSends.set(id, [...failedComposerSends(id), failed]);
+  const sends = [...failedComposerSends(id), failed].slice(-MAX_FAILED_SENDS_PER_DRAFT);
+  failedSends.set(id, sends);
+  storeFailedSends(id, sends);
   publishFailedSends(id);
   return failed;
 }
@@ -343,6 +388,7 @@ export function forgetFailedComposerSend(id: string, failedId: string): void {
   const remaining = failedComposerSends(id).filter((failed) => failed.id !== failedId);
   if (remaining.length > 0) failedSends.set(id, remaining);
   else failedSends.delete(id);
+  storeFailedSends(id, remaining);
   publishFailedSends(id);
 }
 
