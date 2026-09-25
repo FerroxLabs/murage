@@ -130,7 +130,7 @@ test.beforeAll(async () => {
         if (id !== "\0host-entry") return;
         return `
 import React from "react"; import { createRoot } from "react-dom/client";
-import { useFixtureBot } from "@/state/store"; import { CallOverlay } from "/src/components/CallView.tsx"; import "/src/styles.css";
+import { useFixtureBot } from "@/state/store"; import { CallOverlay } from "/src/components/CallControls.tsx"; import "/src/styles.css";
 function Fixture() { const bot = useFixtureBot(); return React.createElement(CallOverlay, { bot }); }
 createRoot(document.getElementById("root")).render(React.createElement(Fixture));`;
       },

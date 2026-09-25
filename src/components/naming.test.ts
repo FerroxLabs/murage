@@ -69,7 +69,7 @@ describe("a chat with bots is a channel, everywhere", () => {
 });
 
 describe("a bot is a bot, never an agent", () => {
-  it.each(["./RenameTitle.tsx", "./ChatHeader.tsx", "./SettingsPanel.tsx", "./Sidebar.tsx", "./CallView.tsx", "./SpeakButton.tsx", "./ChatView.tsx"])(
+  it.each(["./RenameTitle.tsx", "./ChatHeader.tsx", "./SettingsPanel.tsx", "./Sidebar.tsx", "./CallView.tsx", "./CallControls.tsx", "./SpeakButton.tsx", "./ChatView.tsx"])(
     "%s says bot in the words a person reads",
     (file) => {
       expect(visibleWords(read(file)).filter((text) => /\bagents?\b/i.test(text))).toEqual([]);

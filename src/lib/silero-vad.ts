@@ -14,12 +14,13 @@
 import * as ort from "onnxruntime-web/wasm";
 import wasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
 import mjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
+import { SPEECH_CONFIDENCE } from "./vad-threshold";
+
+export { SPEECH_CONFIDENCE };
 
 const CHUNK = 512;
 const CONTEXT = 64;
 const RATE = 16_000;
-/** Pipecat's VAD_CONFIDENCE. */
-export const SPEECH_CONFIDENCE = 0.7;
 /** Pipecat resets the model state every 5 s; here after that much quiet. */
 const RESET_AFTER_QUIET_CHUNKS = Math.round((5 * RATE) / CHUNK);
 

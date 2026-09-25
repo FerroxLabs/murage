@@ -251,7 +251,7 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
   // The speech detector's model (`public/vad`, fetched by
-  // `src/lib/silero-vad.ts:35`). One file, by name: `/vad/*` would be the
+  // `src/lib/silero-vad.ts:36`). One file, by name: `/vad/*` would be the
   // first wildcard on this list, and there is nothing else in there.
   { method: "GET", path: /^\/vad\/silero_vad\.onnx$/ },
   // The diagram frame (src/mermaid-frame): chat renders Mermaid inside a

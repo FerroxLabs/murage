@@ -31,7 +31,7 @@ import { HEADER_RELOCATION_ORDER, useChatHeaderLayout, type HeaderSlot } from "@
 import { useStore, type AppState, type Bot, type InstanceInfo, type Message } from "@/state/store";
 
 import { BotAvatar } from "./Avatar";
-import { CallButton } from "./CallView";
+import { CallButton } from "./CallControls";
 import { ChatHeaderMenu, type HeaderMenuItem } from "./ChatHeaderMenu";
 import { openFiles } from "./Files";
 import { MemoryLauncher } from "./MemoryLauncher";

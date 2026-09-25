@@ -82,7 +82,7 @@ import { RenameTitle } from "./RenameTitle";
 import { SpeakButton } from "./SpeakButton";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
-import { CallOverlay } from "./CallView";
+import { CallOverlay } from "./CallControls";
 import { cn } from "@/lib/cn";
 import { useFocusMessage } from "@/lib/focus-message";
 import { groupTranscript } from "@/lib/activity-runs";

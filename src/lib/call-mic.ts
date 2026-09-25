@@ -21,7 +21,8 @@
 //     utterance and Flux transcribes it (POST /api/voice/transcribe). No
 //     partial words, about 1.5-3 s after you stop, but it works everywhere.
 
-import { SileroVad, SPEECH_CONFIDENCE } from "./silero-vad";
+import type { SileroVad } from "./silero-vad";
+import { SPEECH_CONFIDENCE } from "./vad-threshold";
 
 export interface MicLine {
   text?: string;
@@ -197,9 +198,16 @@ abstract class Capture {
     // file in the bundle, and 64 ms frames are light work for the main
     // thread. (Deprecated in the spec, still supported by Chromium.)
     this.node = this.context.createScriptProcessor(FRAME, 1, 1);
-    void SileroVad.load().then((vad) => {
-      if (this.stream) this.vad = vad;
-    });
+    // onnxruntime is the heaviest thing a call needs and nothing else needs
+    // it, so the model and its runtime arrive with the first open microphone
+    // rather than with the app (spec §6). A chunk that fails to load is the
+    // same as a model that cannot run: the loudness gate carries the call.
+    void import("./silero-vad")
+      .then(({ SileroVad }) => SileroVad.load())
+      .catch(() => null)
+      .then((vad) => {
+        if (this.stream) this.vad = vad;
+      });
     this.node.onaudioprocess = (event) => {
       const frame = new Float32Array(event.inputBuffer.getChannelData(0));
       const level = this.muted ? 0 : rms(frame);

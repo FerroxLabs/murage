@@ -33,7 +33,7 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { GoalRunCard } from "./GoalRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
-import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
+import { GroupCallButton, GroupCallOverlay } from "./CallControls";
 
 import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";

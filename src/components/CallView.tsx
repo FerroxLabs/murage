@@ -1,4 +1,3 @@
-import { t } from "@/lib/i18n";
 // Call mode — the bot on the line.
 //
 // The loop is deliberately HALF-DUPLEX: the microphone is live only when
@@ -29,11 +28,11 @@ import { t } from "@/lib/i18n";
 // ask how it is going or talk about something else; a soft pulse fills the
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
-import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, Phone, PhoneOff, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
-import { currentCall, deferCallCleanup, endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
+import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { unheardMessages } from "@/lib/scrollback";
 import { speaker } from "@/lib/tts";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
@@ -45,7 +44,6 @@ import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
 import { isHostConsentApproval, isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt, spokenToolAction } from "./PendingApproval";
 import { cn } from "@/lib/cn";
-import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 /** Spoken answers to a permission card. Anything else is read as a reply
@@ -78,175 +76,7 @@ const STILL_ON_IT_MAX = 3;
  *  function-call timeout, softened: the work is not cancelled). */
 const LONG_WORK_MS = 4 * 60_000;
 
-export function CallButton({ bot }: { bot: Bot }) {
-  return (
-    <CallTargetButton
-      targetId={bot.id}
-      targetName={bot.name}
-      voices={[bot.voice]}
-      setupBotId={bot.id}
-      requireExplicitVoices={false}
-      onStart={() => track("call_started", { driver: bot.modelSelection?.instanceId })}
-    />
-  );
-}
-
-export function CallTargetButton({
-  targetId,
-  targetName,
-  voices,
-  setupBotId,
-  requireExplicitVoices,
-  onStart,
-}: {
-  targetId: string;
-  targetName: string;
-  voices: Array<string | undefined>;
-  /** Agent profile to open when voice setup is missing (rooms choose a member). */
-  setupBotId?: string;
-  /** Rooms cannot rely on one workspace fallback for multiple speakers. */
-  requireExplicitVoices: boolean;
-  onStart: () => void;
-}) {
-  const { state, dispatch } = useStore();
-  const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
-  const active = useOnCall() === targetId;
-  // A Mac recognizes speech on the device. Windows and Linux capture the
-  // microphone in the app and transcribe through the workspace's Flux key.
-  const macSpeech = capabilities.dictation.available && Boolean(window.muragebox?.speechStart);
-  // Windows and Linux transcribe through Flux or the owner's own Groq or
-  // OpenAI key, whichever the harness reports can serve it.
-  const hostedSpeech =
-    Boolean(state.config?.tts?.routes?.transcribe) &&
-    typeof navigator !== "undefined" &&
-    Boolean(navigator.mediaDevices?.getUserMedia);
-  const supported = macSpeech || hostedSpeech;
-  const configured = Boolean(state.config?.tts?.configured);
-  const everyTargetHasVoice = voices.length > 0 && voices.every((voice) => Boolean(voice));
-  const voiceReady =
-    configured && (requireExplicitVoices ? everyTargetHasVoice : Boolean(state.config?.tts?.ready || everyTargetHasVoice));
-  const unavailable = !active && (!capabilitiesReady || !supported || !voiceReady);
-  const voiceSetupRequired = capabilitiesReady && supported && !voiceReady;
-  const [helpOpen, setHelpOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const helpId = useId();
-  // "Call a bot" from What's new: press this button once it can answer.
-  const callRequest = useCallRequest();
-  useEffect(() => {
-    if (callRequest === targetId && capabilitiesReady && takeCallRequest(targetId)) buttonRef.current?.click();
-  }, [callRequest, targetId, capabilitiesReady]);
-  const label = active
-    ? t("calls.hangUpOn", { name: targetName })
-    : !capabilitiesReady
-      ? t("calls.checkingAvailability")
-      : !supported
-        ? "Add a Flux key, or an OpenAI or Groq key, in Settings to make calls on this computer"
-        : !configured
-          ? "Set up a voice in a bot's settings to make calls"
-          : !voiceReady
-            ? "Pick a voice in a bot's settings to make calls"
-            : t("calls.call", { name: targetName });
-
-  const reason = !capabilitiesReady
-    ? "Checking whether this device can make calls."
-    : !supported
-      ? capabilities.dictation.available
-        ? "The speech service is unavailable in this app build. Restart or update Murage."
-        : "Calls on this computer understand you through Flux, or your own OpenAI or Groq key. Add one in Settings."
-      : !configured
-          ? "Add a Flux key, an ElevenLabs key, or switch to the built-in Mac voices so the bot can speak during calls."
-          : !voiceReady
-            ? voices.length > 1
-              ? "Give every channel member a voice before starting a channel call."
-              : "Choose a voice before starting a call."
-            : "";
-
-  useEffect(() => {
-    if (!helpOpen) return;
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setHelpOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setHelpOpen(false);
-      buttonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [helpOpen]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => {
-          if (active) return endCall(targetId);
-          if (unavailable) {
-            setHelpOpen((open) => !open);
-            return;
-          }
-          onStart();
-          startCall(targetId);
-        }}
-        aria-expanded={unavailable ? helpOpen : undefined}
-        aria-controls={unavailable ? helpId : undefined}
-        aria-label={label}
-        title={label}
-        className={cn(
-          "relative flex size-9 items-center justify-center rounded-full transition-colors",
-          active
-            ? "bg-danger text-white hover:brightness-110"
-            : unavailable
-              ? "text-ink-secondary/50 hover:bg-raised hover:text-ink-secondary"
-              : "text-ink-secondary hover:bg-raised hover:text-ink",
-        )}
-      >
-        {active ? <PhoneOff size={17} /> : <Phone size={17} />}
-        {unavailable && (
-          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-app" aria-hidden="true" />
-        )}
-      </button>
-
-      {unavailable && helpOpen && (
-        <div
-          id={helpId}
-          role="group"
-          aria-label="Call unavailable"
-          className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[280px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
-        >
-          <div className="text-[13px] font-medium text-ink">Call unavailable</div>
-          <div className="mt-1 text-[12px] leading-[1.45] text-ink-secondary">{reason}</div>
-          {voiceSetupRequired && (
-            <button
-              type="button"
-              onClick={() => {
-                setHelpOpen(false);
-                if (setupBotId && setupBotId !== targetId) dispatch({ type: "select", id: setupBotId });
-                dispatch({ type: "toggleSettings", open: true });
-              }}
-              className="mt-2.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110"
-            >
-              Open agent settings
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function CallOverlay({ bot }: { bot: Bot }) {
-  const active = useOnCall() === bot.id;
-  if (!active) return null;
-  return <Call bot={bot} />;
-}
-
-function Call({ bot }: { bot: Bot }) {
+export function Call({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   // One microphone for the whole call (src/lib/call-mic.ts): Apple's
