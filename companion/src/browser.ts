@@ -63,7 +63,7 @@ export interface BrowserDeviceStore {
     name: unknown,
     pairRequestId?: unknown,
     installId?: unknown,
-  ): { device: PublicDevice; token: string } | { error: string; reason?: string };
+  ): { device: PublicDevice; token: string } | { error: string; reason?: string; devices?: Array<{ name: string; lastSeenAt: number }> };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
   /** `sessionId` names the session RECORD, which survives renewal; the cookie
    * does not. Long-lived streams are bound to it. */
@@ -959,6 +959,14 @@ ${CODE_ENTRY_STYLE}
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
+        if (body.reason === "full") {
+          // Right code, full computer. The code is not spent, so once an old
+          // device is replaced there, this same button signs in.
+          say("This computer has too many devices", "On your computer, Murage lists them under Replace an old device. Replace one, then tap Try again.");
+          go.textContent = "Try again";
+          go.disabled = false;
+          return;
+        }
         say("Could not sign in", body.error || "That code is no longer valid.");
         // The link failed — expired, already spent, or guessed to death. The
         // person is standing in front of the computer that can show them a
@@ -1484,6 +1492,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
               // because a person who typed six digits needs to know which of
               // those happened to know what to do next.
               const payload: Record<string, unknown> = { error: result.error };
+              // The stable code, for the page to act on rather than parse
+              // prose. `full` also lists the devices, least recently seen
+              // first, so the person knows why and what to replace.
+              if (result.reason) payload.reason = result.reason;
+              if (result.reason === "full" && result.devices) payload.devices = result.devices;
               if (countsAgainstSignIn(result.reason)) {
                 const locked = signIn.fail(client);
                 if (locked) {

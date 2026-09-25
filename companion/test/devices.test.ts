@@ -923,3 +923,64 @@ describe("pairing again from the same app install", () => {
     expect(registry.count()).toBe(1);
   });
 });
+
+describe("a full fleet", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  /** Twenty devices paired a minute apart; returns their tokens in order. */
+  const fill = (registry: DeviceRegistry, start: number): string[] => {
+    const tokens: string[] = [];
+    for (let i = 0; i < MAX_DEVICES; i += 1) {
+      vi.setSystemTime(start + i * 60_000);
+      tokens.push(pair(registry, `Phone ${i}`).token);
+    }
+    return tokens;
+  };
+
+  it("refuses the right code with every device, least recently seen first", () => {
+    try {
+      const start = Date.now();
+      const registry = new DeviceRegistry();
+      const tokens = fill(registry, start);
+      // Phone 0 is the oldest pairing but was used a moment ago.
+      vi.setSystemTime(start + 60 * 60_000);
+      registry.authenticate(tokens[0]);
+
+      const { code } = registry.openPairing();
+      const refused = registry.redeem(code, "New phone");
+      expect(refused).toMatchObject({ reason: "full" });
+      const listed = (refused as { devices: Array<{ name: string; lastSeenAt: number }> }).devices;
+      expect(listed).toHaveLength(MAX_DEVICES);
+      expect(listed[0].name).toBe("Phone 1");
+      expect(listed.at(-1)?.name).toBe("Phone 0");
+      expect(listed[0]).not.toHaveProperty("id");
+      // The same order is what the computer offers to replace.
+      expect(registry.replaceCandidates().map((d) => d.name)).toEqual(listed.map((d) => d.name));
+
+      // The window survives: replace one on the computer, and the same code works.
+      expect(registry.revoke(registry.replaceCandidates()[0].id)).toBe(true);
+      // Below the cap, nothing has to go.
+      expect(registry.replaceCandidates()).toEqual([]);
+      expect(registry.redeem(code, "New phone")).toHaveProperty("token");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts a browser-only phone as seen when its session is used", () => {
+    try {
+      const start = Date.now();
+      vi.setSystemTime(start);
+      const registry = new DeviceRegistry();
+      const { device } = pair(registry, "Browser phone");
+      const { value } = registry.openSession(device.id, "Safari on iPhone")!;
+      vi.setSystemTime(start + 10 * 60_000);
+      registry.resolveSession(value);
+      expect(registry.list()[0].lastSeenAt).toBe(start + 10 * 60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

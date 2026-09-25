@@ -673,6 +673,21 @@ export class DeviceRegistry {
     return this.devices.length;
   }
 
+  /** Every device, least recently seen first. */
+  private byLastSeen(): PublicDevice[] {
+    return this.list().sort((a, b) => a.lastSeenAt - b.lastSeenAt || a.createdAt - b.createdAt);
+  }
+
+  /** What the pairing screen offers to replace: every device, least recently
+   * seen first, once the fleet is full. Empty below the cap, because below it
+   * nothing has to go for a new device to join. There is no automatic
+   * pruning: a record that looks browser-only may still hold a working
+   * bearer, so the owner chooses. */
+  replaceCandidates(): PublicDevice[] {
+    this.recover();
+    return this.devices.length >= MAX_DEVICES ? this.byLastSeen() : [];
+  }
+
   /** The live pairing window, or null. Expiry is evaluated on read so a
    * stale window can never be redeemed by a caller that skipped a tick. */
   pairing(): PairingWindow | null {
@@ -771,7 +786,7 @@ export class DeviceRegistry {
     name: unknown,
     pairRequestId?: unknown,
     installId?: unknown,
-  ): { device: PublicDevice; token: string } | { error: string; reason: RedeemFailure } {
+  ): { device: PublicDevice; token: string } | { error: string; reason: RedeemFailure; devices?: Array<{ name: string; lastSeenAt: number }> } {
     const presented = String(credential ?? "");
     const requestId =
       typeof pairRequestId === "string" && /^[A-Za-z0-9._-]{16,128}$/.test(pairRequestId)
@@ -857,7 +872,14 @@ export class DeviceRegistry {
     const replaced = install ? this.devices.find((d) => d.installId === install) : undefined;
     // A reinstall frees its own slot, so a full fleet still takes it back.
     if (this.devices.length - (replaced ? 1 : 0) >= MAX_DEVICES) {
-      return { error: "too many paired devices — remove one first", reason: "full" };
+      // Names and when each was last seen, least recent first: enough for the
+      // phone to say what is going on. Not ids — replacing one happens on the
+      // computer (`replaceCandidates`), never from the phone.
+      return {
+        error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again",
+        reason: "full",
+        devices: this.byLastSeen().map(({ name, lastSeenAt }) => ({ name, lastSeenAt })),
+      };
     }
     // Consume the window without clearing a possible replay. `closePairing`
     // is the explicit cancel operation and intentionally clears both.
@@ -968,7 +990,7 @@ export class DeviceRegistry {
    * False, having changed nothing, when it cannot be written down: the
    * successor stays pending on disk, so whoever presented it is still
    * authorised and the next request commits it. */
-  private commit(session: BrowserSession, now: number): boolean {
+  private commit(device: DeviceRecord, session: BrowserSession, now: number): boolean {
     const pending = session.pending;
     if (!pending) return false;
     const previous = {
@@ -977,16 +999,19 @@ export class DeviceRegistry {
       lastSeenAt: session.lastSeenAt,
       expiresAt: session.expiresAt,
     };
+    const lastSeen = device.lastSeenAt;
     session.hash = pending.hash;
     delete session.pending;
     session.committedAt = now;
     session.lastSeenAt = now;
+    device.lastSeenAt = Math.max(device.lastSeenAt, now);
     session.expiresAt = renewedExpiry(session, now);
     try {
       this.persist();
       return true;
     } catch {
       Object.assign(session, previous);
+      device.lastSeenAt = lastSeen;
       session.pending = pending;
       return false;
     }
@@ -1165,9 +1190,16 @@ export class DeviceRegistry {
           // Commit on first use. A failed write still serves this request —
           // the successor is on disk as pending, which authorises it — and
           // the next request tries the commit again.
-          this.commit(session, now);
+          this.commit(device, session, now);
         } else if (now - session.lastSeenAt > LAST_SEEN_WRITE_MS) {
           session.lastSeenAt = now;
+          // The device was seen too. Only bearer use stamped it before, so a
+          // phone paired through the browser door showed "last seen" as the
+          // day it paired, and a replace list sorted by it was wrong.
+          device.lastSeenAt = Math.max(device.lastSeenAt, now);
+          // No extra write: this rides the session's own once-a-minute one,
+          // and tells bearer `authenticate` the device was just written.
+          this.lastSeenWrites.set(device.id, now);
           try {
             this.persist();
           } catch {
@@ -1216,7 +1248,7 @@ export class DeviceRegistry {
         if (sessionExpired(session, now)) return null;
         if (which === "pending") {
           if (pendingExpired(session.pending!, now)) return null;
-          return this.commit(session, now) ? { value, session, expiresAt: session.expiresAt } : null;
+          return this.commit(device, session, now) ? { value, session, expiresAt: session.expiresAt } : null;
         }
         const pending = session.pending && !pendingExpired(session.pending, now) ? session.pending : undefined;
         if (pending) {

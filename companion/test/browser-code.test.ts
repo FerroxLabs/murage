@@ -48,7 +48,7 @@ import {
   type BrowserDeviceStore,
   type SignInLimiter,
 } from "../src/browser.ts";
-import { DeviceRegistry } from "../src/devices.ts";
+import { DeviceRegistry, MAX_DEVICES } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
 
 /** The real registry, reset per test. Real rather than a fake, because the
@@ -679,5 +679,45 @@ describe("pairing from the app replaces its own old record", () => {
     expect(second.status).toBe(201);
     expect(registry.count()).toBe(1);
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${oldCookie}` })).status).toBe(401);
+  });
+});
+
+describe("pairing into a full fleet", () => {
+  const fillFleet = () => {
+    for (let i = 0; i < MAX_DEVICES; i += 1) {
+      const result = registry.redeem(registry.openPairing().token, `Phone ${i}`);
+      if ("error" in result) throw new Error(result.error);
+    }
+  };
+
+  it("tells the phone why, lists the devices, and does not count it as a guess", async () => {
+    fillFleet();
+    const token = registry.openPairing().token;
+    const refused = await submitCode(token);
+    expect(refused.status).toBe(401);
+    const body = bodyOf(refused);
+    expect(body.reason).toBe("full");
+    expect((body.devices as unknown[]).length).toBe(MAX_DEVICES);
+    expect(body.retryAfter).toBeUndefined();
+
+    // Replaced on the computer, then the same link again.
+    registry.revoke(registry.replaceCandidates()[0].id);
+    expect((await submitCode(token)).status).toBe(201);
+  });
+
+  it("puts a Try again button on /enter instead of spending the link", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc", [
+      { ok: false, body: { error: "too many paired devices — remove one first", reason: "full", devices: [] } },
+      { ok: true, body: {} },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").disabled).toBe(false);
+    expect(node("go").textContent).toBe("Try again");
+    expect(node("t").textContent).toBe("This computer has too many devices");
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toHaveLength(2);
   });
 });
