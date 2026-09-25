@@ -26,6 +26,13 @@ describe("phone mode in the store", () => {
     expect(store).toMatch(/dispatch\(\{ type: "loadOlderMessages", threadId: topUpThread \}\)/);
   });
 
+  // A resync drops an in-flight top-up as stale; a failure must not loop.
+  it("asks again once per transcript generation, and never while a page is in flight", () => {
+    expect(store).toContain("const key = `${topUpThread}:${topUpGeneration}`;");
+    expect(store).toContain("if (!topUpThread || topUpBusy) return;");
+    expect(store).toContain("}, [topUpThread, topUpGeneration, topUpBusy, dispatch]);");
+  });
+
   // Without a capture, windowAfterPrepend treats the top-up like a jump's
   // page and leaves it unmounted behind "Show earlier": the phone would open
   // a thread on its one booted row.
@@ -33,6 +40,7 @@ describe("phone mode in the store", () => {
     for (const [file, owner] of [["ChatView.tsx", "bot"], ["GroupView.tsx", "group"]]) {
       const view = readFileSync(fileURLToPath(new URL(`../components/${file}`, import.meta.url)), "utf8");
       expect(view).toContain(`if (olderPending && !preExpandHeight.current && needsNewestPage(${owner})) captureHeight();`);
+      expect(view).toContain("}, [olderPending, transcriptKey]);");
     }
   });
 });

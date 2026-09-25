@@ -1433,14 +1433,16 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   };
   useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
   // A page that came back empty or was dropped as stale moved nothing, so
-  // its capture must not be applied to some later, unrelated growth.
-  // A phone's slim boot page is topped up by the store, not by a click here
-  // (scrollback needsNewestPage). Capture for it too, so its newest page
+  // its capture must not be applied to some later, unrelated growth. A
+  // phone's slim boot page is topped up by the store, not by a click here
+  // (scrollback needsNewestPage): capture for it too, so its newest page
   // mounts and the viewport holds still exactly as for "Load earlier".
+  // transcriptKey: switching back to a thread whose top-up is still in
+  // flight captures for it again.
   useLayoutEffect(() => {
     if (olderPending && !preExpandHeight.current && needsNewestPage(bot)) captureHeight();
     if (!olderPending) preExpandHeight.current = null;
-  }, [olderPending]);
+  }, [olderPending, transcriptKey]);
   // Reaching the top keeps reading back: first the rows already held, then
   // the server's. Only while the reader is scrolled away from the live end,
   // so the programmatic scroll to the bottom never pulls in history.

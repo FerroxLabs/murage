@@ -152,6 +152,13 @@ describe("windowAfterPrepend", () => {
     expect(windowAfterPrepend({ start: 0, end: null }, 100, true)).toEqual({ start: 0, end: null });
   });
 
+  it("mounts a phone's topped-up page from the top: one booted row becomes 101", () => {
+    // ChatView/GroupView capture for the store's top-up, so reveal is true
+    const window = windowAfterPrepend({ start: tailWindowStart(1), end: null }, 100, true);
+    expect(window).toEqual({ start: 0, end: null });
+    expect(resolveTranscriptWindow(thread(101), window.start, TRANSCRIPT_WINDOW_SIZE, window.end).visible).toHaveLength(101);
+  });
+
   it("leaves the window alone when the first row did not move back", () => {
     const window = { start: 5, end: null };
     expect(windowAfterPrepend(window, -1)).toBe(window);

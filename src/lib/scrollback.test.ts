@@ -155,8 +155,59 @@ describe("phone hydrate (spec §6)", () => {
     expect(needsNewestPage(r.state.bots[0])).toBe(false);
   });
 
+  // The store asks once per (thread, transcript generation).
+  it("fetches the page on a re-attempt after a resync dropped the first as stale", async () => {
+    const r = rig(300, 1);
+    const pending = r.scrollback.loadOlder("t");
+    r.state = { ...r.state, transcriptGeneration: { t: 1 } };
+    await pending;
+    expect(r.state.bots[0].messages).toHaveLength(1);
+    expect(r.state.loadingOlder).toEqual({});
+    expect(needsNewestPage(r.state.bots[0])).toBe(true);
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toHaveLength(2);
+    expect(r.state.bots[0].messages).toHaveLength(MESSAGE_PAGE_SIZE + 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  it("leaves the generation alone on a hard failure, so the store does not ask again", async () => {
+    const r = rig(300, 1);
+    r.request.mockRejectedValueOnce(new Error("offline"));
+    await r.scrollback.loadOlder("t");
+    expect(r.request).toHaveBeenCalledTimes(1);
+    expect(r.onError).toHaveBeenCalledTimes(1);
+    expect(r.state.loadingOlder).toEqual({});
+    expect(r.state.transcriptGeneration.t ?? 0).toBe(0);
+    expect(r.state.bots[0].messages).toHaveLength(1);
+  });
+
   it("never tops up a desktop page, which is full whenever there is more", () => {
     expect(needsNewestPage({ messages: Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) => ({ id: `m${i}` }) as Message), hasMore: true })).toBe(false);
     expect(needsNewestPage({ messages: [{ id: "m0" } as Message], hasMore: false })).toBe(false);
+  });
+});
+
+describe("loadOlder while a jump holds the thread", () => {
+  it("clears the loading flag instead of leaving \"Load earlier\" disabled", async () => {
+    const r = rig(300, 100);
+    const jump = r.scrollback.loadThrough("t", "m50");
+    // until the jump's probe is on the wire and holds the thread
+    for (let tick = 0; tick < 20 && r.requests.length === 0; tick++) await Promise.resolve();
+    expect(r.requests).toEqual(["/api/threads/t/messages?around=m50&limit=1"]);
+    // the store's wrapped dispatch sets the flag before asking scrollback
+    r.state = reducer(r.state, { type: "loadOlderMessages", threadId: "t" });
+    expect(r.scrollback.loadOlder("t")).toBeUndefined();
+    expect(r.state.loadingOlder).toEqual({});
+    expect(r.state.bots[0].hasMore).toBe(true);
+    await jump;
+  });
+
+  it("leaves its own page's flag for that page to clear", async () => {
+    const r = rig(300, 100);
+    const pending = r.scrollback.loadOlder("t");
+    expect(r.scrollback.loadOlder("t")).toBeUndefined();
+    expect(r.state.loadingOlder).toEqual({ t: true });
+    await pending;
+    expect(r.state.loadingOlder).toEqual({});
   });
 });

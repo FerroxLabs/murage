@@ -2748,9 +2748,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.bots.find((candidate) => candidate.id === state.selectedId) ??
     state.groups.find((candidate) => candidate.id === state.selectedId);
   const topUpThread = onScreen && needsNewestPage(onScreen) ? onScreen.threadId : null;
+  // Once per (thread, transcript generation). A resync (hydrate, a switch)
+  // bumps the generation and drops an in-flight top-up as stale, so it asks
+  // again; a failed one leaves the key as it was and does not retry, which
+  // keeps a dead link from looping ("Load earlier" is still there).
+  const topUpGeneration = topUpThread ? state.transcriptGeneration[topUpThread] ?? 0 : 0;
+  const topUpBusy = topUpThread ? Boolean(state.loadingOlder[topUpThread]) : false;
+  const toppedUp = useRef("");
   useEffect(() => {
-    if (topUpThread && !stateRef.current.loadingOlder[topUpThread]) dispatch({ type: "loadOlderMessages", threadId: topUpThread });
-  }, [topUpThread, dispatch]);
+    if (!topUpThread || topUpBusy) return;
+    const key = `${topUpThread}:${topUpGeneration}`;
+    if (toppedUp.current === key) return;
+    toppedUp.current = key;
+    dispatch({ type: "loadOlderMessages", threadId: topUpThread });
+  }, [topUpThread, topUpGeneration, topUpBusy, dispatch]);
 
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {

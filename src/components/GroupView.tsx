@@ -1392,10 +1392,12 @@ export function GroupView({ group }: { group: Group }) {
   // A phone's slim boot page is topped up by the store, not by a click here
   // (scrollback needsNewestPage). Capture for it too, so its newest page
   // mounts and the viewport holds still exactly as for "Load earlier".
+  // transcriptKey: switching back to a room whose top-up is still in flight
+  // captures for it again.
   useLayoutEffect(() => {
     if (olderPending && !preExpandHeight.current && needsNewestPage(group)) captureHeight();
     if (!olderPending) preExpandHeight.current = null;
-  }, [olderPending]);
+  }, [olderPending, transcriptKey]);
   const reachedTop = () => {
     const el = scrollRef.current;
     if (!el || followRef.current || el.scrollTop > SCROLLBACK_TRIGGER_PX) return;

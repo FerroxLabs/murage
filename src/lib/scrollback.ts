@@ -78,6 +78,9 @@ export function createScrollback(deps: ScrollbackDeps) {
   /** One page walk per thread at a time: a scroll-triggered page and a jump
    * asking from the same oldest message would fetch the same rows twice. */
   const busy = new Map<string, Promise<unknown>>();
+  /** Threads whose `busy` walk is a `loadOlder` page, which clears the
+   * loading flag itself when it lands; any other walk is a jump's. */
+  const paging = new Set<string>();
   const exclusive = <T>(threadId: string, task: () => Promise<T>): Promise<T> => {
     const running = task().finally(() => {
       if (busy.get(threadId) === running) busy.delete(threadId);
@@ -90,11 +93,17 @@ export function createScrollback(deps: ScrollbackDeps) {
   /** The page before the oldest message this client holds. A no-op while a
    * page for the thread is already on the wire. */
   const loadOlder = (threadId: string): Promise<void> | undefined => {
-    if (busy.has(threadId)) return undefined;
     const owner = ownerOf(deps.getState(), threadId);
     // Captured now: `loadOlderMessages` does not move it, so this is the
     // value the reducer compares when the answer lands.
     const generation = generationOf(threadId);
+    if (busy.has(threadId)) {
+      // A jump's walk holds the thread and may never answer this request
+      // (a probe, a message already held): clear the flag the store set, or
+      // "Load earlier" stays disabled. Our own page clears it when it lands.
+      if (!paging.has(threadId)) deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: Boolean(owner?.hasMore) });
+      return undefined;
+    }
     deps.dispatch({ type: "loadOlderMessages", threadId });
     const before = owner?.messages[0]?.id;
     if (!owner?.hasMore || !before) {
@@ -103,6 +112,7 @@ export function createScrollback(deps: ScrollbackDeps) {
       deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: false });
       return undefined;
     }
+    paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
         const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
@@ -111,6 +121,8 @@ export function createScrollback(deps: ScrollbackDeps) {
         // Clear the flag on the way out, or scrolling up never asks again.
         deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
         deps.onError(error);
+      } finally {
+        paging.delete(threadId);
       }
     });
   };

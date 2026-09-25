@@ -170,6 +170,8 @@ describe("a phone's slim hydrate (spec §6)", () => {
     expect(texts(thread)).toContain("short 2");
     expect(slim.messages).toHaveLength(1);
     expect(slim.messages[0].id).toBe(thread.at(-1).id);
+    expect(slim.messages[0].kind).toBe("activity");
+    expect(slim.messages[0].tool.name).toMatch(/^Murage closed while this was running/);
     expect(slim.hasMore).toBe(true);
   });
 });
