@@ -184,6 +184,32 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
   );
 
   it(
+    "records who sent each chat message from what the request proved, never from its body",
+    async () => {
+      const created = await desktopApi("POST", "/api/bots", { name: "Origin recorder", modelSelection: { instanceId: "asker", model: "fake-model" } });
+      expect(created.status).toBe(201);
+      const bot = created.body.bot as { id: string; threadId: string };
+      const senders: Array<[string, Record<string, string>, string]> = [
+        ["from the desktop", desktopHeaders, "desktop"],
+        ["from the paired phone", pairedPhone, "companion"],
+        ["from nobody in particular", {}, "unproven"],
+        ["from the marker alone", { "x-murage-companion": "1" }, "unproven"],
+      ];
+      for (const [text, headers] of senders) {
+        const sent = await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text, origin: "desktop" }, headers);
+        expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+        const card = await poll(() => liveCard(bot.threadId), 20_000);
+        expect(card).not.toBeNull();
+        await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "skip" });
+        expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+      }
+      const users = (await threadMessages(bot.threadId)).filter((m) => m.role === "user");
+      expect(users.map((m) => [m.text, m.origin])).toEqual(senders.map(([text, , origin]) => [text, origin]));
+    },
+    120_000,
+  );
+
+  it(
     "only the owner's surfaces answer a question; anyone may skip it",
     async () => {
       const created = await desktopApi("POST", "/api/bots", { name: "Asker", modelSelection: { instanceId: "asker", model: "fake-model" } });

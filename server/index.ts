@@ -307,6 +307,8 @@ import {
   type GroupDefaultResponder,
   type GroupRecord,
   type Message,
+  type MessageOrigin,
+  isOwnerOrigin,
   type OptionCardData,
   type TaskRecord,
   type TaskResourceWaitKind,
@@ -2031,7 +2033,8 @@ function echoSetupAnswer(step: SetupStep, answer: string): void {
       .messagesFor(chief.threadId)
       .some((message) => message.role === "user" && (message.text ?? "").trim() === said);
     if (already) return;
-    store.appendMessage(chief.threadId, { role: "user", kind: "text", text: said });
+    // /api/setup is desktop only, so the answer is the owner's own words.
+    store.appendMessage(chief.threadId, { role: "user", kind: "text", text: said, origin: "desktop" });
   } catch {
     // The transcript is the nice half of this route, never the job. A store
     // that refused the line must not cost them the step they just answered.
@@ -5320,6 +5323,8 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Server-owned: the surface the sending request proved (MessageOrigin). */
+    origin?: MessageOrigin;
     /** Server-owned: this is the single re-dispatch of a turn whose prepared
      * memory context was revoked before the provider accepted it (see the
      * catch below). Never taken from a request body. */
@@ -5428,6 +5433,7 @@ async function startTurn(
           replyToId: opts?.replyTo?.id,
           sendId: opts?.sendId,
           attachments: turnImages.promote(threadId, text),
+          ...(opts?.origin ? { origin: opts.origin } : {}),
         });
   }
 
@@ -8336,6 +8342,8 @@ type StartGroupTurnOptions = {
   goalCoordinatorBotId?: string;
   /** Correlates a room goal card with its durable RoutineRun receipt. */
   goalRunId?: string;
+  /** Server-owned: the surface the sending request proved (MessageOrigin). */
+  origin?: MessageOrigin;
 };
 
 function startGroupTurn(
@@ -8384,6 +8392,7 @@ function startGroupTurn(
     channelMode,
     queueId,
     attachments: turnImages.promote(threadId, text),
+    ...(options.origin ? { origin: options.origin } : {}),
   });
   if (!group.dm) store.titleGroupTaskFromFirstMessage(group.id, text, threadId);
 
@@ -8520,14 +8529,14 @@ function drainQueuedChannelSends(): void {
       const group = store.group(groupId);
       return group ? groupIsWorking(group) : false;
     },
-    ({ groupId, threadId, text, replyToId, sendId, mode, id }) => {
+    ({ groupId, threadId, text, replyToId, sendId, mode, id, origin }) => {
       const group = store.group(groupId);
       const ownsThread = group?.dm
         ? group.threadId === threadId
         : Boolean(group && store.groupTaskByThread(group.id, threadId));
       if (!group || !ownsThread) return;
       try {
-        startGroupTurn(groupId, text, resolveReplyTarget(threadId, replyToId), sendId, mode, id);
+        startGroupTurn(groupId, text, resolveReplyTarget(threadId, replyToId), sendId, mode, id, origin ? { origin } : {});
       } catch (error) {
         store.appendMessage(threadId, {
           role: "bot",
@@ -10255,6 +10264,12 @@ function mayApprove(req: IncomingMessage, url: URL): boolean {
   return requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
 }
 const APPROVAL_NEEDS_OWNER = "Approving or answering happens in the Murage app or on your paired phone. From here you can only decline.";
+/** The origin stamped on a user message this request writes: what the request
+ * proved, never what its body says. */
+function requestOrigin(req: IncomingMessage, url: URL): MessageOrigin {
+  if (requestSurface(req.headers, url.searchParams) === "desktop") return "desktop";
+  return companionAuthorized(req.headers) ? "companion" : "unproven";
+}
 
 const server = createServer(async (req, res) => {
   let url: URL;
@@ -10587,7 +10602,15 @@ const server = createServer(async (req, res) => {
         if (fullAccessTurnOrigin(internalClaim.threadId) !== "owner" || internalClaim.depth !== 0 || internalEventId) {
           return json(res, 403, { error: "Only the owner can allow this, in a conversation they are having with you right now. Ask the owner to confirm it on the card instead." });
         }
-        const ownerText = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user")?.text ?? "";
+        // The owner's say-so is the latest user message, and only when it
+        // came from a surface that proved it is the owner. Words a local
+        // caller posted into the chat (a script, or this bot's own shell)
+        // are not the owner's, whatever they say.
+        const latestUser = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user");
+        if (!isOwnerOrigin(latestUser?.origin)) {
+          return json(res, 403, { error: "The latest message did not come from the owner's app or phone, so it cannot allow this. Ask the owner to confirm it on the card instead." });
+        }
+        const ownerText = latestUser?.text ?? "";
         const decided = chatAllowance(body, ownerText, homedir(), stopLineRealpath);
         if (!decided.ok) return json(res, 400, { error: decided.error });
         taskAllowances.grant(internalClaim.botId, internalClaim.threadId, decided.key);
@@ -13438,10 +13461,11 @@ const server = createServer(async (req, res) => {
               replyToId: replyTo?.id,
               sendId,
               mode: channelMode,
+              origin: requestOrigin(req, url),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode);
+          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode, undefined, { origin: requestOrigin(req, url) });
           return { ok: true as const, threadId, message };
         },
       );
@@ -14792,7 +14816,7 @@ const server = createServer(async (req, res) => {
         }
         // (2) The person's words are NOT repeated. The composer's send put
         // them in the transcript; appending them here would say them twice.
-        if (!alongside) store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+        if (!alongside) store.appendMessage(bot.threadId, { role: "user", kind: "text", text, origin: requestOrigin(req, url) });
         store.patchMessage(bot.threadId, messageId, { card: { ...card, answered: text } });
         if (intake.step === "confirm") {
           // A confirm card is a decision, not a question, and typing instead
@@ -14969,21 +14993,23 @@ const server = createServer(async (req, res) => {
                 replyToId: replyTo?.id,
                 sendId,
                 steered: true,
+                origin: requestOrigin(req, url),
               });
               return { ok: true as const, steered: true as const, threadId, message };
             }
             if (!current.busy) {
-              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
+              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin: requestOrigin(req, url) });
               return { ok: true as const, threadId, message };
             }
             const queued = queueSteeredMessage(current.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
+              origin: requestOrigin(req, url),
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
+          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin: requestOrigin(req, url) });
           return { ok: true as const, threadId, message };
         },
       );
@@ -15028,7 +15054,7 @@ const server = createServer(async (req, res) => {
           error: unavailableModelMessage(bot.modelSelection.instanceId),
         });
       }
-      const message = store.branchMessage(bot.threadId, messageId, text);
+      const message = store.branchMessage(bot.threadId, messageId, text, requestOrigin(req, url));
       if (!message) return json(res, 404, { error: "no such message" });
       store.patchTask(bot.id,bot.threadId, { rewound: true });
       const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;

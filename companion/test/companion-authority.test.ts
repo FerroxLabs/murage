@@ -84,7 +84,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
     } finally { await close(door); await close(harness); }
   });
 
-  it("vouches for a paired device's card answer with the launch proof, and only for that", async () => {
+  it("vouches for a paired device's card answers and own messages with the launch proof, and only for those", async () => {
     const seen: Array<{url?: string; token?: string | string[]}> = [];
     const harness = createServer((req,res) => {
       seen.push({url:req.url,token:req.headers["x-murage-companion-token"]});
@@ -119,9 +119,15 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
       expect(seen).toHaveLength(0);
       expect((await launched("/api/threads/thread_1/respond")).status).toBe(200);
       expect(seen.at(-1)).toEqual({url:"/api/threads/thread_1/respond",token:PRIVATE_TOKEN});
-      // a message send is not an answer: no proof rides along
-      expect((await launched("/api/bots/bot_1/messages")).status).toBe(200);
-      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/messages",token:undefined});
+      // the owner's own words from the phone are vouched for too, so the
+      // harness can record them as the owner's
+      for (const path of ["/api/bots/bot_1/messages","/api/bots/bot_1/messages/m_1/edit","/api/groups/room_1/messages"]) {
+        expect((await launched(path)).status).toBe(200);
+        expect(seen.at(-1)).toEqual({url:path,token:PRIVATE_TOKEN});
+      }
+      // anything else carries no proof
+      expect((await launched("/api/bots/bot_1/interrupt")).status).toBe(200);
+      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/interrupt",token:undefined});
       // started on its own, the door has nothing to vouch with and never
       // passes a client's proof on; the harness then takes only a decline
       const manual = await open(undefined);
