@@ -2,8 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/state/store";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { t } from "@/lib/i18n";
-import { saveBlob, saveUrl } from "@/lib/save-file";
-import { nativeAvailable } from "@/lib/native-shell";
+import { clickDownload } from "@/lib/save-file";
 import { activeSavedFilters, type SavedFilters, type SavedVersionResult } from "@/lib/files-view";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
@@ -21,14 +20,20 @@ export function artifactNativeAction() {
   return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => bridge.artifactAction!(artifact.id, action) : undefined;
 }
 export async function downloadSavedArtifact(artifact: Artifact) {
-  const path = `/api/artifacts/${artifact.id}/download`;
-  // Inside the phone app the file is fetched by native with this page's
-  // cookie, so a large file never crosses the channel (spec §3.2).
-  if (await nativeAvailable("saveFile")) return saveUrl(path, artifact.filename);
+  // Artifacts are desktop-authority-only (DESKTOP_AUTHORITY_ROUTES,
+  // server/desktop-policy.ts): the download route answers 404 for anything
+  // that cannot prove the desktop surface, which a phone cannot do on its
+  // own. So this never asks native to fetch or save it — only the browser's
+  // own download anchor, same as before the phone app existed.
   await ensureDesktopSurfaceSecret();
-  const response = await fetch(path, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
+  const response = await fetch(`/api/artifacts/${artifact.id}/download`, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "The saved copy could not be downloaded."); }
-  await saveBlob(await response.blob(), artifact.filename);
+  const url = URL.createObjectURL(await response.blob());
+  try {
+    clickDownload(url, artifact.filename);
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
 }
 
 /** This prelude precedes untrusted HTML. The iframe also has an opaque origin

@@ -9,7 +9,6 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 
 describe("downloads", () => {
   it.each([
-    ["../components/Files.tsx"],
     ["./conversation-export.ts"],
     ["./team-files.ts"],
     ["../components/WorkspacePane.tsx"],
@@ -17,6 +16,21 @@ describe("downloads", () => {
     const source = read(path);
     expect(source).not.toContain("URL.createObjectURL");
     expect(source).toMatch(/from "@\/lib\/save-file"/);
+  });
+
+  // R6 (D4 fix round 1): /api/artifacts is desktop-authority-only
+  // (server/desktop-policy.ts DESKTOP_AUTHORITY_ROUTES) and answers 404
+  // without the desktop proof, which the phone app cannot supply. So — unlike
+  // every other download site — this one deliberately keeps its own blob
+  // anchor via `clickDownload` and never reaches for native at all.
+  it("../components/Files.tsx keeps the saved artifact download desktop-only, never native", () => {
+    const source = read("../components/Files.tsx");
+    expect(source).toMatch(/from "@\/lib\/save-file"/);
+    expect(source).toContain("clickDownload(url, artifact.filename)");
+    expect(source).not.toContain("nativeAvailable");
+    expect(source).not.toContain("nativeHas");
+    expect(source).not.toContain("saveUrl(");
+    expect(source).not.toContain("saveBlob(");
   });
 
   it("the expired-link renewal saves through saveUrl, not a detached anchor", () => {
