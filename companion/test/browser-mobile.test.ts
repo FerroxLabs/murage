@@ -490,3 +490,108 @@ describe("the shell's policy", () => {
     expect(cspOf(page)).toContain("default-src 'none'");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("bytes on the wire", () => {
+  const JS = "export const line = 1;\n".repeat(400);
+  const BR = { "accept-encoding": "gzip, deflate, br, zstd" };
+  let upstreamAcceptEncoding: string | undefined = "unset";
+  const bots = () =>
+    replies.set("/api/bots", (req, res) => {
+      upstreamAcceptEncoding = req.headers["accept-encoding"];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        bots: Array.from({ length: 200 }, (_, i) => ({ id: `bot_${i}`, name: `Bot ${i}`, resumeCursors: { claude: `sess_${i}` } })),
+      }));
+    });
+
+  it("compresses JSON only after it has been scrubbed", async () => {
+    bots();
+    const answer = await knock("GET", "/api/bots", { ...(await signedIn()), ...BR });
+    expect(answer.headers["content-encoding"]).toBe("br");
+    expect(Number(answer.headers["content-length"])).toBe(answer.raw.byteLength);
+    const parsed = JSON.parse(answer.body);
+    expect(parsed.bots).toHaveLength(200);
+    // Withheld before compression, so not hiding inside it either.
+    expect(answer.body).not.toContain("resumeCursors");
+    // The harness was never asked to compress, so it never can have first.
+    expect(upstreamAcceptEncoding).toBeUndefined();
+  });
+
+  it("uses gzip for a browser that only takes gzip, and plain bytes for one that takes neither", async () => {
+    bots();
+    const cookie = await signedIn();
+    const gz = await knock("GET", "/api/bots", { ...cookie, "accept-encoding": "gzip" });
+    expect(gz.headers["content-encoding"]).toBe("gzip");
+    expect(JSON.parse(gz.body).bots).toHaveLength(200);
+    const plain = await knock("GET", "/api/bots", cookie);
+    expect(plain.headers["content-encoding"]).toBeUndefined();
+    expect(plain.headers.vary).toBe("Accept-Encoding");
+    expect(JSON.parse(plain.body).bots).toHaveLength(200);
+  });
+
+  it("leaves a small body plain", async () => {
+    replies.set("/api/config", reply(200, { "content-type": "application/json" }, '{"configured":true}'));
+    const answer = await knock("GET", "/api/config", { ...(await signedIn()), ...BR });
+    expect(answer.headers["content-encoding"]).toBeUndefined();
+    expect(answer.body).toBe('{"configured":true}');
+  });
+
+  it("never compresses the event stream", async () => {
+    replies.set("/api/events", (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(`data: ${JSON.stringify({ kind: "runtime", pad: "x".repeat(4096) })}\n\n`);
+    });
+    const answer = await knock("GET", "/api/events", { ...(await signedIn()), ...BR });
+    expect(answer.headers["content-type"]).toBe("text/event-stream");
+    expect(answer.headers["content-encoding"]).toBeUndefined();
+    expect(answer.raw.toString("utf8")).toContain('data: {"kind":"runtime"');
+    expect(answer.headers.vary).toBe("Accept-Encoding");
+  });
+
+  it("compresses a static file on the way through, and keeps its type and lifetime", async () => {
+    replies.set("/assets/index-AbC123.js", reply(200, { "content-type": "text/javascript" }, JS));
+    const answer = await knock("GET", "/assets/index-AbC123.js", { ...(await signedIn()), ...BR });
+    expect(answer.headers["content-encoding"]).toBe("br");
+    expect(answer.body).toBe(JS);
+    expect(answer.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(answer.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(answer.headers.vary).toBe("Accept-Encoding");
+  });
+
+  it("leaves an image alone", async () => {
+    const PNG = Buffer.alloc(4096, 7);
+    replies.set("/assets/logo-AbC123.png", reply(200, { "content-type": "image/png" }, PNG));
+    const answer = await knock("GET", "/assets/logo-AbC123.png", { ...(await signedIn()), ...BR });
+    expect(answer.headers["content-encoding"]).toBeUndefined();
+    expect(answer.raw.equals(PNG)).toBe(true);
+  });
+
+  it("compresses the shell only after it has been rewritten, and keeps its policy", async () => {
+    const answer = await knock("GET", "/", { ...(await signedIn()), "accept-encoding": "gzip" });
+    expect(answer.headers["content-encoding"]).toBe("gzip");
+    expect(Number(answer.headers["content-length"])).toBe(answer.raw.byteLength);
+    const nonce = /'nonce-([^']+)'/.exec(String(answer.headers["content-security-policy"]))?.[1];
+    expect(nonce).toBeTruthy();
+    // What was compressed is the rewritten document, not the harness's.
+    expect(answer.body).toContain("/session/renew");
+    expect(answer.body).toContain(`<script nonce="${nonce}" type="module"`);
+    expect(answer.headers["x-frame-options"]).toBe("DENY");
+    expect(answer.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("sends a shell too big to rewrite exactly as it came, uncompressed", async () => {
+    replies.set("/", reply(200, { "content-type": "text/html" }, SHELL.replace("</body>", `${"x".repeat(2 * 1024 * 1024 + 16)}</body>`)));
+    const answer = await knock("GET", "/", { ...(await signedIn()), ...BR });
+    expect(answer.status).toBe(200);
+    expect(answer.headers["content-encoding"]).toBeUndefined();
+    expect(answer.headers.vary).toBe("Accept-Encoding");
+    expect(answer.raw.byteLength).toBeGreaterThan(2 * 1024 * 1024);
+  });
+
+  it("varies on Accept-Encoding everywhere, refusals included", async () => {
+    for (const answer of [await knock("GET", "/healthz"), await knock("GET", "/api/bots"), await knock("GET", "/enter")]) {
+      expect(answer.headers.vary).toBe("Accept-Encoding");
+    }
+  });
+});

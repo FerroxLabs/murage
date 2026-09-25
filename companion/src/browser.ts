@@ -27,12 +27,13 @@
 //  - `funnel` never appears anywhere in this design. `serve` is
 //    tailnet-scoped; `funnel` is the public internet, and the two subcommands
 //    differ by one word.
-import { request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
 import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
+import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
 /** The identity this door actually answers to.
  *
@@ -168,6 +169,9 @@ const BASE_HEADERS = {
   "referrer-policy": "no-referrer",
   // The shell is not a frameable document, and neither is anything else here.
   "x-frame-options": "DENY",
+  // Every response, whether or not this one was compressed: a cache that
+  // kept a brotli body must never hand it to a client that asked for plain.
+  vary: "Accept-Encoding",
 } as const;
 
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
@@ -183,6 +187,38 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   });
   res.end(text);
 };
+
+/** One whole body, compressed when the browser can decode it and it is big
+ * enough to be worth it. What is handed in here is final — the door has
+ * finished rewriting it — which is the whole of the rule about what may be
+ * compressed. A zlib failure sends the plain bytes rather than failing a
+ * request whose content was fine. */
+function sendBody(
+  res: ServerResponse,
+  status: number,
+  headers: OutgoingHttpHeaders,
+  body: Buffer,
+  encoding: Encoding | null,
+): void {
+  if (!encoding || body.byteLength < MIN_COMPRESS_BYTES) {
+    res.writeHead(status, { ...headers, "content-length": body.byteLength });
+    res.end(body);
+    return;
+  }
+  const chosen: Encoding = encoding;
+  compressBuffer(body, chosen).then(
+    (packed) => {
+      if (res.destroyed) return;
+      res.writeHead(status, { ...headers, "content-encoding": chosen, "content-length": packed.byteLength });
+      res.end(packed);
+    },
+    () => {
+      if (res.destroyed) return;
+      res.writeHead(status, { ...headers, "content-length": body.byteLength });
+      res.end(body);
+    },
+  );
+}
 
 /** The host out of a `Host` header, port removed.
  *
@@ -1510,6 +1546,13 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
     }
 
+    // What this browser can decode, decided once. `forwardedHeaders` never
+    // passes `accept-encoding` upstream, so the harness always answers in
+    // plain bytes and every compressed body below is one this door made after
+    // it finished rewriting: scrubbed JSON, the shell with its nonce and
+    // renewal script in. Never the other way round.
+    const encoding = negotiateEncoding(req.headers["accept-encoding"]);
+
     const forward = (body: Buffer | null): void => {
       const staticType = method === "GET" ? staticContentType(path) : null;
       const upstream = httpRequest(
@@ -1527,15 +1570,15 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           clearTimeout(headersDeadline);
           const contentType = String(harness.headers["content-type"] ?? "");
 
-          if (staticType) return relayStatic(harness, res, staticType, path);
+          if (staticType) return relayStatic(harness, res, staticType, path, encoding);
 
           if (contentType.includes("text/event-stream")) {
             const auth = resolved ? { deviceId: resolved.device.id, sessionId: resolved.sessionId } : null;
             return relayStream(harness, res, method, path, auth, options);
           }
 
-          const encoding = String(harness.headers["content-encoding"] ?? "").trim().toLowerCase();
-          if (!isJson(contentType) || (encoding && encoding !== "identity")) {
+          const upstreamEncoding = String(harness.headers["content-encoding"] ?? "").trim().toLowerCase();
+          if (!isJson(contentType) || (upstreamEncoding && upstreamEncoding !== "identity")) {
             // Images and anything else: byte for byte, no parsing. An encoded
             // body reaches here too — `forwardedHeaders` never sends
             // accept-encoding, so this is a guard rather than a path, and it
@@ -1597,12 +1640,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             delete headers["content-length"];
             delete headers["content-encoding"];
             delete headers["transfer-encoding"];
-            res.writeHead(status, {
-              ...headers,
-              ...BASE_HEADERS,
-              "content-length": Buffer.byteLength(text),
-            });
-            res.end(text);
+            // Compressed here and nowhere earlier: these are the bytes `scrub`
+            // produced, so nothing it withheld can ride along inside a
+            // compressed copy of the original.
+            sendBody(res, status, { ...headers, ...BASE_HEADERS }, Buffer.from(text, "utf8"), encoding);
           }
         },
       );
@@ -1670,6 +1711,7 @@ function relayStatic(
   res: ServerResponse,
   expected: string,
   path: string,
+  encoding: Encoding | null,
 ): void {
   const upstreamType = String(harness.headers["content-type"] ?? "");
   const status = harness.statusCode ?? 200;
@@ -1703,10 +1745,22 @@ function relayStatic(
   // that makes renewal actually happen rather than merely exist. Every other
   // static file goes through untouched — the frame included, whose own policy
   // names its one script by hash.
-  if (expected.startsWith("text/html") && !frame) return relayShell(harness, res, expected, staticCacheControl(path));
+  if (expected.startsWith("text/html") && !frame) {
+    return relayShell(harness, res, expected, staticCacheControl(path), encoding);
+  }
 
-  res.writeHead(200, staticHeaders(path, expected));
   harness.on("error", () => res.destroy());
+  // Compressed as it passes, when the build left no copy of its own
+  // (`relayPrecompressed` asks for that first). Streamed rather than
+  // buffered: the main script is megabytes, and nothing here reads it.
+  if (encoding && isCompressible(expected)) {
+    res.writeHead(200, { ...staticHeaders(path, expected), "content-encoding": encoding });
+    const packer = compressStream(encoding);
+    packer.on("error", () => res.destroy());
+    harness.pipe(packer).pipe(res);
+    return;
+  }
+  res.writeHead(200, staticHeaders(path, expected));
   harness.pipe(res);
 }
 
@@ -1721,7 +1775,13 @@ function relayStatic(
  * app that has to be re-paired in ninety days, which is today's behaviour;
  * a 502 would be a blank screen. Choosing the degraded-but-working side is
  * the same call the rest of this file makes about a failed renewal. */
-function relayShell(harness: IncomingMessage, res: ServerResponse, expected: string, cache: string): void {
+function relayShell(
+  harness: IncomingMessage,
+  res: ServerResponse,
+  expected: string,
+  cache: string,
+  encoding: Encoding | null,
+): void {
   // One nonce per response, never reused: it is the whole of what lets the
   // shell's own inline scripts run and an injected one not.
   const nonce = randomBytes(16).toString("base64");
@@ -1743,7 +1803,9 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
       // policy goes out anyway, with a nonce no script here carries: the
       // inline skin stamp is refused and the entry bundle still loads from
       // 'self', so the app runs in its default palette. A document this door
-      // could not read gets the stricter answer, not a looser one.
+      // could not read gets the stricter answer, not a looser one — and it
+      // goes out plain, because nothing about a guard path is worth a
+      // compressor in the middle of it.
       res.writeHead(200, headers);
       for (const buffered of chunks) res.write(buffered);
       chunks.length = 0;
@@ -1756,9 +1818,10 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
   harness.on("error", () => res.destroy());
   harness.on("end", () => {
     if (overflowed) return;
+    // Rewritten first, compressed last: the nonce and the renewal script are
+    // in the bytes that get compressed.
     const html = injectRenewal(withScriptNonce(Buffer.concat(chunks).toString("utf8"), nonce), nonce);
-    res.writeHead(200, { ...headers, "content-length": Buffer.byteLength(html) });
-    res.end(html);
+    sendBody(res, 200, headers, Buffer.from(html, "utf8"), encoding);
   });
 }
 
