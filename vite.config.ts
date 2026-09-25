@@ -11,6 +11,11 @@ export default defineConfig({
   // precompressPlugin: `.br`/`.gz` copies of hashed assets for the browser
   // door, written after the bundle (build only; inert under vitest and dev).
   plugins: [react(), tailwindcss(), murageRenderPlugins(), precompressPlugin()],
+  build: {
+    // dist/.vite/manifest.json: which files the first paint loads, read by
+    // scripts/check-bundle-budget.mjs after every CI build (spec §6)
+    manifest: true,
+  },
   test: {
     environment: "node",
     include: [

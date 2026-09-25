@@ -24,6 +24,7 @@
     "clean": "node scripts/clean.mjs",
     "lint": "oxlint .",
     "check:contrast": "node scripts/check-skin-contrast.mjs",
+    "check:bundle-budget": "node scripts/check-bundle-budget.mjs",
     "i18n:check": "node scripts/generate-locale.mjs --check",
     "dev": "vite",
     "docs:dev": "pnpm --filter @murage/docs dev",
