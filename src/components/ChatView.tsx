@@ -109,12 +109,16 @@ import { needsNewestPage } from "@/lib/scrollback";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
-  expandWindowStart,
+  capRevealedWindow,
+  expandEarlier,
+  expandLater,
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  trimFollowedTail,
   windowAfterPrepend,
 } from "@/lib/transcript-window";
+import { captureRowAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { useReplyDraft } from "@/lib/drafts";
 
@@ -950,7 +954,7 @@ const MessagesList = memo(function MessagesList({
         const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
         if (item.kind === "turn") {
           return (
-            <div key={item.id} className="contents">
+            <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && <DaySeparator at={first.at} />}
               <TurnNarrationRun
                 label={item.label}
@@ -981,7 +985,7 @@ const MessagesList = memo(function MessagesList({
         if (item.kind === "run") {
           if (!showToolCalls) return null;
           return (
-            <div key={item.id} className="contents">
+            <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && <DaySeparator at={first.at} />}
               <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
                 {item.messages.map((step) => (
@@ -1111,7 +1115,7 @@ const MessagesList = memo(function MessagesList({
         })();
         if (!row) return null;
         return (
-          <div key={m.id} className="contents" data-mid={m.id}>
+          <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && <DaySeparator at={m.at} />}
             {row}
           </div>
@@ -1214,11 +1218,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // messages lands in front of it, and the boundary moves with the rows so
   // the mounted window does not slide back in time (upstream #1527).
   const firstMessageId = messages[0]?.id;
-  // Height captured before a reader-initiated expand or page (see
+  // Row anchor captured before a reader-initiated expand or page (see
   // showEarlier/loadOlder below). Declared here because a pending capture is
   // also how the window tells the page the reader asked for from the pages a
   // jump walks through.
-  const preExpandHeight = useRef<{ key: string; height: number } | null>(null);
+  const preExpandAnchor = useRef<ScrollAnchor | null>(null);
   const [transcriptWindow, setTranscriptWindow] = useState<{
     key: string;
     start: number;
@@ -1234,14 +1238,15 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null, firstId: firstMessageId });
   } else if (transcriptWindow.firstId !== firstMessageId) {
     const shift = transcriptWindow.firstId ? messages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
-    setTranscriptWindow({ ...windowAfterPrepend(transcriptWindow, shift, preExpandHeight.current?.key === transcriptKey), firstId: firstMessageId });
+    const reveal = preExpandAnchor.current?.key === transcriptKey;
+    const moved = windowAfterPrepend(transcriptWindow, shift, reveal);
+    setTranscriptWindow({ ...(reveal ? capRevealedWindow(moved, messages.length) : moved), firstId: firstMessageId });
   }
   const {
     visible: windowedMessages,
     hiddenCount,
     laterCount,
     startIndex,
-    endIndex,
   } = useMemo(
     () => resolveTranscriptWindow(messages, transcriptWindow.start, TRANSCRIPT_WINDOW_SIZE, transcriptWindow.end),
     [messages, transcriptWindow.start, transcriptWindow.end],
@@ -1357,6 +1362,18 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
   }, [bot.threadId, messages, setBottomFollow, state.focusMessage, transcriptKey]);
   useFocusMessage(bot.threadId, messages.length > 0);
+  // A followed live tail stays within MAX_MOUNTED_ROWS (transcript-window.ts).
+  useEffect(() => {
+    setTranscriptWindow((w) => {
+      const next = trimFollowedTail(w, messages.length, followRef.current);
+      return next === w ? w : { ...w, ...next };
+    });
+  }, [messages.length, transcriptKey]);
+  // Rows the reader has seen may skip layout off screen (styles.css).
+  useEffect(() => {
+    if (!transcriptRef.current || !scrollRef.current) return;
+    return observeSeenRows(transcriptRef.current, scrollRef.current);
+  }, [windowedMessages]);
 
   // deps track the FULL messages.length, so expanding the window (which only
   // changes windowedMessages) can never re-trigger this bottom scrollTo.
@@ -1388,50 +1405,53 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     previousScrollTop.current = el.scrollTop;
   }, [keyboardInsetPx]);
 
-  // Expanding prepends rows: capture the height first, then after the commit
-  // shift scrollTop by the growth so the message under the cursor stays put
-  // (browser scroll anchoring is disabled on this container). The capture
-  // belongs to the thread it was taken in: a switch between the capture and
-  // the commit would otherwise shift the new thread by the old one's growth.
-  const captureHeight = () => {
-    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
-  };
-  const restoreHeight = () => {
+  // Expanding or paging moves rows in and out around the reader. A row that
+  // survives the change is kept where it was (transcript-rows.ts); browser
+  // scroll anchoring is disabled on this container. The capture belongs to
+  // the thread it was taken in: a switch between the capture and the commit
+  // would otherwise move the new thread by the old one's rows. With no row
+  // mounted to hold, the capture still records that the reader asked, so the
+  // page reveals (windowAfterPrepend); its restore then finds nothing to move.
+  const captureAnchor = (edge: "first" | "last") => {
     const el = scrollRef.current;
-    const captured = preExpandHeight.current;
+    preExpandAnchor.current = el ? captureRowAnchor(el, transcriptKey, edge) ?? { key: transcriptKey, id: "", offset: 0 } : null;
+  };
+  const restoreAnchor = () => {
+    const el = scrollRef.current;
+    const captured = preExpandAnchor.current;
     if (!captured || !el) return;
-    preExpandHeight.current = null;
+    preExpandAnchor.current = null;
     if (captured.key !== transcriptKey) return;
-    el.scrollTop += el.scrollHeight - captured.height;
+    restoreRowAnchor(el, captured);
     // keep the resume-follow heuristic from reading the restore as a
     // downward user scroll
     previousScrollTop.current = el.scrollTop;
   };
   const showEarlier = () => {
-    captureHeight();
+    captureAnchor("first");
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
-    const start = expandWindowStart(startIndex);
-    setTranscriptWindow((w) => ({ ...w, start }));
+    setTranscriptWindow((w) => ({ ...w, ...expandEarlier({ start: startIndex, end: w.end }, messages.length) }));
   };
   // transcriptKey is a dependency so a switch runs this and drops a capture
-  // that belongs to the thread being left.
-  useLayoutEffect(restoreHeight, [transcriptWindow.start, transcriptKey]);
+  // that belongs to the thread being left; `end` so a "Show later" that did
+  // not move the start still settles its capture.
+  useLayoutEffect(restoreAnchor, [transcriptWindow.start, transcriptWindow.end, transcriptKey]);
 
   // Scrollback across the network (upstream #1527): the store holds the
   // newest page, and everything before it is still on the server. A page
-  // prepends rows exactly like expanding the window, so the same height
-  // capture keeps the viewport still; here it is applied when the transcript
+  // prepends rows exactly like expanding the window, so the same row anchor
+  // keeps the viewport still; here it is applied when the transcript
   // grows at the front rather than when the boundary moves.
   const olderPending = Boolean(state.loadingOlder[bot.threadId]);
   const loadOlder = () => {
     if (olderPending) return;
-    captureHeight();
+    captureAnchor("first");
     setBottomFollow(false);
     dispatch({ type: "loadOlderMessages", threadId: bot.threadId });
   };
-  useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
+  useLayoutEffect(restoreAnchor, [firstMessageId, transcriptKey]);
   // A page that came back empty or was dropped as stale moved nothing, so
   // its capture must not be applied to some later, unrelated growth. A
   // phone's slim boot page is topped up by the store, not by a click here
@@ -1440,8 +1460,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // transcriptKey: switching back to a thread whose top-up is still in
   // flight captures for it again.
   useLayoutEffect(() => {
-    if (olderPending && !preExpandHeight.current && needsNewestPage(bot)) captureHeight();
-    if (!olderPending) preExpandHeight.current = null;
+    if (olderPending && !preExpandAnchor.current && needsNewestPage(bot)) captureAnchor("first");
+    if (!olderPending) preExpandAnchor.current = null;
   }, [olderPending, transcriptKey]);
   // Reaching the top keeps reading back: first the rows already held, then
   // the server's. Only while the reader is scrolled away from the live end,
@@ -1454,9 +1474,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   };
 
   const showLater = () => {
+    captureAnchor("last");
     setBottomFollow(false);
-    const nextEnd = Math.min(messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
-    setTranscriptWindow((w) => ({ ...w, end: nextEnd >= messages.length ? null : nextEnd }));
+    setTranscriptWindow((w) => ({ ...w, ...expandLater({ start: w.start, end: w.end }, messages.length) }));
   };
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
@@ -1473,8 +1493,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [setBottomFollow]);
 
+  // The end of a window that stops short of the newest row is not the end of
+  // the conversation: follow re-arms only once the tail is mounted again.
   const atEnd = () => {
     const el = scrollRef.current;
+    if (laterCount > 0) return false;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
   const jumpToLatest = () => {
@@ -1573,7 +1596,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           });
           previousScrollTop.current = scrollTop;
           distanceFromBottom.current = fromBottom;
-          if (resume) setBottomFollow(true);
+          if (resume && laterCount === 0) setBottomFollow(true);
           else reachedTop();
         }}
       >

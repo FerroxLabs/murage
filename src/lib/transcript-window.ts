@@ -151,3 +151,17 @@ export function trimFollowedTail(
   if (!following || bounds.end !== null || total - bounds.start <= cap) return bounds;
   return { start: tailWindowStart(total, size), end: null };
 }
+
+/** A page the reader asked for, revealed at the top (windowAfterPrepend's
+ * `reveal`). The window keeps its start so the page appears; past the cap the
+ * newest rows unmount, as for expandEarlier. Without this, reading back
+ * through the server's pages mounted every page. */
+export function capRevealedWindow<W extends WindowBounds>(
+  bounds: W,
+  total: number,
+  cap: number = MAX_MOUNTED_ROWS,
+): W {
+  const end = bounds.end === null ? total : Math.min(bounds.end, total);
+  if (end - bounds.start <= cap) return bounds;
+  return { ...bounds, end: bounds.start + cap };
+}

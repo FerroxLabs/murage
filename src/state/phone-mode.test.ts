@@ -39,7 +39,7 @@ describe("phone mode in the store", () => {
   it("mounts the top-up in both transcript views, holding the viewport still", () => {
     for (const [file, owner] of [["ChatView.tsx", "bot"], ["GroupView.tsx", "group"]]) {
       const view = readFileSync(fileURLToPath(new URL(`../components/${file}`, import.meta.url)), "utf8");
-      expect(view).toContain(`if (olderPending && !preExpandHeight.current && needsNewestPage(${owner})) captureHeight();`);
+      expect(view).toContain(`if (olderPending && !preExpandAnchor.current && needsNewestPage(${owner})) captureAnchor("first");`);
       expect(view).toContain("}, [olderPending, transcriptKey]);");
     }
   });

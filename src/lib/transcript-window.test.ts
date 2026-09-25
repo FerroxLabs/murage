@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_MOUNTED_ROWS,
   TRANSCRIPT_WINDOW_SIZE,
+  capRevealedWindow,
   expandEarlier,
   expandLater,
   expandWindowStart,
@@ -219,5 +220,20 @@ describe("a capped window (spec §6)", () => {
   it("does not grow past the cap on an empty or short thread", () => {
     expect(expandEarlier({ start: 0, end: null }, 0)).toEqual({ start: 0, end: null });
     expect(expandLater({ start: 0, end: 10 }, 10)).toEqual({ start: 0, end: null });
+  });
+
+  it("caps a revealed page like a step back: the newest rows unmount", () => {
+    // the reader at the top of a 300-row tail pulled in a page of 100
+    expect(capRevealedWindow({ start: 0, end: null }, 400)).toEqual({ start: 0, end: MAX_MOUNTED_ROWS });
+    // a window already cut short keeps its start and is cut back to the cap
+    expect(capRevealedWindow({ start: 0, end: 460 }, 1000)).toEqual({ start: 0, end: MAX_MOUNTED_ROWS });
+  });
+
+  it("leaves a revealed page inside the cap alone", () => {
+    // a phone's slim thread topped up with its newest page
+    const topUp = { start: 0, end: null };
+    expect(capRevealedWindow(topUp, 101)).toBe(topUp);
+    const finite = { start: 0, end: MAX_MOUNTED_ROWS };
+    expect(capRevealedWindow(finite, 1000)).toBe(finite);
   });
 });

@@ -74,12 +74,16 @@ import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
-  expandWindowStart,
+  capRevealedWindow,
+  expandEarlier,
+  expandLater,
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  trimFollowedTail,
   windowAfterPrepend,
 } from "@/lib/transcript-window";
+import { captureRowAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
 import { useReplyDraft } from "@/lib/drafts";
 import { modShortcut } from "@/lib/keyboard-shortcuts";
 import { useMessageById } from "@/lib/held-message";
@@ -215,7 +219,7 @@ const Transcript = memo(function Transcript({
           if (!showToolCalls) return null;
           const cluster = !prev || prev.role !== first.role || prev.from?.botId !== first.from?.botId || newDay;
           return (
-            <div key={item.id} className="contents">
+            <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && (
                 <div className="py-3 text-center text-[13px] text-ink-secondary">
                   {dayLabel(first.at)} {formatTime(first.at)}
@@ -426,7 +430,7 @@ const Transcript = memo(function Transcript({
           ) : null;
         if (!row) return null;
         return (
-          <div key={m.id} className="contents" data-mid={m.id}>
+          <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && (
               <div className="py-3 text-center text-[13px] text-ink-secondary">
                 {dayLabel(m.at)} {formatTime(m.at)}
@@ -1284,11 +1288,11 @@ export function GroupView({ group }: { group: Group }) {
   // `firstId`: see ChatView — the boundary moves with the rows when a page of
   // older messages lands in front of them (upstream #1527).
   const firstMessageId = group.messages[0]?.id;
-  // Height captured before a reader-initiated expand or page (see
+  // Row anchor captured before a reader-initiated expand or page (see
   // showEarlier/loadOlder below). Declared here because a pending capture is
   // also how the window tells the page the reader asked for from the pages a
   // jump walks through.
-  const preExpandHeight = useRef<{ key: string; height: number } | null>(null);
+  const preExpandAnchor = useRef<ScrollAnchor | null>(null);
   const [transcriptWindow, setTranscriptWindow] = useState<{
     key: string;
     start: number;
@@ -1304,14 +1308,15 @@ export function GroupView({ group }: { group: Group }) {
     setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null, firstId: firstMessageId });
   } else if (transcriptWindow.firstId !== firstMessageId) {
     const shift = transcriptWindow.firstId ? group.messages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
-    setTranscriptWindow({ ...windowAfterPrepend(transcriptWindow, shift, preExpandHeight.current?.key === transcriptKey), firstId: firstMessageId });
+    const reveal = preExpandAnchor.current?.key === transcriptKey;
+    const moved = windowAfterPrepend(transcriptWindow, shift, reveal);
+    setTranscriptWindow({ ...(reveal ? capRevealedWindow(moved, group.messages.length) : moved), firstId: firstMessageId });
   }
   const {
     visible: windowedMessages,
     hiddenCount,
     laterCount,
     startIndex,
-    endIndex,
   } = useMemo(
     () => resolveTranscriptWindow(group.messages, transcriptWindow.start, TRANSCRIPT_WINDOW_SIZE, transcriptWindow.end),
     [group.messages, transcriptWindow.start, transcriptWindow.end],
@@ -1337,6 +1342,18 @@ export function GroupView({ group }: { group: Group }) {
     setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
   }, [group.messages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey]);
   useFocusMessage(group.threadId, group.messages.length > 0);
+  // A followed live tail stays within MAX_MOUNTED_ROWS (transcript-window.ts).
+  useEffect(() => {
+    setTranscriptWindow((w) => {
+      const next = trimFollowedTail(w, group.messages.length, followRef.current);
+      return next === w ? w : { ...w, ...next };
+    });
+  }, [group.messages.length, transcriptKey]);
+  // Rows the reader has seen may skip layout off screen (styles.css).
+  useEffect(() => {
+    if (!transcriptRef.current || !scrollRef.current) return;
+    return observeSeenRows(transcriptRef.current, scrollRef.current);
+  }, [windowedMessages]);
 
   useEffect(() => setInstructionsDraft(group.bulletin), [group.id, group.bulletin]);
   // an open folder editor belongs to the room it was opened in
@@ -1352,51 +1369,51 @@ export function GroupView({ group }: { group: Group }) {
     previousScrollTop.current = el.scrollTop;
   }, [group.id, group.messages.length, streaming, group.busyBotId, group.working, composerDock.pad]);
 
-  // Expanding prepends rows: capture the height first, then after the commit
-  // shift scrollTop by the growth so the message under the cursor stays put
-  // (browser scroll anchoring is disabled on this container). The capture
-  // belongs to the thread it was taken in (see ChatView).
-  const captureHeight = () => {
-    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
-  };
-  const restoreHeight = () => {
+  // Rows move in and out around the reader; a surviving row is kept where it
+  // was (transcript-rows.ts, and see ChatView). The capture belongs to the
+  // thread it was taken in, and with no row mounted still records that the
+  // reader asked.
+  const captureAnchor = (edge: "first" | "last") => {
     const el = scrollRef.current;
-    const captured = preExpandHeight.current;
+    preExpandAnchor.current = el ? captureRowAnchor(el, transcriptKey, edge) ?? { key: transcriptKey, id: "", offset: 0 } : null;
+  };
+  const restoreAnchor = () => {
+    const el = scrollRef.current;
+    const captured = preExpandAnchor.current;
     if (!captured || !el) return;
-    preExpandHeight.current = null;
+    preExpandAnchor.current = null;
     if (captured.key !== transcriptKey) return;
-    el.scrollTop += el.scrollHeight - captured.height;
+    restoreRowAnchor(el, captured);
     // keep the resume-follow heuristic from reading the restore as a
     // downward user scroll
     previousScrollTop.current = el.scrollTop;
   };
   const showEarlier = () => {
-    captureHeight();
+    captureAnchor("first");
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
-    const start = expandWindowStart(startIndex);
-    setTranscriptWindow((w) => ({ ...w, start }));
+    setTranscriptWindow((w) => ({ ...w, ...expandEarlier({ start: startIndex, end: w.end }, group.messages.length) }));
   };
-  useLayoutEffect(restoreHeight, [transcriptWindow.start, transcriptKey]);
+  useLayoutEffect(restoreAnchor, [transcriptWindow.start, transcriptWindow.end, transcriptKey]);
 
   // Scrollback across the network, as in ChatView (upstream #1527).
   const olderPending = Boolean(state.loadingOlder[group.threadId]);
   const loadOlder = () => {
     if (olderPending) return;
-    captureHeight();
+    captureAnchor("first");
     setBottomFollow(false);
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
-  useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
+  useLayoutEffect(restoreAnchor, [firstMessageId, transcriptKey]);
   // A phone's slim boot page is topped up by the store, not by a click here
   // (scrollback needsNewestPage). Capture for it too, so its newest page
   // mounts and the viewport holds still exactly as for "Load earlier".
   // transcriptKey: switching back to a room whose top-up is still in flight
   // captures for it again.
   useLayoutEffect(() => {
-    if (olderPending && !preExpandHeight.current && needsNewestPage(group)) captureHeight();
-    if (!olderPending) preExpandHeight.current = null;
+    if (olderPending && !preExpandAnchor.current && needsNewestPage(group)) captureAnchor("first");
+    if (!olderPending) preExpandAnchor.current = null;
   }, [olderPending, transcriptKey]);
   const reachedTop = () => {
     const el = scrollRef.current;
@@ -1406,13 +1423,16 @@ export function GroupView({ group }: { group: Group }) {
   };
 
   const showLater = () => {
+    captureAnchor("last");
     setBottomFollow(false);
-    const nextEnd = Math.min(group.messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
-    setTranscriptWindow((w) => ({ ...w, end: nextEnd >= group.messages.length ? null : nextEnd }));
+    setTranscriptWindow((w) => ({ ...w, ...expandLater({ start: w.start, end: w.end }, group.messages.length) }));
   };
 
+  // The end of a window that stops short of the newest row is not the end of
+  // the conversation (see ChatView).
   const atEnd = () => {
     const el = scrollRef.current;
+    if (laterCount > 0) return false;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
 
@@ -1723,7 +1743,7 @@ export function GroupView({ group }: { group: Group }) {
             distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
           });
           previousScrollTop.current = scrollTop;
-          if (resume) setBottomFollow(true);
+          if (resume && laterCount === 0) setBottomFollow(true);
           else reachedTop();
         }}
       >
