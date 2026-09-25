@@ -802,12 +802,19 @@ ${codeEntryScript()}
   // Note for anyone editing this string: no backticks, and no backslashes.
   // Both belong to the template literal, not to the script.
 
+  // The Murage phone app is a webview as well, and on Android its user agent
+  // carries the same "; wv)" as every other one. There the webview IS the
+  // browser: the app keeps its cookies and the session is meant to live in
+  // it, so telling the person to leave would send them somewhere the app
+  // cannot follow. The token only decides whether a sentence is shown; it
+  // grants nothing, so a spoofed one costs nobody anything.
+  var ourApp = ua.indexOf("MurageApp/") !== -1;
   var webview = false;
   var marks = ["Line/", "FBAN", "FBAV", "Instagram", "WhatsApp", "MicroMessenger", "; wv)"];
   for (var i = 0; i < marks.length; i++) {
     if (ua.indexOf(marks[i]) !== -1) { webview = true; break; }
   }
-  if (webview) {
+  if (webview && !ourApp) {
     warn.textContent = "You are in an app's built-in browser. Its sign-in will not carry over to Chrome or Safari, and this code can only be used once. Open this link in your normal browser first.";
   }
   go.hidden = false;

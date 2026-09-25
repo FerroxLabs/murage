@@ -27,6 +27,7 @@ import { createServer, request, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createContext, runInContext } from "node:vm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -490,5 +491,72 @@ describe("normalising what a person typed", () => {
     expect(normalizeCredential(` ${token} `)).toBe(token);
     expect(normalizeCredential(undefined)).toBe("");
     expect(normalizeCredential(42)).toBe("42");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. THE APP: the Murage phone app is a webview too, and must not be told
+//    to leave itself
+// ─────────────────────────────────────────────────────────────────────────
+describe("the phone app is not told to open a real browser", () => {
+  /** Run `/enter`'s real script, from the real response, with a credential in
+   * the fragment and just enough DOM to reach the warning. RUN it rather than
+   * grep it: the check is a loop over marks, and the question is what it
+   * decides for a given user agent. */
+  const enterWith = async (userAgent: string): Promise<{ warning: string; tapOffered: boolean }> => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const [script] = inlineScripts(page.body);
+    const elements = new Map<string, Record<string, unknown>>();
+    const byId = (id: string): Record<string, unknown> => {
+      let element = elements.get(id);
+      if (!element) {
+        element = { hidden: true, disabled: false, textContent: "", value: "", addEventListener: () => {}, focus: () => {} };
+        elements.set(id, element);
+      }
+      return element;
+    };
+    const sandbox = {
+      document: { getElementById: byId },
+      navigator: { userAgent },
+      location: { hash: "#murage_pair_abc" },
+      history: { replaceState: () => {} },
+      fetch: () => new Promise(() => {}),
+      setInterval: () => 0,
+      clearInterval: () => {},
+    };
+    createContext(sandbox);
+    runInContext(script, sandbox);
+    return { warning: String(byId("w").textContent), tapOffered: byId("go").hidden === false };
+  };
+
+  const ANDROID_WEBVIEW =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/UQ1A.240205.004; wv) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.58 Mobile Safari/537.36";
+  const IOS_WEBVIEW =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+  it("still warns a webview that is not ours", async () => {
+    // The control: without it the two tests below would pass on a script
+    // that never warns anybody.
+    const { warning } = await enterWith(ANDROID_WEBVIEW);
+    expect(warning).toContain("built-in browser");
+  });
+
+  it("does not warn inside the Murage app on Android, whose webview says `; wv)`", async () => {
+    const { warning, tapOffered } = await enterWith(`${ANDROID_WEBVIEW} MurageApp/1.0.0 (android)`);
+    expect(warning).toBe("");
+    // The tap stays. A crawler does not press buttons, and neither does
+    // anything else that is not a person.
+    expect(tapOffered).toBe(true);
+  });
+
+  it("does not warn inside the Murage app on iPhone either", async () => {
+    expect((await enterWith(`${IOS_WEBVIEW} MurageApp/1.0.0 (ios)`)).warning).toBe("");
+  });
+
+  it("still warns the chat apps the list was written for, even ones that mention us", async () => {
+    // The token only exempts the app it names. Instagram's webview does not
+    // become ours by carrying an unrelated string somewhere else in it.
+    expect((await enterWith(`${IOS_WEBVIEW} Instagram 312.0.0.32.112`)).warning).toContain("built-in browser");
   });
 });
