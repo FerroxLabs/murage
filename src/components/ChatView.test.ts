@@ -158,6 +158,12 @@ describe("one image surface", () => {
     expect(chat).toContain("<ScreenFrame png={m.png} mime={m.mime} />");
   });
 
+  it("lets the browser pick a thumbnail width and keeps the original for the lightbox", () => {
+    const media = read("./ImageMedia.tsx");
+    expect(media).toContain("const srcSet = thumbnailSrcSet(item.src);");
+    expect(media).toMatch(/srcSet=\{srcSet\}\s*sizes=\{srcSet \? THUMBNAIL_SIZES : undefined\}/);
+  });
+
   it("routes Markdown images, attachment galleries and the Files preview the same way", () => {
     expect(markdown).toMatch(/img\(\{ src, alt \}[\s\S]{0,300}<MarkdownImage /);
     expect(markdown).not.toMatch(/<img\b/);

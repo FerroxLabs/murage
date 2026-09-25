@@ -23,6 +23,7 @@ import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "luc
 
 import { attachmentImageUrl } from "@/lib/composer-attachments";
 import { artifactReferenceSource, attachmentReferenceSource } from "@/lib/image-reference";
+import { THUMBNAIL_SIZES, thumbnailSrcSet } from "@/lib/image-thumbnail";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
@@ -192,6 +193,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
       </span>
     );
   }
+  const srcSet = thumbnailSrcSet(item.src);
   return (
     <button
       type="button"
@@ -207,6 +209,8 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
     >
       <img
         src={item.src}
+        srcSet={srcSet}
+        sizes={srcSet ? THUMBNAIL_SIZES : undefined}
         alt={item.alt}
         loading="lazy"
         decoding="async"

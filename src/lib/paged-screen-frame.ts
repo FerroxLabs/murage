@@ -4,6 +4,8 @@
 // answers by surface and an image request cannot carry the desktop's proof.
 import { useEffect, useState } from "react";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
+import { screenFramePath } from "@/lib/image-thumbnail";
+import { isPhoneClient } from "@/lib/phone-client";
 
 export interface ScreenFramePixels {
   png: string;
@@ -12,7 +14,7 @@ export interface ScreenFramePixels {
 
 async function fetchScreenFrame(threadId: string, messageId: string): Promise<ScreenFramePixels | null> {
   await ensureDesktopSurfaceSecret();
-  const res = await fetch(`/api/threads/${threadId}/messages/${messageId}/image`, { headers: desktopSurfaceHeaders() });
+  const res = await fetch(screenFramePath(threadId, messageId, isPhoneClient()), { headers: desktopSurfaceHeaders() });
   if (!res.ok) return null;
   const blob = await res.blob();
   const bytes = new Uint8Array(await blob.arrayBuffer());
