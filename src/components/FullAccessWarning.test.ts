@@ -15,7 +15,9 @@ describe("FullAccessWarning", () => {
     const markup = render(false);
     expect(markup).toContain("will not ask before running commands, editing files or contacting other bots");
     expect(markup).toContain("still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords");
-    expect(markup).toContain("webhooks or routines still ask");
+    expect(markup).toContain("Turns started by webhooks still ask");
+    // routines follow a level of their own now (server/routine-permissions.ts)
+    expect(markup).not.toContain("routines still ask");
     expect(markup).toContain("image generation still asks");
     expect(markup).toContain("messages from Telegram, Slack or Discord, and setup requests");
     expect(markup).toContain("unless you allow them in Bot Settings");
@@ -33,6 +35,14 @@ describe("FullAccessWarning", () => {
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
     expect(markup).not.toMatch(/\u2014|\bsafe\b/);
+  });
+
+  it("says whether it covers this conversation, the bot or one routine", () => {
+    const at = (scope: "conversation" | "bot" | { routine: string }) =>
+      renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", scope, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
+    expect(at("conversation")).toContain("This is for this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.");
+    expect(at("bot")).toContain("Routines use this level too, unless a routine has its own.");
+    expect(at({ routine: "Log tick" })).toContain("This is for the routine Log tick only.");
   });
 
   it("renders nothing while closed", () => {

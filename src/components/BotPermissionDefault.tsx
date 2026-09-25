@@ -59,7 +59,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else, webhooks and routines still ask." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else and webhooks still ask. Routines use their own level." },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (

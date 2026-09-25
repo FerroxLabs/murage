@@ -175,6 +175,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
           current={current}
           desktop={desktop}
           engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
+          scope={routine ? { routine: routine.name } : {}}
           onPick={(mode) => {
             onSetMode(mode);
             setOpen(false);
@@ -1396,6 +1397,7 @@ export function Composer({
         open={fullWarn !== false}
         botName={autoBot?.name ?? ""}
         level={fullWarn === false ? "full" : fullWarn.level}
+        scope="conversation"
         onThisComputer={fullWarn !== false && fullWarn.onThisComputer}
         onCancel={() => setFullWarn(false)}
         onConfirm={() => {

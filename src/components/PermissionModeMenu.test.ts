@@ -45,4 +45,14 @@ describe("composer approval-level menu", () => {
     for (const label of ["Ask for approval", "Auto mode"]) expect(item(markup, label)).not.toContain("cannot ask first");
     expect(render(true)).not.toContain("cannot ask first");
   });
+
+  // 0.1.60 Mac pass: No limits chosen on the chip in Ember's chat left the
+  // routine at "Same as Ember (Ask)", and nothing on the menu said so.
+  it("says which level it changes: this conversation's, or the routine's", () => {
+    const menu = (scope: { routine?: string } = {}) =>
+      renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "ask", desktop: true, onPick: () => {}, scope }));
+    expect(menu()).toContain("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.");
+    expect(menu({ routine: "Log tick" })).toContain("Changes the level of the routine Log tick. Every run of it works here.");
+    expect(menu({ routine: "Log tick" })).toContain("How should runs of Log tick be approved?");
+  });
 });

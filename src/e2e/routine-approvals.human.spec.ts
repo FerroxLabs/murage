@@ -85,6 +85,8 @@ test("the chip in a routine's conversation shows and sets the routine's level", 
   await expect(chip).toBeVisible();
   await page.screenshot({ path: info.outputPath("routine-conversation-chip.png") });
   await chip.click();
+  // the menu itself says it sets the routine, not this conversation
+  await expect(page.getByRole("menu").getByText("Changes the level of the routine RWA watch. Every run of it works here.")).toBeVisible();
   await page.getByRole("menuitemradio", { name: /^Auto mode/ }).click();
   await expect(page.getByRole("button", { name: "Auto mode for the routine RWA watch" })).toBeVisible();
   await expect.poll(async () => (await routine(page))?.permissionMode).toBe("auto");
@@ -132,4 +134,18 @@ test("each run in a routine's conversation begins with a visible divider", async
   await expect(page.getByRole("separator", { name: /^Scheduled run of RWA watch/ })).toBeVisible();
   await expect(page.getByRole("separator", { name: /^Run now of RWA watch/ })).toBeVisible();
   await page.screenshot({ path: info.outputPath("routine-run-dividers.png") });
+});
+
+test("the chip in any other conversation says it changes that conversation only", async ({ page }) => {
+  // open Dax on an ordinary conversation, not the routine's
+  const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
+  const switched = await fetch(`${fixture.info.url}/api/bots/${botId}/tasks/dax-chat`, { method: "POST", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret } });
+  expect(switched.ok).toBe(true);
+  await start(page);
+  const sidebar = await openSidebar(page);
+  await sidebar.getByText("Dax", { exact: true }).first().click();
+  const chip = page.getByRole("button", { name: /^No limits$/ });
+  await expect(chip).toBeVisible();
+  await chip.click();
+  await expect(page.getByRole("menu").getByText("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.")).toBeVisible();
 });

@@ -902,6 +902,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       open={fullAccessWarning !== null}
       botName={bot.name}
       level={fullAccessWarning?.level ?? "full"}
+      scope="bot"
       onThisComputer={fullAccessWarning?.onThisComputer === true}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {
