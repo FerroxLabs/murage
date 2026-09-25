@@ -302,7 +302,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/approvals-and-inspector#overview",
     "title": "Approvals and inspector",
-    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.app/docs/features/approvals-and-inspector",
@@ -311,27 +311,117 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/approvals-and-inspector#approval-cards",
     "title": "Approvals and inspector",
-    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "heading": "Approval cards",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.app/docs/features/approvals-and-inspector#approval-cards",
-    "text": "When an engine supports approvals, Murage surfaces the request instead of hiding it in terminal output. Read the requested action and scope before approving it. Denying an action sends control back to the agent so it can choose a safer path."
+    "text": "When a bot wants to do something that needs your permission, Murage shows an approval card in the conversation instead of hiding the request in terminal output. Read the requested action and where it applies before you answer. Deny sends control back to the bot so it can choose another way. Cancel turn stops the whole turn.\n\nThe same choices appear on the desktop, in the Inbox and on Telegram (where the first button reads Approve once). The Always allow buttons are offered in the desktop app only."
   },
   {
-    "id": "features/approvals-and-inspector#ask-auto-full-access-and-no-limits",
+    "id": "features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
     "title": "Approvals and inspector",
-    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
-    "heading": "Ask, Auto, Full access and No limits",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Approval levels: Ask, Auto, Full access and No limits",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Bot settings → Permissions → Approvals",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
+    "text": "Choose how a conversation is approved from the permission chip beside the message box. The menu asks \"How should this bot's actions be approved?\" and offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: does anything without asking, except reading your keys and passwords.\n\nThe chip changes the level for this conversation. To set the level new conversations start at, open Bot settings → Permissions → Approvals.…"
+  },
+  {
+    "id": "features/approvals-and-inspector#full-access-and-the-stop-line",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Full access and the stop line",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#ask-auto-full-access-and-no-limits",
-    "text": "Choose how a conversation is approved from the chip beside the composer:\n- Ask shows a card for each action that needs your permission.\n- Auto keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.\n- Full access does not ask before running commands, editing files or contacting other bots. It still stops before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords. On those cards you can allow it once, allow the same kind of action in the same place for the rest of the task, or always.…"
+    "url": "https://murage.app/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
+    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through Finder, scripts and code;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
+  },
+  {
+    "id": "features/approvals-and-inspector#no-limits",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "No limits",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Bot settings → Permissions → Approvals",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#no-limits",
+    "text": "No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords. Choose it when you want the behaviour Full access had before 0.1.59.\n\nFull access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning (\"Give @bot full access?\" or \"Give @bot no limits?\", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.\n\nSome things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto. Image generation still asks before it spends. Questions your bot asks you still reach you.…"
+  },
+  {
+    "id": "features/approvals-and-inspector#allow-once-allow-for-this-task-always-allow",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Allow once, Allow for this task, Always allow",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#allow-once-allow-for-this-task-always-allow",
+    "text": "A stop card offers up to three ways to say yes:\n- Allow once allows just this step.\n- Allow for this task allows the same kind of action in the same place (the same folder, recipient or payee) until the task ends.\n- Always allow remembers the yes for this bot, scoped to that same folder, recipient or payee, never to everything. For a command it reads \"Always allow any git command\" (naming the program).\n\nOn a conversation you started, you can also allow a place for the task in your own words in chat. The chat then notes exactly what was allowed."
+  },
+  {
+    "id": "features/approvals-and-inspector#always-allow-this-exact-command",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Always allow this exact command",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#always-allow-this-exact-command",
+    "text": "A card for a command also offers Always allow this exact command here. It is the narrowest remembered yes: that exact command, only in that folder, and only on that engine. The bot asks again for any other command, folder or engine."
+  },
+  {
+    "id": "features/approvals-and-inspector#the-always-allowed-list",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "The Always allowed list",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Bot settings → Permissions → Always allowed",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#the-always-allowed-list",
+    "text": "Every Always allow a bot remembers is listed in Bot settings → Permissions → Always allowed. Exact-command grants show the command, the folder and the engine. Press Remove next to any item to take it back. The bot still asks before anything that looks destructive, reads your keys, deletes outside its folder, pays or messages someone new. The list, like granting one, is desktop only."
+  },
+  {
+    "id": "features/approvals-and-inspector#engines-that-cannot-ask",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Engines that cannot ask",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#engines-that-cannot-ask",
+    "text": "Some engines have no way to ask before acting when they run inside Murage. The permission menu says so on the levels where it matters, for example \"Antigravity cannot ask first, so it edits files here but runs no commands.\" Under Full access and No limits Murage runs such an engine with file edits only, rather than let it delete, pay or message with nobody asked."
+  },
+  {
+    "id": "features/approvals-and-inspector#pi-asks-first",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Pi asks first",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#pi-asks-first",
+    "text": "Bots on the Pi engine ask Murage before running commands, editing outside their folder or using connected apps, like every other engine. Pi follows the same levels, stop line and Always allow choices."
+  },
+  {
+    "id": "features/approvals-and-inspector#only-you-can-say-yes",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Only you can say yes",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#only-you-can-say-yes",
+    "text": "Only your own desktop app and paired devices can answer an approval card. A message whose sender Murage cannot confirm runs as an unattended turn, which asks the way a webhook turn does."
+  },
+  {
+    "id": "features/approvals-and-inspector#fewer-false-stops",
+    "title": "Approvals and inspector",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
+    "heading": "Fewer false stops",
+    "breadcrumb": "Murage docs → Features → Approvals and inspector",
+    "where": "Murage docs → Features → Approvals and inspector",
+    "url": "https://murage.app/docs/features/approvals-and-inspector#fewer-false-stops",
+    "text": "Auto does not treat deleting inside a bot's own folders and temporary files as dangerous. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them. Stopping other programs still asks."
   },
   {
     "id": "features/approvals-and-inspector#inspector",
     "title": "Approvals and inspector",
-    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "heading": "Inspector",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
@@ -341,12 +431,12 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/approvals-and-inspector#when-a-run-disconnects",
     "title": "Approvals and inspector",
-    "description": "Stay in control when agents ask questions, request access, or perform risky work.",
+    "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "heading": "When a run disconnects",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.app/docs/features/approvals-and-inspector#when-a-run-disconnects",
-    "text": "Murage retries transient streaming failures. If retries end in an authentication or configuration error, fix the underlying engine rather than repeatedly retrying the task. See Agent engine troubleshooting."
+    "text": "Murage retries short streaming failures. If retries end in an authentication or configuration error, fix the underlying engine rather than repeatedly retrying the task. See Agent engine troubleshooting."
   },
   {
     "id": "features/attachments-and-search#image-attachments",
@@ -381,27 +471,87 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/automation#routines",
     "title": "Routines and webhooks",
-    "description": "Start fresh agent tasks on a schedule or from an external event.",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
     "heading": "Routines",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
-    "where": "Murage docs → Features → Routines and webhooks",
+    "where": "Bot settings → Routines",
     "url": "https://murage.app/docs/features/automation#routines",
-    "text": "A routine runs once or on selected weekdays. Each run starts a fresh task using the selected bot's model, permissions, tools, and computer configuration.\n\nRun receipts distinguish queued, active, waiting, completed, missed, failed, and cancelled work. Murage must be running when a local routine becomes due."
+    "text": "A routine runs a bot once or on a schedule you choose. Open Routines in the sidebar to see every routine on a calendar (day, three-day or week view, filtered by bot), or open Bot settings → Routines for that bot's own. Each run uses the bot's model, tools and computer.\n\nRun receipts distinguish queued, active, waiting on you, completed, missed, failed, and cancelled work. Murage must be running when a local routine becomes due."
+  },
+  {
+    "id": "features/automation#one-conversation-per-routine",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "One conversation per routine",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Murage docs → Features → Routines and webhooks",
+    "url": "https://murage.app/docs/features/automation#one-conversation-per-routine",
+    "text": "Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now."
+  },
+  {
+    "id": "features/automation#routine-approval-level",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Routine approval level",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Advanced → Approvals for this routine",
+    "url": "https://murage.app/docs/features/automation#routine-approval-level",
+    "text": "Each routine runs at its own approval level: Ask, Auto, Full access or No limits. Set it in the routine editor under Advanced → Approvals for this routine, or from the permission chip in the routine's own conversation: choosing a level there sets it for the routine.\n\nA routine you have not set shows \"Same as (bot name)\" and follows its bot's level at the moment each run starts. So a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies. Reading your keys always asks, at every level."
+  },
+  {
+    "id": "features/automation#waiting-on-you",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Waiting on you",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Murage docs → Features → Routines and webhooks",
+    "url": "https://murage.app/docs/features/automation#waiting-on-you",
+    "text": "When a routine run hits a question or an approval, Murage tells you at once (\"(routine) is waiting on you\") and the run ends as Waiting on you instead of sitting until it times out. The card stays in the routine's conversation and can still be answered: open it with Review, answer the question or the approval, and the routine carries on from there.\n\nA run waiting on your answer stops its time limit clock and waits for you."
+  },
+  {
+    "id": "features/automation#always-allow-for-this-routine",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Always allow for this routine",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Murage docs → Features → Routines and webhooks",
+    "url": "https://murage.app/docs/features/automation#always-allow-for-this-routine",
+    "text": "An approval card raised by a routine run offers Always allow for this routine. It covers that same command or place for that routine only, and it holds across every later run, so the routine stops asking about it. Other routines and ordinary conversations with the same bot still ask.\n\nEverything a routine is always allowed to do is listed in its editor under Always allowed for this routine, each with Remove. Reading your keys still asks."
+  },
+  {
+    "id": "features/automation#overlapping-runs",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Overlapping runs",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Murage docs → Features → Routines and webhooks",
+    "url": "https://murage.app/docs/features/automation#overlapping-runs",
+    "text": "In the routine editor, \"If the last run is still going\" chooses what happens when a run is due while the last one is still running:\n- Skip this time: scheduled times are skipped while a run is still going.\n- Queue one run: one scheduled run waits until the current run finishes.\n\nRun now is separate from both. Skipped runs are counted and a streak of failures is shown. \"Stop if still running after\" sets an optional time limit for each run."
+  },
+  {
+    "id": "features/automation#routine-problems",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Routine problems",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Murage docs → Features → Routines and webhooks",
+    "url": "https://murage.app/docs/features/automation#routine-problems",
+    "text": "The problems count at the top of Routines counts failed and missed runs you have not opened yet. Press it to open Routine problems, a list of exactly those runs, with Mark all as read."
   },
   {
     "id": "features/automation#webhook-triggers",
     "title": "Routines and webhooks",
-    "description": "Start fresh agent tasks on a schedule or from an external event.",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
     "heading": "Webhook triggers",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
     "url": "https://murage.app/docs/features/automation#webhook-triggers",
-    "text": "Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on 127.0.0.1:8800 by default.\n\nThe receiver exposes only health and secret hook routes. It does not expose the broader Murage API.\n\nBearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers."
+    "text": "Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on 127.0.0.1:8800 by default. A turn started by a webhook asks for approvals the way Auto does, because someone other than you wrote its input.\n\nThe receiver exposes only health and secret hook routes. It does not expose the broader Murage API.\n\nBearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers."
   },
   {
     "id": "features/automation#reaching-a-local-webhook",
     "title": "Routines and webhooks",
-    "description": "Start fresh agent tasks on a schedule or from an external event.",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
     "heading": "Reaching a local webhook",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
