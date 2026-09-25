@@ -6765,6 +6765,21 @@ routines = new RoutineManager({
     return task;
   },
   createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
+  // One conversation per routine (see RoutineManager.tick)
+  taskExists: (botId, threadId) => Boolean(store.taskByThread(botId, threadId)),
+  onRunDispatch: (run, reused) => {
+    if (!run.threadId) return;
+    // Each run starts a fresh engine session in the routine's conversation:
+    // the engine gets this run's instructions and at most the recent history
+    // replay every fresh session gets, never an ever-growing session.
+    if (reused) store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
+    // the run marker: where one run ends and the next begins
+    store.appendMessage(run.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `${run.manual ? "Run now" : "Scheduled run"}: ${redactSecretsInText(run.routineName)}`, ok: true },
+    });
+  },
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>
     startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError, eventId, waitForThreadSlot: true })
       .then(() => undefined),

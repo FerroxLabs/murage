@@ -227,3 +227,98 @@ describe("a run waiting on you at its run limit", () => {
     expect(reloaded.listRuns()[0]).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running" });
   });
 });
+
+describe("one conversation per routine", () => {
+  function conversationHarness() {
+    const h = harness();
+    const tasks = new Set<string>();
+    const busy = new Set<string>();
+    const dispatched: Array<{ runId: string; reused: boolean; threadId?: string }> = [];
+    let made = 0;
+    h.options.createTask = () => { const threadId = `conv-${++made}`; tasks.add(threadId); return { threadId }; };
+    h.options.taskExists = (_botId, threadId) => tasks.has(threadId);
+    h.options.threadBusy = (_botId, threadId) => busy.has(threadId);
+    h.options.onRunDispatch = (run, reused) => dispatched.push({ runId: run.id, reused, threadId: run.threadId });
+    const manager = new RoutineManager(h.options);
+    return { ...h, manager, tasks, busy, dispatched, made: () => made };
+  }
+  const finish = (h: { manager: RoutineManager }, threadId: string) =>
+    h.manager.handleRuntimeEvent({ type: "turn.completed", threadId, ok: true } as never);
+
+  it("every run of a routine works in the same conversation, and the routine remembers it", async () => {
+    const h = conversationHarness();
+    const routine = h.manager.create(input(h.now(), { enabled: false }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    finish(h, "conv-1");
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    finish(h, "conv-1");
+    expect(h.started.map((item) => item.threadId)).toEqual(["conv-1", "conv-1"]);
+    expect(h.made()).toBe(1);
+    expect(h.manager.listRoutines()[0]?.threadId).toBe("conv-1");
+    expect(h.manager.listRuns().map((run) => run.threadId)).toEqual(["conv-1", "conv-1"]);
+    expect(h.dispatched.map((item) => item.reused)).toEqual([false, true]);
+    // and it survives a reload
+    expect(new RoutineManager({ ...h.options }).listRoutines()[0]?.threadId).toBe("conv-1");
+  });
+
+  it("waits while its conversation is busy instead of opening another", async () => {
+    const h = conversationHarness();
+    const routine = h.manager.create(input(h.now(), { enabled: false }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    finish(h, "conv-1");
+    h.busy.add("conv-1");
+    const queued = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === queued.id)?.status).toBe("queued");
+    expect(h.made()).toBe(1);
+    h.busy.delete("conv-1");
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === queued.id)).toMatchObject({ status: "running", threadId: "conv-1" });
+  });
+
+  it("a manual run waits behind the routine's own live run in that conversation", async () => {
+    const h = conversationHarness();
+    const routine = h.manager.create(input(h.now(), { enabled: false }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    const second = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === second.id)?.status).toBe("queued");
+    finish(h, "conv-1");
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === second.id)).toMatchObject({ status: "running", threadId: "conv-1" });
+  });
+
+  it("opens a new one when the old conversation was deleted", async () => {
+    const h = conversationHarness();
+    const routine = h.manager.create(input(h.now(), { enabled: false }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    finish(h, "conv-1");
+    h.tasks.delete("conv-1");
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    expect(h.started.at(-1)?.threadId).toBe("conv-2");
+    expect(h.manager.listRoutines()[0]?.threadId).toBe("conv-2");
+  });
+
+  it("an edit cannot point a routine at another conversation", () => {
+    const h = conversationHarness();
+    const routine = h.manager.create({ ...input(h.now()), threadId: "someone-else" } as never);
+    expect(routine).not.toHaveProperty("threadId");
+    expect(h.manager.update(routine.id, { threadId: "someone-else" } as never)).not.toHaveProperty("threadId");
+  });
+
+  it("webhook work keeps its own conversation per delivery", async () => {
+    const h = conversationHarness();
+    for (const deliveryId of ["d1", "d2"]) {
+      h.manager.enqueueWebhook({ webhookId: "hook", webhookName: "Hook", prompt: "p", botId: "dax", runOn: "ember", deliveryId, receivedAt: h.now() });
+      await h.manager.tick();
+      finish(h, h.started.at(-1)!.threadId);
+    }
+    expect(h.started.map((item) => item.threadId)).toEqual(["conv-1", "conv-2"]);
+  });
+});

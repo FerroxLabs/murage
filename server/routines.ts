@@ -120,6 +120,12 @@ export interface Routine {
    * through the desktop from a pending card, removable in the editor, and
    * never a bare tool name. Absent means none. */
   alwaysAllow?: string[];
+  /** The routine's own conversation: every scheduled and manual run of a
+   * bot routine works in this one task, one run after another, instead of a
+   * new task per run. Set by the scheduler at the first run (and again if
+   * that conversation was deleted); never written by an edit. Older routines
+   * have none until their next run, and their per-run tasks stay as they are. */
+  threadId?: string;
   /** How many scheduled occurrences were skipped because a run was still
    * active, and when the last one was due. Absent means none. */
   skippedRuns?: number;
@@ -289,6 +295,13 @@ export interface RoutineManagerOptions {
   threadBusy?: (botId: string, threadId: string) => boolean;
   goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
+  /** Does this bot still have this conversation? A routine's own
+   * conversation is reused only while it does. Without it, every run gets a
+   * new task as before. */
+  taskExists?: (botId: string, threadId: string) => boolean;
+  /** A bot routine run is about to start in its conversation; `reused` says
+   * an earlier run (or the owner) already worked there. */
+  onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
   /** Telegram messages continue the bot's current conversation. */
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
@@ -647,6 +660,7 @@ export class RoutineManager {
               timeoutMinutes: loadTimeoutMinutes(routine.timeoutMinutes),
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
+              threadId: persistedSourceThreadId.parse(routine.threadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode),
               alwaysAllow: routineGrantKeys(routine.alwaysAllow),
@@ -655,7 +669,7 @@ export class RoutineManager {
             };
             // Absent rather than undefined keys, so a load and save round-trip
             // leaves an older file's routines byte-for-byte shaped as before.
-            for (const key of ["overlap", "permissionMode", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            for (const key of ["overlap", "permissionMode", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
             if (!loaded.alwaysAllow?.length) delete loaded.alwaysAllow;
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
@@ -1559,6 +1573,15 @@ export class RoutineManager {
           continue;
         }
         if (run.watch) { await this.checkWatch(run); continue; }
+        // One conversation per routine: a scheduled or manual run of a bot
+        // routine works in the routine's own task, after the one before it.
+        // It waits while that conversation is busy (an earlier run, or the
+        // owner talking there) rather than opening another.
+        const owner = run.target === "bot" && !sharedChannel && (triggerSource === "schedule" || triggerSource === "manual")
+          ? this.routines.find((routine) => routine.id === run.routineId && routine.botId === run.botId)
+          : undefined;
+        const reusable = owner?.threadId && this.options.taskExists?.(run.botId, owner.threadId) ? owner.threadId : undefined;
+        if (reusable && (this.runs.some((active) => active.threadId === reusable && isLive(active.status)) || this.options.threadBusy?.(run.botId, reusable))) continue;
         // A webhook is an incoming message, so make its task the bot's live
         // chat immediately. Scheduled work remains detached and unobtrusive.
         const task = run.target === "room-goal"
@@ -1567,7 +1590,9 @@ export class RoutineManager {
             : null
           : sharedChannel
             ? this.options.channelThread!(run.botId,run.humanPrincipal)
-            : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
+            : reusable
+              ? { threadId: reusable }
+              : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
         if (!task) {
           this.failRun(run, run.target === "room-goal"
             ? "Could not create a room task for this goal"
@@ -1579,8 +1604,15 @@ export class RoutineManager {
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";
+        const adopted = owner && this.options.taskExists && owner.threadId !== task.threadId;
+        if (adopted) owner.threadId = task.threadId;
         this.save();
         this.emitRun(run);
+        if (adopted) this.emitRoutine(owner);
+        if (owner) {
+          try { this.options.onRunDispatch?.(cloneRun(run), Boolean(reusable)); }
+          catch (error) { console.error("routine: run marker failed", error); }
+        }
         const failDispatch = (message: string) => {
           if (!sharedChannel) return this.failThread(task.threadId, message);
           // A delayed callback from an earlier message cannot fail the next
