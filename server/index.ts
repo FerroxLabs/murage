@@ -3147,7 +3147,35 @@ store.onChange((change) => {
 });
 
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
-const imageOperations = new ImageOperations({ store, speaker: (threadId, botId) => {
+/** The harness's own cards (this computer's one-time consent, a paid image,
+ * a bot-to-bot contact) in a scheduled or manual routine run: held open like
+ * permission cards, so the run waits on the owner instead of the card closing
+ * after 15 minutes. A run whose turn ended while one was open ends as waiting
+ * on you, and answering it carries the same run on in a new turn. */
+function routineCardOpened(threadId: string, requestId: string, summary: string): boolean {
+  return routines?.cardOpened(threadId, requestId, summary) === true;
+}
+function routineCardClosed(threadId: string, requestId: string, answer: "allow" | "deny" | "none"): boolean {
+  const run = routines?.listRuns().find((candidate) => candidate.threadId === threadId && candidate.cardsOpen?.includes(requestId));
+  if (!run || routines?.cardClosed(threadId, requestId) !== true) return false;
+  const note = answer === "allow"
+    ? "[The owner answered the request this run was waiting on: allowed. Carry on with this run of the routine.]"
+    : answer === "deny"
+      ? "[The owner answered the request this run was waiting on: not allowed. Finish this run of the routine without it.]"
+      : "[The request this run was waiting on closed without an answer. Finish this run of the routine without it.]";
+  // after the answer has landed, so the new turn sees it
+  queueMicrotask(() => {
+    void startTurn(run.botId, note, {
+      threadId,
+      cardContinuation: true,
+      onDispatchError: (message) => routines?.failThread(threadId, message),
+    }).catch((error) => routines?.failThread(threadId, error instanceof Error ? error.message : String(error)));
+  });
+  return true;
+}
+const routineCardHooks = { opened: routineCardOpened, closed: routineCardClosed };
+
+const imageOperations = new ImageOperations({ store, routineCard: routineCardHooks, speaker: (threadId, botId) => {
   // A channel card carries its sender like every other member message; a
   // one-to-one task needs none.
   if (!store.groupByThread(threadId)) return undefined;
@@ -7469,7 +7497,7 @@ const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapac
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
 // can call resolvePeerComms without holding a reference back to here.
-const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval, fullAccessStanding: (botId, threadId) => hasFullAccess(peerContactSettings(botId, threadId)) };
+const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval, routineCard: routineCardHooks, fullAccessStanding: (botId, threadId) => hasFullAccess(peerContactSettings(botId, threadId)) };
 
 // Approvals live only in memory, so any peer card still open on disk is one
 // whose resolver died with the previous process. Left alone it can never be

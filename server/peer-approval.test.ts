@@ -241,4 +241,47 @@ describe("peer approval card lifecycle", () => {
       store.messagesFor(task.threadId).find((message) => message.id === orphan.id)?.card?.dismissed,
     ).toBe(true);
   });
+
+  // A bot-to-bot card in a scheduled or manual routine run is held open like
+  // a permission card: no 15-minute expiry, the run waits on the owner, and
+  // an allow given after the run's turn ended covers the same contact once
+  // when the run carries on.
+  describe("in a routine run", () => {
+    const opened: string[] = [];
+    const closed: Array<[string, string]> = [];
+    let turnEnded = false;
+    beforeEach(() => {
+      opened.length = 0; closed.length = 0; turnEnded = false;
+      bus = { store, broadcast: () => {}, routineCard: {
+        opened: (_threadId, requestId) => { opened.push(requestId); return true; },
+        closed: (_threadId, requestId, answer) => { closed.push([requestId, answer]); return turnEnded; },
+      } };
+    });
+
+    it("never expires, and tells the run when it opens and closes", async () => {
+      vi.useFakeTimers();
+      try {
+        const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+        const card = pendingCard(store, from)!;
+        expect(opened).toEqual([card.card!.requestId]);
+        vi.advanceTimersByTime(60 * 60_000);
+        expect(pendingCard(store, from)?.id).toBe(card.id);
+        resolvePeerComms(bus, card.card!.requestId!, "allow");
+        expect(await verdict).toBe("allow");
+        expect(closed).toEqual([[card.card!.requestId, "allow"]]);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("an allow after the turn ended covers the same contact once when the run carries on", async () => {
+      void requestPeerApproval(bus, from, target, "ping", "ask_bot");
+      const card = pendingCard(store, from)!;
+      turnEnded = true;
+      resolvePeerComms(bus, card.card!.requestId!, "allow");
+      expect(await requestPeerApproval(bus, from, target, "ping again", "ask_bot")).toBe("allow");
+      expect(pendingCard(store, from)).toBeUndefined();
+      // once only
+      void requestPeerApproval(bus, from, target, "and again", "ask_bot");
+      expect(pendingCard(store, from)).toBeTruthy();
+    });
+  });
 });

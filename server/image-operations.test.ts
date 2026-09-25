@@ -521,3 +521,38 @@ it("names the asking bot to the waiting hook and stamps a channel card with its 
  operations.resolve("channel-thread",card.card!.requestId!,"deny");await job;
  expect(waiting).toHaveBeenLastCalledWith("channel-thread",false,card.card!.requestId,undefined,bot.id);
 });
+// 0.1.60: in a scheduled or manual routine run the paid-image card is held
+// open like a permission card. It never closes for waiting; if the tool call
+// gives up first (its turn ends), the card stays answerable, the run waits on
+// the owner, and an allow then covers the next image in that conversation
+// once, when the run carries on.
+it("a routine run holds its image card open past the bound and past its turn", async () => {
+  vi.useFakeTimers();
+  try {
+    const events: string[] = [];
+    let resumed = false;
+    const f = generationFixture();
+    const held = new ImageOperations({ store: f.store, waiting: f.waiting, routineCard: {
+      opened: (_threadId, _requestId, summary) => { events.push(`opened:${summary}`); return true; },
+      closed: (_threadId, _requestId, answer) => { events.push(`closed:${answer}`); return resumed; },
+    } });
+    const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+    const run = (id: string, actor = f.actor) => held.execute(actor, id, f.request, (reserve, publish) => service.generate(f.request, { reserve, publish, assertActive: actor.assertActive, signal: actor.signal }, []));
+    const job = run("held"), refused = expect(job).rejects.toThrow("not approved");
+    const card = await f.card();
+    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS + 60 * 60_000);
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBeUndefined();
+    // the tool call gives up (its turn ended): the card stays answerable
+    f.controller.abort(); f.revoke(); await refused;
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBeUndefined();
+    resumed = true;
+    expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("allow");
+    expect(events).toEqual(["opened:Approve image generation", "closed:allow"]);
+    // the run carries on in a new turn: that image is already approved
+    const next = { ...f.actor, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
+    await run("carried-on", next);
+    expect(f.fetcher).toHaveBeenCalledOnce();
+    expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.tool === "generate_image")).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
