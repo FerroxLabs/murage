@@ -488,3 +488,47 @@ describe("the new-bot intake reaches the browser door", () => {
     }
   });
 });
+
+// ── a call, from a browser ───────────────────────────────────────────────
+//
+// Calls run in the web layer on the phone (spec §5), and every piece of that
+// was refused at this door: the utterance splitter, the call note, the speech
+// model and the ONNX runtime that runs it. `.mjs` is the one the spec did not
+// name — the runtime imports its glue as a module (`src/lib/silero-vad.ts:16`),
+// and a refused `.mjs` is a call that never hears anyone.
+describe("a call reaches the browser door", () => {
+  const call: Array<[string, string]> = [
+    ["POST", "/api/tts/prepare"],
+    ["POST", "/api/bots/bot_123/call-note"],
+    ["GET", "/vad/silero_vad.onnx"],
+    ["GET", "/assets/ort-wasm-simd-threaded-B3x9Qz_d.wasm"],
+    ["GET", "/assets/ort-wasm-simd-threaded-B3x9Qz_d.mjs"],
+  ];
+
+  it("allows what the call screen fetches, at the browser door and only there", () => {
+    for (const [method, path] of call) {
+      expect(askBrowser(method, path), path).toBeNull();
+      expect(askBrowser(method, path, false)?.status, path).toBe(401);
+      // The phone's native surface did not ask for any of these.
+      expect(ask(method, path), path).not.toBeNull();
+    }
+  });
+
+  it("opens exactly those, not their neighbours", () => {
+    for (const [method, path] of [
+      ["GET", "/api/tts/prepare"],
+      ["POST", "/api/tts/prepare/extra"],
+      ["GET", "/api/bots/bot_123/call-note"],
+      // The call's fast half is desktop-only in the harness (server/index.ts:16529)
+      // and stays off this list until that is a decision somebody made.
+      ["POST", "/api/bots/bot_123/voice-host"],
+      ["GET", "/vad/other.onnx"],
+      ["GET", "/vad/silero_vad.onnx.bak"],
+      ["GET", "/assets/x.exe"],
+      ["GET", "/assets/../devices.wasm"],
+      ["GET", "/assets/sub/x.wasm"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+});

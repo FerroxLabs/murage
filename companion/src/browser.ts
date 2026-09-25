@@ -147,6 +147,14 @@ const STATIC_MIME: Readonly<Record<string, string>> = {
   ".json": "application/json",
   ".woff2": "font/woff2",
   ".webmanifest": "application/manifest+json",
+  // ONNX Runtime's glue is imported as a module, and a module served as
+  // anything but JavaScript is refused; its WebAssembly is compiled by
+  // streaming, which requires exactly this type. The same pair the harness
+  // maps (`server/index.ts:521-525`).
+  ".mjs": "text/javascript; charset=utf-8",
+  ".wasm": "application/wasm",
+  // The speech model is opaque bytes to everything but the runtime.
+  ".onnx": "application/octet-stream",
 };
 
 /** Headers on every response this door writes. No CORS headers appear here or
@@ -503,6 +511,19 @@ export function staticContentType(path: string): string | null {
   const slash = path.lastIndexOf("/");
   if (dot < 0 || dot < slash) return STATIC_MIME[".html"]; // "/" and the SPA deep links
   return STATIC_MIME[path.slice(dot).toLowerCase()] ?? null;
+}
+
+/** How long a browser may keep one static file.
+ *
+ * Hashed assets are immutable by construction; the shell never is. The speech
+ * model is neither: its name is fixed and it changes only with a release, and
+ * it is 2.2 MB that every call fetches. A day is long enough that a phone on
+ * cellular stops paying for it per call, and short enough that a model
+ * shipped in an update is in use by tomorrow. */
+export function staticCacheControl(path: string): string {
+  if (path.startsWith("/assets/")) return "private, max-age=31536000, immutable";
+  if (path === "/vad/silero_vad.onnx") return "private, max-age=86400";
+  return "private, no-store";
 }
 
 /** Read a body as raw bytes, bounded, so it can be inspected and then
@@ -1556,10 +1577,7 @@ function relayStatic(
     return sendJson(res, 404, { error: `no route: GET ${path}` });
   }
 
-  // Hashed assets are immutable by construction; the shell never is.
-  const cache = path.startsWith("/assets/")
-    ? "private, max-age=31536000, immutable"
-    : "private, no-store";
+  const cache = staticCacheControl(path);
 
   // The shell is the one response this door rewrites, and this is the line
   // that makes renewal actually happen rather than merely exist. Every other

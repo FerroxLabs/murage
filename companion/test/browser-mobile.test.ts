@@ -13,6 +13,7 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  cookieName,
   createBrowserHandler,
   type BoundIdentity,
   type BrowserDeviceStore,
@@ -32,6 +33,14 @@ const SHELL =
  * real harness gives: a JSON 404 under `/api/`, and the SPA fallback —
  * index.html, status 200 — everywhere else (`server/index.ts:16872-16877`). */
 const replies = new Map<string, Reply>();
+/** A canned upstream answer, for a path that needs a specific status, headers
+ * and body rather than the harness's defaults. */
+const reply =
+  (status: number, headers: Record<string, string>, body: string | Buffer): Reply =>
+  (_req, res) => {
+    res.writeHead(status, headers);
+    res.end(body);
+  };
 /** Every path the harness was asked for, in order. */
 let asked: string[] = [];
 
@@ -182,6 +191,15 @@ const write = (extra: Record<string, string> = {}) => ({
   ...extra,
 });
 
+/** A browser that has signed in, as a Cookie header. */
+const signedIn = async (): Promise<Record<string, string>> => {
+  const answer = await knock("POST", "/session", write(), JSON.stringify({ credential: "murage_pair_good" }));
+  expect(answer.status).toBe(201);
+  const set = String(answer.headers["set-cookie"]?.[0] ?? "");
+  const value = set.slice(set.indexOf("=") + 1, set.indexOf(";"));
+  return { cookie: `${cookieName("http")}=${value}` };
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 describe("the launcher's probe", () => {
   it("says what this door is and what it is called, with no session", async () => {
@@ -242,5 +260,55 @@ describe("the launcher's probe", () => {
     // and it is one path, not a family: anything under it is an ordinary
     // unauthenticated request
     expect((await knock("GET", "/healthz/extra")).status).toBe(401);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("what a call needs, through the door", () => {
+  const WASM = "/assets/ort-wasm-simd-threaded-Q1w2E3.wasm";
+  const GLUE = "/assets/ort-wasm-simd-threaded-Q1w2E3.mjs";
+  const MODEL = "/vad/silero_vad.onnx";
+
+  it("serves the speech detector's runtime with the types a browser insists on", async () => {
+    replies.set(WASM, reply(200, { "content-type": "application/wasm" }, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])));
+    replies.set(GLUE, reply(200, { "content-type": "text/javascript" }, "export default 1;"));
+    replies.set(MODEL, reply(200, { "content-type": "application/octet-stream" }, Buffer.from([8, 7, 18, 3])));
+    const cookie = await signedIn();
+
+    const wasm = await knock("GET", WASM, cookie);
+    expect(wasm.status).toBe(200);
+    // Streaming compilation refuses anything else.
+    expect(wasm.headers["content-type"]).toBe("application/wasm");
+    expect(wasm.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+
+    const glue = await knock("GET", GLUE, cookie);
+    // A module served as anything but JavaScript is refused.
+    expect(glue.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+
+    const model = await knock("GET", MODEL, cookie);
+    expect(model.status).toBe(200);
+    expect(model.headers["content-type"]).toBe("application/octet-stream");
+    // 2.2 MB, fetched on every call. Not hashed, so not immutable — but not
+    // re-downloaded on every call either.
+    expect(model.headers["cache-control"]).toBe("private, max-age=86400");
+    expect(model.raw.equals(Buffer.from([8, 7, 18, 3]))).toBe(true);
+  });
+
+  it("forwards the two voice routes a call makes", async () => {
+    replies.set("/api/tts/prepare", reply(200, { "content-type": "application/json" }, '{"ready":true,"utterances":["Hi."]}'));
+    replies.set("/api/bots/bot_1/call-note", reply(200, { "content-type": "application/json" }, '{"ok":true,"written":true}'));
+    const cookie = await signedIn();
+    const prepared = await knock("POST", "/api/tts/prepare", write(cookie), '{"text":"Hi."}');
+    expect(prepared.status).toBe(200);
+    expect(JSON.parse(prepared.body).utterances).toEqual(["Hi."]);
+    const noted = await knock("POST", "/api/bots/bot_1/call-note", write(cookie), '{"log":[]}');
+    expect(noted.status).toBe(200);
+    expect(asked).toEqual(["/api/tts/prepare", "/api/bots/bot_1/call-note"]);
+  });
+
+  it("serves none of it to a browser that has not signed in", async () => {
+    expect((await knock("GET", MODEL)).status).toBe(401);
+    expect((await knock("POST", "/api/tts/prepare", write(), "{}")).status).toBe(401);
+    expect(asked).toEqual([]);
   });
 });

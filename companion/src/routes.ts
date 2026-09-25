@@ -186,9 +186,12 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * under a `.js` URL and breaks the app in a way that survives reload. An
  * unmatched static path is a 404 at this door instead.
  *
- * `/assets/` carries vite's content hashes. Measured against the real build:
- * all 311 files in `dist/assets` match `[\w-]+\.(js|css)`, so the pattern is
- * the hash alphabet plus the extensions the build actually emits — not `.*`.
+ * `/assets/` carries vite's content hashes, so the pattern is the hash
+ * alphabet plus the extensions the build actually emits — not `.*`. `wasm`
+ * and `mjs` are ONNX Runtime's, which the call's speech detector loads by URL
+ * (`src/lib/silero-vad.ts:15-16`): the glue is imported as a module, so a
+ * refused `.mjs` is a call that never hears anyone. `onnx` is here for the
+ * day the model moves into the hashed tree; today's lives under `/vad/`.
  *
  * `browser.ts` imports this list as well as consuming it through
  * `denyReason`, because it has to know which allowed paths go to the static
@@ -196,10 +199,14 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
 export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/$/ },
   { method: "GET", path: /^\/index\.html$/ },
-  { method: "GET", path: /^\/assets\/[\w-]+\.(?:js|css|woff2|svg|png|json)$/ },
+  { method: "GET", path: /^\/assets\/[\w-]+\.(?:js|mjs|css|woff2|svg|png|json|wasm|onnx)$/ },
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
+  // The speech detector's model (`public/vad`, fetched by
+  // `src/lib/silero-vad.ts:35`). One file, by name: `/vad/*` would be the
+  // first wildcard on this list, and there is nothing else in there.
+  { method: "GET", path: /^\/vad\/silero_vad\.onnx$/ },
   // The diagram frame (src/mermaid-frame): chat renders Mermaid inside a
   // sandboxed, opaque-origin iframe loaded from this one static page. The
   // harness serves it with its own `sandbox allow-scripts` CSP header.
@@ -332,6 +339,16 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // voice out, never the workspace key
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+  // Splits a reply into utterances and says whether a voice is set up. It
+  // reads no key and writes nothing (`server/index.ts:16460-16466`); without
+  // it every spoken reply on a remote call fails before its first word.
+  { method: "POST", path: /^\/api\/tts\/prepare$/ },
+  // The note a call leaves in its conversation (`server/voice/call-note.ts`).
+  // Listed so this door is not the thing in the way. The harness is still the
+  // boundary, and today it answers 403 to every surface but the desktop
+  // (`server/index.ts:16551`); lifting that is a server decision, and the
+  // handler has no per-bot visibility check to lift it onto yet.
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/call-note$/ },
   // voice in, same rule — and the whole reason this exists, since the browser
   // door is the surface with no native dictation helper at all
   { method: "POST", path: /^\/api\/voice\/transcribe$/ },
