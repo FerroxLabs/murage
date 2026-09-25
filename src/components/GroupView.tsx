@@ -22,6 +22,7 @@ import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
+import { instructionsPreview } from "@/lib/channel-instructions";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ErrorBanner, MessageActionSheet, type MessageAction } from "./ChatView";
 import { Composer } from "./Composer";
@@ -1629,7 +1630,7 @@ export function GroupView({ group }: { group: Group }) {
           >
             <Pin size={12} className="shrink-0 text-ink-secondary" />
             <span className={cn("truncate text-[12.5px]", group.bulletin ? "text-ink-secondary" : "text-ink-secondary/60")}>
-              {group.bulletin.split("\n")[0] || "Add channel instructions…"}
+              {instructionsPreview(group.bulletin) || "Add channel instructions…"}
             </span>
           </button>
         )}

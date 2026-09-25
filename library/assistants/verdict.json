@@ -9,7 +9,7 @@
     "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.\n\nJob-to-be-done: **the last critical read before a piece of content ships** — a numeric score across eight dimensions, a flagged-issues list, and one specific edit that would lift the work meaningfully. Scoring, not rewriting. Quality gate, not craft labor.",
     "category": "Build",
     "author": {
-      "name": "Wayland"
+      "name": "Ferrox Labs"
     },
     "license": "Apache-2.0",
     "tags": [
