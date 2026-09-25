@@ -11,6 +11,8 @@
 // is 844 px wide and is still a phone, and a desktop window dragged narrow is
 // not one. The desktop app's bridge rules out a touch-screen laptop.
 
+import { hasNativeUserAgent } from "./native-shell";
+
 export interface PhoneProbe {
   userAgent: string;
   coarsePointer: boolean;
@@ -20,13 +22,14 @@ export interface PhoneProbe {
   desktopBridge: boolean;
 }
 
-/** Below Tailwind's md: the line NARROW_MEDIA_QUERY (lib/media-query.ts) draws. */
-const PHONE_SHORT_SIDE = 768;
-const NATIVE_SHELL = /\bMurageApp\//;
+/** Android's own sw600dp phone/tablet line, in CSS px. Tailwind's md (768)
+ * reads a coarse-pointer iPad mini (744 short side) as a phone; this does
+ * not. */
+const PHONE_SHORT_SIDE = 600;
 
 export function phoneClientFrom(probe: PhoneProbe): boolean {
   if (probe.desktopBridge) return false;
-  if (NATIVE_SHELL.test(probe.userAgent)) return true;
+  if (hasNativeUserAgent(probe.userAgent)) return true;
   return probe.coarsePointer && probe.shortSide > 0 && probe.shortSide < PHONE_SHORT_SIDE;
 }
 
@@ -48,4 +51,9 @@ export function isPhoneClient(): boolean {
 /** A poll interval for a phone: half the rate, same shape (see ComputerPanel). */
 export function phonePollMs(desktopMs: number, phone: boolean): number {
   return phone ? desktopMs * 2 : desktopMs;
+}
+
+/** Test seam; the renderer never calls this. */
+export function resetPhoneClientForTest(): void {
+  answer = undefined;
 }
