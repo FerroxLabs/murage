@@ -3,7 +3,7 @@
 // and the composer stays disabled behind it — so a gate that works
 // perfectly can still make a thread unusable. These tests pin the settle.
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
@@ -12,6 +12,7 @@ import {
   cancelPeerApprovalsForThread,
   dismissStalePeerCards,
   peerAllowKey,
+  peerApprovalFailure,
   requestPeerApproval,
   resolvePeerComms,
   type ApprovalBus,
@@ -80,6 +81,26 @@ describe("peer approval card lifecycle", () => {
     expect(store.messagesFor(from.threadId).find((m) => m.id === card.id)?.card?.answered).toBe("deny");
   });
 
+  it("reports an unanswered card as expired, not as the user's denial", async () => {
+    vi.useFakeTimers();
+    try {
+      const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+      const card = pendingCard(store, from)!;
+      await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
+      expect(await verdict).toBe("expired");
+      const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
+      expect(settled?.card?.dismissed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names who decided in the failure the calling bot reads", () => {
+    expect(peerApprovalFailure("deny")).toEqual({ error: "denied by user", approvalOutcome: "deny", approvalSource: "user" });
+    expect(peerApprovalFailure("expired")).toEqual({ error: "the approval card expired without an answer", approvalOutcome: "expired", approvalSource: "system" });
+    expect(peerApprovalFailure("cancelled")).toEqual({ error: "the approval was cancelled before a decision", approvalOutcome: "cancelled", approvalSource: "system" });
+  });
+
   it("answers an unknown requestId as not-ours, so provider cards still route", () => {
     expect(resolvePeerComms(bus, "not-a-peer-request", "allow")).toBe(false);
   });
@@ -97,28 +118,29 @@ describe("peer approval card lifecycle", () => {
     const card = pendingCard(store, from);
     expect(card).toBeTruthy();
     cancelPeerApprovalsFor(impostor.id);
-    await expect(verdict).resolves.toBe("deny");
+    await expect(verdict).resolves.toBe("cancelled");
   });
 
-  it("denies and settles when the bot on either side is deleted", async () => {
+  it("cancels and settles when the bot on either side is deleted", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
     const card = pendingCard(store, from)!;
 
     cancelPeerApprovalsFor(target.id);
 
-    expect(await verdict).toBe("deny");
+    // nobody said no: this is a cancellation, not the user's denial (upstream #1526)
+    expect(await verdict).toBe("cancelled");
     const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
     expect(settled?.card?.answered).toBe("deny");
     expect(settled?.card?.dismissed).toBe(true); // not the user's answer
   });
 
-  it("denies and settles approvals owned by an interrupted thread", async () => {
+  it("cancels and settles approvals owned by an interrupted thread", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
     const card = pendingCard(store, from)!;
 
     cancelPeerApprovalsForThread(from.threadId);
 
-    expect(await verdict).toBe("deny");
+    expect(await verdict).toBe("cancelled");
     const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
     expect(settled?.card?.answered).toBe("deny");
     expect(settled?.card?.dismissed).toBe(true);

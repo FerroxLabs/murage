@@ -21,7 +21,7 @@ import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace 
 import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
-import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
+import { peerApprovalFailure, requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
 import { canReach, type BotRecord, type GroupRecord } from "./store.ts";
 
 export interface DelegationItem {
@@ -65,7 +65,7 @@ interface PendingDelegationItem extends DelegationItem {
   waitingOnBusy?: boolean;
 }
 
-export type DelegationOutcome = "done" | "failed" | "denied" | "busy_gave_up" | "dropped" | "error";
+export type DelegationOutcome = "done" | "failed" | "denied" | "expired" | "cancelled" | "busy_gave_up" | "dropped" | "error";
 
 /** The durable terminal record of one handoff: what the delegating bot reads
  * back with check_delegation / wait_delegation. Bounded and pruned — this is
@@ -587,18 +587,22 @@ async function processOne(
       sourceThreadId,
     );
     if (verdict !== "allow") {
+      // Only the user's own no is "denied"; an expired or cancelled card
+      // says so (upstream #1526).
+      const denied = verdict === "deny";
+      const failure = peerApprovalFailure(verdict);
       recordDelegationReceipt({
         id: item.id,
         sourceThreadId,
         toBotId: target.id,
         toBotName: target.name,
-        status: "denied",
-        result: "the user denied this handoff",
+        status: denied ? "denied" : verdict,
+        result: denied ? "the user denied this handoff" : failure.error,
       });
       bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `Delegation to @${target.name} denied by user`, ok: false },
+        tool: { name: denied ? `Delegation to @${target.name} denied by user` : `Delegation to @${target.name}: ${failure.error}`, ok: false },
       });
       return "settled";
     }
