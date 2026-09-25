@@ -92,6 +92,9 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** "Always allow this exact command here": command, folder and engine
+   * (shared/exact-command.ts); the server decides it, never the client */
+  exactAllowKey?: string;
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;

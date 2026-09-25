@@ -24,6 +24,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+$/, purpose: "bot authority, engine, working folder and deletion" },
   { methods: ["GET", "DELETE"], path: /^\/api\/folder-trust$/, purpose: "per-folder trust record for an engine that gates repo-local files" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow$/, purpose: "persistent permission grants" },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow\/remove$/, purpose: "remove a persistent permission grant" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
   { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },
   { methods: ["POST"], path: /^\/api\/teams\/(import|export)$/, purpose: "team configuration and filesystem import/export" },

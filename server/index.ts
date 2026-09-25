@@ -116,7 +116,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict, approvalHoldNote, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type FullAccessOrigin } from "./auto-approve.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { classifyStopLine, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
 import { extendStepLine, newStepLine, type StepLevel } from "./full-access-steps.ts";
@@ -4210,8 +4210,16 @@ bus.subscribe((event: RuntimeEvent) => {
         if (stopHitByRequest.size >= 1_000) stopHitByRequest.delete(stopHitByRequest.keys().next().value!);
         stopHitByRequest.set(`${event.threadId}:${event.requestId}`, stopHit);
       }
+      // "Always allow this exact command here": the engine's own command, its
+      // folder and the engine asking (shared/exact-command.ts)
+      const exactCommand = permission && asker && !questionAsk && !event.approvalScope
+        ? exactCommandForRequest({ tool: event.tool, toolCall: event.toolCall, engine: event.providerInstanceId ?? asker.modelSelection.instanceId, turnCwd: turnCwdByThread.get(event.threadId) })
+        : undefined;
+      // offered on ordinary command cards only; a stop-line card keeps its own scoped grants
+      const exactAllowKey = stopHit ? undefined : exactAllowKeyFor(event.tool, event.summary, exactCommand);
       const verdict = permission && asker && event.requestId
         ? autoVerdict(asker, event.tool, event.summary, {
+            exactCommand,
             stopLine: questionAsk ? undefined : stopHit,
             stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
             unattended,
@@ -4294,6 +4302,7 @@ bus.subscribe((event: RuntimeEvent) => {
                   ? undefined
                   : stopHit ? stopLineKey(stopHit) : approvalKey(tool, summary, event.approvalScope),
                 ...(stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
+                ...(!event.approvalScope && exactAllowKey ? { exactAllowKey } : {}),
                 held: "Auto mode couldn't answer this one.",
                 approvalScope: event.approvalScope,
               },
@@ -4350,6 +4359,7 @@ bus.subscribe((event: RuntimeEvent) => {
               ? stopHit ? stopLineKey(stopHit) : approvalKey(event.tool, event.summary, event.approvalScope)
               : undefined,
           ...(permission && !event.approvalScope && stopHit && stopLineKey(stopHit) ? { taskAllowKey: stopLineKey(stopHit) } : {}),
+          ...(exactAllowKey ? { exactAllowKey } : {}),
           held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
@@ -13689,6 +13699,23 @@ const server = createServer(async (req, res) => {
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
     }
+    // Remove one remembered "Always allow" grant (Settings, Permissions).
+    // Desktop only, like adding one: desktop-policy.ts lists it as well.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow\/remove$/);
+    if (m && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const record = store.bot(m[1]);
+      if (!record) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      const key = typeof body?.key === "string" ? body.key : "";
+      if (!key) return json(res, 400, { error: "key required" });
+      // gone from the defaults new tasks copy AND from every task that copied it
+      store.patchBot(record.id, { alwaysAllow: (record.alwaysAllow ?? []).filter((held) => held !== key) }, { preserveTaskSettings: true });
+      for (const task of store.tasks(record.id)) if (task.alwaysAllow?.includes(key)) store.patchTask(record.id, task.threadId, { alwaysAllow: task.alwaysAllow.filter((held) => held !== key) });
+      const visible = wireBot(store.bot(record.id)!);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow$/);
     if (m && method === "POST") {
       const body = await readBody(req);
@@ -13719,13 +13746,17 @@ const server = createServer(async (req, res) => {
         message.card?.requestId &&
         !message.card.answered &&
         message.card.dismissed !== true &&
-        message.card.allowKey === allowKey &&
+        (message.card.allowKey === allowKey || message.card.exactAllowKey === allowKey) &&
         // In a room many bots share one transcript; only the bot that raised
         // the card may be granted anything by answering it.
         (!roomThread || message.from?.botId === grantBotId)
       );
       if (!pending) {
         return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
+      }
+      // the lists keep 200 grants; a new one past that used to vanish silently
+      if ([record.alwaysAllow, roomThread ? undefined : bot.alwaysAllow].some((held) => (held?.length ?? 0) >= 200 && !held!.includes(allowKey))) {
+        return json(res, 409, { error: "This bot already remembers 200 approvals. Remove some in Settings, Permissions, then try again." });
       }
       // The grant belongs to the BOT, not to whichever task happened to be
       // open. Writing it only to the task meant the bot's next task started

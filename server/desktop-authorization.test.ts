@@ -14,6 +14,7 @@ const administration: Array<[string, string]> = [
   ["PATCH", "/api/config"], ["PUT", "/api/config"],
   ["PATCH", "/api/bots/{bot}"], ["DELETE", "/api/bots/{bot}"],
   ["POST", "/api/bots/{bot}/always-allow"],
+  ["POST", "/api/bots/{bot}/always-allow/remove"],
   ["PATCH", "/api/groups/{group}"], ["DELETE", "/api/groups/{group}"], ["PATCH", "/api/groups/{group}/setup"],
   ["POST", "/api/teams/import"], ["POST", "/api/teams/export"], ["POST", "/api/team-library/github"],
   ["POST", "/api/bots/{bot}/assistant-profile"], ["POST", "/api/bots/{bot}/skills"], ["POST", "/api/bots/{bot}/skills/library"],

@@ -22,6 +22,7 @@ import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { BotPermissionDefault } from "./BotPermissionDefault";
+import { RememberedApprovals } from "./RememberedApprovals";
 import { defaultModeStep, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
@@ -809,6 +810,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onChoose={chooseDefaultMode}
             onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
           />
+
+          <RememberedApprovals bot={bot} desktop={desktop} />
 
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
