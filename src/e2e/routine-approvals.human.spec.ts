@@ -45,6 +45,7 @@ test.beforeAll(async () => {
       {id:'mk2',role:'bot',kind:'activity',at:at-5000,tool:{name:'Run now: RWA watch',ok:true}},
       {id:'u2',role:'user',kind:'text',at:at-4900,text:'Sweep the RWA feeds.'},
       {id:'b2',role:'bot',kind:'text',at:at-4800,text:'Swept: one new filing.'},
+      {id:'late',role:'bot',kind:'activity',at:at-4700,routineRunAgain:{routineId:'rwa-watch'},tool:{name:'This run of RWA watch ended before you answered, so nothing was run.',ok:false}},
     ];
     let parent=null;
     for(const row of rows){const message={...row,parentId:parent};parent=row.id;db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run('rwa-conversation',message.id,message.at,message.role,message.kind,message.text??null,JSON.stringify(message));}
@@ -148,4 +149,20 @@ test("the chip in any other conversation says it changes that conversation only"
   await expect(chip).toBeVisible();
   await chip.click();
   await expect(page.getByRole("menu").getByText("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.")).toBeVisible();
+});
+
+test("a card answered after its run ended offers Run again, which starts the routine", async ({ page }) => {
+  // open Dax on the routine's own conversation (an earlier test moved it)
+  const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
+  expect((await fetch(`${fixture.info.url}/api/bots/${botId}/tasks/rwa-conversation`, { method: "POST", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret } })).ok).toBe(true);
+  await start(page);
+  const sidebar = await openSidebar(page);
+  await sidebar.getByText("Dax", { exact: true }).first().click();
+  const row = page.getByTestId("routine-run-again");
+  await expect(row).toContainText("This run of RWA watch ended before you answered, so nothing was run.");
+  const runs = async () => ((await (await page.request.get(`${fixture.info.url}/api/routines`)).json()).runs as Array<{ routineId: string }>).filter((run) => run.routineId === "rwa-watch").length;
+  const before = await runs();
+  await row.getByRole("button", { name: "Run again" }).click();
+  await expect(row.getByRole("button", { name: "Started" })).toBeDisabled();
+  await expect.poll(runs).toBe(before + 1);
 });

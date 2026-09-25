@@ -210,6 +210,8 @@ export interface Message {
   /** steer-queue entry this drained user line came from. Pending chips
    * match on this id, not on equal text. Absent on ordinary sends. */
   queueId?: string;
+  /** activity: a card answered after its routine run ended; offers Run again. */
+  routineRunAgain?: { routineId: string };
 }
 
 export type GroupDefaultResponder =

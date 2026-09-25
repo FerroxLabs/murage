@@ -245,6 +245,9 @@ export interface Message {
    * run started with (shared/routine-run-marker.ts). A replayed history
    * labels it as that run. Server-written only. */
   routineRunPrompt?: { trigger: RoutineRunMarkerTrigger; routineName: string };
+  /** activity messages: a card answered after its routine run had ended.
+   * The row offers Run again for this routine. Server-written only. */
+  routineRunAgain?: { routineId: string };
 }
 
 export type GroupDefaultResponder =

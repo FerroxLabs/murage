@@ -62,6 +62,34 @@ async function makeBot(name: string) {
   return created.body.bot as { id: string; threadId: string; name: string };
 }
 
+let serverPort = 0;
+async function startServer() {
+  child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    cwd: join(SERVER_DIR, ".."),
+    env: {
+      ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+      HOME: home,
+      USERPROFILE: home,
+      MURAGE_PORT: String(serverPort),
+      MURAGE_WEBHOOK_PORT: String(serverPort + 1),
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+      MURAGE_PERMISSION_DENY_MS: String(DENY_MS),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stderr!.on("data", (c) => (stderr += c));
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* not up yet */ }
+    if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
+    await sleep(150);
+  }
+  desktopHeaders = {};
+  const proof = await request("GET", "/api/desktop-secret");
+  expect(proof.status).toBe(200);
+  desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+}
+
 const errorRows = (messages: any[]) => messages.filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("error:"));
 
 describe.skipIf(process.platform === "win32")("an unanswered approval in a routine run", () => {
@@ -81,30 +109,8 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
         },
       },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
-      cwd: join(SERVER_DIR, ".."),
-      env: {
-        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-        HOME: home,
-        USERPROFILE: home,
-        MURAGE_PORT: String(port),
-        MURAGE_WEBHOOK_PORT: String(port + 1),
-        MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
-        MURAGE_PERMISSION_DENY_MS: String(DENY_MS),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stderr!.on("data", (c) => (stderr += c));
-    const deadline = Date.now() + 20_000;
-    for (;;) {
-      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
-      await sleep(150);
-    }
-    desktopHeaders = {};
-    const proof = await request("GET", "/api/desktop-secret");
-    expect(proof.status).toBe(200);
-    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    serverPort = port;
+    await startServer();
   }, 40_000);
 
   afterAll(async () => {
@@ -152,4 +158,56 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     const errors = errorRows(await threadMessages(bot.threadId));
     expect(errors.filter((m) => /answered|permission request/i.test(String(m.tool?.name)))).toEqual([]);
   }, 60_000);
+
+  // Answering after the run ended (here: Murage restarted under it) used to
+  // hit "Couldn't deliver that answer — the request is no longer open", a
+  // dead end with an em dash. A routine's card now says the run ended and
+  // offers Run again, and an "Always allow for this routine" answer is kept.
+  it("a card answered after its run ended says so and offers Run again", async () => {
+    const bot = await makeBot("Late");
+    const created = await request("POST", "/api/routines", {
+      name: "Late tick", prompt: "Log the time", botId: bot.id, enabled: false,
+      schedule: { type: "interval", everyMinutes: 30, anchorAt: Date.now() }, timeoutMinutes: 20, permissionMode: "ask",
+    });
+    const routineId = created.body.routine.id as string;
+    const runId = (await request("POST", `/api/routines/${routineId}/run`)).body.run.id as string;
+    const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
+    const card = await poll(() => cardFor(threadId!), 20_000);
+    expect(card?.card?.routineAllowKey).toBeTruthy();
+    // a crash, not a clean stop: a clean stop closes its open cards itself
+    await waitForExit(child, { signal: "SIGKILL" });
+    await startServer();
+    expect(await runState(runId)).toMatchObject({ status: "failed" });
+    // the owner picks "Always allow for this routine" on the old card
+    expect((await request("POST", `/api/routines/${routineId}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    await request("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
+    const note = await poll(async () => (await threadMessages(threadId!)).find((m) => m.routineRunAgain) ?? null, 10_000);
+    expect(note).toMatchObject({
+      kind: "activity",
+      routineRunAgain: { routineId },
+      tool: { name: "This run of Late tick ended before you answered, so nothing was run. Always allow for this routine is saved, so the next run will not ask about it." },
+    });
+    expect(JSON.stringify(await threadMessages(threadId!))).not.toContain("\u2014");
+    // Run again starts the routine now, and the saved answer covers it
+    const again = await request("POST", `/api/routines/${routineId}/run`);
+    expect(again.status).toBe(201);
+    const done = await poll(async () => {
+      const run = await runState(again.body.run.id);
+      return run && ["completed", "failed", "cancelled"].includes(run.status) ? run : null;
+    }, 20_000);
+    expect(done).toMatchObject({ status: "completed" });
+  }, 120_000);
+
+  it("an ordinary late answer says so without an em dash", async () => {
+    const bot = await makeBot("Plain");
+    expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "log the time" })).status).toBe(202);
+    const card = await poll(() => cardFor(bot.threadId), 20_000);
+    // a crash, not a clean stop: a clean stop closes its open cards itself
+    await waitForExit(child, { signal: "SIGKILL" });
+    await startServer();
+    await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card!.card.requestId, behavior: "allow" });
+    const note = await poll(async () => (await threadMessages(bot.threadId)).find((m) => /no longer open/.test(String(m.tool?.name))) ?? null, 10_000);
+    expect(note?.tool?.name).toBe("Couldn't deliver that answer. The request is no longer open, so the action was not run.");
+    expect(note?.routineRunAgain).toBeUndefined();
+  }, 90_000);
 });

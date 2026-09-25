@@ -3421,13 +3421,30 @@ async function answerRequest(
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, answered: "unavailable", dismissed: true } });
     }
     if (messageId) askMessageByRequest.delete(`${threadId}:${requestId}`);
+    // A routine's own conversation: the run this card belonged to has ended
+    // (a crash, a cancel). Say so, keep an "Always allow for this routine"
+    // the owner just chose, and offer Run again instead of a dead end.
+    const routine = question ? undefined : routines?.listRoutines().find((candidate) => candidate.threadId === threadId && candidate.target === "bot");
+    if (routine) {
+      const saved = behavior === "allow" && Boolean(card?.routineAllowKey) && card?.routineId === routine.id && (routine.alwaysAllow ?? []).includes(card.routineAllowKey!);
+      store.appendMessage(threadId, {
+        role: "bot",
+        kind: "activity",
+        routineRunAgain: { routineId: routine.id },
+        tool: {
+          name: `This run of ${redactSecretsInText(routine.name)} ended before you answered, so nothing was run.${saved ? " Always allow for this routine is saved, so the next run will not ask about it." : ""}`,
+          ok: false,
+        },
+      });
+      return outcome;
+    }
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       tool: {
         name: question
-          ? "The bot stopped waiting for this answer — send it as a message from the question card"
-          : "Couldn't deliver that answer — the request is no longer open, so the action was not run",
+          ? "The bot stopped waiting for this answer. Send it as a message from the question card."
+          : "Couldn't deliver that answer. The request is no longer open, so the action was not run.",
         ok: false,
       },
     });
