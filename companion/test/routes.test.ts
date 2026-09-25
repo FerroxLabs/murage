@@ -533,6 +533,32 @@ describe("a call reaches the browser door", () => {
   });
 });
 
+// ── a chunk with a dot in its stem ───────────────────────────────────────
+//
+// vite keeps a chunk's source name ahead of its hash rather than replacing
+// it, so DOMPurify built as `purify.es-Cz4mVeUR.js`. The old pattern's
+// `[\w-]+` stopped at the first dot and refused it, which the E4 first-paint
+// budget check caught on the real build (Hetzner, d489043f) before it ever
+// reached a phone. The fix admits internal dots; these pin that the fix does
+// not also admit a traversal.
+describe("a dotted chunk name reaches the browser door", () => {
+  it("allows the DOMPurify chunk vite actually built", () => {
+    expect(askBrowser("GET", "/assets/purify.es-Cz4mVeUR.js")).toBeNull();
+  });
+
+  it("still refuses every way to fake a dot into a traversal", () => {
+    for (const path of [
+      "/assets/a..js",
+      "/assets/.js",
+      "/assets/x/../y.js",
+      "/assets/%2e%2e.js",
+      "/assets/a.js.map",
+    ]) {
+      expect(askBrowser("GET", path), path).not.toBeNull();
+    }
+  });
+});
+
 describe("the Inbox reaches the browser door", () => {
   it("allows the list and the read/snooze/clear marks to a signed-in browser", () => {
     expect(askBrowser("GET", "/api/inbox")).toBeNull();

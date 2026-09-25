@@ -16,14 +16,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
 
-/** 750 KiB at brotli quality 11. Set after the E1–E3 splits from the measured
- *  pre-split first paint (~900–950 KiB); the reasoning is in the plan that
- *  introduced it. Lower it when the first paint shrinks; never raise it to
+/** 720 KiB at brotli quality 11. Measured on Hetzner at d489043f: 698.0 KiB
+ *  after the E1–E3 splits, `ceil(698/10)*10 + 20` KiB per the plan's decision
+ *  rule. Lower it when the first paint shrinks further; never raise it to
  *  make a regression pass. */
-export const FIRST_PAINT_BROTLI_BUDGET = 750 * 1024;
+export const FIRST_PAINT_BROTLI_BUDGET = 720 * 1024;
 
-/** The door's `/assets/` pattern for the file types this checks (js, css). */
-export const DOOR_ASSET = /^assets\/[\w-]+\.(?:js|css|woff2|svg|png|json)$/;
+/** The door's `/assets/` pattern for the file types this checks (js, css,
+ *  mjs — companion/src/routes.ts BROWSER_STATIC, kept in sync by the
+ *  cross-check test in check-bundle-budget.test.mjs). The stem allows
+ *  internal dots (vite keeps a chunk's source name ahead of its hash, e.g.
+ *  `purify.es-Cz4mVeUR.js`); every dot still needs a `[\w-]` on both sides,
+ *  so `..`, a leading dot and a `/` still fail. */
+export const DOOR_ASSET = /^assets\/[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|css|woff2|svg|png|json|wasm|onnx)$/;
 
 export function brotliSize(bytes) {
   return brotliCompressSync(bytes, {
@@ -65,7 +70,7 @@ export function checkBudget(distDir, budget = FIRST_PAINT_BROTLI_BUDGET) {
   });
   const total = files.reduce((sum, entry) => sum + entry.brotli, 0);
   const emitted = new Set(Object.values(manifest).flatMap((chunk) => [chunk.file, ...(chunk.css ?? [])]));
-  const doorMisses = [...emitted].filter((file) => /\.(?:js|css)$/.test(file) && !DOOR_ASSET.test(file)).sort();
+  const doorMisses = [...emitted].filter((file) => /\.(?:js|mjs|css)$/.test(file) && !DOOR_ASSET.test(file)).sort();
   return { ok: total <= budget && doorMisses.length === 0, total, budget, files, doorMisses };
 }
 

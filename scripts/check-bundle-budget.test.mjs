@@ -61,18 +61,28 @@ describe("first-paint payload budget", () => {
   });
 
   it("fails a chunk the browser door would 404, even a lazy one", () => {
-    // companion/src/routes.ts serves /assets/ only for [\w-]+ names: a phone
-    // would get a 404 for this chunk while the desktop works.
-    const { dist } = fixture({ lazyName: "assets/ort.wasm.min-Cc3.js" });
+    // companion/src/routes.ts serves /assets/ only for [\w-]+ segments: a
+    // space in the name still 404s a phone while the desktop works.
+    const { dist } = fixture({ lazyName: "assets/a b.js" });
     const result = checkBudget(dist, 1_000_000);
-    expect(result.doorMisses).toEqual(["assets/ort.wasm.min-Cc3.js"]);
+    expect(result.doorMisses).toEqual(["assets/a b.js"]);
     expect(result.ok).toBe(false);
+  });
+
+  it("no longer flags a dotted chunk name as a door miss", () => {
+    // vite keeps a chunk's source name ahead of its hash, e.g.
+    // `purify.es-Cz4mVeUR.js` — the door 404'd this until the fix (E4
+    // first-paint budget, Hetzner build d489043f, first paint 698.0 KiB).
+    const { dist } = fixture({ lazyName: "assets/purify.es-Cz4mVeUR.js" });
+    const result = checkBudget(dist, 1_000_000);
+    expect(result.doorMisses).toEqual([]);
+    expect(result.ok).toBe(true);
   });
 
   it("agrees with the browser door about script and style names", () => {
     const door = BROWSER_STATIC.filter((entry) => entry.method === "GET").map((entry) => entry.path);
     const served = (name) => door.some((path) => path.test(`/${name}`));
-    for (const name of ["assets/CallView-Cc3_x.js", "assets/index-Dd4.css", "assets/ort.wasm.min-Cc3.js", "assets/a b.js"]) {
+    for (const name of ["assets/CallView-Cc3_x.js", "assets/index-Dd4.css", "assets/ort.wasm.min-Cc3.js", "assets/purify.es-Cz4mVeUR.js", "assets/a b.js", "assets/a..js", "assets/.js", "assets/a.js.map"]) {
       expect(DOOR_ASSET.test(name), name).toBe(served(name));
     }
   });
@@ -84,6 +94,6 @@ describe("first-paint payload budget", () => {
   });
 
   it("holds the budget the spec set, not a placeholder", () => {
-    expect(FIRST_PAINT_BROTLI_BUDGET).toBe(750 * 1024);
+    expect(FIRST_PAINT_BROTLI_BUDGET).toBe(720 * 1024);
   });
 });

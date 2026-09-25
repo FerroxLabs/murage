@@ -240,13 +240,21 @@ export const MERMAID_FRAME_FILE = /^\/mermaid-frame-[0-9a-f]{16}\.html$/;
  * refused `.mjs` is a call that never hears anyone. `onnx` is here for the
  * day the model moves into the hashed tree; today's lives under `/vad/`.
  *
+ * The stem allows internal dots (`(?:\.[\w-]+)*`) because vite keeps a
+ * chunk's source name ahead of its hash — `purify.es-Cz4mVeUR.js` — and this
+ * door 404'd it while the desktop, which does not go through this pattern,
+ * worked (E4 first-paint budget, Hetzner build d489043f). Every dot is still
+ * required to be followed by at least one `[\w-]` character, so `..`, a
+ * leading dot, a `/`, and a percent-encoded dot all still fail: there is no
+ * empty segment this can produce.
+ *
  * `browser.ts` imports this list as well as consuming it through
  * `denyReason`, because it has to know which allowed paths go to the static
  * branch and which are API. */
 export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/$/ },
   { method: "GET", path: /^\/index\.html$/ },
-  { method: "GET", path: /^\/assets\/[\w-]+\.(?:js|mjs|css|woff2|svg|png|json|wasm|onnx)$/ },
+  { method: "GET", path: /^\/assets\/[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|css|woff2|svg|png|json|wasm|onnx)$/ },
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
