@@ -1,5 +1,5 @@
 {
   "title": "Features",
   "icon": "Sparkles",
-  "pages": ["index", "bots-and-tasks", "chat-and-teams", "approvals-and-inspector", "attachments-and-search", "automation", "voice-and-memory"]
+  "pages": ["index", "bots-and-tasks", "new-bot-and-team", "chat-and-teams", "approvals-and-inspector", "automation", "inbox", "skills", "what-shapes-a-bot", "house-rules-and-about-me", "engine-commands", "attachments-and-search", "voice-and-memory", "whats-new-and-tray"]
 }

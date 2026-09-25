@@ -1,0 +1,46 @@
+---
+title: Skills and Skill Guard
+description: Find, import, read, edit and duplicate skills in Settings → Skills, add them to a bot, and what the Skill Guard results mean.
+icon: BookOpen
+---
+
+A skill is a set of instructions a bot can follow, such as how to run a weekly report or review a pull request. Every skill can be read in plain words before any bot uses it.
+
+## Settings → Skills
+
+Open **Settings → Skills** to see every skill in one place. Search first ("Search skills"), then Your skills, then Built-in, then the Library. Browse the library by typing in the search box or by picking from the Topic dropdown beside it. Each row says which bots use it ("Used by ...") or "Not used yet".
+
+Open any skill to read what it tells the bot, and switch it on for a bot under Use with. Skills in Settings are shown in the desktop app only.
+
+## Import a skill
+
+In **Settings → Skills** press Import skill. Drop a skill's file, folder or zip on the drop zone, use Choose a file… or Choose a folder…, or paste a link to a skill on GitHub and press Import.
+
+The skill is checked by Skill Guard first and is switched on for no bot until you choose. When it is done you see "(name) is in your skills" with Open it and Import another. If you already have a skill with that name, Murage asks whether to Replace it.
+
+## Skill Guard
+
+Skill Guard checks every skill before a bot can use it: on import, on install, on every switch-on, after every edit, and again at startup for skills already switched on. A skill comes out one of three ways:
+
+- **Checked, nothing risky found.** A quiet green shield. Library skills that ship with Murage say Built-in instead.
+- **Needs a look.** The skill shows "Worth a look before you use it:" with what was found in plain words (Show the lines shows exactly where). It switches on only after you confirm "Use it anyway".
+- **Blocked.** "This skill was blocked by the safety check and can't be switched on." It has no switch and no Add button. An imported skill can be deleted with Delete.
+
+A skill that is already on and later comes out Blocked is switched off.
+
+## Edit and Duplicate a skill
+
+The skill reader has Edit and Duplicate.
+
+- **Edit** changes the name, what it's for and what it tells the bot, in the rich editor. Saving checks it again with Skill Guard, and every bot that uses it gets the new version. Built-in skills can't be changed, so editing one edits your own copy and says so.
+- **Duplicate** makes a copy in Your skills, labelled with where it came from ("Copied from ...").
+
+## Add a skill inside a bot
+
+Open **Bot settings → Skills** and press Add a skill. A picker opens right there, titled "Add a skill to (bot)": search Your skills and the Library ("What should it know how to do?"), open one to read it, and press Add. It arrives switched on. You can also right-click a bot in the sidebar and choose Add a skill, which opens the same picker in that bot's window.
+
+Each skill in the bot's Skills panel can be read, switched off or removed at any time.
+
+## The Chief of Staff guide
+
+The Chief of Staff guide belongs to your workspace Chief only; no other bot gets it. It sits at the top of the Chief's Skills panel, tagged Built-in, with Read it and a switch to stop using it.

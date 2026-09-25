@@ -1,6 +1,6 @@
 ---
 title: Chat, tasks, rooms, and teams
-description: Organize agents like contacts and let them collaborate without losing control of each task.
+description: Conversations, channels and teams, Snooze, managing a team (rename, members, lead, delete) and deleting conversations.
 icon: MessagesSquare
 ---
 
@@ -8,7 +8,7 @@ icon: MessagesSquare
 
 A bot is a durable agent identity. A task is one conversation with that bot and has its own transcript, provider session, approvals, costs, and state.
 
-Use separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported providers can be steered while they work.
+Use separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported providers can be steered while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing.
 
 ## Rooms
 
@@ -25,3 +25,33 @@ Editing an earlier message creates a new conversation path. Murage avoids resumi
 ## Memory and working folders
 
 Bot memory is visible and editable. A bot may also have a dedicated working folder; rooms can use a shared working folder. Cloud workspaces use a stable default so generated files remain discoverable across tasks.
+
+## Snooze a conversation
+
+Snooze a conversation when you want it quiet for a while. Right-click a bot or channel in the sidebar and choose Snooze…, or press the clock next to a conversation in a conversation list ("Snooze this conversation"). Pick 1 hour, Tomorrow morning, Next week, or Pick a time (up to 30 days ahead).
+
+A snoozed conversation stays where it is, marked with a bell icon ("Snoozed until ..."). Its unread counts are ignored until the time comes, and then it comes back marked unread. Anything owed to you, such as an approval or a question, wakes it straight away. A conversation that is waiting on your answer cannot be snoozed until you answer it.
+
+To wake it early, open Snooze… again and press Unsnooze, or press the clock in the conversation list.
+
+## Question badge
+
+A conversation with a question waiting for you shows a badge with the count, for example "1 question for you". It clears when you answer.
+
+## Manage a team
+
+Open the team's options (the … on the team heading in the sidebar, "Team options") to Rename team, Manage members and lead, or Delete team. The same settings open from Manage (team) team on the About tab of a team channel's details.
+
+- **Rename**: type the new name and press Save name. Its bots, channels, instructions and team memory keep working under the new name.
+- **Members**: tick the bots on the team and press Save members. Bots on a team can ask and hand work to each other. Bots you remove stay, without a team.
+- **Team lead**: pick one in the Team lead menu, or No lead. The lead coordinates the team and is the one the Chief of Staff hands work to. You can also right-click a bot and choose Make Team leader.
+
+## Delete a team
+
+Delete team removes the heading from the sidebar. No bot, channel or conversation is deleted. Murage asks, right there, what should happen to its bots and channels: Keep them as bots without a team, or Archive them (restore them later from Archived bots). Every conversation is kept. Press Delete (team name) to finish, or Cancel.
+
+## Deleting conversations and channels
+
+Right-click a channel in the sidebar, or use the channel's More actions menu, and choose Delete. Type the name to confirm. Every message in it goes, but the bots stay. Deleting the last conversation in a channel leaves a fresh, empty one, and a channel shows an error instead of failing quietly when something goes wrong.
+
+Editing a message and running it again starts the new run once.
