@@ -10402,14 +10402,17 @@ const thumbnails = createThumbnails({ resize: loadResize, maxBytes: 32 * 1024 * 
 async function sendImage(res: ServerResponse, url: URL, key: string, bytes: Buffer, mime: string, headers: Record<string, string> = {}) {
   const width = thumbnailWidth(url.searchParams.get("w"));
   if (width === null) return json(res, 400, { error: `w must be one of ${THUMBNAIL_WIDTHS.join(", ")}` });
-  const body = (width !== undefined
-    && (await thumbnails.variant(`${key}:${createHash("sha256").update(bytes).digest("base64url")}`, bytes, mime, width)))
-    || { bytes, mime };
+  const served = width === undefined
+    ? { image: null, final: true }
+    : await thumbnails.serve(`${key}:${createHash("sha256").update(bytes).digest("base64url")}`, bytes, mime, width);
+  const body = served.image ?? { bytes, mime };
   res.writeHead(200, {
     "content-type": body.mime,
     "content-length": String(body.bytes.byteLength),
-    // an attachment and a settled message's image never change
-    "cache-control": "private, max-age=31536000, immutable",
+    // An attachment and a settled message's image never change. An original
+    // sent for now in place of a thumbnail (every resize busy, or no
+    // resizer) must not be kept for a year under the thumbnail's URL.
+    "cache-control": served.final ? "private, max-age=31536000, immutable" : "private, no-cache",
     ...headers,
   });
   res.end(body.bytes);

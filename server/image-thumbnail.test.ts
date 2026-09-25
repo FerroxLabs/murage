@@ -182,6 +182,33 @@ describe("createThumbnails", () => {
     expect(resize).toHaveBeenCalledTimes(3);
   });
 
+  it("says a busy or resizer-less original is for now, and every other answer is final", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const resize: Resize = vi.fn(async (_bytes, width) => { await gate; return width === 1280 ? null : small; });
+    const thumbs = createThumbnails({ resize: async () => resize, maxBytes: 10_000, maxConcurrent: 1 });
+    const busy = thumbs.serve("a", source, "image/png", 320);
+    expect(await thumbs.serve("b", source, "image/png", 320)).toEqual({ image: null, final: false });
+    finish();
+    expect(await busy).toEqual({ image: small, final: true });
+    expect(await thumbs.serve("a", source, "image/png", 320)).toEqual({ image: small, final: true });
+    // already no wider than asked, and a type never resized: the original for good
+    expect(await thumbs.serve("a", source, "image/png", 1280)).toEqual({ image: null, final: true });
+    expect(await thumbs.serve("g", source, "image/gif", 320)).toEqual({ image: null, final: true });
+    const none = createThumbnails({ resize: async () => null, maxBytes: 10_000 });
+    expect(await none.serve("a", source, "image/png", 320)).toEqual({ image: null, final: false });
+  });
+
+  it("frees a resize slot when the resize fails, so the next image still gets one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resize: Resize = vi.fn(async (bytes) => { if (bytes === JPEG) throw new Error("corrupt"); return small; });
+    const thumbs = createThumbnails({ resize: async () => resize, maxBytes: 10_000, maxConcurrent: 1 });
+    expect(await thumbs.serve("bad", JPEG, "image/jpeg", 320)).toEqual({ image: null, final: true });
+    expect(await thumbs.serve("good", source, "image/png", 320)).toEqual({ image: small, final: true });
+    expect(resize).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it("never resizes a GIF, an SVG or an unknown type", async () => {
     const resize: Resize = vi.fn(async () => small);
     const thumbs = createThumbnails({ resize: async () => resize, maxBytes: 10_000 });

@@ -122,6 +122,18 @@ export function loadResize(): Promise<Resize | null> {
   return loaded;
 }
 
+/** An answer to a `?w=` view. `image` null means "send the original".
+ * `final` says whether that answer holds for good (a thumbnail, or an image
+ * that will never get one) or only for now (every resize slot busy, or no
+ * resizer loaded): a caller must not let a client cache a for-now original
+ * under the thumbnail's URL as if it were final. */
+export interface Served {
+  image: Thumbnail | null;
+  final: boolean;
+}
+const FOR_GOOD: Served = { image: null, final: true };
+const FOR_NOW: Served = { image: null, final: false };
+
 /** Remembered "no thumbnail needed" answers; cleared wholesale when full. */
 const MAX_ORIGINAL_MARKS = 10_000;
 
@@ -136,7 +148,7 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
   const cache = new Map<string, Thumbnail>();
   const original = new Set<string>();
   // Concurrent first views of one image share one decode.
-  const inFlight = new Map<string, Promise<Thumbnail | null>>();
+  const inFlight = new Map<string, Promise<Served>>();
   let held = 0;
 
   const markOriginal = (id: string) => {
@@ -144,13 +156,13 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
     original.add(id);
   };
 
-  const make = async (id: string, source: Buffer, width: ThumbnailWidth): Promise<Thumbnail | null> => {
+  const make = async (id: string, source: Buffer, width: ThumbnailWidth): Promise<Served> => {
     if (!rasterFormat(source)) {
       markOriginal(id);
-      return null;
+      return FOR_GOOD;
     }
     const resize = await options.resize();
-    if (!resize) return null;
+    if (!resize) return FOR_NOW;
     let made: Thumbnail | null;
     try {
       made = await resize(source, width);
@@ -160,14 +172,14 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
       markOriginal(id);
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`[thumbnails] ${id} could not be resized, serving the original: ${reason.slice(0, 200)}`);
-      return null;
+      return FOR_GOOD;
     }
     if (!made || made.bytes.byteLength >= source.byteLength) {
       markOriginal(id);
-      return null;
+      return FOR_GOOD;
     }
     // Larger than the whole cache: serve it, but do not flush everything else for it.
-    if (made.bytes.byteLength > options.maxBytes) return made;
+    if (made.bytes.byteLength > options.maxBytes) return { image: made, final: true };
     const previous = cache.get(id);
     if (previous) {
       cache.delete(id);
@@ -180,27 +192,33 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
       cache.delete(oldest);
       held -= entry.bytes.byteLength;
     }
-    return made;
+    return { image: made, final: true };
+  };
+
+  const serve = async (key: string, source: Buffer, mime: string, width: ThumbnailWidth): Promise<Served> => {
+    if (!RASTER_MIMES.has(mime)) return FOR_GOOD;
+    const id = `${key}@${width}`;
+    if (original.has(id)) return FOR_GOOD;
+    const hit = cache.get(id);
+    if (hit) {
+      cache.delete(id);
+      cache.set(id, hit);
+      return { image: hit, final: true };
+    }
+    const pending = inFlight.get(id);
+    if (pending) return pending;
+    // Not remembered: this image is refused for now, not for good.
+    if (inFlight.size >= maxConcurrent) return FOR_NOW;
+    const work = make(id, source, width).finally(() => inFlight.delete(id));
+    inFlight.set(id, work);
+    return work;
   };
 
   return {
+    serve,
+    /** The thumbnail, or null for the original; `serve` also says for how long. */
     async variant(key: string, source: Buffer, mime: string, width: ThumbnailWidth): Promise<Thumbnail | null> {
-      if (!RASTER_MIMES.has(mime)) return null;
-      const id = `${key}@${width}`;
-      if (original.has(id)) return null;
-      const hit = cache.get(id);
-      if (hit) {
-        cache.delete(id);
-        cache.set(id, hit);
-        return hit;
-      }
-      const pending = inFlight.get(id);
-      if (pending) return pending;
-      // Not remembered: this image is refused for now, not for good.
-      if (inFlight.size >= maxConcurrent) return null;
-      const work = make(id, source, width).finally(() => inFlight.delete(id));
-      inFlight.set(id, work);
-      return work;
+      return (await serve(key, source, mime, width)).image;
     },
     /** Bytes of thumbnails held; for tests and diagnostics. */
     heldBytes(): number {

@@ -193,4 +193,16 @@ it.each(CASES)("settles $tool into the transcript only when it touched the scree
   const image = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image`, { headers });
   expect(image.status).toBe(200);
   expect(Buffer.from(await image.arrayBuffer()).equals(frameFor(boxId))).toBe(true);
+  // `?w=`: this synthetic frame is not a raster image, so it is the frame
+  // itself, cached as final like the unsized route
+  const thumb = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image?w=320`, { headers });
+  expect(thumb.status).toBe(200);
+  expect(thumb.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  expect(thumb.headers.get("content-type")).toBe(image.headers.get("content-type"));
+  expect(Buffer.from(await thumb.arrayBuffer()).equals(frameFor(boxId))).toBe(true);
+  const refused = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image?w=321`, { headers });
+  expect(refused.status).toBe(400); await refused.text();
+  // existence is answered before `w` is looked at
+  const missing = await fetch(`${fixture!.info.url}/api/threads/no-such-thread/messages/${screens[0].id}/image?w=321`, { headers });
+  expect(missing.status).toBe(404); await missing.text();
 }, 45_000);
