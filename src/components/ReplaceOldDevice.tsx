@@ -2,6 +2,7 @@ import type { PhoneDevice } from "./PhoneSetupFlow";
 
 /** "5 min ago", for a device list. */
 export function lastSeenLabel(at: number, now = Date.now()): string {
+  if (!Number.isFinite(at)) return "unknown";
   const seconds = Math.round((now - at) / 1000);
   if (seconds < 90) return "just now";
   const minutes = Math.round(seconds / 60);
@@ -41,23 +42,26 @@ export function ReplaceOldDevice({
         longer use. The code on screen keeps working.
       </p>
       <ul className="mt-2 flex flex-col gap-1.5">
-        {candidates.map((device) => (
-          <li key={device.id} className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate text-[12.5px] text-ink">{device.name}</div>
-              <div className="text-[11px] text-ink-secondary">Last seen {lastSeenLabel(device.lastSeenAt)}</div>
-            </div>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onReplace(device.id)}
-              aria-label={`Replace ${device.name}`}
-              className="min-h-9 shrink-0 rounded-lg px-3 text-[12px] text-danger hover:bg-control disabled:opacity-40"
-            >
-              Replace
-            </button>
-          </li>
-        ))}
+        {candidates.map((device) => {
+          const seen = lastSeenLabel(device.lastSeenAt);
+          return (
+            <li key={device.id} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[12.5px] text-ink">{device.name}</div>
+                <div className="text-[11px] text-ink-secondary">Last seen {seen}</div>
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onReplace(device.id)}
+                aria-label={`Replace ${device.name}, last seen ${seen}`}
+                className="min-h-9 shrink-0 rounded-lg px-3 text-[12px] text-danger hover:bg-control disabled:opacity-40"
+              >
+                Replace
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

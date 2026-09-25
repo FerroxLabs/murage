@@ -33,7 +33,7 @@ describe("Replace an old device", () => {
     expect(html).toContain("Replace an old device");
     expect(html).toContain("already has 20 devices");
     expect(html.indexOf("Old iPad")).toBeLessThan(html.indexOf("Pixel"));
-    expect(html).toContain('aria-label="Replace Old iPad"');
+    expect(html).toContain('aria-label="Replace Old iPad, last seen 40 d ago"');
     expect(html).toContain('type="button"');
   });
 
@@ -43,6 +43,8 @@ describe("Replace an old device", () => {
     expect(lastSeenLabel(now - 5 * 60_000, now)).toBe("5 min ago");
     expect(lastSeenLabel(now - 3 * 3_600_000, now)).toBe("3 h ago");
     expect(lastSeenLabel(now - 40 * 86_400_000, now)).toBe("40 d ago");
+    expect(lastSeenLabel(now + 60_000, now)).toBe("just now");
+    expect(lastSeenLabel(NaN, now)).toBe("unknown");
   });
 
   it("is offered on both pairing screens, and replacing is the ordinary revoke", () => {
