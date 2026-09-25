@@ -156,6 +156,9 @@ export const SETUP_READ_RETRY_LIMIT = 5;
 let idleReads = 0;
 let lastSeen = "";
 let failedReads = 0;
+/** The route answered 403/404: this surface (a phone through the door) is
+ * never shown the first run, so asking again only adds 404s to its log. */
+let refused = false;
 
 /** Whether a poll is still worth making. Pure, and exported, so the rule can
  *  be read and tested without a timer. */
@@ -217,6 +220,7 @@ function publish(view: SetupView): void {
 }
 
 export function readSetupView(force = false): Promise<SetupView | null> {
+  if (refused) return Promise.resolve(null);
   const now = Date.now();
   if (!force && cached && now - cached.at < FRESH_MS) return Promise.resolve(cached.view);
   if (!force && inFlight) return inFlight;
@@ -232,7 +236,11 @@ export function readSetupView(force = false): Promise<SetupView | null> {
       }
       return cached?.view ?? null;
     })
-    .catch(() => {
+    .catch((error: { status?: unknown } | null) => {
+      if (error?.status === 403 || error?.status === 404) {
+        refused = true;
+        return null;
+      }
       scheduleRetry();
       return null;
     })
@@ -254,6 +262,7 @@ export function readSetupView(force = false): Promise<SetupView | null> {
  * answers that stopped it is over by definition.
  */
 export function forgetSetupView(): void {
+  refused = false;
   cached = null;
   inFlight = null;
   idleReads = 0;

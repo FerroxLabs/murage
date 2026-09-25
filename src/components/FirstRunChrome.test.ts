@@ -153,3 +153,28 @@ describe("a setup read that failed", () => {
     expect(calls).toBeGreaterThan(1);
   });
 });
+
+describe("a surface that is never shown the first run", () => {
+  it("asks once, hears 404, and stops asking for the life of the page", async () => {
+    // A phone through the door: the door does not carry /api/setup at all.
+    reply = () => Object.assign(new Error("no such route"), { status: 404 });
+    forgetSetupView(); // re-reads once, and hears the 404
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await readSetupView(true)).toBeNull();
+    await letTimeRun(10);
+    expect(await readSetupView()).toBeNull();
+    expect(await readSetupView(true)).toBeNull();
+    expect(calls).toBe(1);
+    forgetSetupView();
+  });
+
+  it("still retries a server that is only restarting", async () => {
+    reply = () => Object.assign(new Error("Bad Gateway"), { status: 502 });
+    forgetSetupView();
+    await readSetupView(true);
+    await letTimeRun(3);
+    expect(calls).toBeGreaterThan(1);
+    reply = () => ({ ...view(), next: null });
+    forgetSetupView();
+  });
+});

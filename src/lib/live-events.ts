@@ -98,6 +98,11 @@ const bridgeSecret = (): string => {
 let desktopSecret = bridgeSecret();
 let pendingSecret: Promise<string> | null = null;
 let secretRetryable = false;
+/** The harness said 403/404: this renderer is not the desktop, and asking
+ * again cannot change that for the life of the page. Every `api()` call
+ * awaits `ensureDesktopSurfaceSecret`, so without this a phone re-asked on
+ * each request and filled the door's log with 404s. */
+let secretRefused = false;
 
 /** A failed secret lookup cannot confirm that this renderer is remote. */
 export function desktopSurfaceSecretNeedsRetry(): boolean {
@@ -133,6 +138,7 @@ export function ensureDesktopSurfaceSecret(refresh = false): Promise<string> {
     secretRetryable = false;
     return Promise.resolve(desktopSecret);
   }
+  if (secretRefused) return Promise.resolve(desktopSecret);
   // Deliberately NOT behind `import.meta.env.DEV`.
   //
   // It used to be, and that left a real configuration with no path to the
@@ -166,6 +172,7 @@ export function ensureDesktopSurfaceSecret(refresh = false): Promise<string> {
     .fetch(DEV_SECRET_PATH)
     .then((res) => {
       secretRetryable = res.ok || (res.status !== 403 && res.status !== 404);
+      if (res.status === 403 || res.status === 404) secretRefused = true;
       return res.ok ? res.json() : null;
     })
     .then((body: { secret?: unknown } | null) => {
@@ -194,6 +201,7 @@ export function setDesktopSurfaceSecretForTest(value: string): void {
   desktopSecret = value;
   pendingSecret = null;
   secretRetryable = false;
+  secretRefused = false;
 }
 
 export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {

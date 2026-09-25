@@ -474,6 +474,15 @@ describe("desktop proof recovery", () => {
     stop();
   });
 
+  it("asks a refusing harness once per page, not once per API call", async () => {
+    // A phone through the door: every api() call awaits the secret first.
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", request);
+    for (let call = 0; call < 5; call++) expect(await ensureDesktopSurfaceSecret()).toBe("");
+    expect(request).toHaveBeenCalledExactlyOnceWith(DEV_SECRET_PATH);
+    expect(desktopSurfaceSecretNeedsRetry()).toBe(false);
+  });
+
   it("does not probe a forbidden secret endpoint on remote reconnects", async () => {
     const request = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", request);
