@@ -28,7 +28,7 @@ describe("chiefOfStaffSystemPrompt roster caps", () => {
     const team = Array.from({ length: 60 }, (_, i) => ({ id: `bot${i}`, name: `Bot ${i}` }));
     const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Atlas" }, ...team], true);
     expect(prompt).toContain("Bot 39");
-    expect(prompt).not.toContain("Bot 40 —");
+    expect(prompt).not.toContain("Bot 40 (");
     expect(prompt).toContain("…and 20 more");
   });
 });
@@ -46,11 +46,11 @@ describe("chiefOfStaffSystemPrompt", () => {
     const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
 
     expect(prompt).toContain("Chief of Staff for the Work section");
-    expect(prompt).toContain("Quill — Writer: Drafts concise copy (available)");
-    expect(prompt).toContain("Patch — Engineer (working right now)");
+    expect(prompt).toContain("Quill (Writer, available): Drafts concise copy");
+    expect(prompt).toContain("Patch (Engineer, working right now)");
     expect(prompt).not.toContain("Secret");
     expect(prompt).not.toContain("Scout");
-    expect(prompt).not.toContain("Atlas —");
+    expect(prompt).not.toContain("Atlas (");
     expect(prompt).toContain("use delegate_bot");
     expect(prompt).toContain("keeps you available to the user");
     expect(prompt).toContain("delivers the teammate's completed result back into this conversation automatically");
@@ -94,8 +94,8 @@ describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
     const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
 
     expect(prompt).toContain("Chief of Staff for this workspace");
-    expect(prompt).toContain("Sales — @Rex — Head of Sales: Owns pipeline (available); 2 specialists");
-    expect(prompt).toContain("Content — @Nia — Editorial lead (available); 0 specialists");
+    expect(prompt).toContain("Sales, led by @Rex (Head of Sales, available): Owns pipeline; 2 specialists");
+    expect(prompt).toContain("Content, led by @Nia (Editorial lead, available); 0 specialists");
     // "that's not her department": the grunts are counted, never named
     expect(prompt).not.toContain("Dash");
     expect(prompt).not.toContain("Wick");
@@ -105,20 +105,20 @@ describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
 
   it("says a team has no leader rather than working around it", () => {
     const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
-    expect(prompt).toContain("Ops — no leader yet (1 bot). Say so rather than working around it.");
+    expect(prompt).toContain("Ops: no leader yet (1 bot). Say so rather than working around it.");
   });
 
   it("lists bots in the chief's own section as direct reports", () => {
     const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
     expect(prompt).toContain("Also reporting to you directly:");
-    expect(prompt).toContain("- @Scribe — Note taker (available)");
+    expect(prompt).toContain("- @Scribe (Note taker, available)");
   });
 
   it("keeps the section-lead prompt verbatim for a bot without the tier", () => {
     const prompt = chiefOfStaffSystemPrompt("rex", workspace, true);
     expect(prompt).toContain("Chief of Staff for the Sales section");
-    expect(prompt).toContain("Dash — SDR (available)");
-    expect(prompt).toContain("Wick — SDR (working right now)");
+    expect(prompt).toContain("Dash (SDR, available)");
+    expect(prompt).toContain("Wick (SDR, working right now)");
     expect(prompt).not.toContain("Chief of Staff for this workspace");
     expect(prompt).not.toContain("Secret");
   });
@@ -166,17 +166,17 @@ describe("chiefOfStaffSystemPrompt — individual assistants", () => {
     const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
 
     expect(prompt).toContain("Individual assistants (they lead no team and report to you directly):");
-    expect(prompt).toContain("- @Bruce — Trading assistant: Runs the book (available)");
+    expect(prompt).toContain("- @Bruce (Trading assistant, available): Runs the book");
     // the one thing that must not happen: Bruce rendered as a team
-    expect(prompt).not.toContain("Smart Trader — @Bruce");
-    expect(prompt).not.toContain("Smart Trader — no leader yet");
+    expect(prompt).not.toContain("Smart Trader, led by @Bruce");
+    expect(prompt).not.toContain("Smart Trader: no leader yet");
     expect(prompt).toContain("An individual assistant is not a team leader");
   });
 
   it("keeps the group an individual sits in out of the team list entirely", () => {
     const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
     const teams = prompt.slice(prompt.indexOf("Team leaders:"), prompt.indexOf("Individual assistants"));
-    expect(teams).toContain("Sales — @Rex");
+    expect(teams).toContain("Sales, led by @Rex");
     expect(teams).not.toContain("Smart Trader");
   });
 
@@ -196,7 +196,7 @@ describe("chiefOfStaffSystemPrompt — individual assistants", () => {
       workspace[0]!,
       { id: "both", name: "Janus", title: "Lead", section: "Ops", chiefOfStaff: true, individual: true },
     ], true);
-    expect(prompt).toContain("Ops — @Janus — Lead (available); 0 specialists");
+    expect(prompt).toContain("Ops, led by @Janus (Lead, available); 0 specialists");
     expect(prompt).not.toContain("Individual assistants");
   });
 
@@ -236,7 +236,7 @@ describe("individualAssistantSystemPrompt", () => {
       true,
     );
     expect(prompt).toContain("Bots filed alongside you");
-    expect(prompt).toContain("- Quant — Analyst (available)");
+    expect(prompt).toContain("- Quant (Analyst, available)");
     expect(prompt).not.toContain("no other bot you can reach");
   });
 

@@ -136,7 +136,8 @@ describe("persona — the micro field", () => {
 // edit that "helpfully" adds it to the roster line must fail here.
 const readSource = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
-// directTurnPersona(), shared by the direct turn and "What shapes <bot>".
+// directPersona() and roomPersonaLines() in bot-shapes.ts, the one place the
+// direct turn, the room turn and "What shapes <bot>" build who the bot is.
 const DIRECT_TURN_PERSONA = `  return [
     \`You are \${bot.name}, a personal bot in Murage.\`,
     bot.title && \`Role: \${bot.title}.\`,
@@ -144,29 +145,33 @@ const DIRECT_TURN_PERSONA = `  return [
     \`Personality: \${personalityImprint(bot.persona)}\`,
   ]`;
 
-const ROOM_TURN_PERSONA = `      \`You are \${bot.name}, a bot in the room "\${group.name}" in Murage.\`,
-      bot.title && \`Role: \${bot.title}.\`,
-      bot.description && \`About: \${bot.description}\`,
-      \`Personality: \${personalityImprint(bot.persona)}\`,`;
+const ROOM_TURN_PERSONA = `    \`You are \${bot.name}, a bot in the room "\${roomName}" in Murage.\`,
+    bot.title && \`Role: \${bot.title}.\`,
+    bot.description && \`About: \${bot.description}\`,
+    \`Personality: \${personalityImprint(bot.persona)}\`,`;
 
 describe("persona is spoken to the bot and read by nothing that routes", () => {
   const index = readSource("./index.ts");
+  const shapes = readSource("./bot-shapes.ts");
 
   it("is appended to the DIRECT turn's persona string", () => {
-    expect(index).toContain(DIRECT_TURN_PERSONA);
+    expect(shapes).toContain(DIRECT_TURN_PERSONA);
+    expect(index).toContain("directPersona(bot)");
   });
 
   it("is appended to the ROOM turn's persona string", () => {
-    expect(index).toContain(ROOM_TURN_PERSONA);
+    expect(shapes).toContain(ROOM_TURN_PERSONA);
+    expect(index).toContain("roomPersonaLines(bot, group.name)");
   });
 
   it("appears on those two lines of the harness and no others", () => {
-    const lines = index.split("\n").filter((line) => line.includes(".persona"));
+    expect(index.split("\n").filter((line) => line.includes(".persona"))).toEqual([]);
+    const lines = shapes.split("\n").filter((line) => line.includes("bot.persona"));
     expect(lines).toEqual([
       // Every bot now carries a personality imprint, defaulted by
       // personalityImprint (shared/bot-identity.ts, covered in memory/identity.test.ts).
       "    `Personality: ${personalityImprint(bot.persona)}`,",
-      "      `Personality: ${personalityImprint(bot.persona)}`,",
+      "    `Personality: ${personalityImprint(bot.persona)}`,",
     ]);
   });
 

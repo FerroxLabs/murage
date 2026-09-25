@@ -19,7 +19,7 @@ import { imageDelivery, IMAGE_DELIVERY_PROMPT, sendsInlineImages } from "./turn-
 const UNSPLIT_PROMPT = (capabilities: Capabilities, vision: boolean | undefined) =>
   sendsInlineImages(capabilities.imagesInline, vision)
     ? " Images attached to this turn are already in front of you: look at them directly and do not open image files with shell or file-read tools to see them."
-    : " You are not shown attached images directly — an attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.";
+    : " You are not shown attached images directly. An attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.";
 
 type Capabilities = { images?: boolean; imagesInline?: boolean };
 
