@@ -10549,7 +10549,8 @@ const server = createServer(async (req, res) => {
         }
         try {
           const note = await createVoiceNote(
-            { db: database(), dataDir: DATA_DIR, store, cfg, speak: (config, text, voiceId, _run, own) => tts.speak(config, text, voiceId, undefined, own) },
+            { db: database(), dataDir: DATA_DIR, store, cfg, speak: (config, text, voiceId, _run, own) => tts.speak(config, text, voiceId, undefined, own),
+              stillLive: () => { try { requireActiveInternal(); return true; } catch { return false; } } },
             { botId: internalClaim.botId, threadId: internalClaim.threadId, runId: String(internalClaim.generation), text: body.text, title: body.title },
           );
           rememberVoiceNote({ threadId: internalClaim.threadId, at: Date.now(), name: note.artifact.filename, mime: note.mime, bytes: note.bytes, text: body.text });
