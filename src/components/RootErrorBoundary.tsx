@@ -37,7 +37,7 @@ export class RootErrorBoundary extends Component<{ children: ReactNode }, { erro
           <div>
             <div className="text-[16px] font-medium text-ink">Murage hit an error and stopped drawing</div>
             <div className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-              Your conversations and settings are on disk and were not touched. Reloading the window is safe.
+              Your conversations and settings are on disk and were not touched. Reloading the window loses nothing.
             </div>
           </div>
           <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap rounded-xl bg-inset p-3 font-mono text-[11.5px] leading-relaxed text-ink-secondary">

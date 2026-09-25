@@ -27,6 +27,12 @@ describe("0.1.60 copy flags", () => {
     expect(box).toContain('"No Box key yet. Add one in App Settings → Tools & Connections."');
   });
 
+  it("the error screen never says safe", () => {
+    const screen = source("./components/RootErrorBoundary.tsx");
+    expect(screen).toContain("Reloading the window loses nothing.");
+    expect(screen).not.toMatch(/window is safe/);
+  });
+
   it("Review routine approvals never says safe", () => {
     const panel = source("./components/SettingsPanel.tsx");
     const at = panel.indexOf("Review routine approvals");
