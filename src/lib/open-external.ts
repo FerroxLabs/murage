@@ -8,7 +8,7 @@
 //            never receives an opener reference while a real null still
 //            means "blocked" (unchanged from ConnectorCard and PluginsPanel).
 import { callNative, nativeHas } from "./native-shell";
-import { saveUrl } from "./save-file";
+import { reportSaveFailure, saveSource, saveUrl } from "./save-file";
 
 /** `nativeHas` is synchronous on purpose: this runs inside a click, and a
  * browser only lets a tab open during the gesture that asked for it. The
@@ -53,20 +53,27 @@ export function nativeClickAction(
   } catch {
     return null;
   }
-  if (anchor.hasDownload) return { kind: "save", url: url.href, filename: anchor.download || nameFromPath(url) };
+  const web = url.protocol === "https:" || url.protocol === "http:";
+  if (anchor.hasDownload) {
+    // Native downloads only what this page or its own server holds (M2). A
+    // download link to another site is a page in the system browser.
+    const source = saveSource(url.href, pageOrigin);
+    if (source !== "external") return { kind: "save", url: url.href, filename: anchor.download || nameFromPath(url) };
+    return web ? { kind: "external", url: url.href } : null;
+  }
   if (anchor.target !== "_blank") return null;
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!web) return null;
   return url.origin === pageOrigin ? null : { kind: "external", url: url.href };
 }
 
 /** `saveUrl` re-checks native availability itself (spec-correct for a call
  * with no other context) before it will touch its blob:/data: branch, which
- * fetches the bytes here because native cannot. This click already ran that
+ * reads the bytes here because native cannot. This click already ran that
  * same check via `nativeHas` a line above; only the blob:/data: branch is
- * still needed from `saveUrl`, so a plain server URL skips straight to the
- * native call instead of asking twice. */
-function saveDownload(url: string, filename: string): Promise<unknown> {
-  if (/^(?:blob|data):/i.test(url)) return saveUrl(url, filename);
+ * still needed from `saveUrl`, so a server URL (the only other kind
+ * `nativeClickAction` saves) skips straight to the native call. */
+function saveDownload(url: string, filename: string, pageOrigin: string): Promise<unknown> {
+  if (saveSource(url, pageOrigin) === "page") return saveUrl(url, filename);
   return callNative("saveFile", { kind: "url", url, filename });
 }
 
@@ -92,8 +99,11 @@ export function routeNativeClicks(
     if (!action) return;
     if (action.kind === "save" ? !nativeHas("saveFile") : !nativeHas("openExternal")) return;
     mouse.preventDefault();
-    const done = action.kind === "save" ? saveDownload(action.url, action.filename) : callNative("openExternal", action.url);
-    void done.catch((error) => console.warn("murage: the phone app could not finish that", error));
+    if (action.kind === "save") {
+      void saveDownload(action.url, action.filename, pageOrigin).catch(reportSaveFailure);
+      return;
+    }
+    void callNative("openExternal", action.url).catch((error) => console.warn("murage: the phone app could not finish that", error));
   };
   doc.addEventListener("click", onClick);
   return () => doc.removeEventListener("click", onClick);

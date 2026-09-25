@@ -55,6 +55,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
+import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
 import { isPhoneClient } from "@/lib/phone-client";
 
@@ -2120,6 +2121,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // A save the person asked for and did not get (lib/save-file.ts): the same
+  // six-second error toast every other failed action shows.
+  useEffect(() => onSaveFailed((message) => {
+    rawDispatch({ type: "error", message });
+    setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+  }), []);
   // per-frame stream-delta batching (see the "runtime" SSE case); stream
   // state is intentionally OUTSIDE the reducer so token frames re-render
   // only StreamContext consumers
