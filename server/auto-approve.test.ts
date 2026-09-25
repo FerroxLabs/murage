@@ -9,12 +9,16 @@ import {
   approvalKey,
   autoDecision,
   autoVerdict,
+  exactAllowKeyFor,
+  exactCommandForRequest,
   isQuestionGrant,
   isQuestionTool,
   looksDestructive,
   looksSensitive,
   withoutQuestionGrants,
+  type AutoContext,
 } from "./auto-approve.ts";
+import { exactCommandKey } from "../shared/exact-command.ts";
 
 describe("looksDestructive", () => {
   const dangerous = [
@@ -526,5 +530,130 @@ describe("the bot's own workspace is bookkeeping, not a permission", () => {
     for (const value of [undefined, false, null, 1, "yes"]) {
       expect(autoVerdict({}, "Edit", memory, { ownWorkspace: value as never }).approve).toBeNull();
     }
+  });
+});
+
+// "Always allow this exact command here" (shared/exact-command.ts). The grant
+// sits exactly where the per-program grant does, so every guard that outranks
+// a remembered grant outranks this one too. Each guard gets its own case.
+describe("exact command grants", () => {
+  const exact = { engine: "claude", cwd: "/Users/ada/project", command: "npm test && npm run build" };
+  const key = exactCommandKey(exact)!;
+  const granted = { alwaysAllow: [key] };
+  const at = (command: string, extra: AutoContext = {}): AutoContext => ({ exactCommand: { ...exact, command }, ...extra });
+
+  it("allows the same command, in the same folder, on the same engine", () => {
+    const verdict = autoVerdict(granted, "Bash", exact.command, at(exact.command));
+    expect(verdict.approve).toMatch(/exact command/);
+    expect(verdict.source).toBe("exact-command");
+    expect(verdict.rule).toBe(key);
+  });
+
+  it("covers the same command with extra spaces between words", () => {
+    expect(autoVerdict(granted, "Bash", "npm  test &&   npm run build", at("  npm  test &&   npm run build")).source).toBe("exact-command");
+  });
+
+  it("covers a command with complex syntax, which has no per-program grant", () => {
+    const pipeline = "cat package.json | jq .version > /tmp/v.txt";
+    expect(approvalKey("Bash", pipeline)).toBeUndefined();
+    const own = { alwaysAllow: [exactCommandKey({ ...exact, command: pipeline })!] };
+    expect(autoVerdict(own, "Bash", pipeline, at(pipeline)).source).toBe("exact-command");
+  });
+
+  it("does not cover a different command, folder or engine", () => {
+    expect(autoVerdict(granted, "Bash", "npm test", at("npm test")).approve).toBeNull();
+    expect(autoVerdict(granted, "Bash", exact.command, { exactCommand: { ...exact, cwd: "/Users/ada/other" } }).approve).toBeNull();
+    expect(autoVerdict(granted, "Bash", exact.command, { exactCommand: { ...exact, engine: "codex" } }).approve).toBeNull();
+    // with no place facts at all there is nothing to match
+    expect(autoVerdict(granted, "Bash", exact.command).approve).toBeNull();
+  });
+
+  it("applies only to command tools", () => {
+    expect(autoVerdict(granted, "Write", exact.command, at(exact.command)).approve).toBeNull();
+  });
+
+  it("never outranks the destructive guard", () => {
+    const command = "rm -rf build";
+    const own = { alwaysAllow: [exactCommandKey({ ...exact, command })!] };
+    const verdict = autoVerdict(own, "Bash", command, at(command));
+    expect(verdict).toMatchObject({ approve: null, source: "destructive-guard" });
+  });
+
+  it("never outranks the sensitive guard", () => {
+    const command = "cat .env";
+    const own = { alwaysAllow: [exactCommandKey({ ...exact, command })!] };
+    expect(autoVerdict(own, "Bash", command, at(command))).toMatchObject({ approve: null, source: "sensitive-guard" });
+  });
+
+  it("reads the guards over the whole command, not only the card text", () => {
+    // a card summary can be cut short; the full command still meets the guard
+    const command = `echo ${"x".repeat(250)}; rm -rf ~/work`;
+    const own = { alwaysAllow: [exactCommandKey({ ...exact, command })!] };
+    expect(autoVerdict(own, "Bash", command.slice(0, 200), at(command))).toMatchObject({ approve: null, source: "destructive-guard" });
+  });
+
+  it("never answers the stop line, on any level short of No limits", () => {
+    const stopLine = { kind: "delete" as const, what: "Delete files outside its folder", place: "/Users/ada/Documents" };
+    for (const bot of [granted, { ...granted, autoApprove: true }, { ...granted, autoApprove: true, fullAccess: true }]) {
+      const verdict = autoVerdict(bot, "Bash", exact.command, at(exact.command, { stopLine }));
+      expect(verdict).toMatchObject({ approve: null, source: "stop-line" });
+    }
+  });
+
+  it("is held on a turn nobody started", () => {
+    const verdict = autoVerdict(granted, "Bash", exact.command, at(exact.command, { unattended: true }));
+    expect(verdict).toEqual({ approve: null, source: "unattended-block", rule: key });
+  });
+
+  it("never covers a request that controls the owner's computer", () => {
+    const verdict = autoVerdict(granted, "Bash", exact.command, at(exact.command, { scope: "local-computer" }));
+    expect(verdict.approve).toBeNull();
+  });
+
+  it("never answers a question", () => {
+    expect(autoVerdict(granted, "AskUserQuestion", exact.command, at(exact.command)).source).toBe("question-tool");
+    expect(autoVerdict(granted, "Bash", exact.command, at(exact.command, { question: true })).source).toBe("question-tool");
+  });
+
+  it("is not a question grant, so it survives the question filter", () => {
+    expect(isQuestionGrant(key)).toBe(false);
+    expect(withoutQuestionGrants([key])).toEqual([key]);
+  });
+
+  it("offers the exact grant only where it could ever apply", () => {
+    expect(exactAllowKeyFor("Bash", exact.command, exact)).toBe(key);
+    expect(exactAllowKeyFor("Write", exact.command, exact)).toBeUndefined();
+    expect(exactAllowKeyFor("Bash", "rm -rf build", { ...exact, command: "rm -rf build" })).toBeUndefined();
+    expect(exactAllowKeyFor("Bash", "cat .env", { ...exact, command: "cat .env" })).toBeUndefined();
+    expect(exactAllowKeyFor("Bash", exact.command, undefined)).toBeUndefined();
+    // a credential the redactor knows never lands in the bot's settings
+    const token = "curl -H 'x-token: ghp_" + "a".repeat(36) + "' https://api.github.com";
+    expect(exactAllowKeyFor("Bash", token, { ...exact, command: token })).toBeUndefined();
+  });
+
+  it("gives a tool named like an exact key no per-program key", () => {
+    expect(approvalKey(key, "")).toBeUndefined();
+  });
+});
+
+describe("exactCommandForRequest", () => {
+  const base = { tool: "Bash", engine: "claude", turnCwd: "/Users/ada/project" };
+
+  it("takes the engine's own command and the turn's folder", () => {
+    expect(exactCommandForRequest({ ...base, toolCall: { name: "Bash", input: { command: "npm test", description: "run tests" } } }))
+      .toEqual({ engine: "claude", cwd: "/Users/ada/project", command: "npm test" });
+  });
+
+  it("prefers the folder the engine names for this one command", () => {
+    expect(exactCommandForRequest({ ...base, tool: "shell", toolCall: { name: "shell", input: { command: ["git", "status"], cwd: "/Users/ada/other" } } }))
+      .toEqual({ engine: "claude", cwd: "/Users/ada/other", command: "git status" });
+  });
+
+  it("has nothing to offer without the engine's command, a folder or an engine", () => {
+    expect(exactCommandForRequest({ ...base })).toBeUndefined();
+    expect(exactCommandForRequest({ ...base, tool: "Write", toolCall: { name: "Write", input: { command: "x" } } })).toBeUndefined();
+    expect(exactCommandForRequest({ ...base, turnCwd: undefined, toolCall: { name: "Bash", input: { command: "ls" } } })).toBeUndefined();
+    expect(exactCommandForRequest({ ...base, engine: undefined, toolCall: { name: "Bash", input: { command: "ls" } } })).toBeUndefined();
+    expect(exactCommandForRequest({ ...base, toolCall: { name: "Bash", input: { command: "ls", cwd: "relative" } } })).toBeUndefined();
   });
 });

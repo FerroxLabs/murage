@@ -11,6 +11,8 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
+import { redactSecretsInText } from "./redact.ts";
+import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, type ExactCommand } from "../shared/exact-command.ts";
 
 const DESTRUCTIVE = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
@@ -192,15 +194,55 @@ function simpleProgram(summary: string): string | undefined {
   return program;
 }
 
+/** Is this one of the tools that runs a shell command? */
+export function isCommandTool(tool: string): boolean {
+  return COMMAND_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!);
+}
+
 export function approvalKey(tool: string, summary: string, scope?: "local-computer"): string | undefined {
   // No "Always allow" for a question: undefined hides the action entirely.
   if (isQuestionTool(tool)) return undefined;
-  const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!;
-  if (!COMMAND_TOOLS.has(bare)) return scope ? `${scope}:${tool}` : tool;
+  // A tool whose NAME reads as an exact-command key must not be able to
+  // match one by its bare name.
+  if (isExactCommandKey(tool)) return undefined;
+  if (!isCommandTool(tool)) return scope ? `${scope}:${tool}` : tool;
   const program = simpleProgram(summary);
   if (!program) return undefined;
   const key = `${tool}:${program}`;
   return scope ? `${scope}:${key}` : key;
+}
+
+/** The "Always allow this exact command here" key a card offers, or
+ * undefined. Offered only for a command tool the caller has place facts for
+ * (the engine's own command text, its folder and the engine), and never for
+ * a command the destructive or key guard would card anyway: such a grant
+ * could never apply, and a key guard hit may carry a secret that has no
+ * business being written into the bot's settings. */
+export function exactAllowKeyFor(tool: string, summary: string, exact: ExactCommand | undefined): string | undefined {
+  if (!exact || isQuestionTool(tool) || !isCommandTool(tool)) return undefined;
+  const text = `${summary}\n${exact.command}`;
+  if (looksDestructive(text) || looksSensitive(text) || redactSecretsInText(text) !== text) return undefined;
+  return exactCommandKey(exact);
+}
+
+/** The place facts for an exact-command grant, from the ENGINE's structured
+ * tool call (never the card text): its command, the folder it names for this
+ * one command or else the turn's folder, and the engine instance asking.
+ * Undefined when any of the three is missing or cannot be placed. */
+export function exactCommandForRequest(input: {
+  tool: string;
+  toolCall?: { name: string; input: unknown };
+  engine: string | undefined;
+  turnCwd: string | undefined;
+}): ExactCommand | undefined {
+  if (!isCommandTool(input.tool) || isQuestionTool(input.tool)) return undefined;
+  const command = commandFromToolInput(input.toolCall?.input);
+  const named = commandCwdFromToolInput(input.toolCall?.input);
+  if (command === undefined || named === null || !input.engine) return undefined;
+  const cwd = named ?? input.turnCwd;
+  if (!cwd) return undefined;
+  const exact = { engine: input.engine, cwd, command };
+  return exactCommandKey(exact) === undefined ? undefined : exact;
 }
 
 export interface AutoApprover {
@@ -246,6 +288,9 @@ export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: F
  * was that nobody started this turn — the most audit-worthy card of all. */
 export type AutoVerdictSource =
   | "always-allow"
+  /** "Always allow this exact command here": the same command text, folder
+   * and engine the owner allowed (shared/exact-command.ts). */
+  | "exact-command"
   | "auto-mode"
   | "full-access"
   /** No limits: Full access without the stop line (the key guard holds). */
@@ -336,6 +381,10 @@ export interface AutoContext {
    * checked (a caller with no place facts), which leaves every rule below
    * exactly as it was. */
   stopLine?: StopHit | null;
+  /** The command as the engine reported it, the folder it runs in and the
+   * engine asking, for "Always allow this exact command here". The guards
+   * read this command too, so a card text cut short cannot hide a match. */
+  exactCommand?: ExactCommand;
   /** The task allowance that covers `stopLine`, when the caller holds one:
    * the owner pressed "Allow for this task" or said so in chat. Honoured
    * only on a turn the owner is at. */
@@ -364,8 +413,9 @@ export function autoVerdict(
     : "owner";
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
-  const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
-  const sensitive = destructive ? null : matchFirst(SENSITIVE, summary);
+  const guarded = context?.exactCommand ? `${summary}\n${context.exactCommand.command}` : summary;
+  const destructive = matchFirst(DESTRUCTIVE, guarded) ?? matchFirst(DESTRUCTIVE, tool);
+  const sensitive = destructive ? null : matchFirst(SENSITIVE, guarded);
   // The stop line outranks every mode, Full access included: deleting
   // outside its folder, paying, and messaging someone new wait for the
   // owner. Only a grant scoped to the same place answers it — the owner's
@@ -378,7 +428,7 @@ export function autoVerdict(
   const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
   if (stop) {
     const attended = !context?.unattended && !context?.automated;
-    const keyGuard = matchFirst(SENSITIVE, summary);
+    const keyGuard = matchFirst(SENSITIVE, guarded);
     if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
     if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
       return { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
@@ -395,7 +445,7 @@ export function autoVerdict(
   // permanent and unrecoverable, whichever level it is on.
   if (fullAccessCovers(bot, origin)) {
     // the key guard is the one stop No limits keeps too
-    const keyGuard = sensitive ?? (destructive ? matchFirst(SENSITIVE, summary) : null);
+    const keyGuard = sensitive ?? (destructive ? matchFirst(SENSITIVE, guarded) : null);
     if (keyGuard) return { approve: null, source: "sensitive-guard", rule: keyGuard };
     if (hasNoLimits(bot)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
     return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
@@ -417,9 +467,16 @@ export function autoVerdict(
   // stood in the way", which cannot be told apart from an ordinary
   // "nobody granted this" card without knowing both halves.
   const key = approvalKey(tool, summary, context?.scope);
+  // The exact grant is the narrower one, so it names itself first. It is
+  // never computed for a host-control request or a non-command tool.
+  const exactKey = context?.exactCommand && !context.scope && isCommandTool(tool) && !isQuestionTool(tool)
+    ? exactCommandKey(context.exactCommand)
+    : undefined;
   const grant =
     destructive || sensitive
       ? null
+      : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
+        ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command" as const, rule: exactKey }
       : key !== undefined && bot.alwaysAllow?.includes(key)
         ? { approve: `auto-approved ${key} (always allowed)`, source: "always-allow" as const, rule: key }
         : bot.autoApprove

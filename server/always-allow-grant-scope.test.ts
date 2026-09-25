@@ -41,6 +41,9 @@ const OUTSIDER_THREAD = "grant-outsider-thread";
 // on that bot's defaults, and a task made afterwards would inherit it —
 // which is the very thing test 2 exists to prove, so it must start clean.
 const TASKS_THREAD = "grant-tasks-thread";
+// "Always allow this exact command here" (shared/exact-command.ts)
+const EXACT_THREAD = "grant-exact-thread";
+const EXACT_KEY = 'exact:["claude","/Users/ada/project","npm test && npm run build"]';
 
 let base: string;
 let child: ChildProcess;
@@ -87,7 +90,7 @@ const bot = (id: string, name: string, threadId: string) => ({
 
 /** One unanswered permission card, the shape the request.opened fold writes
  * (server/index.ts): a requestId, the tool, and the narrow allowKey. */
-const cardFile = (cardId: string, from: { botId: string; name: string }) =>
+const cardFile = (cardId: string, from: { botId: string; name: string }, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
     activeLeafId: cardId,
     messages: [
@@ -104,6 +107,7 @@ const cardFile = (cardId: string, from: { botId: string; name: string }) =>
           requestId: `${cardId}-request`,
           tool: "shell",
           allowKey: GRANT_KEY,
+          ...extra,
         },
         from: { ...from, color: "purple" },
       },
@@ -124,6 +128,7 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
         bot("grant-owner", "Grant owner", OWNER_THREAD),
         bot("grant-outsider", "Grant outsider", OUTSIDER_THREAD),
         bot("grant-tasks", "Grant tasks", TASKS_THREAD),
+        bot("grant-exact", "Grant exact", EXACT_THREAD),
       ]),
     );
     writeFileSync(
@@ -151,6 +156,11 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
     writeFileSync(
       join(data, `messages-${TASKS_THREAD}.json`),
       cardFile("own-card", { botId: "grant-tasks", name: "Grant tasks" }),
+    );
+
+    writeFileSync(
+      join(data, `messages-${EXACT_THREAD}.json`),
+      cardFile("exact-card", { botId: "grant-exact", name: "Grant exact" }, { exactAllowKey: EXACT_KEY }),
     );
 
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -245,6 +255,51 @@ posixOnly("an always-allow grant is remembered for the bot", () => {
         storedBot("grant-tasks").tasks?.find((task) => task.threadId === laterThread)?.alwaysAllow,
         "a task created after the grant asked about it all over again",
       ).toContain(GRANT_KEY);
+    },
+    60_000,
+  );
+
+  it(
+    "remembers the exact command a card offered, and nothing the card did not offer",
+    async () => {
+      const other = 'exact:["claude","/Users/ada/project","npm publish"]';
+      const refused = await desktopApi("POST", "/api/bots/grant-exact/always-allow", { allowKey: other, threadId: EXACT_THREAD });
+      expect(refused.status).toBe(409);
+      // from a phone or the browser door the route does not exist
+      const remote = await request("POST", "/api/bots/grant-exact/always-allow", { allowKey: EXACT_KEY, threadId: EXACT_THREAD }, { "x-murage-companion": "1" });
+      expect(remote.status).toBe(404);
+      expect(storedBot("grant-exact").alwaysAllow ?? []).not.toContain(EXACT_KEY);
+
+      const granted = await desktopApi("POST", "/api/bots/grant-exact/always-allow", { allowKey: EXACT_KEY, threadId: EXACT_THREAD });
+      expect(granted.status, `grant refused: ${JSON.stringify(granted.body)}`).toBe(200);
+      const stored = storedBot("grant-exact");
+      expect(stored.alwaysAllow).toContain(EXACT_KEY);
+      expect(stored.tasks?.find((task) => task.threadId === EXACT_THREAD)?.alwaysAllow).toContain(EXACT_KEY);
+    },
+    60_000,
+  );
+
+  it(
+    "removes a remembered grant from the bot and every task, from the desktop only",
+    async () => {
+      const later = await desktopApi("POST", "/api/bots/grant-exact/tasks", { title: "Later" });
+      expect(later.status).toBe(201);
+      const laterThread = later.body.task.threadId as string;
+      expect(storedBot("grant-exact").tasks?.find((task) => task.threadId === laterThread)?.alwaysAllow).toContain(EXACT_KEY);
+
+      for (const headers of [{}, { "x-murage-companion": "1" }] as Record<string, string>[]) {
+        const remote = await request("POST", "/api/bots/grant-exact/always-allow/remove", { key: EXACT_KEY }, headers);
+        expect(remote.status).toBe(404);
+      }
+      expect(storedBot("grant-exact").alwaysAllow).toContain(EXACT_KEY);
+
+      expect((await desktopApi("POST", "/api/bots/grant-exact/always-allow/remove", {})).status).toBe(400);
+      const removed = await desktopApi("POST", "/api/bots/grant-exact/always-allow/remove", { key: EXACT_KEY });
+      expect(removed.status, JSON.stringify(removed.body)).toBe(200);
+      expect(removed.body.bot.alwaysAllow).not.toContain(EXACT_KEY);
+      const stored = storedBot("grant-exact");
+      expect(stored.alwaysAllow ?? []).not.toContain(EXACT_KEY);
+      for (const task of stored.tasks ?? []) expect(task.alwaysAllow ?? []).not.toContain(EXACT_KEY);
     },
     60_000,
   );
