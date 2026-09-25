@@ -333,6 +333,35 @@ describe("notification routing", () => {
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "bot-1" }]);
   });
 
+  it("finds the bot from a thread id alone (a phone notification or a deep link)", () => {
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "detached-thread" }, { bots, groups })).toBe(true);
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "bot-1" },
+      { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
+    ]);
+  });
+
+  it("finds the room from a thread id alone", () => {
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "older-room-thread" }, { bots, groups })).toBe(true);
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "room-1" },
+      { type: "switchGroupTask", groupId: "room-1", threadId: "older-room-thread" },
+    ]);
+  });
+
+  it("opens nothing for a thread nobody on this device owns, and says so", () => {
+    // Hidden from this phone by its visibility scope, or deleted since.
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "someone-elses-thread" }, { bots, groups })).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("still returns true on the existing botId path", () => {
+    expect(openNotificationTarget(vi.fn(), { botId: "bot-1", threadId: "deleted-task-thread" }, { bots, groups })).toBe(true);
+  });
+
   it("identifies only the exact chat thread currently on screen", () => {
     expect(visibleNotificationThread({
       activeView: "chat",
@@ -352,6 +381,13 @@ describe("notification routing", () => {
       bots,
       groups,
     })).toBeNull();
+  });
+});
+
+describe("hydration", () => {
+  it("is false until the first snapshot lands", () => {
+    expect(initialState.hydrated).toBe(false);
+    expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).hydrated).toBe(true);
   });
 });
 

@@ -44,7 +44,7 @@ import {
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
-import { showNotification, type NotificationTarget } from "@/lib/notify";
+import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
@@ -666,6 +666,9 @@ export interface AppState {
   /** The door said this browser's session is gone (GET /session → 401).
    * Final for this page: the only way back is pairing again. */
   signedOut?: boolean;
+  /** The first REST snapshot has been applied. A deep link waits for it:
+   * before then no thread can be placed. */
+  hydrated?: boolean;
   error: string | null;
   mascotMotion: {
     botId: string;
@@ -982,9 +985,9 @@ export function visibleNotificationThread(
 
 export function openNotificationTarget(
   dispatch: (action: Action) => void,
-  target: NotificationTarget,
+  target: { botId?: string; threadId: string },
   state: NotificationRoutingState,
-) {
+): boolean {
   // A room's approval/question notification carries the asker bot with the
   // GROUP's thread id; asking the bot to switch to that thread would 404.
   // Open the room itself. A thread that is neither a room nor one of the
@@ -999,15 +1002,27 @@ export function openNotificationTarget(
     if (group.threadId !== target.threadId) {
       dispatch({ type: "switchGroupTask", groupId: group.id, threadId: target.threadId });
     }
-    return;
+    return true;
   }
-  dispatch({ type: "select", id: target.botId });
-  const bot = state.bots.find((candidate) => candidate.id === target.botId);
-  if (!bot) return;
+  // A phone notification and a #open= link carry only the thread (spec
+  // §3.5 step 2). Its bot is whoever owns it in the snapshot just loaded;
+  // nobody owning it means this device cannot see it, and nothing opens.
+  const botId =
+    target.botId ??
+    state.bots.find(
+      (candidate) =>
+        candidate.threadId === target.threadId ||
+        (candidate.tasks ?? []).some((task) => task.threadId === target.threadId),
+    )?.id;
+  if (!botId) return false;
+  dispatch({ type: "select", id: botId });
+  const bot = state.bots.find((candidate) => candidate.id === botId);
+  if (!bot) return true;
   const known =
     bot.threadId === target.threadId ||
     (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
-  if (known) dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+  if (known) dispatch({ type: "switchTask", botId, threadId: target.threadId });
+  return true;
 }
 
 /** Retire the scrollback pages a thread has in flight: whatever they return
@@ -1158,6 +1173,7 @@ export function reducer(state: AppState, action: Action): AppState {
           groups: action.groups,
           computerControl: action.computerControl,
           selectedId,
+          hydrated: true,
         },
         [...action.bots, ...action.groups],
       );
@@ -1881,6 +1897,7 @@ export const initialState: AppState = {
   teamLibrary: { open: false },
   connected: false,
   signedOut: false,
+  hydrated: false,
   error: null,
   mascotMotion: null,
   pendingQueued: {},
