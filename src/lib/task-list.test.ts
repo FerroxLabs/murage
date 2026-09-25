@@ -190,9 +190,15 @@ describe("isHiddenEmptyTask", () => {
 
 describe("formatTaskTokenLabel", () => {
   it("names the unit and puts the split in the detail", () => {
+    // the headline leaves out the cached re-read of the thread (upstream #1557)
     const label = formatTaskTokenLabel({ input: 600_000, output: 74_000, cachedInput: 500_000, costUsd: 1.5, turns: 12 });
+    expect(label?.label).toBe("174k tokens");
+    expect(label?.detail).toBe("174,000 tokens · 600,000 in (500,000 cached) · 74,000 out · 12 turns · $1.50");
+  });
+  it("counts every token when the engine never reported a cached share", () => {
+    const label = formatTaskTokenLabel({ input: 600_000, output: 74_000, costUsd: null, turns: 12 });
     expect(label?.label).toBe("674k tokens");
-    expect(label?.detail).toBe("674,000 tokens · 600,000 in (500,000 cached) · 74,000 out · 12 turns · $1.50");
+    expect(label?.detail).toBe("674,000 tokens · 600,000 in · 74,000 out · 12 turns");
   });
   it("does not say tokens twice for small counts and skips an empty tally", () => {
     expect(formatTaskTokenLabel({ input: 1, output: 0, costUsd: null, turns: 1 })?.label).toBe("1 token");

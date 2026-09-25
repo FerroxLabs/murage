@@ -2,7 +2,7 @@
 // zone and the locale are injected, so date grouping can be tested on any
 // machine and across midnight, daylight saving and a year change.
 import type { TaskUsage } from "@/state/store";
-import { cachedInput, formatTaskTokens, formatUsd } from "@/lib/usage";
+import { cachedInput, cachedKnown, formatTaskTokens, formatUsd, freshTokens } from "@/lib/usage";
 
 /** The fields the list reads. Bot tasks carry all of them; channel tasks
  * only the first few. */
@@ -244,7 +244,9 @@ export function formatTaskTokenLabel(
   locale?: string,
 ): { label: string; detail: string } | null {
   if (!usage) return null;
-  const total = usage.input + usage.output;
+  // the fresh figure: the cached re-read of the thread each turn is not new
+  // tokens (upstream #1557); every token when no cached share was reported
+  const total = freshTokens(usage);
   const short = formatTaskTokens(total);
   if (!short) return null;
   const label = /tokens?$/.test(short) ? short : `${short} tokens`;
@@ -252,7 +254,7 @@ export function formatTaskTokenLabel(
   const cached = cachedInput(usage);
   const parts = [
     `${n(total)} ${total === 1 ? "token" : "tokens"}`,
-    `${n(usage.input)} in${cached ? ` (${n(cached)} cached)` : ""}`,
+    `${n(usage.input)} in${cachedKnown(usage) ? ` (${n(cached)} cached)` : ""}`,
     `${n(usage.output)} out`,
   ];
   if (usage.turns > 0) parts.push(`${usage.turns} ${usage.turns === 1 ? "turn" : "turns"}`);
