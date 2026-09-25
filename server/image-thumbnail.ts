@@ -18,13 +18,12 @@ import { THUMBNAIL_WIDTHS, type ThumbnailWidth } from "../shared/image-thumbnail
 
 export { THUMBNAIL_WIDTHS };
 
-/** undefined: no `w`, serve the original. null: a `w` outside the set (400). */
+/** undefined: no `w`, serve the original. null: a `w` outside the set (400).
+ * Canonical spelling only: "0320", "3.2e2", "0x140" and " 320" are refused. */
 export function thumbnailWidth(raw: string | null): ThumbnailWidth | null | undefined {
   if (raw === null) return undefined;
-  // Digits only: Number() would also read "0x140", "3.2e2" and " 320".
-  if (!/^\d{1,5}$/.test(raw)) return null;
-  const width = Number(raw);
-  return (THUMBNAIL_WIDTHS as readonly number[]).includes(width) ? (width as ThumbnailWidth) : null;
+  const width = THUMBNAIL_WIDTHS.find(candidate => String(candidate) === raw);
+  return width ?? null;
 }
 
 export interface Thumbnail {
@@ -45,29 +44,46 @@ interface SharpImage {
   toBuffer(): Promise<Buffer>;
 }
 type Sharp = (input: Buffer, options: { limitInputPixels: number }) => SharpImage;
+type SharpModule = Sharp & { cache(enabled: boolean): unknown; concurrency(threads: number): unknown };
 
 /** A phone panorama is ~60 MP; anything larger is not a photo worth decoding. */
-const MAX_INPUT_PIXELS = 64_000_000;
+export const MAX_INPUT_PIXELS = 64_000_000;
 const QUALITY = 78;
-/** Formats worth shrinking, by sharp's name and by the stored MIME type. Never
- *  SVG (rasterising it runs a renderer over whatever the file says), and never
- *  GIF (a resize would lose its animation). */
-const RASTER_FORMATS = new Set(["jpeg", "png", "webp"]);
+/** The stored MIME types worth shrinking. Never SVG (rasterising it runs a
+ *  renderer over whatever the file says), and never GIF (a resize would lose
+ *  its animation). */
 const RASTER_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+type RasterFormat = "jpeg" | "png" | "webp";
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** The format the bytes themselves claim, from their magic number, or null.
+ * Checked before sharp sees anything: sharp picks its decoder from the bytes,
+ * not the MIME type, so a file saved as image/png could otherwise reach the
+ * SVG renderer or any other loader libvips carries. */
+export function rasterFormat(bytes: Buffer): RasterFormat | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return "png";
+  if (bytes.length >= 12 && bytes.toString("latin1", 0, 4) === "RIFF" && bytes.toString("latin1", 8, 12) === "WEBP") return "webp";
+  return null;
+}
 
 /** A Resize over a sharp factory. Exported for its test, which passes a fake. */
 export function sharpResize(sharp: Sharp): Resize {
   return async (bytes, width) => {
+    const sniffed = rasterFormat(bytes);
+    if (!sniffed) return null;
     const meta = await sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
-    // sharp reads the format from the bytes, not the MIME type: a file saved
-    // as image/png can still be an SVG.
-    if (meta.format !== undefined && !RASTER_FORMATS.has(meta.format)) return null;
+    // Fail closed: sharp must agree with the magic number.
+    if (meta.format !== sniffed) return null;
     // A resize would keep only the first frame.
     if ((meta.pages ?? 1) > 1) return null;
+    // The header's size, refused before a decode rather than during one.
+    if (!meta.width || !meta.height || meta.width * meta.height > MAX_INPUT_PIXELS) return null;
     // EXIF orientations 5–8 turn the picture a quarter: the width the reader
     // sees is the stored height (every phone photo taken upright).
     const shown = (meta.orientation ?? 1) >= 5 ? meta.height : meta.width;
-    if (!shown || shown <= width) return null;
+    if (shown <= width) return null;
     const out = await sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
       .resize({ width, withoutEnlargement: true })
@@ -77,19 +93,32 @@ export function sharpResize(sharp: Sharp): Resize {
   };
 }
 
+/** A Resize over the sharp that `load` returns, or null (with one warning)
+ * when it cannot be loaded. sharp's own file cache is off (sources are
+ * already in memory, and thumbnails are cached below) and it decodes on one
+ * thread, so a burst of first views cannot take every core. */
+export async function loadSharpResize(load: () => unknown): Promise<Resize | null> {
+  try {
+    const sharp = load() as SharpModule;
+    sharp.cache(false);
+    sharp.concurrency(1);
+    return sharpResize(sharp);
+  } catch (error) {
+    console.warn(`[thumbnails] unavailable, serving originals: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 let loaded: Promise<Resize | null> | undefined;
 
 /** sharp from beside transformers, once per process; null when unavailable. */
 export function loadResize(): Promise<Resize | null> {
-  loaded ??= (async () => {
-    try {
-      const beside = createRequire(fileURLToPath(import.meta.resolve("@huggingface/transformers")));
-      return sharpResize(beside("sharp") as Sharp);
-    } catch (error) {
-      console.warn(`[thumbnails] unavailable, serving originals: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  })();
+  // import.meta.resolve returns the real path of Transformers (pnpm's
+  // node_modules/.pnpm store in development, the staged copy when packaged),
+  // and sharp is only resolvable from there, not from this file's directory.
+  // A resolver that kept the symlinked path would miss it and fall back to
+  // originals.
+  loaded ??= loadSharpResize(() => createRequire(fileURLToPath(import.meta.resolve("@huggingface/transformers")))("sharp"));
   return loaded;
 }
 
@@ -102,7 +131,54 @@ const MAX_ORIGINAL_MARKS = 10_000;
 export function createThumbnails(options: { resize: () => Promise<Resize | null>; maxBytes: number }) {
   const cache = new Map<string, Thumbnail>();
   const original = new Set<string>();
+  // Concurrent first views of one image share one decode.
+  const inFlight = new Map<string, Promise<Thumbnail | null>>();
   let held = 0;
+
+  const markOriginal = (id: string) => {
+    if (original.size >= MAX_ORIGINAL_MARKS) original.clear();
+    original.add(id);
+  };
+
+  const make = async (id: string, source: Buffer, width: ThumbnailWidth): Promise<Thumbnail | null> => {
+    if (!rasterFormat(source)) {
+      markOriginal(id);
+      return null;
+    }
+    const resize = await options.resize();
+    if (!resize) return null;
+    let made: Thumbnail | null;
+    try {
+      made = await resize(source, width);
+    } catch (error) {
+      // Corrupt, truncated or over the pixel limit: this image gets its
+      // original from now on, so the warning is once per image.
+      markOriginal(id);
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[thumbnails] ${id} could not be resized, serving the original: ${reason.slice(0, 200)}`);
+      return null;
+    }
+    if (!made || made.bytes.byteLength >= source.byteLength) {
+      markOriginal(id);
+      return null;
+    }
+    // Larger than the whole cache: serve it, but do not flush everything else for it.
+    if (made.bytes.byteLength > options.maxBytes) return made;
+    const previous = cache.get(id);
+    if (previous) {
+      cache.delete(id);
+      held -= previous.bytes.byteLength;
+    }
+    cache.set(id, made);
+    held += made.bytes.byteLength;
+    for (const [oldest, entry] of cache) {
+      if (held <= options.maxBytes) break;
+      cache.delete(oldest);
+      held -= entry.bytes.byteLength;
+    }
+    return made;
+  };
+
   return {
     async variant(key: string, source: Buffer, mime: string, width: ThumbnailWidth): Promise<Thumbnail | null> {
       if (!RASTER_MIMES.has(mime)) return null;
@@ -114,27 +190,15 @@ export function createThumbnails(options: { resize: () => Promise<Resize | null>
         cache.set(id, hit);
         return hit;
       }
-      const resize = await options.resize();
-      if (!resize) return null;
-      let made: Thumbnail | null;
-      try {
-        made = await resize(source, width);
-      } catch {
-        return null;
-      }
-      if (!made || made.bytes.byteLength >= source.byteLength) {
-        if (original.size >= MAX_ORIGINAL_MARKS) original.clear();
-        original.add(id);
-        return null;
-      }
-      cache.set(id, made);
-      held += made.bytes.byteLength;
-      for (const [oldest, entry] of cache) {
-        if (held <= options.maxBytes) break;
-        cache.delete(oldest);
-        held -= entry.bytes.byteLength;
-      }
-      return made;
+      const pending = inFlight.get(id);
+      if (pending) return pending;
+      const work = make(id, source, width).finally(() => inFlight.delete(id));
+      inFlight.set(id, work);
+      return work;
+    },
+    /** Bytes of thumbnails held; for tests and diagnostics. */
+    heldBytes(): number {
+      return held;
     },
   };
 }
