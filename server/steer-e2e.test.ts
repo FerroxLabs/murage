@@ -28,7 +28,12 @@ const memoryClose = `\n${MEMORY_REFERENCE_CLOSE}`;
 const currentRequestMarker = "\n\nCurrent request:\n";
 // MEMJSON2: every remembered line opens with its turn-local handle (m1, m2, …).
 const memoryLine = /^- m[1-9][0-9]{0,2} \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/;
+// The date line rides on top of every message (withNowLine) and the fake
+// echoes it back. Only the request itself is under test here.
 function currentRequestEcho(text: string): string {
+  return requestEcho(text).replace(/^(bot:reply to: )It is now [^\n]*\n\n/, "$1");
+}
+function requestEcho(text: string): string {
   const prefix = "bot:reply to: ";
   if (!text.startsWith(prefix + memoryPreamble)) return text;
   const start = prefix.length + memoryPreamble.length;

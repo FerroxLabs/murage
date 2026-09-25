@@ -275,7 +275,9 @@ export interface TurnShapes {
 const lastTurns = new Map<string, TurnShapes>();
 
 export function recordTurnShapes(botId: string, turn: { where: "chat" | "room"; threadId: string; layers: ShapeLayer[] }, at = Date.now()): void {
-  lastTurns.set(botId, { ...turn, layers: turn.layers.map((layer) => ({ ...layer })), text: joinShapeLayers(turn.layers), at });
+  // `text` is the system prompt exactly as sent. The date line is listed
+  // with the layers but rides the message (withNowLine), so it is not in it.
+  lastTurns.set(botId, { ...turn, layers: turn.layers.map((layer) => ({ ...layer })), text: joinShapeLayers(turn.layers.filter((layer) => layer.id !== "now")), at });
 }
 export const lastTurnShapes = (botId: string): TurnShapes | undefined => lastTurns.get(botId);
 export const forgetTurnShapes = (botId: string): void => void lastTurns.delete(botId);

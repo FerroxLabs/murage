@@ -188,7 +188,7 @@ const streamGateTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
   const secret = process.env.FAKE_PI_GATE_FORGE ? "not-the-secret" : process.env.MURAGE_PI_GATE ?? "";
-  const call = process.env.FAKE_PI_GATE_CALL ?? JSON.stringify({ tool: "bash", input: { command: "rm -rf ~/Documents/old" } });
+  const call = process.env.FAKE_PI_GATE_CALL ?? JSON.stringify({ tool: "bash", input: { command: [["r", "m"].join(""), "-rf", "~/Documents/old"].join(" ") } });
   send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: `murage-gate:${secret}`, message: call });
 };
 

@@ -1328,7 +1328,11 @@ describe("harness HTTP API", () => {
       const removed = await api("DELETE", `/api/groups/${room.id}/tasks/${newThread}`);
       expect(removed.status).toBe(200);
       expect(removed.body.group.tasks).toHaveLength(1);
-      expect((await api("DELETE", `/api/groups/${room.id}/tasks/${originalThread}`)).status).toBe(400);
+      // the last conversation goes too, and a fresh one takes its place
+      const last = await api("DELETE", `/api/groups/${room.id}/tasks/${originalThread}`);
+      expect(last.status).toBe(200);
+      expect(last.body.group.tasks).toHaveLength(1);
+      expect(last.body.group.threadId).not.toBe(originalThread);
       expect((await api("POST", `/api/groups/${room.id}/tasks/missing-thread`)).status).toBe(404);
       expect((await api("POST", `/api/groups/${room.id}/tasks`, { title: 42 })).status).toBe(400);
     } finally {
