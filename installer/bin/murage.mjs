@@ -32,6 +32,7 @@ import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupP
 import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
+import { closePairing, controlPort, expiryText, openPairing, watchPairing } from "../lib/pair.mjs";
 import { NotPlainFile, asAccount } from "../lib/private-files.mjs";
 import {
   ServiceAccountRefused,
@@ -1346,12 +1347,13 @@ async function doorFront(door, { env = process.env, signal, log = console.log } 
  * is created or chmodded here.
  * @param {string[]} argv
  * @param {string | null} serviceUserFromEnv
+ * @param {string} command for the "does not take" message; the caller's own name
  * @returns {{ dataDir: string, envFile: string }}
  */
-function resolveStatusPaths(argv, serviceUserFromEnv = null) {
+function resolveStatusPaths(argv, serviceUserFromEnv = null, command = "status") {
   const parsed = parseSetupArgs(argv);
   if (parsed.error) {
-    fail(parsed.error.replace("setup does not take", "status does not take"));
+    fail(parsed.error.replace("setup does not take", `${command} does not take`));
     process.exit(EXIT.USAGE);
   }
   const name = parsed.serviceUser || serviceUserFromEnv;
@@ -1499,6 +1501,98 @@ function resetpass(argv = []) {
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
+/**
+ * Pair a phone with a headless box: open a pairing window on this box's
+ * companion and show the QR and the six digits, then wait for the phone.
+ *
+ * The door has to prove it is this deployment's before anything is opened —
+ * the same proof `murage status` asks for. The control page it then talks to
+ * is loopback-only and belongs to the same sidecar; refusing to go further
+ * against an unproven door means a squatter on these ports cannot get a QR
+ * of its choosing printed on the owner's terminal.
+ *
+ * The token-bearing link is never printed as text. The QR carries it, the
+ * way the desktop's does; scrollback and a provisioning log do not.
+ * @param {string[]} argv everything after `pair`
+ */
+async function pair(argv = []) {
+  heading("Murage — pair a phone");
+  const mode = unattendedMode(argv, "murage pair");
+  const wait = !mode.rest.includes("--no-wait");
+  const { dataDir, envFile } = resolveStatusPaths(mode.rest.filter((arg) => arg !== "--no-wait"), process.env.MURAGE_SERVICE_USER?.trim() || null, "pair");
+  const env = { ...process.env, ...readEnvFile(envFile) };
+  const dir = env.MURAGE_DATA_DIR || dataDir;
+
+  const recorded = readDoorNonce(dir, { owner: deploymentOwner(dir) });
+  const door = await probeDoor({ port: DOOR_PORT, nonce: recorded.nonce, nonceError: recorded.error ?? undefined, version: INSTALLER_VERSION });
+  if (!(door.answered && door.identity === "match" && door.ready)) {
+    fail(`this deployment's browser door is not running on ${c.dim(`127.0.0.1:${DOOR_PORT}`)}${door.reason ? ` (${door.reason})` : ""}.`);
+    console.log(c.dim("  Start it with `murage start`, then run `murage pair` again.\n"));
+    process.exit(EXIT.ENVIRONMENT);
+  }
+
+  const port = controlPort(env);
+  const opened = await openPairing({ port });
+  if (!opened.ok) {
+    fail(opened.reason);
+    process.exit(EXIT.ENVIRONMENT);
+  }
+  if (!opened.link) {
+    await closePairing({ port, token: opened.token });
+    fail("the browser door has no address a phone can open yet, so there is nothing to scan.");
+    console.log(c.dim("  Check `murage status`: the tailnet has to be up and the proxy in front of the door.\n"));
+    process.exit(EXIT.ENVIRONMENT);
+  }
+
+  console.log("  Scan this with the phone's camera, or with the Murage app:\n");
+  printQr(opened.link);
+  console.log(`\n  No camera? Open ${c.o(opened.origin)} on the phone and type this code:\n`);
+  console.log(`      ${c.b(opened.code)}\n`);
+  if (opened.door?.scheme === "http") {
+    warn("that address is plain HTTP. A browser on your tailnet can use it; the Murage phone app needs the HTTPS address `murage setup` puts in front.");
+  }
+  const at = new Date(opened.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  console.log(c.dim(`  The phone must be signed into the same tailnet as this box. The code works once.`));
+  console.log(c.dim(`  ${expiryText(opened.expiresAt)} (at ${at})\n`));
+
+  if (!wait) {
+    console.log(c.dim("  The window stays open until a phone uses it or it expires. Running `murage pair` again replaces it.\n"));
+    return;
+  }
+
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once("SIGINT", stop);
+  const tty = Boolean(process.stdout.isTTY);
+  const result = await watchPairing({
+    port, token: opened.token, expiresAt: opened.expiresAt, openedAt: Date.now() - 1_000, signal: controller.signal,
+    // One line, rewritten in place, on a terminal. A log gets the line above
+    // and the outcome below, not six hundred countdown lines.
+    onTick: (text) => { if (tty) process.stdout.write(`\r  ${c.dim(text)}   `); },
+  });
+  process.removeListener("SIGINT", stop);
+  if (tty) process.stdout.write("\n");
+
+  if (result.outcome === "paired") {
+    ok(`paired: ${c.b(result.device)}. It can open Murage now.\n`);
+    return;
+  }
+  if (result.outcome === "cancelled") {
+    await closePairing({ port, token: opened.token });
+    warn("cancelled. That code no longer works.\n");
+    process.exit(130);
+  }
+  const why = {
+    expired: "that code expired before a phone used it.",
+    replaced: "a newer pairing window was opened (on the desktop, or by another `murage pair`), so this code stopped working.",
+    closed: "the pairing window was closed before a phone used it.",
+    unreachable: "lost contact with the companion. Check `murage status`.",
+  }[result.outcome];
+  fail(why);
+  console.log(c.dim("  Run `murage pair` again when the phone is ready.\n"));
+  process.exit(EXIT.ENVIRONMENT);
+}
+
 function help() {
   console.log(`
   ${c.o("murage")} — deploy Murage's headless server, reachable only over your tailnet
@@ -1509,6 +1603,8 @@ function help() {
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
       ${c.dim("[--service-user <account>]")}  look where \`setup --service-user\` put things (when run as root)
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
+  ${c.b("murage pair")}        Pair a phone: show a QR and a 6-digit code, then wait for it
+      ${c.dim("[--no-wait]")}  print the code and exit; the window stays open until used or expired
   ${c.b("murage help")}        This message
 
   Data dir : ${c.dim(DATA_DIR)}   ${c.dim("(override with MURAGE_DATA_DIR)")}
@@ -1551,6 +1647,7 @@ if (isMain) {
   else if (cmd === "start") await start(process.argv.slice(3));
   else if (cmd === "status") await status(process.argv.slice(3));
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass(process.argv.slice(3));
+  else if (cmd === "pair") await pair(process.argv.slice(3));
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {
       console.log(JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).version);

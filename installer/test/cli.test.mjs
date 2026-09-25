@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -421,4 +422,44 @@ test("MURAGE_TAILSCALE_BIN points at a specific CLI, and a missing one is not fo
   assert.equal(tailscaleBin({ env: { MURAGE_TAILSCALE_BIN: "/gone" }, exists: () => false }), null);
   assert.equal(tailscaleBin({ env: {}, onPath: () => true, exists: () => false }), "tailscale");
   assert.equal(tailscaleBin({ env: {}, onPath: () => false, exists: () => false }), null);
+});
+
+/** A port nothing is listening on, for a run that must find nothing there. */
+async function deadPort() {
+  const server = createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+test("help lists `murage pair`", () => {
+  const out = execFileSync(process.execPath, [CLI, "help"], { encoding: "utf8", timeout: 20_000 });
+  assert.match(out, /murage pair/);
+  assert.match(out, /--no-wait/);
+});
+
+test("pair refuses when this deployment's door is not running, and opens nothing", async () => {
+  const dir = scratch();
+  const run = spawnSync(process.execPath, [CLI, "pair"], {
+    encoding: "utf8",
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      MURAGE_DATA_DIR: dir,
+      MURAGE_ENV_FILE: join(dir, "murage.env"),
+      MURAGE_BROWSER_PORT: String(await deadPort()),
+      MURAGE_CONTROL_PORT: String(await deadPort()),
+      NO_COLOR: "1",
+    },
+  });
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stdout, /murage start/);
+  assert.ok(!/murage_pair_/.test(run.stdout + run.stderr), "no pairing token may reach the terminal");
+});
+
+test("pair refuses a stray argument, and says pair rather than setup", () => {
+  const run = spawnSync(process.execPath, [CLI, "pair", "--bogus"], { encoding: "utf8", timeout: 20_000, env: { ...process.env, NO_COLOR: "1" } });
+  assert.equal(run.status, 2);
+  assert.match(run.stdout, /pair does not take/);
 });
