@@ -801,10 +801,37 @@ function cmdHit(words: Word[], cwd: string | undefined, place: StopLinePlace, fo
   return commandHit(name, args, operands(args), cwd, place, found, line);
 }
 
+/** PowerShell here-strings (`@'…'@`, `@"…"@`), taken out of the line before
+ * it is read, each with where its text goes: into an interpreter (python,
+ * node, …) it is code, judged by its real delete calls like a shell
+ * here-doc; into Invoke-Expression or another PowerShell it is a line of
+ * PowerShell; anywhere else (a file, a variable, the screen) it is data.
+ * 0.1.60 Windows pass: text that only said "rm trash", piped to python, was
+ * read as a delete nobody could place. */
+const PS_HERE = /@(['"])\r?\n([\s\S]*?)\r?\n\1@/g;
+const PS_INTERPRETER = /^(python\d*(\.\d+)?|py|node|nodejs|deno|bun|ruby|perl|php|lua)$/;
+function psHereStrings(line: string): { flat: string; docs: Array<{ body: string; sink: "code" | "ps" | "data" }> } {
+  const docs: Array<{ body: string; sink: "code" | "ps" | "data" }> = [];
+  const flat = line.replace(PS_HERE, (_whole, _quote: string, body: string, offset: number) => {
+    const after = line.slice(offset + _whole.length);
+    let target = /^[ \t]*\|[ \t]*&?[ \t]*([^\s|;]+)/.exec(after)?.[1];
+    if (target === undefined) {
+      // `$code = @'…'@` and later `$code | python`
+      const assigned = /\$([A-Za-z_]\w*)\s*=\s*$/.exec(line.slice(0, offset))?.[1];
+      if (assigned) target = new RegExp(`\\$${assigned}\\s*\\|\\s*&?\\s*([^\\s|;]+)`, "i").exec(after)?.[1];
+    }
+    const name = (target ?? "").split(/[\\/]/).pop()!.replace(/\.exe$/i, "").toLowerCase();
+    docs.push({ body, sink: PS_INTERPRETER.test(name) ? "code" : /^(iex|invoke-expression|powershell|pwsh)$/.test(name) ? "ps" : "data" });
+    return ` __murage_here_${docs.length - 1}__ `;
+  });
+  return { flat, docs };
+}
+
 function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
   const sql = SQL_DESTRUCTIVE.exec(line);
   if (sql) return { kind: "delete", place: "sql:shell", what: `Delete database data (${sql[0].trim()}): ${short(line)}` };
-  const { commands, complex } = splitPowerShell(line);
+  const { flat, docs } = psHereStrings(line);
+  const { commands, complex } = splitPowerShell(flat);
   let cwd = place.cwd;
   const found: Collected = { deletes: [] };
   const vars = new Map<string, string>();
@@ -901,11 +928,23 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
     previous = { name, paths: psPaths(args) };
   }
   if (found.other) return found.other;
+  // here-string bodies, by where their text goes (psHereStrings)
+  for (const doc of docs) {
+    if (doc.sink === "ps" && depth < 3) {
+      const inner = psHit(doc.body, { ...place, cwd }, depth + 1);
+      if (inner) return inner;
+    } else if (doc.sink === "code" && CODE_DELETE.test(doc.body)) {
+      const literals = [...doc.body.matchAll(/['"]((?:~|\.\.?)?[\\/][^'"]*|[A-Za-z]:[\\/][^'"]*)['"]/g)].map((m) => m[1]!);
+      if (!literals.length) found.unknownDelete ??= short(line);
+      for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
+    }
+  }
   // a delete this reader did not follow: a method on an object
-  // (`(Get-Item x).Delete()`), a here-string, text run through Invoke-Expression
+  // (`(Get-Item x).Delete()`), text run through Invoke-Expression. Read on
+  // the line without its here-string bodies, which are judged above.
   if (!found.deletes.length && !found.unknownDelete) {
-    const methodDelete = /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(line);
-    const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(line)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(line);
+    const methodDelete = /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(flat);
+    const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(flat)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(flat);
     if (methodDelete || hidden) found.unknownDelete = short(line);
   }
   return deleteHit(found, place, line);
