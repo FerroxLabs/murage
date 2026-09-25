@@ -1169,6 +1169,8 @@ function botForDirectThread(botId:string,threadId:string):BotRecord|null {
 async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean):Promise<void>{
   if(!resources.length)return;
   let waited=false;
+  // Waiting for another thread's folder, computer or browser is not a stall.
+  let releaseStallWait=()=>{};
   try{
     // A deadline, because this wait had none. Stop ends it for a person who is
     // watching; an 8am routine queued behind a thread that never lets go had
@@ -1176,10 +1178,14 @@ async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resourc
     // why. ResourceWaitTimeout leaves the queue as well as the promise.
     const granted=await directRuns.acquire(run,resources,(blockers)=>{
       waited=true;
-      store.setTaskWaiting(run.botId,run.threadId,resourceWaitFor(blockers,screenUse,showHolder));
+      const waitingFor=resourceWaitFor(blockers,screenUse,showHolder);
+      releaseStallWait();
+      releaseStallWait=watchdog.waitingOn(run.threadId,waitingFor.resource,run.generation);
+      store.setTaskWaiting(run.botId,run.threadId,waitingFor);
     },RESOURCE_WAIT_TIMEOUT_MS);
     if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
   }finally{
+    releaseStallWait();
     // Also on the timeout and on a refusal: a thread left showing "waiting for
     // the working folder" after its turn is over is not waiting for anything.
     if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
@@ -1189,7 +1195,11 @@ async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resourc
  * and holding nothing, before any setup side effect; Stop ends the wait. */
 async function acquireDirectTurnSlot(run:DirectThreadRun<BotRecord>):Promise<void>{
   let waited=false;
-  const granted=await directRuns.awaitSlot(run,()=>{waited=true;store.setTaskWaiting(run.botId,run.threadId,{resource:"thread-slot"});});
+  // A queued routine waiting for a thread slot is not a stall.
+  const releaseStallWait=watchdog.waitingOn(run.threadId,"thread-slot",run.generation);
+  let granted:boolean;
+  try{granted=await directRuns.awaitSlot(run,()=>{waited=true;store.setTaskWaiting(run.botId,run.threadId,{resource:"thread-slot"});});}
+  finally{releaseStallWait();}
   if(waited)store.setTaskWaiting(run.botId,run.threadId,undefined);
   if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for a free thread");
 }
@@ -1231,6 +1241,8 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
     // per-turn state — never a replacement run, whatever phase the
     // replacement is in when the close lands (turn.completed fold).
     if(run.providerTurnId)rememberReleasedStoppedTurn(threadId,run.providerTurnId);
+    // A stop during setup ends that setup's admission watch too.
+    watchdog.settleSetup(threadId,run.generation);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
     // The bot reads idle now, but a legacy "requested, not observed" stop
     // keeps the folder writer lease until the engine's terminal event. Mark
@@ -3598,6 +3610,12 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // activity-based, so an hour-long turn that keeps streaming is never
 // touched, and turns parked on a human approval are exempt.
 const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
+// The watch is armed at admission (upstream #1682), and setup is latched to
+// this longer ceiling until dispatch: a box, VPS or VM being prepared, a
+// connected-app discovery or a memory build can be slow and silent without
+// being stuck. Waiting for a thread slot, another thread's computer, browser
+// or folder, or a person is not counted at all (turn-watchdog.ts).
+const TURN_SETUP_STALL_MS = Math.max(TURN_STALL_MS, Number(process.env.MURAGE_TURN_SETUP_STALL_MS) || 60 * 60_000);
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
 // Upstream #1589: four minutes held the asking bot's whole turn hostage to a
@@ -3619,6 +3637,7 @@ const roomStallCompletions = new RoomTurnStallRegistry();
 const pendingRoomStops = new Map<string, RoomPendingStop>();
 const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
+  setupStallMs: TURN_SETUP_STALL_MS,
   checkMs: 60_000,
   onStall: (turn) => {
     // The room invocation owns its exact generation and provider identity.
@@ -5592,6 +5611,10 @@ async function startTurn(
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
   store.setTaskActivity(bot.id, threadId, "working");
+  // Watch from admission, not dispatch (upstream #1682): setup can wedge
+  // before any provider event exists. Every setup exit throws into the catch
+  // below, which settles this generation's watch.
+  watchdog.watch(threadId, bot.id, { generation: dispatchClaimId, setup: true });
   store.patchTask(bot.id,threadId, { unread: false });
   turnUsage.delete(threadId);
 
@@ -6075,7 +6098,7 @@ async function startTurn(
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
-      watchdog.watch(threadId, bot.id);
+      watchdog.dispatched(threadId, bot.id, dispatchClaimId);
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
@@ -6289,10 +6312,12 @@ async function startTurn(
       await releaseBrowserCapabilityForThread(threadId, dispatchClaimId);
       const ownsLatestGeneration = directRuns.current(run);
       if(ownsLatestGeneration)directRuns.release(run);
+      // Scoped to this generation: armed at admission, the watch must end
+      // with a setup that failed or was stopped, never with a newer turn's.
+      watchdog.settle(threadId, dispatchClaimId);
       if (ownsLatestGeneration) {
         releaseLocalVmThread(threadId);
         if (activeVpsThreads.get(bot.id) === threadId) activeVpsThreads.delete(bot.id);
-        watchdog.settle(threadId);
         turnUsage.delete(threadId);
       }
       if (e instanceof DirectTurnSetupCancelled) {
@@ -7410,6 +7435,9 @@ async function runGroupMemberTurn(
     instance.adapter.capabilities.agentsMcp === true;
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
+  // Upstream 0b2694a4: the setup latch for a stall during room setup.
+  let setupStalled = false;
+  let unregisterSetupStall = () => {};
   try {
   if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
@@ -7536,6 +7564,13 @@ async function runGroupMemberTurn(
   pendingRoomStops.get(threadId)?.cancel();
   pendingRoomStops.delete(threadId);
   groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });
+  // Watch from the room claim, not provider dispatch (upstream #1682). The
+  // room's stall handler only exists once the provider turn runs, so a stall
+  // during setup is latched here and honoured before dispatch (upstream
+  // 0b2694a4); the finally below clears the latch and the setup watch on
+  // every other exit.
+  unregisterSetupStall = roomStallCompletions.register(threadId, () => { setupStalled = true; });
+  watchdog.watch(threadId, bot.id, { generation: internalGeneration, setup: true });
   // The room claim above is this attempt's. Every exit before a provider
   // turn is accepted releases it through this one path — the same steps a
   // rejected dispatch takes (the dispatch catch below finishes as
@@ -7776,6 +7811,15 @@ async function runGroupMemberTurn(
     else markCancelledProviderHandshake(threadId, retirementOwner);
   };
   const timeoutMinutes = roomTurnTimeoutMinutes(cfg);
+  // A stall latched during setup: no provider turn was launched, so there is
+  // nothing to quarantine or close. Say so and release the claim as every
+  // other unstarted exit does. Nothing awaits between this check and the
+  // latch's swap for the real handler below.
+  if (setupStalled) {
+    store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: "error: no activity while getting ready, so the turn was stopped", ok: false } });
+    await releaseUnstartedRoomTurn();
+    return false;
+  }
   const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
     let unsub = () => {};
@@ -7820,6 +7864,7 @@ async function runGroupMemberTurn(
       else if (e.type === "request.resolved") deadline.setWaitingOnHuman(false);
     });
     deadline.start();
+    unregisterSetupStall();
     unregisterStall = roomStallCompletions.register(threadId, () => {
       abandonProviderTurn();
       void releaseBrowserCapabilityForThread(threadId);
@@ -7828,7 +7873,7 @@ async function runGroupMemberTurn(
       void beginRoomStop();
       finish("stalled");
     });
-    watchdog.watch(threadId, bot.id);
+    watchdog.dispatched(threadId, bot.id, internalGeneration);
     onProviderHandshakeStarted?.();
     projectTurnLeases.markDispatched(internalGeneration);
     void (async()=>{
@@ -8087,6 +8132,8 @@ async function runGroupMemberTurn(
   }
   return true;
   } finally {
+    unregisterSetupStall();
+    watchdog.settleSetup(threadId, internalGeneration);
     revokeInternalGeneration(threadId, internalGeneration);
   }
 }
