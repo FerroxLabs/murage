@@ -194,6 +194,25 @@ describe("steer-queue module", () => {
     expect(_queuedCount("thread-original-cancel")).toBe(0);
   });
 
+  it("keeps the queue while the bot is held by a room turn, then drains it once", () => {
+    // Upstream OpenMausBot #1664: a 1:1 bot that is idle in its own thread
+    // can still be mid room turn. The drain waits for that too.
+    const bot = fakeBot("bot-room", "thread-room", false);
+    const store = fakeStore([bot]);
+    queueSteeredMessage(bot.id, bot.threadId, "while you were in the room");
+    let inRoom = true;
+    const run = vi.fn();
+    drainSteeredMessages(store, run, (botId) => botId === bot.id && inRoom);
+    expect(run).not.toHaveBeenCalled();
+    expect(store.messages).toHaveLength(0);
+    expect(_queuedCount("thread-room")).toBe(1);
+
+    inRoom = false;
+    drainSteeredMessages(store, run, (botId) => botId === bot.id && inRoom);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(_queuedCount("thread-room")).toBe(0);
+  });
+
   it("fires nothing when nothing is queued", () => {
     const run = vi.fn();
     drainSteeredMessages(fakeStore([fakeBot("bot-c", "thread-c", false)]), run);
@@ -219,9 +238,17 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   let drainGate: string;
   let stopGate: string;
   let stopRpcDump: string;
+  let roomGate: string;
 
   /** the flat command payloads these tests POST/PATCH */
-  type ApiBody = Record<string, string | boolean | { instanceId: string; model: string }>;
+  type ApiBody = Record<
+    string,
+    | string
+    | boolean
+    | string[]
+    | { instanceId: string; model: string }
+    | { bulletin: string; defaultResponder: { kind: string; botId: string } }
+  >;
 
   const api = async (method: string, path: string, body?: ApiBody): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
@@ -234,6 +261,9 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
 
   const botById = async (id: string) =>
     (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
+
+  const groupById = async (id: string) =>
+    (await api("GET", "/api/bots?messages=0")).body.groups.find((g: any) => g.id === id);
 
   const echoes = (bot: any): any[] =>
     bot.messages.filter((m: any) => m.role === "bot" && m.kind === "text" && m.text?.startsWith("echo: "));
@@ -272,6 +302,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     drainGate = join(home, "gates", "drain.gate");
     stopGate = join(home, "gates", "stop.gate");
     stopRpcDump = join(home, "gates", "stop.rpc");
+    roomGate = join(home, "gates", "room.gate");
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
@@ -291,6 +322,12 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
               FAKE_ACP_GATE_FILE: stopGate,
               FAKE_ACP_RPC_DUMP: stopRpcDump,
             },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
+          // a room turn held open by its own gate while a 1:1 message arrives
+          steerRoom: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: roomGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -438,6 +475,40 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       const replies = echoes(snapshot);
       expect(replies).toHaveLength(1);
       expect(replies[0].text).toContain("after stop please");
+    },
+    60_000,
+  );
+
+  it(
+    "queues a person's 1:1 message behind the bot's room turn instead of bouncing it",
+    async () => {
+      // Upstream OpenMausBot #1664: this bounced with 409 while the room ran
+      const bot = await newBot("steerRoom", "RoomBusy");
+      const room = (await api("POST", "/api/groups", {
+        name: "Ops Room",
+        memberIds: [bot.id],
+        setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } },
+      })).body.group;
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room work" })).status).toBe(202);
+      await until(async () => (await groupById(room.id))?.working === true, "the room turn to start");
+
+      const direct = await api("POST", `/api/bots/${bot.id}/messages`, { text: "meanwhile, direct words" });
+      expect(direct.status, JSON.stringify(direct.body)).toBe(202);
+      expect(direct.body).toMatchObject({ ok: true, queued: true });
+
+      // the queued words stay off the 1:1 transcript while the room runs
+      const during = await botById(bot.id);
+      expect(during.messages.filter((m: any) => m.role === "user").map((m: any) => m.text)).toEqual([]);
+
+      // the room turn ends: the words run as exactly one attended 1:1 turn
+      writeFileSync(roomGate, "open");
+      await until(async () => {
+        const after = await botById(bot.id);
+        return !after.busy && echoes(after).some((reply) => reply.text.includes("meanwhile, direct words"));
+      }, "the drained 1:1 turn");
+      const after = await botById(bot.id);
+      expect(echoes(after).filter((reply) => reply.text.includes("meanwhile, direct words"))).toHaveLength(1);
+      expect((await groupById(room.id))?.working).toBe(false);
     },
     60_000,
   );

@@ -2615,6 +2615,11 @@ function finishGroupTurnOperation(groupId: string, operation: GroupTurnOperation
   if (operations?.size === 0) groupTurnOperations.delete(groupId);
   const group = store.group(groupId);
   if (group) broadcast({ kind: "group", group: publicGroupState(group) });
+  // A 1:1 message queued behind this room turn waits on this map entry, and
+  // the operation can outlive the member's turn.completed, so drain here at
+  // the true end. The drain re-checks activeGroupTurnForBot, so a room turn
+  // begun meanwhile still holds it (upstream OpenMausBot #1664).
+  drainQueuedSends();
   // A follow-up sent while this operation was running belongs to the
   // harness, not whichever composer happened to be mounted. Hand the next
   // one to the ordinary channel runner as soon as the channel is truly idle.
@@ -5108,6 +5113,8 @@ function drainQueuedSends() {
         },
       });
     }),
+    // a bot idle in this thread can still be speaking in a room
+    (botId) => Boolean(activeGroupTurnForBot(botId)),
   );
 }
 
@@ -14959,11 +14966,22 @@ const server = createServer(async (req, res) => {
               });
               return { ok: true as const, steered: true as const, threadId, message };
             }
-            if (!current.busy) {
+            if (!current.busy && !activeGroupTurnForBot(current.id)) {
               const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
               return { ok: true as const, threadId, message };
             }
             const queued = queueSteeredMessage(current.id, threadId, text, {
+              replyToId: replyTo?.id,
+              sendId,
+              prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
+            });
+            return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
+          }
+          // Idle here but speaking in a room: startTurn would refuse with 409.
+          // Queue the words; the drain runs them when the room turn ends
+          // (upstream OpenMausBot #1664).
+          if (activeGroupTurnForBot(currentAtStart.id)) {
+            const queued = queueSteeredMessage(currentAtStart.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),

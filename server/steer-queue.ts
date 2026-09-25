@@ -131,6 +131,9 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
   ) => void | Promise<void>,
+  /** Holds a queue the thread's own busy flag cannot see, such as the bot
+   * speaking in a room turn (upstream OpenMausBot #1664). */
+  isBlocked?: (botId: string, threadId: string) => boolean,
 ): void {
   // deleting only the entry being visited is safe under Map iteration
   for (const [threadId, entry] of queues) {
@@ -142,6 +145,7 @@ export function drainSteeredMessages(
       continue;
     }
     if (store.taskByThread ? store.taskByThread(bot.id,threadId)?.busy : bot.busy) continue;
+    if (isBlocked?.(entry.botId, threadId)) continue;
     // committed to draining: the entry leaves the map before anything runs,
     // so a settle racing another settle can never fire the same queue twice
     queues.delete(threadId);
