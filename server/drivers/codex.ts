@@ -125,6 +125,23 @@ function mountMcpServer(
   }
 }
 
+// Murage owns browser and computer selection and mounts its own scoped MCP
+// servers. Codex's bundled desktop browser/computer tools need the Codex
+// desktop app's connection, which a CLI child never has, so leaving them on
+// offers the model a route that cannot work. These overrides only reach this
+// child process: the owner's Codex install and config are untouched, and
+// native web search keeps its configured mode. Codex ignores feature keys it
+// does not know (checked on codex-cli 0.156.1), so older CLIs still start.
+// Upstream OpenMausBot #1722.
+const CODEX_TOOL_SURFACE_ARGS: readonly string[] = [
+  "-c", "features.browser_use=false",
+  "-c", "features.browser_use_external=false",
+  "-c", "features.computer_use=false",
+  // Disable the matching plugin instructions too. An inline table, because
+  // some CLIs read quoted dotted keys literally.
+  "-c", 'plugins={ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
+];
+
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
@@ -244,6 +261,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // upstream context-length error mid-thread. So assume the observed
           // floor, exactly as the spec says to. Only set for a Flux turn.
           ...(flux?.applied ? ["-c", `model_context_window=${FLUX_CONTEXT_FLOOR}`] : []),
+          ...CODEX_TOOL_SURFACE_ARGS,
         ];
         if (turn.integrations?.composio) {
           mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio);

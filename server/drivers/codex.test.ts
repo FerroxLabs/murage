@@ -754,6 +754,26 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.join(" ")).toContain("mcp_servers.browser.command");
   });
 
+  it("turns off Codex's own desktop browser and computer tools so the bot uses Murage's", async () => {
+    await create();
+    const dump = join(scratch, "tool-surface.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-tool-surface",
+      text: "go",
+      integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
+    expect(argv).toContain("features.browser_use=false");
+    expect(argv).toContain("features.browser_use_external=false");
+    expect(argv).toContain("features.computer_use=false");
+    expect(argv).toContain('plugins={ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }');
+    // native web search keeps whatever mode the owner configured
+    expect(argv.some((arg) => arg.startsWith("web_search="))).toBe(false);
+    expect(argv.join(" ")).toContain("mcp_servers.browser.command");
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
