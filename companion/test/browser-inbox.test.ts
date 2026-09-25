@@ -2,7 +2,7 @@
 // the harness only believes it is talking to the companion when the private
 // launch proof arrives with the request. So the door has to add that proof on
 // these two routes — its own, never one a browser sent — and on no others.
-import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import { createServer, request, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { cookieName, createBrowserHandler, type BrowserDeviceStore } from "../src/browser.ts";
@@ -163,5 +163,84 @@ describe("the browser door's Inbox", () => {
       expect(response.status).toBe(503);
       expect(await response.text()).toContain("started together");
     } finally { await close(door); }
+  });
+});
+
+// A phone on cellular sends a 10 MiB photo for as long as the link needs. The
+// harness wait must measure the harness, not the upload; while the body is
+// still going up, only silence counts.
+describe("an upload through the door", () => {
+  const TIMEOUT = 300;
+  /** A door with short clocks in front of a harness that answers once the
+   * whole body is in, after `answerAfterMs`. */
+  const rig = async (answerAfterMs = 0) => {
+    const received: number[] = [];
+    const harness = createServer((req, res) => {
+      let bytes = 0;
+      req.on("data", (chunk: Buffer) => { bytes += chunk.length; });
+      req.on("end", () => setTimeout(() => {
+        received.push(bytes);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ bytes }));
+      }, answerAfterMs));
+    });
+    const harnessPort = await listen(harness);
+    const door = createServer(createBrowserHandler({
+      harnessPort, companionToken: PRIVATE_TOKEN, headersTimeoutMs: TIMEOUT, bodyIdleTimeoutMs: TIMEOUT,
+      identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    return { port, received, done: async () => { await close(door); await close(harness); } };
+  };
+  /** Send `chunks` of 1 KiB, `gapMs` apart, then optionally stop without ending. */
+  const upload = (port: number, chunks: number, gapMs: number, end = true) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request({
+        host: "127.0.0.1", port, method: "POST", path: "/api/attachments?threadId=thread_1",
+        headers: { "content-type": "image/png", origin: `http://127.0.0.1:${port}`, cookie: `${cookieName("http")}=paired-session` },
+      }, (res) => {
+        let body = "";
+        res.on("data", (c) => { body += c; });
+        res.on("end", () => { resolve({ status: res.statusCode ?? 0, body }); req.destroy(); });
+      });
+      req.on("error", reject);
+      let sent = 0;
+      const next = () => {
+        if (sent === chunks) { if (end) req.end(); return; }
+        sent += 1;
+        req.write(Buffer.alloc(1024, 7));
+        setTimeout(next, gapMs);
+      };
+      next();
+    });
+
+  it("lets a slow upload take far longer than the harness wait, as long as bytes keep arriving", async () => {
+    const { port, received, done } = await rig();
+    try {
+      const started = Date.now();
+      const answer = await upload(port, 8, 200);
+      expect(Date.now() - started).toBeGreaterThan(TIMEOUT * 4);
+      expect(answer.status).toBe(201);
+      expect(JSON.parse(answer.body)).toEqual({ bytes: 8 * 1024 });
+      expect(received).toEqual([8 * 1024]);
+    } finally { await done(); }
+  });
+
+  it("gives up on an upload that stops sending bytes", async () => {
+    const { port, received, done } = await rig();
+    try {
+      const answer = await upload(port, 2, 50, false);
+      expect(answer.status).toBe(408);
+      expect(answer.body).toContain("the upload stopped arriving");
+      expect(received).toEqual([]);
+    } finally { await done(); }
+  });
+
+  it("still gives up on a harness that takes too long once it has the whole upload", async () => {
+    const { port, done } = await rig(TIMEOUT * 3);
+    try {
+      const answer = await upload(port, 3, 100);
+      expect(answer.status).toBe(504);
+    } finally { await done(); }
   });
 });

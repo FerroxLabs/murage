@@ -110,8 +110,12 @@ export interface BrowserDoorOptions {
    * a device signs itself out, the same call the control page makes after a
    * revoke. */
   disconnectDevice?: (deviceId: string) => void;
-  /** How long the harness may take to produce response *headers*. Tests only. */
+  /** How long the harness may take to produce response *headers*, counted
+   * from when the request body has been forwarded whole. Tests only. */
   headersTimeoutMs?: number;
+  /** How long an upload may send no bytes at all before it is given up on.
+   * Tests only. */
+  bodyIdleTimeoutMs?: number;
   /** The sign-in rate limiter. Injectable so a test can drive its clock;
    * every real door gets its own from `createSignInLimiter`. */
   signInLimiter?: SignInLimiter;
@@ -126,6 +130,11 @@ export interface BrowserDoorOptions {
  * long as it likes — an SSE stream is a response that deliberately never
  * ends. Same value and same reasoning as the device proxy. */
 const HEADERS_TIMEOUT_MS = 30_000;
+
+/** An upload is judged by progress, not by its total time: a 10 MiB photo
+ * from a phone on a slow cellular link can take minutes and is fine as long
+ * as bytes keep arriving. Silence this long means it stalled. */
+const BODY_IDLE_TIMEOUT_MS = 30_000;
 
 /** A JSON response is buffered whole before it can be scrubbed. Far above any
  * real payload; it exists to have a ceiling at all. */
@@ -1670,7 +1679,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           },
         },
         (harness) => {
-          clearTimeout(headersDeadline);
+          stopClocks();
           const contentType = String(harness.headers["content-type"] ?? "");
 
           if (staticType) return relayStatic(harness, res, staticType, path, encoding);
@@ -1756,18 +1765,47 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       });
       req.on("error", () => upstream.destroy());
 
-      let timedOut = false;
-      const headersDeadline = setTimeout(() => {
-        timedOut = true;
-        upstream.destroy(new Error("the harness sent no response headers"));
-      }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
-      headersDeadline.unref?.();
+      // Two clocks, one after the other. While the body is still going up,
+      // only silence counts: an upload that keeps sending bytes may take as
+      // long as the link needs. Once the harness has the whole request, the
+      // headers clock measures the harness alone. A request with no body
+      // finishes at once, so for it this is the old single deadline.
+      let timedOut: "harness" | "upload" | null = null;
+      let headersDeadline: ReturnType<typeof setTimeout> | undefined;
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const stopClocks = () => {
+        clearTimeout(headersDeadline);
+        clearTimeout(idle);
+      };
+      const idleMs = options.bodyIdleTimeoutMs ?? BODY_IDLE_TIMEOUT_MS;
+      const armIdle = () => {
+        clearTimeout(idle);
+        idle = setTimeout(() => {
+          // Paused on the harness's backpressure is the harness being slow,
+          // not the phone.
+          timedOut = upstream.writableNeedDrain ? "harness" : "upload";
+          upstream.destroy(new Error("the upload made no progress"));
+        }, idleMs);
+        idle.unref?.();
+      };
+      upstream.on("finish", () => {
+        clearTimeout(idle);
+        headersDeadline = setTimeout(() => {
+          timedOut = "harness";
+          upstream.destroy(new Error("the harness sent no response headers"));
+        }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
+        headersDeadline.unref?.();
+      });
 
       upstream.on("error", () => {
-        clearTimeout(headersDeadline);
+        stopClocks();
         if (res.headersSent || res.writableEnded) {
           res.destroy();
           return;
+        }
+        if (timedOut === "upload") {
+          res.setHeader("connection", "close");
+          return sendJson(res, 408, { error: "the upload stopped arriving" });
         }
         sendJson(
           res,
@@ -1777,7 +1815,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       });
 
       if (body) upstream.end(body);
-      else req.pipe(upstream);
+      else {
+        armIdle();
+        req.on("data", armIdle);
+        req.pipe(upstream);
+      }
     };
 
     if (isRoutineWrite(method, path) && !device?.cloudDesktopAccess) {
