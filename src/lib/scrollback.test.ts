@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { initialState, reducer, type AppState, type Bot, type Message } from "@/state/store";
-import { createScrollback, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, unheardMessages } from "./scrollback";
+import { createScrollback, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, unheardMessages } from "./scrollback";
 
 // A thread of `total` messages m0..m{total-1}; the client holds the newest
 // `held`. The fake server answers `before=` and `around=` like the harness.
@@ -128,5 +128,35 @@ describe("unheardMessages", () => {
   });
   it("reads everything when nothing was on screen", () => {
     expect(unheardMessages([m("a")], new Set())).toEqual([m("a")]);
+  });
+});
+
+describe("phone hydrate (spec §6)", () => {
+  it("asks for one row per thread on a phone and a full page elsewhere", () => {
+    expect(hydratePageSize(true)).toBe(PHONE_HYDRATE_PAGE);
+    expect(PHONE_HYDRATE_PAGE).toBe(1);
+    expect(hydratePageSize(false)).toBe(MESSAGE_PAGE_SIZE);
+  });
+
+  it("tops up a slim thread to a full page with one ordinary scrollback request", async () => {
+    const r = rig(300, 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(true);
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toEqual([`/api/threads/t/messages?limit=${MESSAGE_PAGE_SIZE}&before=m299`]);
+    expect(r.state.bots[0].messages).toHaveLength(MESSAGE_PAGE_SIZE + 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  it("leaves a short thread alone once it holds all of it", async () => {
+    const r = rig(40, 1);
+    await r.scrollback.loadOlder("t");
+    expect(r.state.bots[0].messages).toHaveLength(40);
+    expect(r.state.bots[0].hasMore).toBe(false);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  it("never tops up a desktop page, which is full whenever there is more", () => {
+    expect(needsNewestPage({ messages: Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) => ({ id: `m${i}` }) as Message), hasMore: true })).toBe(false);
+    expect(needsNewestPage({ messages: [{ id: "m0" } as Message], hasMore: false })).toBe(false);
   });
 });

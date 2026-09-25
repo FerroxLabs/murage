@@ -49,13 +49,14 @@ import { speaker } from "@/lib/tts";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
-import { createScrollback, MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
+import { createScrollback, hydratePageSize, MESSAGE_PAGE_SIZE, needsNewestPage } from "@/lib/scrollback";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
+import { isPhoneClient } from "@/lib/phone-client";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
@@ -2740,9 +2741,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return wrapped;
   }, [botPatchQueue,threadWrites]);
 
+  // Phone mode boots every thread as a one-row page (hydratePageSize). The
+  // conversation on screen gets its newest page right away, through the same
+  // request "Load earlier" makes, whenever it is selected or switched to.
+  const onScreen =
+    state.bots.find((candidate) => candidate.id === state.selectedId) ??
+    state.groups.find((candidate) => candidate.id === state.selectedId);
+  const topUpThread = onScreen && needsNewestPage(onScreen) ? onScreen.threadId : null;
+  useEffect(() => {
+    if (topUpThread && !stateRef.current.loadingOlder[topUpThread]) dispatch({ type: "loadOlderMessages", threadId: topUpThread });
+  }, [topUpThread, dispatch]);
+
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
+    // Asked once for the life of this effect: the stream and the hydrate
+    // below must agree about what kind of client this is.
+    const phone = isPhoneClient();
     type PeripheralKey = "instances" | "config" | "routines" | "webhooks";
     type PeripheralPart = {
       key: PeripheralKey;
@@ -2857,7 +2872,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // The newest page of each open thread (upstream #1527). Every
         // transcript at once made startup slow on long threads and was more
         // than a companion over a tunnel could buffer.
-        api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, computerControl }) => {
+        // A phone asks for one row per thread and pages the one on screen in (spec §6).
+        api(`/api/bots?messages=${hydratePageSize(phone)}`).then(({ bots, groups, computerControl }) => {
           if (!alive) return;
           rawDispatch({
             type: "hydrate",
@@ -3099,7 +3115,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let liveClosed = false;
     void ensureDesktopSurfaceSecret().then(() => {
       if (!alive || liveClosed) return;
+      // A phone never receives live computer frames: a base64 capture every
+      // few seconds while a bot works is the heaviest thing on the stream.
+      // Its computer panel polls instead (ComputerPanel, sseFlowing).
       stopLive = openLiveEvents({
+        screens: phone ? false : undefined,
         onOpen: () => rawDispatch({ type: "connected", value: true }),
         onError: () => rawDispatch({ type: "connected", value: false }),
         onSnapshotRequired: () => {

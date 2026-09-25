@@ -19,6 +19,24 @@ import type { AppState, Message } from "@/state/store";
  * the switch reply hold the same rows. */
 export const MESSAGE_PAGE_SIZE = 100;
 
+/** A phone's boot page per thread (spec §6 phone mode). One row, which the
+ * server widens to reach back to every open request card and the active
+ * branch head (server newestPageLimit), so a phone still sees what needs it
+ * and each thread's latest line, without every thread's history. `0` would
+ * be settings only: no cards, no latest line, and nothing to page back from. */
+export const PHONE_HYDRATE_PAGE = 1;
+
+export function hydratePageSize(phone: boolean): number {
+  return phone ? PHONE_HYDRATE_PAGE : MESSAGE_PAGE_SIZE;
+}
+
+/** A conversation holding less than a newest page while the server has more:
+ * a phone's slim boot page. A snapshot or switch always holds at least a full
+ * page when there is more, so on the desktop this is never true. */
+export function needsNewestPage(owner: { messages: Message[]; hasMore?: boolean }): boolean {
+  return Boolean(owner.hasMore) && owner.messages.length < MESSAGE_PAGE_SIZE;
+}
+
 /** The largest page the server hands out; a jump walks back in these. */
 export const MESSAGE_PAGE_MAX = 200;
 

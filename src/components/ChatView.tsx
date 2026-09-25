@@ -105,6 +105,7 @@ import {
 import { useNarrowViewport } from "@/lib/media-query";
 import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
 import { useMessageById } from "@/lib/held-message";
+import { needsNewestPage } from "@/lib/scrollback";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
@@ -1433,7 +1434,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
   // A page that came back empty or was dropped as stale moved nothing, so
   // its capture must not be applied to some later, unrelated growth.
+  // A phone's slim boot page is topped up by the store, not by a click here
+  // (scrollback needsNewestPage). Capture for it too, so its newest page
+  // mounts and the viewport holds still exactly as for "Load earlier".
   useLayoutEffect(() => {
+    if (olderPending && !preExpandHeight.current && needsNewestPage(bot)) captureHeight();
     if (!olderPending) preExpandHeight.current = null;
   }, [olderPending]);
   // Reaching the top keeps reading back: first the rows already held, then

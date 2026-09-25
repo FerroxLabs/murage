@@ -83,6 +83,7 @@ import {
 import { useReplyDraft } from "@/lib/drafts";
 import { modShortcut } from "@/lib/keyboard-shortcuts";
 import { useMessageById } from "@/lib/held-message";
+import { needsNewestPage } from "@/lib/scrollback";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -1388,7 +1389,11 @@ export function GroupView({ group }: { group: Group }) {
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
   useLayoutEffect(restoreHeight, [firstMessageId, transcriptKey]);
+  // A phone's slim boot page is topped up by the store, not by a click here
+  // (scrollback needsNewestPage). Capture for it too, so its newest page
+  // mounts and the viewport holds still exactly as for "Load earlier".
   useLayoutEffect(() => {
+    if (olderPending && !preExpandHeight.current && needsNewestPage(group)) captureHeight();
     if (!olderPending) preExpandHeight.current = null;
   }, [olderPending]);
   const reachedTop = () => {

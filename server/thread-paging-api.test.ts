@@ -146,3 +146,30 @@ describe("channel thread switch", () => {
     expect(whole.body.group).not.toHaveProperty("hasMore");
   });
 });
+
+describe("a phone's slim hydrate (spec §6)", () => {
+  it("still carries the open request card, and says there is more", async () => {
+    expect((await call("POST", `/api/bots/${ids.bot}/tasks/${ids.long}?messages=0`)).status).toBe(200);
+    const slim = (await call("GET", "/api/bots?messages=1")).body.bots.find((bot: any) => bot.id === ids.bot);
+    expect(slim.threadId).toBe(ids.long);
+    // one row was asked for; the page reaches back to the open card
+    expect(slim.messages).toHaveLength(LONG - CARD_AT);
+    expect(slim.messages[0].id).toBe(ids.card);
+    expect(slim.hasMore).toBe(true);
+    // zero is "settings only": the card a phone has to answer would be gone
+    const bare = (await call("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === ids.bot);
+    expect(bare.messages).toEqual([]);
+  });
+
+  it("is the newest row alone for a thread with nothing open", async () => {
+    expect((await call("POST", `/api/bots/${ids.bot}/tasks/${ids.short}?messages=0`)).status).toBe(200);
+    const slim = (await call("GET", "/api/bots?messages=1")).body.bots.find((bot: any) => bot.id === ids.bot);
+    // The newest row, whatever it is: the fixture's unanswered "short 2"
+    // earns a "Murage closed while this was running" notice at startup.
+    const thread = (await call("GET", `/api/threads/${ids.short}/messages?limit=10`)).body.messages;
+    expect(texts(thread)).toContain("short 2");
+    expect(slim.messages).toHaveLength(1);
+    expect(slim.messages[0].id).toBe(thread.at(-1).id);
+    expect(slim.hasMore).toBe(true);
+  });
+});
