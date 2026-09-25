@@ -6,6 +6,7 @@ import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, Rout
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
 import { useSetupView } from "./FirstRunChrome";
 import { signedOutEngineRows, withSignedOutEngines } from "@/lib/signed-out-engines";
+import { usePageVisible } from "@/lib/page-visible";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
@@ -239,11 +240,17 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     return () => controller.abort();
   }, [view, query, page, includeSnoozed, revision, refreshKey]);
 
+  // Hidden (a locked phone, a background tab): no 5 s reads nobody can see.
+  const pageVisible = usePageVisible();
+  const wasHidden = useRef(false);
   useEffect(() => {
     if (view !== "decisions") return;
+    if (!pageVisible) wasHidden.current = true;
+    if (!pageVisible) return;
+    if (wasHidden.current) { wasHidden.current = false; setRevision(current => current + 1); }
     const timer = window.setInterval(() => setRevision(current => current + 1), 5000);
     return () => window.clearInterval(timer);
-  }, [view]);
+  }, [view, pageVisible]);
 
   /** One change at a time. `hide` goes at once and comes back on failure. */
   const act = async (hide: readonly string[], work: () => Promise<unknown>, failure: string) => {

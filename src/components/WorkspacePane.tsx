@@ -29,6 +29,7 @@ import type { LocaleKey } from "@/locales";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { usePageVisible } from "@/lib/page-visible";
 import {
   canSaveEntry, entryNotice, formatFileSize, rootStateNotice, saveWorkspaceVersion, workspaceCrumbs, workspaceNativeAction, workspaceUrl,
   type ApiCall, type WorkspaceNativeAction,
@@ -665,8 +666,14 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
   // between a quiet reload and a conflict; a preview simply shows the new text.
   const loadRef = useRef(load);
   loadRef.current = load;
+  const pageVisible = usePageVisible();
+  const probeOnShow = useRef(false);
   useEffect(() => {
     if (load.status !== "ready" && load.status !== "editor") return;
+    // Hidden: no interval at all. The probe used to skip its work while
+    // hidden (below) but the timer still woke every tick.
+    if (!pageVisible) probeOnShow.current = true;
+    if (!pageVisible) return;
     let stopped = false, inFlight = false;
     const probe = async () => {
       if (stopped || inFlight || typeof document !== "undefined" && document.hidden) return;
@@ -693,13 +700,14 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
       } catch { /* a failed probe claims nothing; the next one asks again */ }
       finally { inFlight = false; }
     };
+    if (probeOnShow.current) { probeOnShow.current = false; void probe(); }
     const timer = setInterval(() => { void probe(); }, probeMs);
     const onFocus = () => { void probe(); };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => { stopped = true; clearInterval(timer); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onFocus); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load.status, tab.id, probeMs]);
+  }, [load.status, tab.id, probeMs, pageVisible]);
 
   const act = async (operation: () => Promise<void>) => {
     if (busy) return;

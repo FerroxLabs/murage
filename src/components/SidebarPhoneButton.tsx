@@ -4,6 +4,7 @@ import { Plus, Smartphone } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Action } from "@/state/store";
 import type { SidebarDensity } from "@/lib/sidebar-preferences";
+import { usePageVisible } from "@/lib/page-visible";
 import { companionBridge, type CompanionState } from "./PhoneSetupFlow";
 
 export const SIDEBAR_PHONE_RECENT_MS = 2 * 60_000;
@@ -119,6 +120,7 @@ export const phoneSettingsAction = (): ToggleAppSettingsAction => ({
 
 function useSidebarPhoneStatus(): SidebarPhoneStatus {
   const [snapshot, setSnapshot] = useState<SidebarPhoneSnapshot | null>();
+  const pageVisible = usePageVisible();
 
   useEffect(() => {
     const companion = companionBridge();
@@ -126,6 +128,9 @@ function useSidebarPhoneStatus(): SidebarPhoneStatus {
       setSnapshot(null);
       return;
     }
+
+    // Hidden: the 15 s bridge poll waits; the refresh below runs on return.
+    if (!pageVisible) return;
 
     let disposed = false;
     let refreshing = false;
@@ -148,7 +153,7 @@ function useSidebarPhoneStatus(): SidebarPhoneStatus {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [pageVisible]);
 
   return deriveSidebarPhoneStatus(snapshot, Date.now());
 }
