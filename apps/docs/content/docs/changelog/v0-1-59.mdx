@@ -1,0 +1,60 @@
+---
+title: What changed in Murage 0.1.59
+description: No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.
+icon: Clock
+---
+
+## Please read in 0.1.59
+
+**Murage is now licensed AGPL-3.0-or-later.** Murage as a whole, including every Ferrox Labs change and addition, is under the GNU Affero General Public License, version 3 or later. If you run a modified copy of Murage as a service for other people, you publish your changes. The OpenMausBot portions that Murage builds on remain under Apache-2.0. Releases before 0.1.59 remain available under Apache-2.0.
+
+**Full access now stops at a few lines.** A bot on Full access still does ordinary work without asking, but it now stops and asks before deleting anything outside its own folder, before paying for anything, and before messaging someone for the first time or posting in public. If you want the old behaviour, choose the new No limits level.
+
+## What's new and the tray in 0.1.59
+
+- **What's new.** After updating, Murage shows what changed once; click any card to try that feature. Reopen it any time from the sidebar's **Tools menu → What's new**.
+- **Tray.** The menu-bar icon shows the Murage glyph and a count of what needs you. Its menu lists approvals (ordinary ones can be allowed or denied right there), what your bots are working on (Working now), and New message to… a bot.
+
+## Skills in 0.1.59
+
+- **Skills live in Settings.** **Settings → Skills** is one place for every skill: search first, then Your skills, then the library by search or by topic.
+- **Import a skill.** Drop or choose a file, a folder or a zip, or paste a GitHub link, right inside **Settings → Skills**.
+- **Skill Guard checks every skill** before a bot can use it: on import, on install, on every switch-on, after every edit, and again at startup.
+- **Edit and Duplicate** in the skill reader. Editing a built-in skill edits your own copy.
+- **Add a skill inside a bot.** Add a skill in a bot's window opens a picker right there.
+- **The Chief of Staff guide** belongs to your workspace Chief only, and can be switched off.
+
+## New Bot, New Team and House rules in 0.1.59
+
+- **One chooser each.** The + menu has one New Bot and one New Team. Type a sentence and the best matching templates come up, or browse one topic at a time.
+- **House rules.** **Settings → House rules** holds one set of rules that goes first in every bot's instructions. Edit them, switch them off, or reset them to the default. Murage's built-in protections always apply.
+- **Rich editor.** The rich editor from Wayland now edits files, skills and House rules, and keeps Markdown tables exact.
+
+## What shapes a bot and engine commands in 0.1.59
+
+- **What shapes a bot.** A section in each bot's window lists every part of that bot's instructions in the order the model reads them, with switches for the parts you choose and "Show exactly what it read". Desktop app only.
+- **Engine "/" commands.** Typing "/" in the message box shows Murage's commands and then a group for the bot's engine with the commands that engine offers, read live.
+
+## Approvals in 0.1.59
+
+- **Full access stops before the lines that matter:** deleting outside its own folder, paying for anything, and messaging someone new or posting in public. Messages to you, your own linked accounts and the person a channel conversation is with never stop.
+- **Allow once, Allow for this task, Always allow.** A stop card offers all three, on the desktop, in the Inbox and on Telegram.
+- **New No limits level.** Ask, Auto, Full access and No limits. No limits still asks before reading your keys and passwords. Desktop only, with a one-time warning per bot.
+- **Approved N steps.** Steps approved under Full access or No limits fold into one line that opens to list them.
+
+## Voice in 0.1.59
+
+- **Real-time calls** start speaking on the first sentence. You can talk over the bot, Mute replaces Interrupt, and a spoken "stop" stops it at once.
+- **Voice through Flux** by default. Your own keys are optional and still work.
+- **Voice notes.** A bot can send an answer as a voice note, in the chat and on Telegram, Slack and Discord.
+- **Voice picker.** Every Flux voice in one list, grouped by female, male and neutral.
+- **A voice per bot**, each with its own voice service.
+
+## Also in 0.1.59
+
+- **Bots know the time.** Every turn tells the bot today's date, the time and your time zone.
+- **Web search through Flux.** Settings offers Flux Router as a web search provider, using the Flux key saved under Models.
+- **New models:** Claude Opus 5.5, GPT-6 Sol, GPT-6 Luna and Grok 4.7. Defaults are unchanged.
+- **Chat:** math and Mermaid diagrams, long conversations open faster.
+- **Inbox:** Clear and Clear all for failures and reports, dismiss old connection requests, and "I don't use" an engine.
+- **Routines:** a recurring routine can queue one run behind a run that is still going, and the problems count opens a list of the runs behind it.

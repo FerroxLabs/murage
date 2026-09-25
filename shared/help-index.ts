@@ -27,6 +27,176 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "The changelog tracks published desktop builds. Changes merged into main after a release are not listed as shipped until a new build is published.\n\nBrowse checksums, installers, and older notes in the Murage releases repository."
   },
   {
+    "id": "changelog/v0-1-59#please-read-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "Please read in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "url": "https://murage.app/docs/changelog/v0-1-59#please-read-in-0-1-59",
+    "text": "Murage is now licensed AGPL-3.0-or-later. Murage as a whole, including every Ferrox Labs change and addition, is under the GNU Affero General Public License, version 3 or later. If you run a modified copy of Murage as a service for other people, you publish your changes. The OpenMausBot portions that Murage builds on remain under Apache-2.0. Releases before 0.1.59 remain available under Apache-2.0.\n\nFull access now stops at a few lines. A bot on Full access still does ordinary work without asking, but it now stops and asks before deleting anything outside its own folder, before paying for anything, and before messaging someone for the first time or posting in public.…"
+  },
+  {
+    "id": "changelog/v0-1-59#what-s-new-and-the-tray-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "What's new and the tray in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Tools menu → What's new",
+    "url": "https://murage.app/docs/changelog/v0-1-59#what-s-new-and-the-tray-in-0-1-59",
+    "text": "- What's new. After updating, Murage shows what changed once; click any card to try that feature. Reopen it any time from the sidebar's Tools menu → What's new.\n- Tray. The menu-bar icon shows the Murage glyph and a count of what needs you. Its menu lists approvals (ordinary ones can be allowed or denied right there), what your bots are working on (Working now), and New message to… a bot."
+  },
+  {
+    "id": "changelog/v0-1-59#skills-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "Skills in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Settings → Skills",
+    "url": "https://murage.app/docs/changelog/v0-1-59#skills-in-0-1-59",
+    "text": "- Skills live in Settings. Settings → Skills is one place for every skill: search first, then Your skills, then the library by search or by topic.\n- Import a skill. Drop or choose a file, a folder or a zip, or paste a GitHub link, right inside Settings → Skills.\n- Skill Guard checks every skill before a bot can use it: on import, on install, on every switch-on, after every edit, and again at startup.\n- Edit and Duplicate in the skill reader. Editing a built-in skill edits your own copy.\n- Add a skill inside a bot. Add a skill in a bot's window opens a picker right there.\n- The Chief of Staff guide belongs to your workspace Chief only, and can be switched off."
+  },
+  {
+    "id": "changelog/v0-1-59#new-bot-new-team-and-house-rules-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "New Bot, New Team and House rules in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Settings → House rules",
+    "url": "https://murage.app/docs/changelog/v0-1-59#new-bot-new-team-and-house-rules-in-0-1-59",
+    "text": "- One chooser each. The + menu has one New Bot and one New Team. Type a sentence and the best matching templates come up, or browse one topic at a time.\n- House rules. Settings → House rules holds one set of rules that goes first in every bot's instructions. Edit them, switch them off, or reset them to the default. Murage's built-in protections always apply.\n- Rich editor. The rich editor from Wayland now edits files, skills and House rules, and keeps Markdown tables exact."
+  },
+  {
+    "id": "changelog/v0-1-59#what-shapes-a-bot-and-engine-commands-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "What shapes a bot and engine commands in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "url": "https://murage.app/docs/changelog/v0-1-59#what-shapes-a-bot-and-engine-commands-in-0-1-59",
+    "text": "- What shapes a bot. A section in each bot's window lists every part of that bot's instructions in the order the model reads them, with switches for the parts you choose and \"Show exactly what it read\". Desktop app only.\n- Engine \"/\" commands. Typing \"/\" in the message box shows Murage's commands and then a group for the bot's engine with the commands that engine offers, read live."
+  },
+  {
+    "id": "changelog/v0-1-59#approvals-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "Approvals in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "url": "https://murage.app/docs/changelog/v0-1-59#approvals-in-0-1-59",
+    "text": "- Full access stops before the lines that matter: deleting outside its own folder, paying for anything, and messaging someone new or posting in public. Messages to you, your own linked accounts and the person a channel conversation is with never stop.\n- Allow once, Allow for this task, Always allow. A stop card offers all three, on the desktop, in the Inbox and on Telegram.\n- New No limits level. Ask, Auto, Full access and No limits. No limits still asks before reading your keys and passwords. Desktop only, with a one-time warning per bot.\n- Approved N steps. Steps approved under Full access or No limits fold into one line that opens to list them."
+  },
+  {
+    "id": "changelog/v0-1-59#voice-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "Voice in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "url": "https://murage.app/docs/changelog/v0-1-59#voice-in-0-1-59",
+    "text": "- Real-time calls start speaking on the first sentence. You can talk over the bot, Mute replaces Interrupt, and a spoken \"stop\" stops it at once.\n- Voice through Flux by default. Your own keys are optional and still work.\n- Voice notes. A bot can send an answer as a voice note, in the chat and on Telegram, Slack and Discord.\n- Voice picker. Every Flux voice in one list, grouped by female, male and neutral.\n- A voice per bot, each with its own voice service."
+  },
+  {
+    "id": "changelog/v0-1-59#also-in-0-1-59",
+    "title": "What changed in Murage 0.1.59",
+    "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
+    "heading": "Also in 0.1.59",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
+    "url": "https://murage.app/docs/changelog/v0-1-59#also-in-0-1-59",
+    "text": "- Bots know the time. Every turn tells the bot today's date, the time and your time zone.\n- Web search through Flux. Settings offers Flux Router as a web search provider, using the Flux key saved under Models.\n- New models: Claude Opus 5.5, GPT-6 Sol, GPT-6 Luna and Grok 4.7. Defaults are unchanged.\n- Chat: math and Mermaid diagrams, long conversations open faster.\n- Inbox: Clear and Clear all for failures and reports, dismiss old connection requests, and \"I don't use\" an engine.\n- Routines: a recurring routine can queue one run behind a run that is still going, and the problems count opens a list of the runs behind it."
+  },
+  {
+    "id": "changelog/v0-1-60#please-read-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Please read in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#please-read-in-0-1-60",
+    "text": "Routines now have their own approval level. Each routine runs at a level you choose: Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.\n\nA routine that needs you says so straight away. When a routine run hits a question or an approval, you hear about it at once and the run ends as \"waiting on you\", instead of sitting until it times out."
+  },
+  {
+    "id": "changelog/v0-1-60#connected-apps-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Connected apps in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#connected-apps-in-0-1-60",
+    "text": "Connected apps stay connected. One failed check of the connected-apps service used to leave every bot without its apps until Murage restarted. Each bot's turn now checks again, so a short network blip no longer cuts your bots off."
+  },
+  {
+    "id": "changelog/v0-1-60#routines-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Routines in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#routines-in-0-1-60",
+    "text": "- Always allow for this routine. An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.\n- One conversation per routine. Each routine keeps one conversation, so runs no longer pile up as separate conversations.\n- Fewer false stops on Auto. Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks."
+  },
+  {
+    "id": "changelog/v0-1-60#approvals-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Approvals in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#approvals-in-0-1-60",
+    "text": "- Always allow this exact command. A card for a command offers Always allow this exact command here: that command, in that folder, on that engine. Settings lists everything you have always allowed, and you can remove any of it.\n- Fewer false stops. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.\n- Pi asks first. Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.\n- Only you can say yes. Only your own desktop app and paired devices can answer an approval card.…"
+  },
+  {
+    "id": "changelog/v0-1-60#inbox-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Inbox in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#inbox-in-0-1-60",
+    "text": "A cleaner Inbox. Don't use, Turn off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button."
+  },
+  {
+    "id": "changelog/v0-1-60#conversations-and-teams-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Conversations and teams in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#conversations-and-teams-in-0-1-60",
+    "text": "- Snooze. Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.\n- Manage teams. Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.\n- Deleting conversations. Deleting the last conversation in a channel leaves a fresh one, and channels now show errors instead of failing quietly.\n- Edit and rerun. Editing a message and running it again no longer starts twice.\n- Queued messages. A direct message sent while the bot is busy in a channel waits its turn instead of failing."
+  },
+  {
+    "id": "changelog/v0-1-60#about-me-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "About me in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Settings → About me",
+    "url": "https://murage.app/docs/changelog/v0-1-60#about-me-in-0-1-60",
+    "text": "About me. Settings → About me holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it."
+  },
+  {
+    "id": "changelog/v0-1-60#voice-and-notifications-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Voice and notifications in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#voice-and-notifications-in-0-1-60",
+    "text": "- Voice picker. Every voice in the list has its own play button.\n- Notification sounds. Turn off notification sounds on this computer.\n- Voice notes. A voice note is dropped cleanly when the turn ends while it is being made."
+  },
+  {
+    "id": "changelog/v0-1-60#reliability-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Reliability in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#reliability-in-0-1-60",
+    "text": "- Stalled turns. A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.\n- VPS turns. A turn waits for a busy VPS instead of failing, and a command that times out stops everything it started.\n- Usage totals. Usage counts the tokens actually bought, not cached re-reads, and a missing count shows as unknown, not zero.\n- Backups. Backups and restores include snoozed conversations.\n- Plan checklist. A to-do list a local model writes into its answer becomes the plan checklist.\n- The date and time now travel with each message rather than in the bot's standing instructions.\n- Codex and Claude fixes.…"
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",

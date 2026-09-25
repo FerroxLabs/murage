@@ -1,0 +1,61 @@
+---
+title: What changed in Murage 0.1.60
+description: Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.
+icon: Clock
+---
+
+## Please read in 0.1.60
+
+**Routines now have their own approval level.** Each routine runs at a level you choose: Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.
+
+**A routine that needs you says so straight away.** When a routine run hits a question or an approval, you hear about it at once and the run ends as "waiting on you", instead of sitting until it times out.
+
+## Connected apps in 0.1.60
+
+**Connected apps stay connected.** One failed check of the connected-apps service used to leave every bot without its apps until Murage restarted. Each bot's turn now checks again, so a short network blip no longer cuts your bots off.
+
+## Routines in 0.1.60
+
+- **Always allow for this routine.** An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.
+- **One conversation per routine.** Each routine keeps one conversation, so runs no longer pile up as separate conversations.
+- **Fewer false stops on Auto.** Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks.
+
+## Approvals in 0.1.60
+
+- **Always allow this exact command.** A card for a command offers Always allow this exact command here: that command, in that folder, on that engine. Settings lists everything you have always allowed, and you can remove any of it.
+- **Fewer false stops.** Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.
+- **Pi asks first.** Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.
+- **Only you can say yes.** Only your own desktop app and paired devices can answer an approval card. A message whose sender Murage cannot confirm runs as an unattended turn.
+- **Engines that cannot ask.** The permission menu says when a bot's engine cannot ask you, on the levels where that means it has to refuse some commands.
+
+## Inbox in 0.1.60
+
+**A cleaner Inbox.** Don't use, Turn off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button.
+
+## Conversations and teams in 0.1.60
+
+- **Snooze.** Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.
+- **Manage teams.** Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.
+- **Deleting conversations.** Deleting the last conversation in a channel leaves a fresh one, and channels now show errors instead of failing quietly.
+- **Edit and rerun.** Editing a message and running it again no longer starts twice.
+- **Queued messages.** A direct message sent while the bot is busy in a channel waits its turn instead of failing.
+
+## About me in 0.1.60
+
+**About me.** **Settings → About me** holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it.
+
+## Voice and notifications in 0.1.60
+
+- **Voice picker.** Every voice in the list has its own play button.
+- **Notification sounds.** Turn off notification sounds on this computer.
+- **Voice notes.** A voice note is dropped cleanly when the turn ends while it is being made.
+
+## Reliability in 0.1.60
+
+- **Stalled turns.** A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.
+- **VPS turns.** A turn waits for a busy VPS instead of failing, and a command that times out stops everything it started.
+- **Usage totals.** Usage counts the tokens actually bought, not cached re-reads, and a missing count shows as unknown, not zero.
+- **Backups.** Backups and restores include snoozed conversations.
+- **Plan checklist.** A to-do list a local model writes into its answer becomes the plan checklist.
+- **The date and time** now travel with each message rather than in the bot's standing instructions.
+- **Codex and Claude fixes.** Codex's own desktop browser and computer tools are off inside bots, Opus 5.5 reports its 1M context window, and a Stop during a Claude Code prompt settles as cancelled.
