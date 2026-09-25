@@ -5,7 +5,7 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | editor | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | gate | question | editor | interleave | turn-error | no-models | exit-early
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
 //                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
 //                  shape; question = an `input` ask; editor = an `editor` ask with prefill
@@ -83,6 +83,7 @@ if (process.env.FAKE_PI_DUMP) {
           (k) => process.env[k] !== undefined,
         ),
         mcpConfig,
+        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, prefixes: process.env.MURAGE_PI_GATE_PREFIXES } : null,
       }) + "\n",
     );
   } catch {
@@ -176,6 +177,19 @@ const streamHostConfirmTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
   send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: "Allow click on your computer?", message: "Run computer:click" });
+};
+
+// gate: pi-permission-gate asking before a bash call runs. The title carries
+// the per-turn secret the driver handed over in MURAGE_PI_GATE (as the real
+// gate does), and the message the call as JSON. FAKE_PI_GATE_CALL overrides
+// the call; FAKE_PI_GATE_FORGE sends a wrong secret instead, as any other
+// extension would have to.
+const streamGateTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  const secret = process.env.FAKE_PI_GATE_FORGE ? "not-the-secret" : process.env.MURAGE_PI_GATE ?? "";
+  const call = process.env.FAKE_PI_GATE_CALL ?? JSON.stringify({ tool: "bash", input: { command: "rm -rf ~/Documents/old" } });
+  send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: `murage-gate:${secret}`, message: call });
 };
 
 // question: an `input` ask, which is a question for the human, not a permission.
@@ -347,6 +361,7 @@ function handle(cmd: any) {
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "host-confirm") streamHostConfirmTurn();
+      else if (mode === "gate") streamGateTurn();
       else if (mode === "question") streamQuestionTurn();
       else if (mode === "editor") streamEditorTurn();
       else if (mode === "interleave") streamInterleaveTurn();

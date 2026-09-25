@@ -18,6 +18,7 @@ import { newId, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
 import {
+  piGateAsk,
   applyPiLocalCatalog,
   buildMcpServers,
   ensurePiInjectModel,
@@ -1210,5 +1211,98 @@ describe("PiDriver bounded ingress (A4)", () => {
     expect(catalog).toEqual({ default: "", options: [] });
     // the probe's own fallback timer is 15 s; the frame bound answers first
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+// Pi runs its tools without asking anybody. pi-permission-gate.ts asks Murage
+// first, so Ask mode can ask and Full access can stop before a delete, a
+// payment or a new contact (server/stop-line.ts reads `toolCall`).
+describe("PiDriver approvals gate (fake CLI)", () => {
+  let instance: ProviderInstance | undefined;
+  let recorder: EventRecorder | undefined;
+  const dumps: string[] = [];
+  const create = async (fullAuto: boolean, environment: Record<string, string> = {}) => {
+    const dump = join(tmpdir(), `murage-pi-gate-${newId()}.jsonl`);
+    dumps.push(dump);
+    instance = await PiDriver.create({
+      instanceId: "pi-gate",
+      displayName: "pi Gate",
+      environment: { FAKE_PI_MODE: "gate", FAKE_PI_DUMP: dump, ...environment },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto },
+    });
+    recorder = recordEvents(instance.adapter);
+    return dump;
+  };
+  // The last launch is the turn's; the first is the catalog probe at create.
+  const argvOf = (dump: string) => (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.argv).at(-1) ?? {}) as { argv: string[]; gate: { secretLength: number; prefixes: string } | null };
+  beforeEach(() => { ensureDirs(); chmodSync(FAKE_CLI, 0o755); });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+    for (const dump of dumps.splice(0)) rmSync(dump, { force: true });
+  });
+
+  it("loads the gate and carries the real command to the stop line", async () => {
+    const dump = await create(false);
+    const threadId = `t-gate-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(ask).toMatchObject({
+      requestType: "permission",
+      tool: "Bash",
+      summary: "rm -rf ~/Documents/old",
+      toolCall: { name: "bash", input: { command: "rm -rf ~/Documents/old" } },
+    });
+    const row = argvOf(dump);
+    expect(row.argv.join(" ")).toMatch(/-e \S*pi-permission-gate\.(ts|js)/);
+    expect(row.gate?.secretLength).toBe(48);
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", cancelled: true } }]);
+  });
+
+  it("gives a forged gate title nothing for the stop line to clear", async () => {
+    await create(false, { FAKE_PI_GATE_FORGE: "1" });
+    const threadId = `t-gate-forge-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(ask).not.toHaveProperty("toolCall");
+    expect(ask).toMatchObject({ tool: "murage-gate:not-the-secret" });
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+  });
+
+  it("stays off when the instance skips asks and the bot is not on Full access, and on when it is", async () => {
+    const off = await create(true, { FAKE_PI_MODE: "happy" });
+    const first = await instance!.adapter.sendTurn({ threadId: `t-gate-off-${newId()}`, text: "hi" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    expect(argvOf(off).argv.join(" ")).not.toMatch(/pi-permission-gate/);
+    expect(argvOf(off).gate).toBeNull();
+    recorder!.stop();
+    await instance!.dispose();
+
+    const on = await create(true, { FAKE_PI_MODE: "happy" });
+    const second = await instance!.adapter.sendTurn({ threadId: `t-gate-on-${newId()}`, text: "hi", stopLine: true });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
+  });
+});
+
+describe("piGateAsk", () => {
+  it("reads a file edit as a file the stop line can place", () => {
+    expect(piGateAsk(JSON.stringify({ tool: "write", input: { path: "/Users/owner/notes.md" } }))).toEqual({
+      tool: "Write", summary: "Write /Users/owner/notes.md", toolCall: { name: "Write", input: { file_path: "/Users/owner/notes.md" } }, filePaths: ["/Users/owner/notes.md"],
+    });
+  });
+  it("names a connected-app call the way the stop line reads Composio's", () => {
+    const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
+    expect(piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } })).toolCall).toEqual({
+      name: "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", input: { tools },
+    });
+  });
+  it("still raises a card, with nothing to clear it, for a message it cannot read", () => {
+    expect(piGateAsk("{not json")).toEqual({ tool: "pi", summary: "pi wants to run a tool" });
   });
 });

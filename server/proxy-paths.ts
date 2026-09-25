@@ -52,4 +52,5 @@ export const SPAWNED_PROXIES = {
   // resolved through the same single source of truth so the packaged layout
   // check can assert it ships.
   piMcpExtension: resolveProxy("drivers/pi-mcp-extension"),
+  piPermissionGate: resolveProxy("drivers/pi-permission-gate"),
 } as const;

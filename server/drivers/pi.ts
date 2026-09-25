@@ -21,6 +21,7 @@
 // `custom` because pi is a custom-only (BYOK) engine — the model picker's
 // Local pane only lists `custom` options for custom-only engines.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,6 +58,7 @@ import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
+import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -452,6 +454,41 @@ function piEnvironment(source: Record<string, string | undefined>): Record<strin
   return env;
 }
 
+/** The name the pi-mcp-extension gives Murage's connected-apps tools: the
+ *  server name, then the tool, lower-cased (sanitizeToolName). */
+const PI_COMPOSIO_TOOL_PREFIX = "composio_";
+
+/**
+ * What a pi-permission-gate ask is about, from the JSON the gate sends. The
+ * stop line reads `toolCall` (a shell command, a file, a connected-app call),
+ * so these carry the engine's own input, never display text. A message that
+ * does not parse still becomes a card, with no `toolCall`: the stop line then
+ * cannot clear it, so under Full access it waits for the owner.
+ */
+export function piGateAsk(message: string): { tool: string; summary: string; toolCall?: { name: string; input: unknown }; filePaths?: string[] } {
+  let parsed: { tool?: unknown; input?: unknown } = {};
+  try {
+    const value: unknown = JSON.parse(message);
+    if (value && typeof value === "object" && !Array.isArray(value)) parsed = value as typeof parsed;
+  } catch {
+    // unreadable: a card with nothing for the stop line to clear
+  }
+  const tool = typeof parsed.tool === "string" ? parsed.tool : "";
+  const input = parsed.input && typeof parsed.input === "object" && !Array.isArray(parsed.input) ? (parsed.input as Record<string, unknown>) : undefined;
+  if ((tool === "bash" || tool === "powershell") && typeof input?.command === "string") {
+    return { tool: tool === "bash" ? "Bash" : "PowerShell", summary: input.command.slice(0, 2_000), toolCall: { name: tool, input: { command: input.command } } };
+  }
+  if ((tool === "edit" || tool === "write") && typeof input?.path === "string") {
+    const name = tool === "edit" ? "Edit" : "Write";
+    return { tool: name, summary: `${name} ${input.path}`.slice(0, 2_000), toolCall: { name, input: { file_path: input.path } }, filePaths: [input.path] };
+  }
+  if (tool.startsWith(PI_COMPOSIO_TOOL_PREFIX) && input) {
+    const rest = tool.slice(PI_COMPOSIO_TOOL_PREFIX.length);
+    return { tool: "Connected app", summary: rest.slice(0, 300), toolCall: { name: `mcp__composio__${rest.toUpperCase()}`, input } };
+  }
+  return { tool: "pi", summary: tool ? `pi wants to use ${tool.slice(0, 80)}` : "pi wants to run a tool" };
+}
+
 export const PiDriver: ProviderDriver<PiConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "pi", supportsMultipleInstances: true, access: "custom" },
@@ -582,7 +619,20 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           throw err;
         }
       }
-      const childArgs = mcpServers ? [...PI_ARGS, "-e", SPAWNED_PROXIES.piMcpExtension] : PI_ARGS;
+      // Murage's approvals (pi-permission-gate.ts). Pi runs its tools without
+      // asking anyone, so without the gate Ask mode never asked and Full
+      // access could not stop before a delete, a payment or a new contact.
+      // Off only when this instance is set to skip asks AND the bot is not on
+      // Full access or No limits, exactly when Claude runs bypassPermissions.
+      const gateSecret = !config.fullAuto || turn.stopLine === true ? randomBytes(24).toString("hex") : null;
+      // Connected-app calls are asked about only when the stop line has to
+      // see them, as Claude pre-allows its connected-apps tool otherwise.
+      const gatePrefixes = turn.stopLine === true && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
+      const childArgs = [
+        ...PI_ARGS,
+        ...(mcpServers ? ["-e", SPAWNED_PROXIES.piMcpExtension] : []),
+        ...(gateSecret ? ["-e", SPAWNED_PROXIES.piPermissionGate] : []),
+      ];
 
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
@@ -596,6 +646,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               ...process.env,
               ...input.environment,
               ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
+              ...(gateSecret ? { MURAGE_PI_GATE: gateSecret, MURAGE_PI_GATE_PREFIXES: JSON.stringify(gatePrefixes) } : {}),
             }),
           });
         } catch (err) {
@@ -805,13 +856,20 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
                 else send({ type: "extension_ui_response", id: reqId, confirmed: true });
               });
+              // Murage's own gate, recognised by this turn's secret: the call it
+              // carries is what the stop line and the card read.
+              const gate = !questions && gateSecret && evt.method === "confirm" && evt.title === `${PI_GATE_TITLE_PREFIX}${gateSecret}`
+                ? piGateAsk(typeof evt.message === "string" ? evt.message : "")
+                : null;
               emit({
                 ...base(threadId, turnId),
                 requestId: reqId,
                 type: "request.opened",
                 requestType: questions ? "question" : "permission",
-                tool: questions ? String(evt.method) : String(evt.title ?? "pi"),
-                summary: questions ? questions[0]!.question.slice(0, 300) : String(evt.title ?? "pi wants confirmation"),
+                tool: questions ? String(evt.method) : gate ? gate.tool : String(evt.title ?? "pi"),
+                summary: questions ? questions[0]!.question.slice(0, 300) : gate ? gate.summary : String(evt.title ?? "pi wants confirmation"),
+                ...(gate?.toolCall ? { toolCall: gate.toolCall } : {}),
+                ...(gate?.filePaths ? { filePaths: gate.filePaths } : {}),
                 ...(questions ? { choices: questions[0]!.options.map((option) => option.label), questions } : {}),
                 ...(scoped ? { approvalScope: "local-computer" as const } : {}),
               });

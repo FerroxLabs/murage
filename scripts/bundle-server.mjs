@@ -130,3 +130,5 @@ const piMcpExtSrc = join(server, "drivers", "pi-mcp-extension.ts");
 const piMcpExtDest = join(root, "dist-server", "drivers", "pi-mcp-extension.ts");
 mkdirSync(dirname(piMcpExtDest), { recursive: true });
 copyFileSync(piMcpExtSrc, piMcpExtDest);
+// pi-permission-gate.ts rides along the same way: pi loads it with `-e`.
+copyFileSync(join(server, "drivers", "pi-permission-gate.ts"), join(root, "dist-server", "drivers", "pi-permission-gate.ts"));
