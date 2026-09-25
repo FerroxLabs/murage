@@ -12,10 +12,14 @@ import { AddressInfo } from "node:net";
 import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from "node:zlib";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { COMPRESSIBLE_EXTENSIONS } from "../../scripts/compress-dist.mjs";
 import {
+  BUILD_COPY_EXTENSIONS,
   cookieName,
   createBrowserHandler,
+  hasBuildSiblings,
   keptCacheControl,
+  withScriptNonce,
   type BoundIdentity,
   type BrowserDeviceStore,
   type SignInLimiter,
@@ -459,6 +463,14 @@ describe("the shell's policy", () => {
     expect(csp).not.toMatch(/(?:^|; )default-src [^;]*\*/);
   });
 
+  it("names every script tag whatever its case, ahead of any nonce the build already wrote", () => {
+    const html = '<SCRIPT nonce="stale" src="/a.js"></SCRIPT><Script>x()</Script><scripts></scripts><noscript></noscript>';
+    const out = withScriptNonce(html, "N0nce");
+    // An HTML parser keeps the first of two same-named attributes, so this
+    // response's nonce is the one the browser checks, never the stale one.
+    expect(out).toBe('<script nonce="N0nce" nonce="stale" src="/a.js"></SCRIPT><script nonce="N0nce">x()</Script><scripts></scripts><noscript></noscript>');
+  });
+
   it("mints a fresh nonce for every response", async () => {
     const cookie = await signedIn();
     const first = nonceOf(cspOf(await knock("GET", "/", cookie)));
@@ -660,6 +672,70 @@ describe("the build's own compressed copies", () => {
     replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
     await knock("GET", ASSET, await signedIn());
     expect(asked).toEqual([ASSET]);
+  });
+
+  it("asks only about the extensions the build writes copies of, the same list as compress-dist", () => {
+    expect([...BUILD_COPY_EXTENSIONS].sort()).toEqual([...COMPRESSIBLE_EXTENSIONS].sort());
+    for (const path of ["/assets/index-AbC123.js", "/assets/index-AbC123.css", "/assets/icons-AbC123.svg", "/assets/ort-AbC123.wasm", "/mermaid-frame-0123456789abcdef.html"]) {
+      expect(hasBuildSiblings(path), path).toBe(true);
+    }
+    for (const path of ["/assets/logo-AbC123.png", "/assets/inter-AbC123.woff2", "/assets/silero-AbC123.onnx", "/assets/index-AbC123.JS", "/assets/no-extension", "/assets/dir.js/file", "/index.js"]) {
+      expect(hasBuildSiblings(path), path).toBe(false);
+    }
+  });
+
+  it("never asks the harness for a copy of an image, a font or a model", async () => {
+    const cookie = await signedIn();
+    for (const path of ["/assets/logo-AbC123.png", "/assets/inter-AbC123.woff2", "/assets/silero-AbC123.onnx"]) {
+      replies.set(path, reply(200, { "content-type": "application/octet-stream" }, Buffer.alloc(4096, 7)));
+      asked = [];
+      const answer = await knock("GET", path, { ...cookie, "accept-encoding": "gzip, br" });
+      expect(answer.status, path).toBe(200);
+      expect(asked, path).toEqual([path]);
+    }
+  });
+
+  it("falls back to the ordinary path when the harness drops the copy's connection", async () => {
+    replies.set(`${ASSET}.br`, (req) => req.socket.destroy());
+    replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+    const answer = await knock("GET", ASSET, { ...(await signedIn()), "accept-encoding": "br" });
+    expect(answer.status).toBe(200);
+    expect(answer.headers["content-encoding"]).toBe("br");
+    expect(answer.body).toBe(JS);
+    expect(asked).toEqual([`${ASSET}.br`, ASSET]);
+  });
+
+  it("falls back to the ordinary path when the harness never answers for the copy", async () => {
+    // A door with a short deadline, so the silent `.br` is given up on in
+    // test time. Same device store, so the session carries over.
+    const quick = createServer(createBrowserHandler({
+      harnessPort,
+      companionToken: "d".repeat(64),
+      identity: () => identity,
+      devices,
+      signInLimiter: limiter,
+      serverName: () => computerName,
+      headersTimeoutMs: 150,
+    }));
+    await new Promise<void>((r) => quick.listen(0, "127.0.0.1", r));
+    const usual = doorPort;
+    const silent: ServerResponse[] = [];
+    try {
+      const cookie = await signedIn();
+      doorPort = (quick.address() as AddressInfo).port;
+      replies.set(`${ASSET}.br`, (_req, res) => { silent.push(res); });
+      replies.set(ASSET, reply(200, { "content-type": "text/javascript" }, JS));
+      asked = [];
+      const answer = await knock("GET", ASSET, { ...cookie, "accept-encoding": "br" });
+      expect(answer.status).toBe(200);
+      expect(answer.body).toBe(JS);
+      expect(asked).toEqual([`${ASSET}.br`, ASSET]);
+    } finally {
+      doorPort = usual;
+      for (const res of silent) res.destroy();
+      quick.closeAllConnections?.();
+      await new Promise<void>((r) => quick.close(() => r()));
+    }
   });
 
   it("keeps the diagram frame sandboxed and frameable when it comes from a copy", async () => {

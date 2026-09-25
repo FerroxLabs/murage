@@ -1869,11 +1869,20 @@ function relayStatic(
   harness.pipe(res);
 }
 
+/** The extensions the build writes copies of: `COMPRESSIBLE_EXTENSIONS` in
+ * `scripts/compress-dist.mjs`, mirrored rather than imported so the companion
+ * never reaches into the build scripts. browser-mobile.test.ts pins the two
+ * together. An image, a font or a model is compressed already and never has a
+ * copy, so asking for one would only cost a round trip to the harness. */
+export const BUILD_COPY_EXTENSIONS: ReadonlySet<string> = new Set([".js", ".mjs", ".css", ".json", ".svg", ".wasm", ".html"]);
+
 /** Whether the build writes compressed copies of this path
  * (`scripts/compress-dist.mjs`): the files whose names change when their
  * content does, and nothing that keeps its name across releases — a copy of
  * those would be stale the day after an update. */
 export function hasBuildSiblings(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot <= path.lastIndexOf("/") || !BUILD_COPY_EXTENSIONS.has(path.slice(dot))) return false;
   return path.startsWith("/assets/") || MERMAID_FRAME_FILE.test(path);
 }
 
