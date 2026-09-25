@@ -1139,7 +1139,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         emit({ ...base(threadId, turnId), type: "turn.started" });
         liveTurn.submission = writeUser(live, threadId, turnPrompt, liveTurn.boundary, turn.images);
         const written = await liveTurn.submission;
-        if (!written) {
+        // A Stop during the write kills the pipe, so the write fails. That is
+        // the Stop, not a broken session: the child's close settles this turn
+        // as cancelled once the kill is confirmed (upstream #1701).
+        if (!written && !liveTurn.stopRequested) {
           forgetActive(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
