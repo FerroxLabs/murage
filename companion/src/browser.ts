@@ -55,8 +55,8 @@ export interface BoundIdentity {
 
 /** The slice of `DeviceRegistry` this door needs. Structural rather than the
  * class, so a test can state the world in a few lines — and so it is visible
- * at a glance that the door can pair, sign in, and sign out, and cannot
- * revoke, list or enumerate anything. */
+ * at a glance that the door can pair, sign in, sign out, and revoke only the
+ * device its own cookie belongs to. It cannot list or enumerate anything. */
 export interface BrowserDeviceStore {
   redeem(
     credential: string,
@@ -79,6 +79,9 @@ export interface BrowserDeviceStore {
    * Never extends or revives anything. */
   sessionDeadline(sessionId: string): number | null;
   closeSession(value: string | undefined): boolean;
+  /** Revoke the device this session belongs to; its id, or null when the
+   * value is not a live session. Throws when it cannot be written down. */
+  signOutDevice(value: string | undefined): string | null;
   /** Renew a live session (`DeviceRegistry.renewSession`): the successor to
    * set as the cookie, the same successor again on a retry, or the committed
    * value when the successor itself is presented. `expiresAt` is the cap that
@@ -103,6 +106,10 @@ export interface BrowserDoorOptions {
    * one session — terminates it in flight. The same tracker the device port
    * uses, for the same reason and with the same disposer contract. */
   connected?: (deviceId: string, disconnect: () => void, sessionId?: string) => () => void;
+  /** End every live stream a device owns, bearer ones included. Called after
+   * a device signs itself out, the same call the control page makes after a
+   * revoke. */
+  disconnectDevice?: (deviceId: string) => void;
   /** How long the harness may take to produce response *headers*. Tests only. */
   headersTimeoutMs?: number;
   /** The sign-in rate limiter. Injectable so a test can drive its clock;
@@ -1458,6 +1465,33 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       const maxAge = Math.floor((renewed.expiresAt - Date.now()) / 1000);
       res.setHeader("set-cookie", sessionCookie(renewed.value, identity, maxAge));
       return sendJson(res, 200, { ok: true, expiresAt: renewed.expiresAt });
+    }
+
+    // ── "Sign out this device", from the device ─────────────────────────
+    //
+    // Sidecar-owned, like `/session`. DELETE, so the origin gate's rule 4
+    // applies: a write must carry our `Origin`, which is the CSRF story for
+    // a route that removes a device. It revokes the DEVICE, not the one
+    // session — see `DeviceRegistry.signOutDevice`.
+    if (path === "/session/device") {
+      if (method !== "DELETE") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
+      req.resume();
+      const cookie = readCookie(req.headers.cookie, cookieName(identity.scheme));
+      let deviceId: string | null;
+      try {
+        deviceId = options.devices.signOutDevice(cookie);
+      } catch {
+        // The device is still on disk and still in memory. Saying "signed
+        // out" would be false, and clearing the cookie would hide the only
+        // credential able to retry. No detail: it names paths on the computer.
+        return sendJson(res, 500, { error: "could not sign this device out on the computer — try again" });
+      }
+      if (!deviceId) return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
+      // Browser streams already ended with their sessions (`onSessionEnded`);
+      // this also ends any bearer stream the device held.
+      options.disconnectDevice?.(deviceId);
+      res.setHeader("set-cookie", clearedCookie(identity));
+      return sendJson(res, 200, { ok: true });
     }
 
     if (path === "/session") {

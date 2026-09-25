@@ -90,6 +90,7 @@ const devices: BrowserDeviceStore = {
     sessions.set(next, renewed);
     return { value: next, expiresAt: renewed.expiresAt };
   },
+  signOutDevice: () => null,
 };
 
 const identity: BoundIdentity = {

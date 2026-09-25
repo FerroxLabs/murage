@@ -524,6 +524,7 @@ beforeAll(async () => {
         sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
         closeSession: (value) => registry.closeSession(value),
         renewSession: (value) => registry.renewSession(value),
+        signOutDevice: (value) => registry.signOutDevice(value),
       },
       headersTimeoutMs: 4000,
     }),

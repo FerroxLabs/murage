@@ -1339,6 +1339,25 @@ export class DeviceRegistry {
     return true;
   }
 
+  /** "Sign out this phone", asked by the phone. Revokes the DEVICE the
+   * presented session belongs to — every session on it, its bearer and (once
+   * push lands) its push binding — because a phone that signs out and leaves
+   * its record behind is a record that still counts toward the cap and still
+   * shows as paired on the computer.
+   *
+   * A pending successor resolves like any other request would, which commits
+   * it on the way past; the revoke then takes the row either way, so which
+   * value the cookie jar held changes nothing about the outcome.
+   *
+   * The id of the revoked device, or null when the value is not a live
+   * session. Throws, having changed nothing, when the removal cannot be
+   * written down, same as `revoke`. */
+  signOutDevice(value: string | undefined): string | null {
+    const resolved = this.resolveSession(value);
+    if (!resolved) return null;
+    return this.revoke(resolved.device.id) ? resolved.device.id : null;
+  }
+
   /** Grant or remove the one capability that crosses from companion actions
    * into full desktop control. This is per device so a watch-only phone does
    * not inherit a different phone's permission. */

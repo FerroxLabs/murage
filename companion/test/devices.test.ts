@@ -1004,3 +1004,55 @@ describe("a full fleet", () => {
     }
   });
 });
+
+describe("signing a device out from the device itself", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("revokes the device behind the session, not just the session", () => {
+    const registry = new DeviceRegistry();
+    const phone = pair(registry, "iPhone");
+    const other = pair(registry, "iPad");
+    const first = registry.openSession(phone.device.id, "Murage on iPhone")!;
+    const second = registry.openSession(phone.device.id, "Safari on iPhone")!;
+
+    expect(registry.signOutDevice(first.value)).toBe(phone.device.id);
+    expect(registry.resolveSession(first.value)).toBeNull();
+    expect(registry.resolveSession(second.value)).toBeNull();
+    expect(registry.authenticate(phone.token)).toBeNull();
+    expect(registry.authenticate(other.token)?.id).toBe(other.device.id);
+    expect(new DeviceRegistry().list().map((d) => d.id)).toEqual([other.device.id]);
+  });
+
+  it("takes the device when the cookie is a successor nobody has used yet", () => {
+    try {
+      const registry = new DeviceRegistry();
+      const phone = pair(registry, "iPhone");
+      const opened = registry.openSession(phone.device.id, "Murage on iPhone")!;
+      const other = registry.openSession(phone.device.id, "Safari on iPhone")!;
+      const sessionIds = [opened.value, other.value].map((v) => registry.resolveSession(v)!.sessionId);
+      const ended: string[] = [];
+      registry.onSessionEnded(({ sessionId }) => ended.push(sessionId));
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 60_000);
+      const successor = registry.renewSession(opened.value)!;
+      expect(successor).not.toBeNull();
+
+      expect(registry.signOutDevice(successor.value)).toBe(phone.device.id);
+      expect(registry.resolveSession(successor.value)).toBeNull();
+      expect(registry.resolveSession(opened.value)).toBeNull();
+      expect(registry.count()).toBe(0);
+      expect(ended.sort()).toEqual([...sessionIds].sort());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does nothing for a cookie that is not a live session", () => {
+    const registry = new DeviceRegistry();
+    pair(registry);
+    expect(registry.signOutDevice(undefined)).toBeNull();
+    expect(registry.signOutDevice("murage_browser_never_issued")).toBeNull();
+    expect(registry.count()).toBe(1);
+  });
+});

@@ -433,6 +433,9 @@ const browserRequests = createBrowserHandler({
   // The same name the device door pairs with, for the launcher's probe.
   serverName: machineName,
   connected: connectedDevices.open,
+  // A device that signs itself out loses every stream, bearer ones too —
+  // the same call the control page's revoke makes.
+  disconnectDevice: connectedDevices.disconnect,
   // The same instance the device door got. A lockout earned at either door
   // is spent at both, which is the only reading of "locked out" that means
   // anything when one credential opens two doors.

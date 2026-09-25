@@ -31,6 +31,7 @@ import { createContext, runInContext } from "node:vm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  clearedCookie,
   codeEntryScript,
   countsAgainstSignIn,
   cookieName,
@@ -58,6 +59,8 @@ let registry = new DeviceRegistry();
 /** Every credential `redeem` was asked about, so "the door never reached the
  * registry" is an assertion about calls rather than about status codes. */
 let asked: string[] = [];
+/** Every device the door asked to have its streams ended. */
+let disconnected: string[] = [];
 /** Swapped by the rate-limit tests; null means the door makes its own. */
 let limiter: SignInLimiter | null = null;
 
@@ -71,6 +74,7 @@ const store: BrowserDeviceStore = {
   sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
   closeSession: (value) => registry.closeSession(value),
   renewSession: (value) => registry.renewSession(value),
+  signOutDevice: (value) => registry.signOutDevice(value),
 };
 
 const identity: BoundIdentity = {
@@ -90,6 +94,9 @@ const openDoor = async (): Promise<void> => {
       harnessPort: 1,
       identity: () => identity,
       devices: store,
+      disconnectDevice: (deviceId: string) => {
+        disconnected.push(deviceId);
+      },
       ...(limiter ? { signInLimiter: limiter } : {}),
     }),
   );
@@ -109,6 +116,7 @@ beforeEach(async () => {
   rmSync(join(DATA_DIR, "devices.json"), { force: true });
   registry = new DeviceRegistry();
   asked = [];
+  disconnected = [];
   limiter = null;
   await openDoor();
 });
@@ -744,5 +752,46 @@ describe("pairing into a full fleet", () => {
     await settle();
     expect(node("go").textContent).toBe("Sign in on this device");
     expect(node("t").textContent).toBe("Could not sign in");
+  });
+});
+
+describe("signing this device out, from the device", () => {
+  const signedIn = async (): Promise<string> => {
+    const answer = await submitCode(registry.openPairing().token);
+    expect(answer.status).toBe(201);
+    return String(answer.headers["set-cookie"]?.[0] ?? "").split(";")[0].split("=")[1];
+  };
+  const origin = () => ({ origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` });
+
+  it("removes the whole device, clears the cookie and ends its streams", async () => {
+    const cookie = await signedIn();
+    const [device] = registry.list();
+    const answer = await knock("DELETE", "/session/device", { ...origin(), cookie: `${cookieName("http")}=${cookie}` });
+    expect(answer.status).toBe(200);
+    // Cleared with exactly the attributes the door sets it with, or the
+    // browser keeps the live cookie beside the empty one.
+    expect(String(answer.headers["set-cookie"]?.[0] ?? "")).toBe(clearedCookie(identity));
+    expect(String(answer.headers["set-cookie"]?.[0] ?? "")).toContain("Max-Age=0");
+    expect(registry.count()).toBe(0);
+    expect(disconnected).toEqual([device.id]);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${cookie}` })).status).toBe(401);
+  });
+
+  it("is a write, so nothing cross-site can sign a phone out", async () => {
+    const cookie = await signedIn();
+    const header = { cookie: `${cookieName("http")}=${cookie}` };
+    expect((await knock("DELETE", "/session/device", header)).status).toBe(403);
+    expect((await knock("DELETE", "/session/device", { ...header, origin: "http://evil.example" })).status).toBe(403);
+    expect((await knock("GET", "/session/device", header)).status).toBe(404);
+    expect(registry.count()).toBe(1);
+  });
+
+  it("answers a stranger with a sign-in, and revokes nothing", async () => {
+    await signedIn();
+    const answer = await knock("DELETE", "/session/device", origin());
+    expect(answer.status).toBe(401);
+    expect(bodyOf(answer)).toEqual({ error: "sign in", signIn: "/enter" });
+    expect(registry.count()).toBe(1);
+    expect(disconnected).toEqual([]);
   });
 });

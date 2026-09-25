@@ -192,6 +192,7 @@ beforeAll(async () => {
         sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
         closeSession: (value) => registry.closeSession(value),
         renewSession: (value) => registry.renewSession(value),
+        signOutDevice: (value) => registry.signOutDevice(value),
       },
       connected: (deviceId, disconnect, sessionId) => tracker.open(deviceId, disconnect, sessionId),
       headersTimeoutMs: 4000,

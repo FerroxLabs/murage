@@ -74,6 +74,7 @@ const devices: BrowserDeviceStore = {
   },
   closeSession: (value) => (value ? sessions.delete(value) : false),
   renewSession: () => null,
+  signOutDevice: () => null,
 };
 
 /** A limiter that records being consulted at all, and can be set locked. */

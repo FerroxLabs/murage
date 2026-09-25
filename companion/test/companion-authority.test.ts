@@ -35,7 +35,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
     });
     const harnessPort = await listen(harness);
     const devices: BrowserDeviceStore = {
-      redeem:()=>({error:"unused"}), openSession:()=>null, closeSession:()=>false, renewSession:()=>null,
+      redeem:()=>({error:"unused"}), openSession:()=>null, closeSession:()=>false, renewSession:()=>null, signOutDevice:()=>null,
       resolveSession:value=>value === "paired-session" ? {
         device:{id:"paired",name:"Fixture",cloudDesktopAccess:capability},session:{expiresAt:Date.now()+60_000},
         sessionId:"paired-session-record",
@@ -95,7 +95,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
     const doors: Server[] = [];
     const open = async (companionToken: string | undefined) => {
       const devices: BrowserDeviceStore = {
-        redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null,
+        redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null, signOutDevice:()=>null,
         resolveSession:value=>value === "paired-session" ? {device:{id:"paired",name:"Fixture",cloudDesktopAccess:false},session:{expiresAt:Date.now()+60_000},sessionId:"paired-session-record"} : null,
         sessionDeadline:id=>id === "paired-session-record" ? Date.now()+60_000 : null,
       };
@@ -141,7 +141,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
 
   it("fails join helpfully when independently launched without private proof", async () => {
     const devices: BrowserDeviceStore = {
-      redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null,
+      redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null, signOutDevice:()=>null,
       resolveSession:()=>({device:{id:"paired",name:"Fixture",cloudDesktopAccess:true},session:{expiresAt:Date.now()+60_000},sessionId:"paired-session-record"}),
       sessionDeadline:()=>Date.now()+60_000,
     };

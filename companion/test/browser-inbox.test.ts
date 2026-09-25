@@ -17,7 +17,7 @@ const close = async (server: Server) => {
   await new Promise<void>(resolve => server.close(() => resolve()));
 };
 const devices: BrowserDeviceStore = {
-  redeem: () => ({ error: "unused" }), openSession: () => null, closeSession: () => false, renewSession: () => null,
+  redeem: () => ({ error: "unused" }), openSession: () => null, closeSession: () => false, renewSession: () => null, signOutDevice: () => null,
   resolveSession: value => value === "paired-session" ? {
     device: { id: "paired", name: "Fixture", cloudDesktopAccess: false }, session: { expiresAt: Date.now() + 60_000 },
     sessionId: "paired-session-record",
