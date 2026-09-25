@@ -900,6 +900,14 @@ export class RoutineManager {
     return { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
+  /** The routine whose own conversation this is (Routine.threadId), with
+   * its level (absent = inherit). The composer's level in that conversation
+   * is the routine's, so the owner's own turns there are judged at it too. */
+  routineForConversation(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode } | null {
+    const routine = this.routines.find((candidate) => candidate.target === "bot" && candidate.threadId === threadId);
+    return routine ? { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}) } : null;
+  }
+
   /** Remember "Always allow for this routine". The caller has proved the key
    * sits on a pending card this routine's run raised; this only refuses a
    * key that is not one of the two scoped kinds, and a full list. */

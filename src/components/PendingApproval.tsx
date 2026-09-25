@@ -205,10 +205,13 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
  * the one it would record. A stop-line card (deleting outside its folder,
  * paying, messaging someone new) also offers "Allow for this task": the same
  * kind of action in the same place until the task ends. */
-export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; exact: boolean; forTask: boolean } {
+export function approvalGrants(pending: Pending, opts: { desktop: boolean | undefined; hasBot: boolean }): { always: boolean; exact: boolean; forTask: boolean; forRoutine: boolean } {
   const durable = isRoutineApproval(pending) || isSkillApproval(pending);
-  if (durable || isHostConsentApproval(pending)) return { always: false, exact: false, forTask: false };
+  if (durable || isHostConsentApproval(pending)) return { always: false, exact: false, forTask: false, forRoutine: false };
+  const card = pending.message.card;
   return {
+    // a card raised in a routine's run: the same scoped key, kept on the routine
+    forRoutine: opts.desktop === true && Boolean(card?.routineAllowKey && card.routineId),
     always: opts.desktop === true && opts.hasBot && Boolean(pending.allowKey),
     // the narrow grant: this command, in this folder, on this engine
     exact: opts.desktop === true && opts.hasBot && Boolean(pending.exactAllowKey),
@@ -247,8 +250,12 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
   const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot) });
-  const decide = (behavior: "allow" | "deny", always: false | "program" | "exact" = false, forTask = false) => {
+  const decide = (behavior: "allow" | "deny", always: false | "program" | "exact" | "routine" = false, forTask = false) => {
     const key = always === "exact" ? pending.exactAllowKey : always === "program" ? pending.allowKey : undefined;
+    const card = pending.message.card;
+    const routineGrant = always === "routine" && grants.forRoutine && card?.routineId && card.routineAllowKey
+      ? { routineId: card.routineId, key: card.routineAllowKey }
+      : undefined;
     dispatch({
       type: "decideRequest",
       threadId,
@@ -257,6 +264,7 @@ export function PendingApprovalActions({
       message: behavior === "deny" ? "Denied by the user." : undefined,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
       alwaysAllow: desktop === true && bot && key ? { botId: bot.id, key } : undefined,
+      ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       ...(behavior === "allow" && forTask && grants.forTask ? { allowForTask: true } : {}),
     });
   };
@@ -291,6 +299,15 @@ export function PendingApprovalActions({
           className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
         >
           Allow for this task
+        </button>
+      )}
+      {grants.forRoutine && (
+        <button
+          onClick={() => decide("allow", "routine")}
+          title="Stop asking about this in this routine's runs, only in the same place"
+          className={cn(base, "border border-accent/60 text-ink hover:bg-accent/10")}
+        >
+          Always allow for this routine
         </button>
       )}
       {/* the recommended remembered grant: nothing wider than this command */}

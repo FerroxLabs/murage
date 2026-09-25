@@ -40,7 +40,7 @@ import type { EngineCommand, EngineCommandsView } from "../../shared/engine-comm
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
-import { permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
+import { fullAccessRefusalMessage, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
   appendPastedText,
@@ -120,10 +120,16 @@ interface ComposerDraftSnapshot extends ComposerSendSnapshot {
  * limits. The same `autoApprove` bit as the profile switch, plus
  * `fullAccess` and `noLimits` above it. The
  * chip only changes its name, not its color. */
-function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode: PermissionMode) => void }) {
+function PermissionModeSelector({ bot, onSetMode, routine }: {
+  bot: Bot;
+  onSetMode: (mode: PermissionMode) => void;
+  /** This is a routine's own conversation: the chip shows, and sets, the
+   * level that routine's runs are judged at. */
+  routine?: { name: string; mode: PermissionMode };
+}) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const current = permissionModeOf(bot);
+  const current = routine?.mode ?? permissionModeOf(bot);
   const desktop = useDesktopSurface();
   const currentEntry = PERMISSION_MODES.find((entry) => entry.mode === current)!;
   const { state } = useStore();
@@ -152,7 +158,9 @@ function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={current === "ask" ? "Ask for approval" : currentEntry.label}
+        aria-label={`${current === "ask" ? "Ask for approval" : currentEntry.label}${routine ? ` for the routine ${routine.name}` : ""}`}
+        title={routine ? `Every run of the routine ${routine.name} works here at this level. Choosing one here sets it for the routine.` : undefined}
+        data-routine-level={routine ? "" : undefined}
         disabled={bot.busy}
         onClick={() => setOpen((value) => !value)}
         className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
@@ -601,6 +609,8 @@ export function Composer({
   const removeAudioFile = () => { audioFileRef.current = null; setAudioFile(null); };
   // Auto mode belongs to one bot; a room has several, each with its own.
   const autoBot = group ? undefined : bot;
+  const conversationRoutine = autoBot ? routineOfConversation(state.routines, autoBot.id, threadId) : undefined;
+  const routineProfile = conversationRoutine ? state.bots.find((candidate) => candidate.id === conversationRoutine.botId) : undefined;
   // Tracked for its whole length, append included: an Enter that lands while
   // this is running must be held, or the image it is fetching is attached to
   // the draft AFTER this one.
@@ -618,6 +628,15 @@ export function Composer({
   });
   const setMode = (mode: PermissionMode) => {
     if (!autoBot) return;
+    // In a routine's own conversation the level is the routine's: every run
+    // works here at it (server/routines.ts). The server asks for the bot's
+    // one-time Full access or No limits warning first, and says so.
+    if (conversationRoutine) {
+      void api(`/api/routines/${encodeURIComponent(conversationRoutine.id)}`, { method: "PATCH", body: JSON.stringify({ permissionMode: mode }) })
+        .then((response) => { if (response?.routine) dispatch({ type: "routinePatched", routine: response.routine }); })
+        .catch((error) => dispatch({ type: "error", message: fullAccessRefusalMessage({ [mode === "unlimited" ? "noLimits" : "fullAccess"]: mode === "full" || mode === "unlimited" }, error) ?? (error instanceof Error ? error.message : String(error)) }));
+      return;
+    }
     // Turning Auto (or Full access, which includes it) on for a bot that
     // drives THIS computer has to be acknowledged first. The flag the dialog
     // sends is stripped by the reducer rather than stored, so — exactly like
@@ -1263,7 +1282,7 @@ export function Composer({
                   {effectiveChannelMode === "goal" ? "/goal" : "Goal"}
                 </button>
               )}
-              {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} />}
+              {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} routine={conversationRoutine && routineProfile ? { name: conversationRoutine.name, mode: routineEffectiveMode(conversationRoutine, routineProfile) } : undefined} />}
             </div>
           )}
           <div className="ml-auto flex items-center gap-1">

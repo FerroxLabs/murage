@@ -95,6 +95,9 @@ export interface OptionCardData {
   /** "Always allow this exact command here": command, folder and engine
    * (shared/exact-command.ts); the server decides it, never the client */
   exactAllowKey?: string;
+  /** "Always allow for this routine" on a card a routine run raised */
+  routineAllowKey?: string;
+  routineId?: string;
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
@@ -872,6 +875,9 @@ export type Action =
       reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
+      /** "Always allow for this routine": the card's routineAllowKey, stored
+       * on the routine whose run raised it */
+      alwaysAllowRoutine?: { routineId: string; key: string };
       /** a stop-line card's "Allow for this task": the server records the
        * card's own scoped grant (taskAllowKey) for this task */
       allowForTask?: boolean;
@@ -2320,6 +2326,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               showError(error);
               action.onError?.(error instanceof Error ? error.message : String(error));
             });
+          if (action.alwaysAllowRoutine) {
+            // saved before the answer, for the same reason as below
+            void api(`/api/routines/${encodeURIComponent(action.alwaysAllowRoutine.routineId)}/always-allow`, {
+              method: "POST",
+              body: JSON.stringify({ allowKey: action.alwaysAllowRoutine.key, threadId: action.threadId }),
+            })
+              .catch(showError)
+              .finally(respond);
+            break;
+          }
           if (action.alwaysAllow) {
             // save the grant BEFORE releasing the bot: it may ask again
             // within milliseconds, and a grant that hasn't landed yet

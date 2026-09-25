@@ -86,6 +86,8 @@ import type {
   RoutineTarget,
 } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
+import { permissionModeOf } from "@/lib/permission-mode";
+import { RoutineApprovalLevel, RoutineGrants, type RoutineLevelChoice } from "./RoutineApprovals";
 
 const HOUR_HEIGHT = 64;
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -420,6 +422,7 @@ function EventEditor({
   const [groupId, setGroupId] = useState(existingRoutine?.groupId ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
+  const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? "inherit");
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
   );
@@ -436,6 +439,8 @@ function EventEditor({
   const at = fromLocalDateAndTime(date, startTime);
   const endAt = at + durationMinutes * 60_000;
   const selectedBots = botIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
+  // the bot's own level (its settings), not any one conversation's
+  const levelBot = state.bots.find((bot) => bot.id === botIds[0]);
   const intervalInvalid = recurrence === "interval"
     && (!Number.isInteger(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1_440);
 
@@ -508,6 +513,7 @@ function EventEditor({
           timeoutMinutes,
           attachments: routineTarget === "room-goal" ? [] : attachments as RoutineContextAttachment[],
           overlap,
+          ...(routineTarget === "bot" ? { permissionMode } : {}),
         };
         const response = await api(existingRoutine ? `/api/routines/${existingRoutine.id}` : "/api/routines", {
           method: existingRoutine ? "PATCH" : "POST",
@@ -686,7 +692,7 @@ function EventEditor({
                         {EVENT_DURATION_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>)}
                       </select>
                     </label>
-                    <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">Optional. The clock starts when work actually begins and does not control how often the routine starts.</div>
+                    <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">Optional. The clock starts when work actually begins and does not control how often the routine starts. A run waiting on your answer stops the clock and waits for you.</div>
                     {recurrence !== "none" && <div className="mt-3">
                       <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
                         <span>If the last run is still going</span>
@@ -696,6 +702,10 @@ function EventEditor({
                         </select>
                       </label>
                       <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineOverlapHelp(overlap)}</div>
+                    </div>}
+                    {routineTarget === "bot" && levelBot && <div className="mt-3">
+                      <RoutineApprovalLevel value={permissionMode} onChange={setPermissionMode} botName={levelBot.name} botMode={permissionModeOf(levelBot)} />
+                      {existingRoutine && existingRoutine.botId === levelBot.id && <RoutineGrants routine={state.routines.find((item) => item.id === existingRoutine.id) ?? existingRoutine} />}
                     </div>}
                   </div>
                 </details>

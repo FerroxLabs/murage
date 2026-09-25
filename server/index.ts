@@ -5483,6 +5483,11 @@ async function startTurn(
     ? routineRunLevel(threadId)
     : null;
   if (routineLevel) Object.assign(bot, applyRoutinePermissionMode(bot, routineLevel.mode));
+  // The owner talking in a routine's own conversation: the composer there
+  // shows (and sets) the routine's level, so that is the level the owner's
+  // turn runs at too. Still the owner's turn in every other respect.
+  const conversationMode = !routineLevel && humanIsOwner && opts?.automationSource === undefined ? routineConversationMode(threadId) : null;
+  if (conversationMode) Object.assign(bot, applyRoutinePermissionMode(bot, conversationMode));
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
     : opts?.automationSource === "channel" ? "owner-channel"
@@ -8838,6 +8843,26 @@ function routineRunLevel(threadId: string): { routineId: string; mode: RoutinePe
   return { routineId: run.routineId, mode: effectiveRoutinePermissionMode(run, profile), alwaysAllow: run.alwaysAllow };
 }
 
+/** The level of the routine whose own conversation this is, or null. */
+function routineConversationMode(threadId: string): RoutinePermissionMode | null {
+  const routine = routines?.routineForConversation(threadId);
+  const profile = routine ? store.bot(routine.botId) : undefined;
+  return routine && profile && store.taskByThread(profile.id, threadId) ? effectiveRoutinePermissionMode(routine, profile) : null;
+}
+
+/** Full access and No limits for a routine need the same one-time warning
+ * the bot's own switch needs (server/full-access.ts). Null when allowed. */
+function routineLevelRefusal(body: unknown, routineBotId?: string): string | null {
+  if (!body || typeof body !== "object") return null;
+  const { permissionMode, botId } = body as { permissionMode?: unknown; botId?: unknown };
+  if (permissionMode !== "full" && permissionMode !== "unlimited") return null;
+  const bot = store.bot(typeof botId === "string" ? botId : routineBotId ?? "");
+  if (!bot) return null;
+  if (permissionMode === "unlimited" && bot.noLimitsAcknowledgedAt === undefined) return `Turn on No limits for ${bot.name} once in its settings first, then choose it for this routine.`;
+  if (permissionMode === "full" && bot.fullAccessAcknowledgedAt === undefined && bot.noLimitsAcknowledgedAt === undefined) return `Turn on Full access for ${bot.name} once in its settings first, then choose it for this routine.`;
+  return null;
+}
+
 /** Who started the turn now running in this thread, as Full access reads
  * it (server/auto-approve.ts). Only the workspace owner's conversation can be
  * anything but "other"; inside a routine run only the owner's own channel
@@ -11953,7 +11978,10 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "no such route" });
     }
     if (path === "/api/routines" && method === "POST") {
-      return json(res, 201, { routine: routines!.create(await readBody(req)) });
+      const body = await readBody(req);
+      const refusal = routineLevelRefusal(body);
+      if (refusal) return json(res, 409, { error: refusal });
+      return json(res, 201, { routine: routines!.create(body) });
     }
     const instructionRollback = path.match(/^\/api\/routines\/([\w-]+)\/instructions\/rollback$/);
     if (instructionRollback && method === "POST") {
@@ -12013,7 +12041,10 @@ const server = createServer(async (req, res) => {
     }
     routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
     if (routineMatch && method === "PATCH") {
-      const routine = routines!.update(routineMatch[1], await readBody(req));
+      const body = await readBody(req);
+      const refusal = routineLevelRefusal(body, routines!.listRoutines().find((candidate) => candidate.id === routineMatch![1])?.botId);
+      if (refusal) return json(res, 409, { error: refusal });
+      const routine = routines!.update(routineMatch[1], body);
       return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
     }
     if (routineMatch && method === "DELETE") {

@@ -416,16 +416,16 @@ describe("the stop line's grants on a pending approval", () => {
 
   it("offers Allow for this task when the server scoped one, on any surface", () => {
     const stop = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
-    expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: true });
-    expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, exact: false, forTask: true });
+    expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: true, forRoutine: false });
+    expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, exact: false, forTask: true, forRoutine: false });
   });
 
   it("keeps Always allow but offers no task grant on an ordinary card", () => {
-    expect(approvalGrants(pending({ allowKey: "Bash:git" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: false });
+    expect(approvalGrants(pending({ allowKey: "Bash:git" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: false, forRoutine: false });
   });
 
   it("offers neither when the stop line could not say where", () => {
-    expect(approvalGrants(pending({}), { desktop: true, hasBot: true })).toEqual({ always: false, exact: false, forTask: false });
+    expect(approvalGrants(pending({}), { desktop: true, hasBot: true })).toEqual({ always: false, exact: false, forTask: false, forRoutine: false });
   });
 });
 
@@ -441,14 +441,21 @@ describe("the exact command grant on a pending approval", () => {
   });
 
   it("offers the exact grant on the desktop, beside a per-program grant or alone", () => {
-    expect(approvalGrants(pending({ exactAllowKey }), { desktop: true, hasBot: true })).toEqual({ always: false, exact: true, forTask: false });
-    expect(approvalGrants(pending({ exactAllowKey, allowKey: "Bash:npm" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: true, forTask: false });
+    expect(approvalGrants(pending({ exactAllowKey }), { desktop: true, hasBot: true })).toEqual({ always: false, exact: true, forTask: false, forRoutine: false });
+    expect(approvalGrants(pending({ exactAllowKey, allowKey: "Bash:npm" }), { desktop: true, hasBot: true })).toEqual({ always: true, exact: true, forTask: false, forRoutine: false });
   });
 
   it("never offers it off the desktop or without a bot", () => {
     expect(approvalGrants(pending({ exactAllowKey }), { desktop: false, hasBot: true }).exact).toBe(false);
     expect(approvalGrants(pending({ exactAllowKey }), { desktop: undefined, hasBot: true }).exact).toBe(false);
     expect(approvalGrants(pending({ exactAllowKey }), { desktop: true, hasBot: false }).exact).toBe(false);
+  });
+
+  it("offers Always allow for this routine only on a routine run's card, and only on the desktop", () => {
+    const routineCard = pending({ exactAllowKey: "exact:[\"claude\",\"/w\",\"ls\"]", routineAllowKey: "exact:[\"claude\",\"/w\",\"ls\"]", routineId: "r1" });
+    expect(approvalGrants(routineCard, { desktop: true, hasBot: true }).forRoutine).toBe(true);
+    expect(approvalGrants(routineCard, { desktop: false, hasBot: true }).forRoutine).toBe(false);
+    expect(approvalGrants(pending({ routineAllowKey: "stop:delete:/x" }), { desktop: true, hasBot: true }).forRoutine).toBe(false);
   });
 
   it("names what the per-program grant covers", () => {
