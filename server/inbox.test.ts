@@ -552,3 +552,35 @@ it("names every conversation that owes the owner something, snoozed in the Inbox
   updateInboxState(db, { id: ask.id, version: ask.version, snoozedUntil: now + 60_000 }, scope, now);
   expect([...owedThreads(db, scope)].sort()).toEqual(["other", "thread"]);
 });
+
+// ONE CONVERSATION PER ROUTINE LEFT THE ROUTINES TAB EMPTY.
+//
+// A run used to post a card into the conversation that made the routine, and
+// the rollup was read off those cards. A routine made on the Routines page has
+// no such conversation, and its runs work in the routine's own conversation,
+// so nine runs on the 0.1.60 Mac pass left no card and the tab said "Your
+// routines have not run yet." The routine's own run record counts too now.
+it("counts routine runs that left no card, from the routine's own run record", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  // one run did post a card; the same run in the record is not counted twice
+  put(db, { id: "card", at: now - 300_000, kind: "routine.run", routineRun: { runId: "r1", routineId: "log", routineName: "Log tick", status: "completed" } });
+  const run = (runId: string, extra: Record<string, unknown>) => ({ runId, routineId: "log", routineName: "Log tick", threadId: "thread", status: "completed", at: now, ...extra });
+  const routineRuns = [
+    run("r1", { at: now - 300_000 }),
+    run("r2", { at: now - 200_000, status: "failed", error: "boom" }),
+    run("r3", { at: now - 100_000, link: { threadId: "thread", messageId: "marker-3" } }),
+    run("w1", { routineId: "fixed", routineName: "Fixed write", at: now - 50_000, status: "needs-you", attention: "printf tick" }),
+    // still working: not a result yet
+    run("r4", { at: now - 10_000, status: "running" }),
+    // older than the window, and a conversation outside the Inbox's scope
+    run("old", { at: now - 30 * 24 * 60 * 60 * 1000 }),
+    run("elsewhere", { threadId: "not-mine", at: now - 20_000 }),
+  ];
+  const page = listInbox(db, { view: "routines" }, { ...access, routineRuns }, now);
+  expect(page.routines).toMatchObject([
+    { routineName: "Fixed write", runs: 1, failed: 0, verdict: "waiting" },
+    { routineName: "Log tick", runs: 3, failed: 1, verdict: "recovered", botLabel: "Research bot", link: { threadId: "thread", messageId: "marker-3" } },
+  ]);
+  // and nothing about them becomes owed twice: the waiting card is the owed thing
+  expect(listInbox(db, {}, { ...access, routineRuns }, now).decisions).toBe(0);
+});

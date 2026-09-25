@@ -96,6 +96,14 @@ export function routineRunLine(routine: RoutineRollup): string {
   return `${routine.runs} run${routine.runs === 1 ? "" : "s"}, ${routine.failed} failed`;
 }
 
+/** "2 routines, covering 7 runs": the runs the rows themselves cover, which
+ *  include runs that posted no card (a run in the routine's own
+ *  conversation), so never the card total. */
+export function routinesCoverLine(rows: readonly Pick<RoutineRollup, "runs">[]): string {
+  const runs = rows.reduce((sum, row) => sum + row.runs, 0);
+  return `${rows.length} ${rows.length === 1 ? "routine" : "routines"}, covering ${runs} ${runs === 1 ? "run" : "runs"}`;
+}
+
 /** What the row says about where the routine stands now.
  *
  *  "Recovered" is the sentence that empties this list: twelve failures
@@ -432,7 +440,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         see INBOX_VIEWS. Routines counts the ROWS a person sees, not the runs
         behind them. */}
     {view === "routines" && routineRows.length > 0 && result && (
-      <InboxSection label="Routines" aside={<span className="text-[12px] text-ink-secondary">{`${routineRows.length} ${routineRows.length === 1 ? "routine" : "routines"}, covering ${result.total} ${result.total === 1 ? "run" : "runs"}`}</span>}>
+      <InboxSection label="Routines" aside={<span className="text-[12px] text-ink-secondary">{routinesCoverLine(routineRows)}</span>}>
         <ul className="space-y-2" aria-label="Routines">
           {routineRows.map(routine => (
             <li key={routine.routineKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-hairline/50 bg-inset p-3 text-[13px]">

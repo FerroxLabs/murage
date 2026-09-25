@@ -14,7 +14,23 @@ const DECISION_SQL = sqlList(INBOX_DECISION_STATUSES);
 const TO_READ_SQL = sqlList(INBOX_TO_READ_STATUSES);
 
 export interface InboxThread { threadId: string; label: string; botId?: string }
-export interface InboxAccess { owner: boolean; threads: readonly InboxThread[] }
+/** One routine run as the routine's own record has it (server/routines.ts).
+ *  A run in the routine's own conversation posts no card anywhere, so the
+ *  Routines view reads these beside the cards. */
+export interface InboxRoutineRun {
+  runId: string;
+  routineId: string;
+  routineName: string;
+  threadId?: string;
+  status: string;
+  /** When it started (or was due). */
+  at: number;
+  error?: string;
+  attention?: string;
+  /** Where the run begins in its conversation, when the caller found it. */
+  link?: { threadId: string; messageId: string };
+}
+export interface InboxAccess { owner: boolean; threads: readonly InboxThread[]; routineRuns?: readonly InboxRoutineRun[] }
 export class InboxError extends Error {
   readonly status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
@@ -197,13 +213,16 @@ const ROUTINE_ROW_LIMIT = 2_000;
  *  which is the honest reading: a renamed routine is a different thing in the
  *  owner's head, and the alternative (matching loosely) would merge two real
  *  routines that happen to share a name across bots. */
-function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["threads"], now: number): RoutineRunFact[] {
-  const rows = db.prepare(SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision FROM items
+function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["threads"], now: number, records: readonly InboxRoutineRun[] = []): RoutineRunFact[] {
+  const rows = db.prepare(SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision,
+    json_extract(json,'$.routineRun.runId') AS run_id, json_extract(json,'$.routineRun.routineId') AS routine_id FROM items
     WHERE kind_segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
     .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as
-    Array<{ thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number }>;
-  return rows.map(row => ({
-    routineKey: `${row.thread_id}:${row.title}`,
+    Array<{ thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number; run_id: unknown; routine_id: unknown }>;
+  const carded = new Set(rows.map(row => row.run_id).filter((id): id is string => typeof id === "string"));
+  return [...rows.map(row => ({
+    // one routine is one row whichever record a run came from
+    routineKey: typeof row.routine_id === "string" && row.routine_id ? `routine:${row.routine_id}` : `${row.thread_id}:${row.title}`,
     routineName: text(row.title, 120),
     botLabel: text(threads.find(thread => thread.threadId === row.thread_id)?.label ?? "", 100),
     at: row.at,
@@ -219,7 +238,32 @@ function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["t
     owed: row.decision === 1,
     detail: row.summary,
     link: { threadId: row.thread_id, messageId: row.message_id },
-  }));
+  })), ...routineRecordFacts(records, carded, threads, now)];
+}
+
+/** Runs in the routine's own record that posted no card: finished ones, and
+ *  ones waiting on the owner, inside the window and the Inbox's scope. A run
+ *  still working is not a result yet. The same rules as a card: anything but
+ *  a clean finish is a failure, except a run that is waiting on the owner. */
+function routineRecordFacts(records: readonly InboxRoutineRun[], carded: ReadonlySet<string>, threads: InboxAccess["threads"], now: number): RoutineRunFact[] {
+  const facts: RoutineRunFact[] = [];
+  for (const run of records.slice(0, ROUTINE_ROW_LIMIT)) {
+    if (carded.has(run.runId) || !run.threadId || run.at < now - ROUTINE_WINDOW_MS || ["queued", "running"].includes(run.status)) continue;
+    const thread = threads.find(candidate => candidate.threadId === run.threadId);
+    if (!thread) continue;
+    const owed = run.status === "waiting" || run.status === "needs-you";
+    facts.push({
+      routineKey: `routine:${run.routineId}`,
+      routineName: text(run.routineName, 120),
+      botLabel: text(thread.label, 100),
+      at: run.at,
+      failed: run.status !== "completed" && !owed,
+      owed,
+      detail: text(owed ? run.attention : run.error),
+      ...(run.link && run.link.threadId === run.threadId ? { link: run.link } : {}),
+    });
+  }
+  return facts;
 }
 
 function scope(access: InboxAccess) {
@@ -344,7 +388,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // Computed once and shared, because `routines` wants the same rollup and
   // this runs on the view the sidebar polls.
   const rollups = view === "routines" || view === "connections" || decisions
-    ? rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now), now)
+    ? rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now, access.routineRuns), now)
     : null;
   // AND IT ASKS ONLY WHEN NOBODY ELSE IS ASKING.
   //

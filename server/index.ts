@@ -64,7 +64,7 @@ import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PE
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
-import { inboxRequest, owedThreads } from "./inbox.ts";
+import { inboxRequest, owedThreads, type InboxRoutineRun } from "./inbox.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
@@ -3090,6 +3090,32 @@ function inboxAccessThreads() {
     ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
     ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
   ];
+}
+/** Every routine run in the routine manager's record, for the Inbox's
+ *  Routines view: a run in the routine's own conversation posts no card, so
+ *  the record is the only place those runs are counted. Only each routine's
+ *  latest run is given a link (where it begins in its conversation). */
+function inboxRoutineRuns(): InboxRoutineRun[] {
+  const runs = routines?.listRuns() ?? [];
+  const startOf = (run: RoutineRun) => run.startedAt ?? run.scheduledFor;
+  const latest = new Map<string, RoutineRun>();
+  for (const run of runs) {
+    const seen = latest.get(run.routineId);
+    if (!seen || startOf(seen) < startOf(run)) latest.set(run.routineId, run);
+  }
+  return runs.map((run) => {
+    const at = startOf(run);
+    const first = latest.get(run.routineId) === run && run.threadId
+      ? store.messagesFor(run.threadId).find((message) => message.at >= at - 5_000) ?? store.messagesFor(run.threadId).at(-1)
+      : undefined;
+    return {
+      runId: run.id, routineId: run.routineId, routineName: run.routineName, status: run.status, at,
+      ...(run.threadId ? { threadId: run.threadId } : {}),
+      ...(run.error ? { error: run.error } : {}),
+      ...(run.attention ? { attention: run.attention } : {}),
+      ...(first && run.threadId ? { link: { threadId: run.threadId, messageId: first.id } } : {}),
+    };
+  });
 }
 // A SNOOZED CONVERSATION WAKES MARKED UNREAD, whether its time came or
 // something owed to the owner arrived in it (shared/thread-snooze.ts). A
@@ -10654,7 +10680,7 @@ const server = createServer(async (req, res) => {
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
-      }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
+      }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads, routineRuns: inboxRoutineRuns() });
       return json(res, result.status, result.body);
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
@@ -10673,7 +10699,7 @@ const server = createServer(async (req, res) => {
         ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
         ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
       ];
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads });
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads, routineRuns: inboxRoutineRuns() });
       if (result.status !== 200) return json(res, result.status, result.body);
       return json(res, 200, traySummary({
         page: result.body as InboxPage,

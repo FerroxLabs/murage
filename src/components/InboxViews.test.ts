@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import en from "@/locales/en.json";
+import { routinesCoverLine } from "./Inbox";
 import { INBOX_OWED_VIEWS, INBOX_VIEWS, INBOX_VIEW_COPY, INBOX_VIEW_EMPTY, inboxCardItems, inboxShowsEmpty, inboxTally, owedWaitingLine, waitedFor } from "./Inbox";
 import type { InboxItem } from "../../shared/inbox";
 import { INBOX_BADGED_SEGMENTS } from "../../shared/inbox";
@@ -229,5 +230,14 @@ describe("the line that counts what is on the list", () => {
     expect(inboxTally(1, 0)).toBe("1 item");
     expect(inboxTally(3, 0)).toBe("3 items");
     expect(inboxTally(3, 1)).toBe("3 items, 1 unread");
+  });
+});
+
+describe("the Routines section's count", () => {
+  // It said "covering 0 runs" once runs came from the routine's own record
+  // instead of cards: the runs are the rows' own counts, not the card total.
+  it("counts the runs the rows cover", () => {
+    expect(routinesCoverLine([{ runs: 5 }, { runs: 2 }])).toBe("2 routines, covering 7 runs");
+    expect(routinesCoverLine([{ runs: 1 }])).toBe("1 routine, covering 1 run");
   });
 });
