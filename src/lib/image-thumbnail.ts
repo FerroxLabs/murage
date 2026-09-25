@@ -25,13 +25,38 @@ export function screenFramePath(threadId: string, messageId: string, phone: bool
   return phone ? `${path}?w=${PHONE_SCREEN_FRAME_WIDTH}` : path;
 }
 
+/** The `N` of a `?w=N` candidate URL, or undefined for any other URL. */
+export function requestedWidth(currentSrc: string): number | undefined {
+  const requested = Number(/[?&]w=(\d+)/.exec(currentSrc)?.[1]);
+  return Number.isFinite(requested) && requested > 0 ? requested : undefined;
+}
+
 /** True when a `?w=N` request came back narrower than N: the server (E12)
  *  never upscales, so an image already at or below N sends the whole
  *  original. Left un-dropped, the browser would treat those bytes as the
- *  "Nw" candidate and draw them shrunken — small on a dense phone screen. */
-export function servedOriginal(currentSrc: string, naturalWidth: number): boolean {
-  const requested = Number(/[?&]w=(\d+)/.exec(currentSrc)?.[1]);
-  return naturalWidth > 0 && Number.isFinite(requested) && naturalWidth < requested;
+ *  "Nw" candidate and draw them shrunken — small on a dense phone screen.
+ *
+ *  `pixelWidth` must be the file's TRUE pixel width. The srcset `<img>`'s own
+ *  `naturalWidth` is not: with `w` descriptors the browser divides it by the
+ *  candidate's density, so a real 1280-pixel thumbnail in a 259 px slot
+ *  reports 259, and every image looked like an original (phone verification,
+ *  08c-srcset-probe). `truePixelWidth` measures it. */
+export function servedOriginal(currentSrc: string, pixelWidth: number): boolean {
+  const requested = requestedWidth(currentSrc);
+  return pixelWidth > 0 && requested !== undefined && pixelWidth < requested;
+}
+
+/** The true pixel width of an image URL: a plain `Image` with no srcset, so
+ *  no density correction. Same URL as the one just drawn, so the bytes come
+ *  from the cache, and an image load is governed by img-src, not the door's
+ *  connect-src. Resolves 0 when it cannot tell. */
+export function truePixelWidth(url: string, make: () => HTMLImageElement = () => new Image()): Promise<number> {
+  return new Promise((resolve) => {
+    const probe = make();
+    probe.onload = () => resolve(probe.naturalWidth);
+    probe.onerror = () => resolve(0);
+    probe.src = url;
+  });
 }
 
 /** Sources already found to have served the original for their widest `?w=`

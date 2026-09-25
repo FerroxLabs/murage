@@ -5,7 +5,13 @@
 // src/e2e/media-lightbox.human.spec.ts.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Which surface ImageThumb believes it is on. Undefined (not asked yet) is
+// what every other test here renders with, exactly as before.
+let desktopAnswer: boolean | undefined;
+vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => desktopAnswer }));
+afterEach(() => { desktopAnswer = undefined; });
 
 import {
   artifactImageItem,
@@ -191,5 +197,26 @@ describe("closed-state markup", () => {
     expect(local).not.toContain("<img");
     expect(local).not.toContain("/Users/sean");
     expect(local).toContain("Local image paths are not loaded in chat.");
+  });
+});
+
+// M6: the resized thumbnails are for phones and browsers. The Electron
+// desktop keeps drawing the original, as it did before E12.
+describe("which surfaces get the srcset", () => {
+  const render = () => renderToStaticMarkup(createElement(MarkdownImage, { src: "/api/attachments/abc-123.png", alt: "chart" }));
+
+  it("offers the ?w= widths on a confirmed remote surface", () => {
+    desktopAnswer = false;
+    expect(render()).toContain('srcSet="/api/attachments/abc-123.png?w=320 320w');
+  });
+
+  it("draws only the original on the desktop, and before the surface is known", () => {
+    for (const answer of [true, undefined]) {
+      desktopAnswer = answer;
+      const html = render();
+      expect(html).toContain('<img src="/api/attachments/abc-123.png" alt="chart"');
+      expect(html).not.toContain("srcSet");
+      expect(html).not.toContain("?w=");
+    }
   });
 });

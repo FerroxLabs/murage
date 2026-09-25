@@ -23,7 +23,8 @@ import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "luc
 
 import { attachmentImageUrl } from "@/lib/composer-attachments";
 import { artifactReferenceSource, attachmentReferenceSource } from "@/lib/image-reference";
-import { rememberServedOriginal, servedOriginal, THUMBNAIL_SIZES, thumbnailSrcSet, wasServedOriginal } from "@/lib/image-thumbnail";
+import { rememberServedOriginal, requestedWidth, servedOriginal, THUMBNAIL_SIZES, thumbnailSrcSet, truePixelWidth, wasServedOriginal } from "@/lib/image-thumbnail";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
@@ -187,6 +188,9 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
   // back as the original, which a srcset would draw shrunken (see
   // servedOriginal). Sticky per source so a remount does not flash small.
   const [smallOriginal, setSmallOriginal] = useState(() => wasServedOriginal(item.src));
+  // Phones and browsers only (M6): the Electron desktop draws the original,
+  // as it did before E12, and never asks the harness to resize.
+  const desktop = useDesktopSurface();
   if (failed) {
     // stays visible: a missing image says so instead of silently vanishing
     return (
@@ -201,7 +205,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
       </span>
     );
   }
-  const srcSet = smallOriginal ? undefined : thumbnailSrcSet(item.src);
+  const srcSet = desktop === false && !smallOriginal ? thumbnailSrcSet(item.src) : undefined;
   return (
     <button
       type="button"
@@ -224,11 +228,15 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={(event) => {
-          const img = event.currentTarget;
-          if (servedOriginal(img.currentSrc, img.naturalWidth)) {
+          // naturalWidth here is density-corrected by the srcset; measure the
+          // file's true pixels instead (see servedOriginal).
+          const current = event.currentTarget.currentSrc;
+          if (requestedWidth(current) === undefined) return;
+          void truePixelWidth(current).then((pixels) => {
+            if (!servedOriginal(current, pixels)) return;
             rememberServedOriginal(item.src);
             setSmallOriginal(true);
-          }
+          });
         }}
         onError={() => setFailed(true)}
         className={cn(
