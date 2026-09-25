@@ -20,6 +20,7 @@ import {
   readServeStatus,
   sameTarget,
   serveState,
+  TAILSCALE_DNS_ADMIN_URL,
 } from "./companion-remote-access.mjs";
 
 const NAME = "seans-macbook-pro.tail0a48a4.ts.net";
@@ -151,6 +152,29 @@ describe("failure gets a reason, not a shrug", () => {
     expect(reason).toBe("failed");
     expect(message).toContain("something went sideways");
     expect(message).not.toContain("stack");
+  });
+
+  it("names the exact page where HTTPS certificates are turned on", () => {
+    const { message } = classifyServeFailure("HTTPS is disabled for your tailnet; enable HTTPS in the admin console");
+    expect(TAILSCALE_DNS_ADMIN_URL).toBe("https://login.tailscale.com/admin/dns");
+    expect(message).toContain(TAILSCALE_DNS_ADMIN_URL);
+    expect(message).toContain("Enable HTTPS");
+    expect(message).toContain("MagicDNS");
+  });
+
+  it("keeps the link Tailscale itself printed, even when it is not on the first line", () => {
+    const { reason, message } = classifyServeFailure(
+      "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nABC123\n",
+    );
+    expect(reason).toBe("failed");
+    expect(message).toContain("Serve is not enabled on your tailnet.");
+    expect(message).toContain("https://login.tailscale.com/f/serve?node=nABC123");
+  });
+
+  it("never echoes a link to anywhere but Tailscale's own console", () => {
+    const { message } = classifyServeFailure("something odd\nvisit https://login.tailscale.com.evil.example/steal and https://example.com/x");
+    expect(message).not.toContain("evil.example");
+    expect(message).not.toContain("example.com/x");
   });
 });
 
