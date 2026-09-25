@@ -83,7 +83,9 @@ const rows: Row[] = [
   ["rtk rm outside", ...shell("rtk rm -rf ~/Documents/old"), "delete"],
   ["rtk proxy rm outside", ...shell("rtk proxy rm ~/Desktop/x"), "delete"],
   ["rtk rm inside", ...shell("rtk rm -rf build"), "pass"],
-  ["a variable set from a command is unknown", ...shell(`f=$(mktemp); rm "$f"`), "delete"],
+  // 0.1.60 Linux pass: a mktemp file is placed (in temp); any other command's output is not
+  ["a variable set from mktemp is placed in temp", ...shell(`f=$(mktemp); rm "$f"`), "pass"],
+  ["a variable set from another command is unknown", ...shell(`f=$(cat list.txt); rm "$f"`), "delete"],
   ["no cwd: relative rm is unknown", "Bash", { command: "rm -rf build" }, "delete"],
   ["delete_file outside", "delete_file", { path: "/Users/ada/Documents/old.txt" }, "delete"],
   ["git push --force", ...shell("git push --force origin main"), "delete"],
@@ -198,7 +200,8 @@ describe("stop line keys", () => {
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm ~/Documents/a ~/Desktop/b" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf ~/Documents" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf /" }, "", place())!)).toBeUndefined();
-    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf $X" }, "", place())!)).toBeUndefined();
+    // a delete it cannot place is keyed on the command itself, never a folder
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf $X" }, "", place())!)).toMatch(/^stop:delete:unplaced:\[/);
   });
 
   it("scopes a message to its recipient and a payment to its payee", () => {
@@ -338,10 +341,12 @@ describe("PowerShell and cmd on Windows", () => {
     ["a .Delete() method on an object", `(Get-Item "x").Delete()`],
     ["a subexpression", `Remove-Item "$(Get-Location)\\..\\x"`],
   ];
-  it.each(unknown)("stops without a place when it cannot read the target: %s", (_label, command) => {
+  it.each(unknown)("stops, placed only by the command itself, when it cannot read the target: %s", (_label, command) => {
     const hit = run(command);
     expect(hit?.kind).toBe("delete");
-    expect(hit?.place).toBeUndefined();
+    // no folder: the card's task and routine grants cover this command only
+    expect(hit?.place).toMatch(/^unplaced:\[/);
+    expect(hit?.what).toMatch(/cannot place/);
   });
 
   it("still stops outside its folder through ..", () => {

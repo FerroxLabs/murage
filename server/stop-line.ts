@@ -29,6 +29,7 @@
 // folder, the recipients the bot has written to, how links resolve) is passed
 // in, so it is table-tested without touching a disk.
 import { posix } from "node:path";
+import { commandWithoutDateTimes, EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
 
 export type StopKind = "delete" | "pay" | "message";
 
@@ -446,6 +447,37 @@ function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
   return { text, dynamic: unknown || /[$`]/.test(text) };
 }
 
+/** The value of `name=value` when it is not a plain literal but can still be
+ * placed (0.1.60 Linux pass): `$(mktemp …)` is a new file in temp, in the
+ * folder `-p`/`--tmpdir` names, or (a bare template) in the current folder;
+ * a name built with `$(date …)` is that name with digits where the date is,
+ * as long as the format cannot print a slash. Undefined for anything else,
+ * which stays unknown. */
+function assignedValue(value: string): string | undefined {
+  const mk = /^(?:\$\(\s*mktemp((?:\s+[^\s()$`;|&<>]+)*)\s*\)|`\s*mktemp((?:\s+[^\s()$`;|&<>]+)*)\s*`)$/.exec(value);
+  if (mk) {
+    const args = (mk[1] ?? mk[2] ?? "").trim().split(/\s+/).filter(Boolean);
+    let dir: string | undefined;
+    let template: string | undefined;
+    let inTemp = false;
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i]!;
+      if (arg === "-p" || arg === "--tmpdir") dir = args[++i];
+      else if (arg.startsWith("--tmpdir=")) dir = arg.slice("--tmpdir=".length);
+      else if (arg === "-t") inTemp = true;
+      else if (!arg.startsWith("-")) template = arg;
+    }
+    if (dir === "") return undefined;
+    if (dir === undefined && (inTemp || template === undefined)) dir = "/tmp";
+    const name = template ?? "tmp.XXXXXXXXXX";
+    if (name.includes("/")) return dir === undefined || name.startsWith("/") ? name : undefined;
+    return dir === undefined ? name : `${dir.replace(/\/+$/, "")}/${name}`;
+  }
+  const dated = value.replace(/\$\(\s*date(?:\s+[^()$`/;|&<>]*)?\)|`\s*date(?:\s+[^`$/;|&<>]*)?`/g, (call) => (/%[Dxc]/.test(call) ? call : "0"));
+  if (dated === value || /[$`]/.test(dated)) return undefined;
+  return dated;
+}
+
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
   const { commands, complex, scan, words } = splitShell(line);
   let cwd = place.cwd;
@@ -463,8 +495,9 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
       for (const word of assigning) {
         const eq = word.text.indexOf("=");
         const name = word.text.slice(0, eq);
-        if (word.dynamic) vars.delete(name);
-        else vars.set(name, word.text.slice(eq + 1));
+        const value = word.dynamic ? assignedValue(word.text.slice(eq + 1)) : word.text.slice(eq + 1);
+        if (value === undefined) vars.delete(name);
+        else vars.set(name, value);
       }
       continue;
     }
@@ -518,7 +551,7 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(words) && !found.deletes.length) {
     found.unknownDelete = short(line);
   }
-  return deleteHit(found, place);
+  return deleteHit(found, place, line);
 }
 
 // ── PowerShell and cmd (Windows) ───────────────────────────────────────
@@ -875,7 +908,7 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
     const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(line)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(line);
     if (methodDelete || hidden) found.unknownDelete = short(line);
   }
-  return deleteHit(found, place);
+  return deleteHit(found, place, line);
 }
 
 function short(text: string, max = 140): string {
@@ -1036,7 +1069,31 @@ function gitHit(args: Word[], cwd: string | undefined, place: StopLinePlace, fou
   }
 }
 
-function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
+/** The place of a delete Murage cannot place: the command's own shape (its
+ * folder and its normalized text), so the card can still offer "Allow for
+ * this task" and "Always allow for this routine" for exactly this command,
+ * never only Allow once. */
+function unplacedPlace(line: string | undefined, cwd: string | undefined): string | undefined {
+  if (line === undefined) return undefined;
+  const command = normalizeCommand(line);
+  if (!command || command.length > EXACT_COMMAND_MAX_CHARS) return undefined;
+  return `${UNPLACED}${JSON.stringify([cwd ?? "", command])}`;
+}
+const UNPLACED = "unplaced:";
+/** Two unplaced-delete places are the same command in the same folder,
+ * apart from its dates and times (shared/exact-command.ts). */
+function sameUnplaced(granted: string, place: string): boolean {
+  const read = (value: string): [string, string] | undefined => {
+    try {
+      const parts: unknown = JSON.parse(value.slice(UNPLACED.length));
+      return Array.isArray(parts) && parts.length === 2 && parts.every((part) => typeof part === "string") ? parts as [string, string] : undefined;
+    } catch { return undefined; }
+  };
+  const a = read(granted), b = read(place);
+  return Boolean(a && b && a[0] === b[0] && (a[1] === b[1] || commandWithoutDateTimes(a[1]) === commandWithoutDateTimes(b[1])));
+}
+
+function deleteHit(found: Collected, place: StopLinePlace, line?: string): StopHit | null {
   const real = (path: string) => {
     try { return place.realpath ? clean(place.realpath(path)) : path; } catch { return path; }
   };
@@ -1051,8 +1108,16 @@ function deleteHit(found: Collected, place: StopLinePlace): StopHit | null {
     return roots.some((root) => within(root, p) || (t.glob === true && clean(root) === p));
   };
   const outside = found.deletes.filter((t) => !inside(t));
-  if (found.unknownDelete && !outside.length) {
-    return { kind: "delete", what: `Delete something Murage cannot place, so it may be outside its folder: ${found.unknownDelete}` };
+  // a target the reader could not resolve (an unknown variable) is not a
+  // path outside the folder: it is a delete nobody can place
+  const unplaced = outside.filter((t) => !t.path);
+  if ((found.unknownDelete || unplaced.length) && outside.length === unplaced.length) {
+    const shape = unplacedPlace(line, place.cwd);
+    return {
+      kind: "delete",
+      ...(shape ? { place: shape } : {}),
+      what: `Delete something Murage cannot place, so it may be outside its folder: ${found.unknownDelete ?? unplaced.map((t) => t.text).slice(0, 3).join(", ")}`,
+    };
   }
   if (!outside.length) return null;
   const glob = WIN_CANON.test(clean(place.home)) ? "\\…" : "/…";
@@ -1291,8 +1356,9 @@ export function deletesPlacedInside(command: string, given: StopLinePlace): bool
     if (assigning.length && assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) {
       for (const word of assigning) {
         const eq = word.text.indexOf("=");
-        if (word.dynamic) vars.delete(word.text.slice(0, eq));
-        else vars.set(word.text.slice(0, eq), word.text.slice(eq + 1));
+        const value = word.dynamic ? assignedValue(word.text.slice(eq + 1)) : word.text.slice(eq + 1);
+        if (value === undefined) vars.delete(word.text.slice(0, eq));
+        else vars.set(word.text.slice(0, eq), value);
       }
       continue;
     }
@@ -1399,6 +1465,7 @@ export function stopLineKey(hit: StopHit): string | undefined {
  * covers its folder's whole subtree; every other place must match exactly. */
 export function stopLineKeyCovers(key: string, hit: StopHit): boolean {
   if (!hit.place) return false;
+  if (hit.place.startsWith(UNPLACED)) return hit.kind === "delete" && key.startsWith(`stop:delete:${UNPLACED}`) && sameUnplaced(key.slice("stop:delete:".length), hit.place);
   if (key.startsWith("stop:public:")) return hit.kind === "message" && `stop:${hit.place}` === key;
   const m = /^stop:(delete|pay|message):(.+)$/.exec(key);
   if (!m || m[1] !== hit.kind) return false;

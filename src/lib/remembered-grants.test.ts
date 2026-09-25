@@ -31,3 +31,10 @@ describe("describeGrant", () => {
     expect(describeGrant("mcp__box__read", engines)).toEqual({ kind: "other", text: "mcp__box__read" });
   });
 });
+
+// 0.1.60 Linux pass D2: a delete Murage cannot place is remembered by the
+// command itself, and is listed as that command in its folder.
+it("describes an unplaced delete grant as its command", () => {
+  const key = `stop:delete:unplaced:${JSON.stringify(["/home/tester/.murage/threads/t1", 'tmp="$(cat list.txt)"; rm "$tmp"'])}`;
+  expect(describeGrant(key, [])).toEqual({ kind: "exact", command: 'tmp="$(cat list.txt)"; rm "$tmp"', folder: "/home/tester/.murage/threads/t1", engine: "any engine" });
+});

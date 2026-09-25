@@ -61,8 +61,8 @@ async function poll<T>(read: () => Promise<T | null>, ms: number): Promise<T | n
   }
 }
 
-async function makeBot(name: string) {
-  const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "deleter", model: "fake-model" } });
+async function makeBot(name: string, instanceId = "deleter") {
+  const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId, model: "fake-model" } });
   expect(created.status).toBe(201);
   expect((await desktopApi("PATCH", `/api/bots/${created.body.bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
   return created.body.bot as { id: string; threadId: string; name: string };
@@ -100,6 +100,18 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
         deleter: {
           driver: "grokAgent",
           environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE, FAKE_ACP_PROMPT_DUMP: join(home, "last-prompt.json") },
+          config: { cli: FAKE_CLI, fullAuto: false },
+        },
+        // 0.1.60 Linux pass D2: a routine deleting its own dated temp file
+        tempfile: {
+          driver: "grokAgent",
+          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: 'tmp="tempfile_$(date +%s).txt" && date > "$tmp" && cat "$tmp" >> notes/log.md && rm "$tmp"' },
+          config: { cli: FAKE_CLI, fullAuto: false },
+        },
+        // and one whose delete cannot be placed at all
+        unplaced: {
+          driver: "grokAgent",
+          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: 'tmp="$(cat list.txt)"; rm "$tmp"' },
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
@@ -183,6 +195,34 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     // removed in the editor: the next run asks again
     expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow/remove`, { key: card.card.routineAllowKey })).status).toBe(200);
     expect((await routineState(routine.id)).alwaysAllow).toBeUndefined();
+  }, 120_000);
+
+  it("a routine's own dated temp file is deleted inside its folder, with no card on Auto", async () => {
+    const bot = await makeBot("Tem", "tempfile");
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
+    const run = await settled(await runOnce(routine.id));
+    expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
+    expect((await threadMessages(run!.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+  }, 90_000);
+
+  it("a delete it cannot place still asks, and its card offers this task and this routine", async () => {
+    const bot = await makeBot("Unp", "unplaced");
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
+    const runId = await runOnce(routine.id);
+    const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
+    const card = await poll(() => liveCard(threadId!), 20_000);
+    expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(card.card.held).toContain("cannot place");
+    expect(card.card.taskAllowKey).toMatch(/^stop:delete:unplaced:/);
+    expect(card.card.routineAllowKey).toBe(card.card.taskAllowKey);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
+    expect(await settled(runId)).toMatchObject({ status: "completed" });
+    // the next run of the same command is covered
+    const next = await settled(await runOnce(routine.id));
+    expect(next).toMatchObject({ status: "completed" });
   }, 120_000);
 
   it("the owner's message in a routine's conversation runs at the routine's level", async () => {
