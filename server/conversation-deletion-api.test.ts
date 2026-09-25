@@ -126,9 +126,12 @@ it("removes a channel conversation's member folders and engine history, then a b
   mkdirSync(botDesk, { recursive: true });
   const botSession = join(data, ".fuigo", "sessions", rustUrlEncode(botDesk));
   touch(join(botSession, "s", "chat_history.jsonl"), MARKER);
+  const rootSession = join(data, ".fuigo", "sessions", rustUrlEncode(join(data, "workspaces", bot.id)));
+  touch(join(rootSession, "s", "chat_history.jsonl"), MARKER);
   const removed = await api("DELETE", `/api/bots/${bot.id}`);
   expect(removed.status).toBe(200);
   expect(Array.isArray(removed.body.leftovers)).toBe(true);
   expect(existsSync(join(data, "workspaces", bot.id))).toBe(false);
   expect(existsSync(botSession)).toBe(false);
+  expect(existsSync(rootSession)).toBe(false);
 }, 60_000);

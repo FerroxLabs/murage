@@ -52,6 +52,8 @@ export interface PendingConversationDeletion {
   /** one entry per working folder found for a thread (a channel has one per member) */
   desks: Array<{ botId: string; threadId: string; checkpointKey?: string }>;
   engineHomes: DeletionEngineHome[];
+  /** bots deleted with these conversations: their own folder was theirs alone */
+  botIds?: string[];
   attachments: string[];
   artifactBlobs: string[];
   leftovers: DeletionLeftover[];
@@ -64,6 +66,9 @@ export interface DeletionInput {
   /** engine kinds (driverKind) the conversations ran on */
   engineKinds?: string[];
   engineHomes?: DeletionEngineHome[];
+  /** the bot is being deleted too: its own folder, and the engine history
+   * kept for it, belonged to it alone */
+  botIds?: string[];
 }
 
 // ── pure path helpers ───────────────────────────────────────────────────
@@ -400,6 +405,7 @@ export class ConversationDeletions {
       createdAt: Date.now(),
       threadIds,
       desks,
+      botIds: [...new Set(input.botIds ?? [])].filter((id) => ID.test(id)),
       engineHomes: (input.engineHomes ?? []).filter((home) => Object.values(ENGINE_FOR_DRIVER).includes(home.engine) && typeof home.home === "string" && pathApiFor(home.home).isAbsolute(home.home)),
       attachments: this.attachmentsOnlyIn(threadIds),
       artifactBlobs: this.artifactBlobsOf(threadIds),
@@ -445,6 +451,10 @@ export class ConversationDeletions {
         const shadow = nodePath.join(dirs.checkpoints, desk.botId, desk.checkpointKey);
         record(removeConfined(dirs.checkpoints, shadow), shadow, removed, failed);
       }
+    }
+    for (const botId of (entry.botIds ?? []).filter((id) => ID.test(id))) {
+      for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, botId));
+      for (const root of [dirs.workspaces, dirs.skillState, dirs.checkpoints]) record(removeConfined(root, nodePath.join(root, botId)), nodePath.join(root, botId), removed, failed);
     }
     // pinned bundles can exist for a thread whose folder was never made
     for (const botId of listDir(dirs.skillState).filter((name) => ID.test(name))) {

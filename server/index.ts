@@ -14816,7 +14816,7 @@ const server = createServer(async (req, res) => {
         localVmIdles.delete(target.key);
         const botThreads = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])];
         await retireEngineSessions(botThreads);
-        deletionReport = runConversationDeletion(conversationDeletions, botDeletionInput(bot, botThreads), () => store.deleteBot(bot.id)).report;
+        deletionReport = runConversationDeletion(conversationDeletions, { ...botDeletionInput(bot, botThreads), botIds: [bot.id] }, () => store.deleteBot(bot.id)).report;
         engineCommandCache.forget(bot.id);
       } catch (error) {
         if (browserCleanupRequest) browserCleanup.abort(browserCleanupRequest);
@@ -15912,7 +15912,7 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
-      if (bot) await retireEngineSessions([m[2]]);
+      if (bot && (bot.tasks?.length ?? 0) > 1 && bot.tasks?.some((task) => task.threadId === m![2])) await retireEngineSessions([m[2]]);
       const { result: updated, report } = bot
         ? runConversationDeletion(conversationDeletions, botDeletionInput(bot, [m[2]]), () => store.deleteTask(m![1]!, m![2]!))
         : { result: null, report: null };
