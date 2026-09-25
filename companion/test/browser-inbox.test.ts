@@ -61,6 +61,48 @@ describe("the browser door's Inbox", () => {
     } finally { await close(door); await close(harness); }
   });
 
+  it("forwards its own launch proof on a call's two routes too", async () => {
+    const seen: Array<{ url: string; headers: IncomingHttpHeaders }> = [];
+    const harness = createServer((req, res) => {
+      seen.push({ url: req.url ?? "", headers: req.headers });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    const harnessPort = await listen(harness);
+    const door = createServer(createBrowserHandler({
+      harnessPort, companionToken: PRIVATE_TOKEN,
+      identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    const headers = {
+      "content-type": "application/json", origin: `http://127.0.0.1:${port}`,
+      cookie: `${cookieName("http")}=paired-session`, "x-murage-companion-token": "attacker-supplied-proof",
+    };
+    try {
+      for (const route of ["voice-host", "call-note"]) {
+        const answer = await fetch(`http://127.0.0.1:${port}/api/bots/bot_1/${route}`, { method: "POST", headers, body: "{}" });
+        expect(answer.status, route).toBe(200);
+        expect(seen.at(-1)!.url).toBe(`/api/bots/bot_1/${route}`);
+        expect(seen.at(-1)!.headers["x-murage-companion-token"], route).toBe(PRIVATE_TOKEN);
+      }
+    } finally { await close(door); await close(harness); }
+  });
+
+  it("explains a call refused because the sidecar was launched without the proof", async () => {
+    const door = createServer(createBrowserHandler({
+      harnessPort: 1, identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/bots/bot_1/voice-host`, {
+        method: "POST", body: "{}",
+        headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}`, cookie: `${cookieName("http")}=paired-session` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.text()).toContain("calls require");
+    } finally { await close(door); }
+  });
+
   it("explains itself when the sidecar was launched without the proof", async () => {
     const door = createServer(createBrowserHandler({
       harnessPort: 1, identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,

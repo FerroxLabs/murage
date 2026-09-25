@@ -119,6 +119,9 @@ beforeAll(async () => {
   door = createServer(
     createBrowserHandler({
       harnessPort,
+      // A call's two routes carry the sidecar's launch proof (C9), so the door
+      // needs one to forward them at all.
+      companionToken: "d".repeat(64),
       identity: () => identity,
       devices,
       signInLimiter: limiter,

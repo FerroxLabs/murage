@@ -66,6 +66,7 @@ import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
+import { callAccess } from "./voice/call-access.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxPage, InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
@@ -16521,10 +16522,14 @@ const server = createServer(async (req, res) => {
 
     // The fast half of a call (server/voice/voice-host.ts). Read only: it
     // streams what the host says; the call screen sends any hand-down
-    // through the ordinary message route. Owner's desktop only, because the
-    // snapshot includes the inbox.
+    // through the ordinary message route. The desktop, or a phone the
+    // companion proved it forwarded calling a bot its sidebar shows
+    // (voice/call-access.ts); the snapshot's inbox is scoped the same way.
     if (method === "POST" && VOICE_HOST_PATH.test(path)) {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      const door = inboxDoor(req.headers, url.searchParams);
+      const access = callAccess(store, door, VOICE_HOST_PATH.exec(path)![1]);
+      if (access === "forbidden") return json(res, 403, { error: "calls need a paired device" });
+      if (access === "not-found") return json(res, 404, { error: "no such bot" });
       await handleVoiceHostRoute(method, path, req, res, {
         endpoints: () => ({ host: voiceRouteFor("host"), lookup: voiceRoutesFor("lookup") }),
         bot: (id) => store.bot(id),
@@ -16535,7 +16540,9 @@ const server = createServer(async (req, res) => {
           if (!bot) return [];
           const threads = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])]
             .map((threadId) => ({ threadId, label: [bot.name, bot.tasks?.find((task) => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }));
-          const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } }, { owner: true, threads });
+          const scoped = inboxAccessFor(store, door);
+          const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } },
+            { ...scoped, threads: scoped.threads.filter((thread) => threads.some((own) => own.threadId === thread.threadId)) });
           const items = (result.body as { items?: Array<{ title: string; summary: string; at: number; botId?: string }> })?.items ?? [];
           return items.filter((item) => item.botId === botId).map(({ title, summary, at }) => ({ title, summary, at }));
         },
@@ -16547,7 +16554,9 @@ const server = createServer(async (req, res) => {
     // The record a call leaves in its conversation when it ends
     // (server/voice/call-note.ts). Built from the call's own log, no model.
     if (method === "POST" && CALL_NOTE_PATH.test(path)) {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      const access = callAccess(store, inboxDoor(req.headers, url.searchParams), CALL_NOTE_PATH.exec(path)![1]);
+      if (access === "forbidden") return json(res, 403, { error: "calls need a paired device" });
+      if (access === "not-found") return json(res, 404, { error: "no such bot" });
       await handleCallNoteRoute(method, path, req, res, {
         bot: (id) => store.bot(id),
         append: (threadId, text) => { store.appendMessage(threadId, { role: "bot", kind: "text", text }); },

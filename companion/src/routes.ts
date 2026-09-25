@@ -71,6 +71,13 @@ export function isInboxRoute(method: string, path: string): boolean {
   return (method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state");
 }
 
+const CALL_ROUTE = /^\/api\/bots\/[\w-]+\/(?:voice-host|call-note)$/;
+/** Routes the harness answers only when the sidecar proves it forwarded them:
+ *  the Inbox (C2) and a call's two routes (C9). */
+export function needsLaunchProof(method: string, path: string): boolean {
+  return isInboxRoute(method, path) || (method === "POST" && CALL_ROUTE.test(path));
+}
+
 /** The two routine routes that can carry a `runOn` field.
  *
  * Creating or amending a routine is an ordinary thing to do from a phone, but
@@ -367,11 +374,12 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // it every spoken reply on a remote call fails before its first word.
   { method: "POST", path: /^\/api\/tts\/prepare$/ },
   // The note a call leaves in its conversation (`server/voice/call-note.ts`).
-  // Listed so this door is not the thing in the way. The harness is still the
-  // boundary, and today it answers 403 to every surface but the desktop
-  // (`server/index.ts:16551`); lifting that is a server decision, and the
-  // handler has no per-bot visibility check to lift it onto yet.
+  // The harness is still the boundary: it answers only when this door adds
+  // its launch proof, and only for a bot the phone's sidebar shows
+  // (`server/voice/call-access.ts`).
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/call-note$/ },
+  // The fast half of a call, same rule (`server/voice/voice-host-route.ts`).
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/voice-host$/ },
   // voice in, same rule — and the whole reason this exists, since the browser
   // door is the surface with no native dictation helper at all
   { method: "POST", path: /^\/api\/voice\/transcribe$/ },

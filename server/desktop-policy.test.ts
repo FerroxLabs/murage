@@ -39,3 +39,9 @@ it("guards the first-run checklist, including step routes added later", () => {
   }
   expect(requiresDesktopAuthority("POST","/api/setup-other")).toBe(false);
 });
+
+it("leaves a call's two routes to the call routes, which scope them to the bots a phone can see", () => {
+  for (const path of ["/api/bots/bot_1/voice-host", "/api/bots/bot_1/call-note"]) {
+    expect(requiresDesktopAuthority("POST", path), path).toBe(false);
+  }
+});

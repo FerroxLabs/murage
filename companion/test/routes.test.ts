@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, type Surface } from "../src/routes.ts";
+import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, needsLaunchProof, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -520,9 +520,8 @@ describe("a call reaches the browser door", () => {
       ["GET", "/api/tts/prepare"],
       ["POST", "/api/tts/prepare/extra"],
       ["GET", "/api/bots/bot_123/call-note"],
-      // The call's fast half is desktop-only in the harness (server/index.ts:16529)
-      // and stays off this list until that is a decision somebody made.
-      ["POST", "/api/bots/bot_123/voice-host"],
+      // The call's fast half is open to POST only (C9, server/voice/call-access.ts).
+      ["GET", "/api/bots/bot_123/voice-host"],
       ["GET", "/vad/other.onnx"],
       ["GET", "/vad/silero_vad.onnx.bak"],
       ["GET", "/assets/x.exe"],
@@ -567,5 +566,22 @@ describe("the Inbox reaches the browser door", () => {
     expect(isInboxRoute("POST", "/api/inbox/state")).toBe(true);
     expect(isInboxRoute("POST", "/api/inbox")).toBe(false);
     expect(isInboxRoute("GET", "/api/bots")).toBe(false);
+  });
+});
+
+describe("routes that carry the sidecar's launch proof", () => {
+  it("covers the Inbox and both call routes, and nothing else", () => {
+    expect(needsLaunchProof("GET", "/api/inbox")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/inbox/state")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/voice-host")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/call-note")).toBe(true);
+    expect(needsLaunchProof("GET", "/api/bots/bot_1/voice-host")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/messages")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/bots/../voice-host")).toBe(false);
+  });
+
+  it("lets a signed-in browser reach voice-host", () => {
+    expect(askBrowser("POST", "/api/bots/bot_1/voice-host")).toBeNull();
+    expect(askBrowser("GET", "/api/bots/bot_1/voice-host")).not.toBeNull();
   });
 });

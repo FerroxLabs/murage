@@ -31,7 +31,7 @@ import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders,
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isInboxRoute, isRoutineWrite } from "./routes.ts";
+import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isInboxRoute, isRoutineWrite, needsLaunchProof } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
@@ -1542,12 +1542,14 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         error: "cloud desktop access is off for this device — enable it in Murage → Settings → Phone",
       });
     }
-    const carriesProof = isCloudDesktopJoin(method, path) || isInboxRoute(method, path);
+    const carriesProof = isCloudDesktopJoin(method, path) || needsLaunchProof(method, path);
     if (carriesProof && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
       return sendJson(res, 503, {
         error: isInboxRoute(method, path)
           ? "the Inbox requires Murage and its companion to be started together by the desktop app or murage start"
-          : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
+          : needsLaunchProof(method, path)
+            ? "calls require Murage and its companion to be started together by the desktop app or murage start"
+            : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
       });
     }
 
