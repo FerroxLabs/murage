@@ -39,7 +39,7 @@ import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/li
 import type { EngineCommand, EngineCommandsView } from "../../shared/engine-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
-import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu } from "./PermissionModeMenu";
+import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
 import { permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
@@ -126,6 +126,8 @@ function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode
   const current = permissionModeOf(bot);
   const desktop = useDesktopSurface();
   const currentEntry = PERMISSION_MODES.find((entry) => entry.mode === current)!;
+  const { state } = useStore();
+  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -164,6 +166,7 @@ function PermissionModeSelector({ bot, onSetMode }: { bot: Bot; onSetMode: (mode
           botName={bot.name}
           current={current}
           desktop={desktop}
+          engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
           onPick={(mode) => {
             onSetMode(mode);
             setOpen(false);

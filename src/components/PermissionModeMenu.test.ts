@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { PermissionModeMenu } from "./PermissionModeMenu";
 
-const render = (desktop: boolean | undefined) =>
-  renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {} }));
+const render = (desktop: boolean | undefined, engineCannotAsk?: string) =>
+  renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {}, engineCannotAsk }));
 const item = (markup: string, label: string) => {
   const at = markup.indexOf(label);
   expect(at, `no "${label}" item`).toBeGreaterThan(-1);
@@ -34,5 +34,15 @@ describe("composer approval-level menu", () => {
     expect(remote).toContain("Full access can only be turned on in the Murage desktop app.");
     expect(item(render(false), "Auto mode")).not.toContain(' disabled=""');
     for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' disabled=""');
+  });
+
+  // Antigravity's print mode cannot ask, so under Full access and No limits
+  // Murage runs it with file edits only. The menu has to say so, or the bot
+  // just fails the first time it needs a command.
+  it("says when this bot's engine cannot ask, on the levels where that costs it commands", () => {
+    const markup = render(true, "Antigravity");
+    for (const label of ["Full access", "No limits"]) expect(item(markup, label)).toContain("Antigravity cannot ask first, so it edits files here but runs no commands.");
+    for (const label of ["Ask for approval", "Auto mode"]) expect(item(markup, label)).not.toContain("cannot ask first");
+    expect(render(true)).not.toContain("cannot ask first");
   });
 });
