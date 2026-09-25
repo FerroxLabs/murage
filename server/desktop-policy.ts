@@ -28,6 +28,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
   { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },
   { methods: ["POST"], path: /^\/api\/teams\/(import|export)$/, purpose: "team configuration and filesystem import/export" },
+  { methods: ["GET", "POST"], path: /^\/api\/team-sections(?:\/|$)/, purpose: "rename, delete and change the members and lead of a team" },
   { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
   { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
   { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },

@@ -722,6 +722,35 @@ function dropIfUnreachable(
   return true;
 }
 
+/** Re-check every queued handoff against the roster as it is now.
+ *
+ * The dispatch edge already re-checks (dropIfUnreachable above), but only
+ * when the source turn settles or a busy target frees up, which can be long
+ * after the owner moved a bot out of a team. Called right after an owner's
+ * team change so a handoff the change made unreachable is dropped at once,
+ * with the same receipt and chip as the dispatch-time drop. Items whose
+ * sender or target no longer exist are left for the drain, which already
+ * reports those. Returns how many were dropped. */
+export function dropUnreachableDelegations(bus: CommsBus): number {
+  let dropped = 0;
+  for (const [threadId, items] of pendingDelegations) {
+    const owner = bus.store.botByThread(threadId);
+    const remaining = items.filter((item) => {
+      const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? owner;
+      const target = bus.store.bot(item.toBotId);
+      if (!sender || !target) return true;
+      if (!dropIfUnreachable(bus, sender, target, threadId, item)) return true;
+      dropped += 1;
+      return false;
+    });
+    if (remaining.length === items.length) continue;
+    if (remaining.length) pendingDelegations.set(threadId, remaining);
+    else pendingDelegations.delete(threadId);
+  }
+  if (dropped) savePending();
+  return dropped;
+}
+
 /** Test helper: how many items remain queued for a thread. */
 export function _pendingCount(threadId: string): number {
   return pendingDelegations.get(threadId)?.length ?? 0;

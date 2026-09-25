@@ -26,6 +26,7 @@ import {
   releaseDelegationsWaitingOn,
   threadsWaitingOn,
   discardDelegations,
+  dropUnreachableDelegations,
   pendingThreads,
   _loadPending,
   _pendingCount,
@@ -1294,4 +1295,36 @@ describe("the harness answers that question the way it dispatches", () => {
   // `handoffCanStart` itself is tested thoroughly above, against every
   // collaborator answering every way. That the harness hands it the REAL
   // collaborators, and that the predicate is on the bus at all, is UNPROVEN.
+});
+
+describe("dropUnreachableDelegations", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    _resetPending();
+  });
+
+  it("drops only the handoffs a team change made unreachable, straight away, and says so", () => {
+    const store = new Store(selection);
+    const { commsBus } = setupBuses(store);
+    const from = store.createBot({ name: "Sender", section: "Ops" });
+    const moved = store.createBot({ name: "Moved", section: "Ops" });
+    const stays = store.createBot({ name: "Stays", section: "Ops" });
+    const gone = queueDelegation(commsBus, from, { toBotId: moved.id, message: "one", depth: 0 }, 2);
+    const kept = queueDelegation(commsBus, from, { toBotId: stays.id, message: "two", depth: 0 }, 2);
+    expect(store.setBotsSection([moved.id], "Sales").ok).toBe(true);
+
+    expect(dropUnreachableDelegations(commsBus)).toBe(1);
+
+    expect(findDelegationReceipt(gone.id!)).toMatchObject({ status: "dropped", result: expect.stringContaining("different sections") });
+    expect(pendingDelegationInfo(gone.id!)).toBeNull();
+    expect(pendingDelegationInfo(kept.id!)).not.toBeNull();
+    expect(findDelegationReceipt(kept.id!)).toBeNull();
+    expect(store.messagesFor(from.threadId).some((m) => m.tool?.name.includes("Delegation to @Moved canceled"))).toBe(true);
+    // Persisted: a restart does not bring the dropped handoff back.
+    _loadPending();
+    expect(pendingDelegationInfo(gone.id!)).toBeNull();
+    expect(pendingDelegationInfo(kept.id!)).not.toBeNull();
+    // Nothing else to drop the second time.
+    expect(dropUnreachableDelegations(commsBus)).toBe(0);
+  });
 });

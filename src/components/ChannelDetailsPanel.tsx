@@ -21,6 +21,7 @@ import { effectiveDefaultResponder } from "@/lib/group-routing";
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { openTeamSettings } from "@/lib/team-manage";
 import {
   CHANNEL_DETAILS_SECTIONS,
   CHANNEL_DETAILS_SECTION_LABELS,
@@ -150,6 +151,23 @@ export function ChannelDetailsPanel({
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+          {section === "about" && group.section?.trim() && (
+            <div className={CARD}>
+              <span className={FIELD_LABEL}>Team</span>
+              <p className={FIELD_NOTE}>This {channelNoun(group)} is filed under the {group.section.trim()} team.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const team = group.section!.trim();
+                  onClose();
+                  openTeamSettings(team, "members");
+                }}
+                className={cn(BUTTON, "mt-2 min-h-11")}
+              >
+                Manage {group.section.trim()} team
+              </button>
+            </div>
+          )}
           {section === "about" && <AboutSection group={group} members={members} />}
           {section === "members" && <MembersSection group={group} onSaved={onClose} />}
           {section === "files" && <FilesSection group={group} members={members} />}

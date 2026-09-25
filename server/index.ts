@@ -37,6 +37,7 @@ import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus, type PendingPermissionInput } from "./permission-status.ts";
 import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
+import { TeamChangeError, changeTeamMembers, deleteTeam, describeTeam, renameTeam, type TeamDeps } from "./team-sections.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
@@ -265,7 +266,7 @@ import {
 } from "./question-normalize.ts";
 import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -13596,6 +13597,35 @@ const server = createServer(async (req, res) => {
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
       if (!patched) return json(res, 404, { error: "no such message" });
       return json(res, 200, { message: patched });
+    }
+    // Owner team management (server/team-sections.ts). Desktop only, like
+    // every other route that changes who leads and who can reach whom.
+    if (path === "/api/team-sections" || path.startsWith("/api/team-sections/")) {
+      const deps: TeamDeps = {
+        memoryTicket: ownerMemoryTicket(),
+        leadershipError: (bot) => leadershipAdmissionError(registry.get(bot.modelSelection.instanceId), bot.modelSelection.instanceId),
+        groupWorking: groupIsWorking,
+        channelArchived: (group) => routines!.disableForGroup(group.id),
+        reachabilityChanged: () => { dropUnreachableDelegations(commsBus); },
+      };
+      try {
+        if (method === "GET" && path === "/api/team-sections") {
+          return json(res, 200, { team: describeTeam(store, url.searchParams.get("section") ?? "") });
+        }
+        if (method === "POST" && path === "/api/team-sections/rename") {
+          return json(res, 200, renameTeam(store, await readBody(req), deps));
+        }
+        if (method === "POST" && path === "/api/team-sections/members") {
+          return json(res, 200, changeTeamMembers(store, await readBody(req), deps));
+        }
+        if (method === "POST" && path === "/api/team-sections/delete") {
+          return json(res, 200, { ok: true, ...deleteTeam(store, await readBody(req), deps) });
+        }
+      } catch (error) {
+        if (error instanceof TeamChangeError) return json(res, error.status, { error: error.message });
+        throw error;
+      }
+      return json(res, 404, { error: "no such route" });
     }
     if (method === "POST" && path === "/api/sidebar-sections") {
       const parsed = createSidebarSectionSchema.safeParse(await readBody(req));

@@ -2136,6 +2136,51 @@ export class Store {
     return { ok: true, bots: ids.map((id) => this.bot(id)!) };
   }
 
+  /** Apply one owner team change (rename, members, delete) to bots and
+   * channels together. Like setBotsSection, the next bots file is written
+   * before any live record changes; the channels follow, and a failed
+   * channel write puts the bots file back. A patch value of `undefined`
+   * removes that field, so "no team" is stored as an absent section. The
+   * caller (team-sections.ts) owns the one-lead-per-team rule. */
+  applyTeamChange(
+    botPatches: ReadonlyMap<string, Partial<BotRecord>>,
+    groupPatches: ReadonlyMap<string, Partial<GroupRecord>>,
+  ): void {
+    const merge = <T extends object>(record: T, patch: Partial<T>): T => {
+      const next = { ...record, ...patch };
+      for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (next as Record<string, unknown>)[key];
+      return next;
+    };
+    const previousBots = this.bots;
+    const nextBots = this.bots.map((bot) => (botPatches.has(bot.id) ? merge(bot, botPatches.get(bot.id)!) : bot));
+    const previousGroups = this.groups.map((group) => ({ ...group }));
+    const replace = <T extends object>(live: T, next: T) => {
+      for (const key of Object.keys(live)) if (!(key in next)) delete (live as Record<string, unknown>)[key];
+      Object.assign(live, next);
+    };
+    if (botPatches.size) {
+      this.saveBots(nextBots);
+      // Live before the channels are saved: that save reconciles memory
+      // scopes from the live roster, and must see the new labels.
+      for (const bot of this.bots) if (botPatches.has(bot.id)) replace(bot, nextBots.find((next) => next.id === bot.id)!);
+    }
+    if (groupPatches.size) {
+      try {
+        for (const group of this.groups) if (groupPatches.has(group.id)) replace(group, merge(group, groupPatches.get(group.id)!));
+        this.saveGroups();
+      } catch (error) {
+        this.groups.forEach((group, index) => replace(group, previousGroups[index]));
+        if (botPatches.size) {
+          this.saveBots(previousBots);
+          for (const bot of this.bots) if (botPatches.has(bot.id)) replace(bot, previousBots.find((prior) => prior.id === bot.id)!);
+        }
+        throw error;
+      }
+    }
+    for (const id of botPatches.keys()) this.emit({ type: "bot", botId: id });
+    for (const id of groupPatches.keys()) this.emit({ type: "group", groupId: id });
+  }
+
   /** The one way runtime state changes. Sets `activity` and derives `busy`
    * from it, so a reader that only knows busy sees the same truth. */
   setActivity(botId: string, activity: BotActivity): BotRecord | null {
