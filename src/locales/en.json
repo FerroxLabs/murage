@@ -407,6 +407,8 @@
   "notificationSettings.failuresHelp": "A task or routine needs review after a failure.",
   "notificationSettings.previewLabel": "Show notification previews",
   "notificationSettings.previewHelp": "Turn off to use a generic Murage title and message. Clicking still opens the right conversation.",
+  "notificationSettings.soundLabel": "Play a sound",
+  "notificationSettings.soundHelp": "For this computer only, and it changes right away. Turn it off to keep the banners without the sound, for example on a call where the bot is already talking to you.",
   "notificationSettings.quietLabel": "Quiet hours",
   "notificationSettings.quietHelp": "Suppress all notification categories during this window. Muted notifications are not replayed later.",
   "notificationSettings.startLabel": "Start",

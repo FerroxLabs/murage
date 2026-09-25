@@ -49,7 +49,7 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough"] },
   { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and

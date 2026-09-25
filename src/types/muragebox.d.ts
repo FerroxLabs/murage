@@ -192,7 +192,7 @@ type SkillRecordingPayload = {
         clearRetentionReview?(remoteRef:string,revision:number,previewId:string):Promise<{cleared:boolean}>;
       };
       approvalNotifications?: {
-        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string }): Promise<{ accepted: boolean }>;
+        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
         onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
       };
       /** Menu bar / system tray menu intents (electron/background-lifecycle.mjs). */
