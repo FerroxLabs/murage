@@ -12,6 +12,7 @@ import {
   directTurnLayers,
   joinShapeLayers,
   nowPrompt,
+  withNowLine,
   lastTurnShapes,
   lineLayers,
   recordTurnShapes,
@@ -286,12 +287,20 @@ describe("the date and time a turn starts at", () => {
   it("reads UTC as UTC", () => {
     expect(nowPrompt(new Date("2026-09-24T13:30:00Z"), "UTC")).toContain("1:30 pm (13:30) in the owner's time zone, UTC (UTC+00:00)");
   });
-  it("comes last in a direct turn, where changing every turn costs nothing cached", () => {
+  // 0.1.59 put it last in the system prompt. The Claude driver reuses its
+  // process only while `system` is unchanged, so a clock there restarted
+  // Claude on every turn and lost its prompt cache.
+  it("is never part of a direct turn's system prompt", () => {
     const layers = directTurnLayers({
       houseRules: "", persona: "", computerKind: null, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
       coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: "", memory: "",
-      primer: "", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [], now: " It is now X.",
+      primer: "", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [],
     } as DirectTurnShapeInput);
-    expect(layers.at(-1)).toMatchObject({ id: "now", text: " It is now X." });
+    expect(layers.some((layer) => layer.id === "now")).toBe(false);
+  });
+  it("rides on top of the message, and leaves an engine command exactly as typed", () => {
+    expect(withNowLine("hello", " It is now X.")).toBe("It is now X.\n\nhello");
+    expect(withNowLine("/review main", " It is now X.", true)).toBe("/review main");
+    expect(withNowLine("hello", "")).toBe("hello");
   });
 });

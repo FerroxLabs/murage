@@ -24,7 +24,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
-import { botShapeRows, directTurnLayers, nowPrompt, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
+import { botShapeRows, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
@@ -6115,9 +6115,10 @@ async function startTurn(
         outputFolder: outputInstructions,
         automationSource: opts?.automationSource,
         tagged,
-        now: nowPrompt(new Date(), routineTimeZone()),
       });
-      recordTurnShapes(bot.id, { where: "chat", threadId, layers: systemLayers });
+      // The clock rides the message, never the system prompt (nowPrompt).
+      const nowLine = nowPrompt(new Date(), routineTimeZone());
+      recordTurnShapes(bot.id, { where: "chat", threadId, layers: [...systemLayers, shapeLayer("now", nowLine)] });
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
           if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
@@ -6127,7 +6128,7 @@ async function startTurn(
         providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
-        text: turnText,
+        text: withNowLine(turnText, nowLine, Boolean(engineCommand)),
         ...(engineCommand ? { engineCommand } : {}),
         model,
         effort,
@@ -7790,8 +7791,10 @@ async function runGroupMemberTurn(
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
-      const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt), shapeLayer("now", nowPrompt(new Date(), routineTimeZone()))];
-      recordTurnShapes(bot.id, { where: "room", threadId, layers: roomSystemLayers });
+      const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];
+      // The clock rides the message, never the system prompt (nowPrompt).
+      const nowLine = nowPrompt(new Date(), routineTimeZone());
+      recordTurnShapes(bot.id, { where: "room", threadId, layers: [...roomSystemLayers, shapeLayer("now", nowLine)] });
       return guardTurnDispatch(instance.adapter.sendTurn({
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
           if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
@@ -7801,7 +7804,7 @@ async function runGroupMemberTurn(
         providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
-        text,
+        text: withNowLine(text, nowLine),
         system: joinShapeLayers(roomSystemLayers),
         cwd,
         integrations,

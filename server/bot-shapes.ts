@@ -67,7 +67,7 @@ export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "output-folder": { group: "turn", label: "Output folder", what: "Where to save the files it makes.", locked: true },
   automation: { group: "turn", label: "Unattended run", what: "Notes for a run nobody is watching: a routine, a webhook or a Telegram message.", locked: true },
   tagged: { group: "turn", label: "Tagged bots", what: "The bots you tagged in your message.", locked: true },
-  now: { group: "turn", label: "Date and time", what: "Today's date, the time and your time zone, so it never has to guess.", locked: true },
+  now: { group: "turn", label: "Date and time", what: "Today's date, the time and your time zone, at the top of each message, so it never has to guess.", locked: true },
 };
 
 // "skill:<id>" rows, and any id this list does not know, read as a built-in skill.
@@ -148,8 +148,6 @@ export interface DirectTurnShapeInput {
   outputFolder: string;
   automationSource?: string;
   tagged: ReadonlyArray<{ name: string; id: string }>;
-  /** nowPrompt(): the date, time and zone this turn starts at. */
-  now?: string;
 }
 
 /** The direct turn's system prompt, in the order the model reads it. The
@@ -188,18 +186,33 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     shapeLayer("tagged", v.tagged.length
       ? ` The user tagged ${v.tagged.map((t) => `@${t.name} (bot_id ${t.id})`).join(" and ")} in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.`
       : ""),
-    shapeLayer("now", v.now ?? ""),
   ];
 }
 
-/** The date, time and zone a turn starts at. Last in the prompt, because it
- *  changes every turn and anything after it would lose its cache. Bots had
- *  no clock at all before this, and one logged an 8:03 am run as 20:03. */
+/** The date, time and zone a turn starts at. Bots had no clock at all before
+ *  this, and one logged an 8:03 am run as 20:03.
+ *
+ *  NEVER IN THE SYSTEM PROMPT. 0.1.59 put it last there, reasoning that a
+ *  line that changes every turn costs nothing cached when nothing follows it.
+ *  That was wrong twice over: the Claude driver reuses its process only while
+ *  `system` is unchanged, so a clock in it restarted Claude on every turn,
+ *  and the engines that resend the system prompt each turn stored another
+ *  copy of it in the session every time. It rides the message instead
+ *  (withNowLine), where it is new every turn anyway. */
 export function nowPrompt(at: Date, timeZone: string): string {
   const parts = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...options }).format(at);
   const offset = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
   const time = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hour12: true }).format(at).toLowerCase();
   return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${offset.replace("GMT", "UTC") || "UTC"}).`;
+}
+
+/** The turn's message with the date line on top. An engine command ("/name
+ *  args") is left exactly as typed: the engine reads it only when "/" opens
+ *  the message. */
+export function withNowLine(text: string, now: string, engineCommand = false): string {
+  const line = now.trim();
+  if (engineCommand || !line) return text;
+  return `${line}\n\n${text}`;
 }
 
 // ── the last turn, per bot, in memory ──────────────────────────────────────
