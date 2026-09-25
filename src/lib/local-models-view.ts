@@ -45,7 +45,7 @@ export const LOCAL_MODELS_FOOTER =
  */
 export function lookedLine(targets: readonly LocalDetectionTarget[]): string {
   const where = targets.map((target) => `${LOCAL_SERVER_KIND_LABELS[target.kind]} at ${target.address}`).join(", ");
-  return `Looked for ${where} — nothing answered.`;
+  return `Looked for ${where}. Nothing answered.`;
 }
 
 export function serverStatusLine(server: LocalServerView, now: number): string {

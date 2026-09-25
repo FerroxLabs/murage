@@ -74,7 +74,7 @@ describe("the empty state says where Murage looked (spec V1)", () => {
     // llama.cpp is called llama.cpp. Mislabelling it "oMLX" — the other server
     // on :8080 — is the exact confusion the spec calls out.
     expect(line).toContain("llama.cpp");
-    expect(line).toContain("nothing answered");
+    expect(line).toContain(". Nothing answered.");
   });
 });
 

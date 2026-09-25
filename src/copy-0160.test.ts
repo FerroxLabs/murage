@@ -52,4 +52,14 @@ describe("0.1.60 copy flags", () => {
     const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
     expect(hint).toContain("in routines at that level; webhook turns still stop and ask");
   });
+
+  // Linux and Windows pass copy flags
+  it("the remaining flagged lines have no em dash and never say safe", () => {
+    expect(source("./components/BackupSettings.tsx")).not.toMatch(/somewhere safe/);
+    expect(source("./lib/first-run-copy.ts")).not.toMatch(/somewhere safe/);
+    expect(source("./components/LocalComputerSection.tsx")).not.toContain("Safety and storage");
+    expect(source("./components/PushToTalk.tsx")).toContain('"Voice typing unavailable. Tap to find out why"');
+    expect(source("./lib/local-models-view.ts")).toContain("`Looked for ${where}. Nothing answered.`");
+    expect(source("../server/drivers/openai-compat.ts")).toContain('"No API key yet. Add one in App Settings → Models."');
+  });
 });

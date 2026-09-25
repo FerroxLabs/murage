@@ -180,7 +180,7 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   await expect(looked).toContainText("LM Studio at 127.0.0.1:1234");
   await expect(looked).toContainText("llama.cpp at 127.0.0.1:8080");
   await expect(looked).toContainText("vLLM at 127.0.0.1:8000");
-  await expect(looked).toContainText("nothing answered");
+  await expect(looked).toContainText("Nothing answered.");
   await expect(section.getByRole("button", { name: "Add a server", exact: true })).toBeVisible();
   await shoot(page, section, testInfo.outputPath(`local-models-1-empty-${width}-${skin}.png`));
 
