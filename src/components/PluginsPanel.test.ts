@@ -35,6 +35,7 @@ import {
   mergeCompleteConnectorStatus,
   migrationFromClaim,
   PluginsPanel,
+  preloadConnectedApps,
   type ConnectorPanelFields,
 } from "./PluginsPanel";
 
@@ -562,5 +563,32 @@ describe("the Connected tab's count", () => {
   it("says nothing extra when every connection works", () => {
     expect(connectedTabSummary(cards, { gmail: { connected: true } }).note).toBe("");
     expect(connectedTabSummary(null, { gmail: { connected: true }, composio: { connected: true } }).ready).toBe(1);
+  });
+});
+
+// Windows customer pass, 0.1.60 (D9): the first open after an update said
+// "No connected apps yet" and the Marketplace offered Connect on apps that
+// were connected, until Refresh. The inventory had been warmed before the
+// connection backend was ready, and its empty answer was kept as the truth.
+describe("an inventory read before the connection backend is ready", () => {
+  it("is not kept as the truth, so the next open asks again", async () => {
+    const answers = [
+      { configured: false, credentialStore: "ok", services: {} },
+      { configured: true, credentialStore: "ok", services: { gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }] } } },
+    ];
+    storeStub.api.mockImplementation(async () => answers.shift() as never);
+    try {
+      const early = await preloadConnectedApps(true);
+      expect(early).toMatchObject({ authoritative: false, backendReady: false });
+      const next = await preloadConnectedApps();
+      expect(next.authoritative).toBe(true);
+      expect(Object.keys(next.services)).toEqual(["gmail"]);
+    } finally {
+      storeStub.api.mockImplementation(async () => { throw new Error("no request may leave the locked panel"); });
+    }
+  });
+
+  it("keeps the panel checking, not empty, while it waits for the backend", () => {
+    expect(panel).toMatch(/backendReady === false[\s\S]{0,400}setInventoryPhase\("loading"\)/);
   });
 });

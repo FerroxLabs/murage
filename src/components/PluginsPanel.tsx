@@ -80,12 +80,19 @@ let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
  * lock stands down and the panel shows what it remembers, as it always did. */
 let credentialStoreUnreadable = false;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
+/** How long the panel keeps asking while the connection backend comes up. */
+const BACKEND_WAIT_MS = 1_500;
+const BACKEND_WAIT_TRIES = 10;
 
 export interface ConnectorInventory {
   services: Record<string, ConnectorStatus>;
   /** false when the server could not read the credential store: the list is
    * then "we do not know", and nothing may be cleared on the strength of it */
   authoritative: boolean;
+  /** false when the server answered before its connection backend was
+   * ready (the first moments after a launch or an update). Its empty list
+   * means "not yet", never "nothing is connected". */
+  backendReady?: boolean;
 }
 
 /** Warm the account inventory once the app server is ready. Concurrent panel
@@ -108,6 +115,11 @@ export function preloadConnectedApps(force = false): Promise<ConnectorInventory>
         return { services: readCachedInventory()?.services ?? {}, authoritative: false };
       }
       credentialStoreUnreadable = false;
+      // Not ready yet: remembered accounts, if any, stand; nothing is cached
+      // on the strength of an answer that does not know.
+      if (response.configured === false) {
+        return { services: readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
+      }
       cachedConnectorStatus = services;
       cachedConnectorStatusAt = Date.now();
       cachedConnectorStatusAuthoritative = true;
@@ -550,11 +562,25 @@ export function PluginsPanel() {
       });
   }, []);
 
+  const backendWait = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
+  const refreshConnectedStatusRef = useRef<((force?: boolean) => Promise<Record<string, ConnectorStatus>>) | null>(null);
+  useEffect(() => () => clearTimeout(backendWait.current.timer), []);
   const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
     return preloadConnectedApps(force)
-      .then(({ services, authoritative }) => {
+      .then(({ services, authoritative, backendReady }) => {
+        clearTimeout(backendWait.current.timer);
+        if (backendReady === false && backendWait.current.tries < BACKEND_WAIT_TRIES) {
+          // Asked too early, just after a launch or an update: keep saying
+          // "Checking" and ask again, rather than painting "No connected apps
+          // yet" and a Connect button on apps that are connected.
+          backendWait.current.tries++;
+          setInventoryPhase("loading");
+          backendWait.current.timer = setTimeout(() => void refreshConnectedStatusRef.current?.(true), BACKEND_WAIT_MS);
+          return services;
+        }
+        if (backendReady !== false) backendWait.current.tries = 0;
         setStale(!authoritative);
         setInventoryPhase(authoritative ? "ready" : "error");
         setStatus((current) => mergeCompleteConnectorStatus(
@@ -577,6 +603,8 @@ export function PluginsPanel() {
       })
       .finally(() => setRefreshing(false));
   }, []);
+
+  refreshConnectedStatusRef.current = refreshConnectedStatus;
 
   const loadConnectionInventory = useCallback((force = false) => {
     const hadCachedInventory = cachedConnectorStatus !== null;
