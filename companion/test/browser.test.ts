@@ -523,6 +523,21 @@ describe("sessions", () => {
     expect((await knock("GET", "/api/bots", cookie)).status).toBe(401);
   });
 
+  it("answers the page's signed-out check: 401 on /session and on the stream, with where to go", async () => {
+    // The web UI asks GET /session after an API 401 or a stream error
+    // (src/lib/session-check.ts). EventSource cannot see a status, so this
+    // pair — a dead stream AND a 401 here — is how a phone learns it was
+    // signed out instead of retrying forever.
+    const cookie = await signedIn();
+    expect((await knock("DELETE", "/session", write(cookie))).status).toBe(200);
+    const who = await knock("GET", "/session", cookie);
+    expect(who.status).toBe(401);
+    expect(JSON.parse(who.body)).toEqual({ error: "sign in", signIn: "/enter" });
+    expect((await knock("GET", "/api/events", cookie)).status).toBe(401);
+    // A wiped cookie store reads the same, and a GET needs no Origin.
+    expect((await knock("GET", "/session")).status).toBe(401);
+  });
+
   it("reads one cookie out of a header that holds several", () => {
     expect(readCookie("a=1; murage_session=xyz=; b=2", "murage_session")).toBe("xyz=");
     expect(readCookie("murage_sessionx=no", "murage_session")).toBeUndefined();
