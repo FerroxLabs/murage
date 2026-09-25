@@ -34,12 +34,12 @@ const clip = (value: string, max: number) => (value.length > max ? `${value.slic
 
 const availabilityOf = (bot: ChiefTeamMember) => (bot.busy ? "working right now" : "available");
 
-/** "@Name — Role: about (available)" — the one line shape both tiers use. */
+/** "@Name (Role, available): about": the one line shape both tiers use. */
 const memberLine = (bot: ChiefTeamMember): string => {
   const name = clip(bot.name, ROSTER_NAME_MAX);
   const role = clip(bot.title?.trim() || "General assistant", ROSTER_ROLE_MAX);
   const about = bot.description?.trim();
-  return `${name} — ${role}${about ? `: ${clip(about, ROSTER_ABOUT_MAX)}` : ""} (${availabilityOf(bot)})`;
+  return `${name} (${role}, ${availabilityOf(bot)})${about ? `: ${clip(about, ROSTER_ABOUT_MAX)}` : ""}`;
 };
 
 const withOverflow = (lines: string[], total: number): string =>
@@ -97,8 +97,8 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): strin
 
   const teamLines = [...sections.values()].map((entry) =>
     entry.lead
-      ? `- ${entry.label} — @${memberLine(entry.lead)}; ${entry.members.length} specialist${entry.members.length === 1 ? "" : "s"}`
-      : `- ${entry.label} — no leader yet (${entry.members.length} bot${entry.members.length === 1 ? "" : "s"}). Say so rather than working around it.`,
+      ? `- ${entry.label}, led by @${memberLine(entry.lead)}; ${entry.members.length} specialist${entry.members.length === 1 ? "" : "s"}`
+      : `- ${entry.label}: no leader yet (${entry.members.length} bot${entry.members.length === 1 ? "" : "s"}). Say so rather than working around it.`,
   );
   const individualLines = individuals.map((bot) => `- @${memberLine(bot)}`);
   const directLines = direct.map((bot) => `- @${memberLine(bot)}`);
@@ -144,7 +144,7 @@ export function chiefOfStaffSystemPrompt(
   if (chief && isWorkspaceChief(chief)) {
     return [
       "You are the Chief of Staff for this workspace. You are the user's primary contact, and your direct reports are the team leaders and individual assistants below.",
-      "Assign a team's work to that team's leader and let them run their own people. Do not assign work to a leader's specialists yourself, and do not route around a leader — coordinating their team is their job, not yours.",
+      "Assign a team's work to that team's leader and let them run their own people. Do not assign work to a leader's specialists yourself, and do not route around a leader: coordinating their team is their job, not yours.",
       "An individual assistant is not a team leader: it works alone, has nobody under it, and reports to you directly. Give it its own work yourself, and never ask it to hand work down.",
       "Own the outcome: understand the request, decide what to handle yourself, hand the rest to the right leader or individual assistant, and return one concise consolidated answer.",
       "Do not delegate trivial work merely to appear busy. Never invent a report's progress or result. Normal permission and approval rules still apply.",
@@ -173,7 +173,7 @@ export function chiefOfStaffSystemPrompt(
     : undefined;
 
   return [
-    `You are the Chief of Staff for the ${sectionName} section — its team leader. You are the user's primary contact for this section, and the bots listed below are your own team members.`,
+    `You are the Chief of Staff for the ${sectionName} section, and its team leader. You are the user's primary contact for this section, and the bots listed below are your own team members.`,
     "Own the outcome: understand the request, decide what to handle yourself, coordinate the right specialists when useful, and return one concise consolidated answer.",
     "Do not delegate trivial work merely to appear busy. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
     SPEAK_FOR_YOURSELF,

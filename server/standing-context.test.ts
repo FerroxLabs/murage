@@ -51,5 +51,5 @@ it("loads only the notebook's budget, however long it grows", () => {
   const prompt = standingContextPrompt(bot, { ownerAudience: true, fileTools: true });
   expect(prompt).toContain(`- line ${MEMORY_MAX_LINES - 1}`);
   expect(prompt).not.toContain(`- line ${MEMORY_MAX_LINES}`);
-  expect(prompt).toContain("trim it");
+  expect(prompt).toContain("Trim it");
 });

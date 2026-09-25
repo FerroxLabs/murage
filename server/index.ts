@@ -9,7 +9,6 @@ import { verifyGepaBundle } from "./gepa-resource.ts";
 import { skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, assertSkillProcedureEvidence } from "./skills.ts";
 import { observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, resolveHumanBinding, resolveHumanDelivery, revokeHumanConnection, assertHumanPrincipal, threadHumanPrincipal, isWorkspaceOwner, humanTask } from "./human-principals.ts";
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
-import { personalityImprint } from "../shared/bot-identity.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
@@ -24,7 +23,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
-import { botShapeRows, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
+import { TURN_PROMPTS, botShapeRows, directPersona, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
@@ -693,18 +692,6 @@ await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
 const availableSkills = () => mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
 
-/** Who the bot is, as its own chat's system prompt says it. */
-function directTurnPersona(bot: { name: string; title?: string; description?: string; persona?: string }): string {
-  return [
-    `You are ${bot.name}, a personal bot in Murage.`,
-    bot.title && `Role: ${bot.title}.`,
-    bot.description && `About: ${bot.description}`,
-    `Personality: ${personalityImprint(bot.persona)}`,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 /** GET /api/bots/:id/shapes: what goes into this bot's instructions, in the
  *  order the model reads it (bot-shapes.ts). What is known now is read now;
  *  the rest comes word for word from its last turn, or waits for one. */
@@ -716,7 +703,7 @@ function botShapesView(bot: BotRecord) {
   const last = lastTurnShapes(bot.id);
   const rows = botShapeRows({
     houseRules: { on: rules.enabled, text: rules.text },
-    persona: directTurnPersona(bot),
+    persona: directPersona(bot),
     teamBrief: brief ? { on: bot.teamBrief !== false, text: brief, team: sectionContextLabel(bot.section) } : null,
     memory: memorySystemPrompt(bot.id, { fileTools: driver !== "grok" && driver !== "boxAgent" }),
     chiefGuide: chiefGuide ? { on: attachedSkillOn(bot, CHIEF_GUIDE_ID), text: renderSkillInstructions([chiefGuide]) } : null,
@@ -5512,7 +5499,7 @@ async function startTurn(
   // memory refresh below can also set it (upstream 581a740b, #1562).
   let sessionReset = !resume;
 
-  const persona = directTurnPersona(bot);
+  const persona = directPersona(bot);
 
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
@@ -5859,10 +5846,10 @@ async function startTurn(
         : isIndividualAssistant(bot)
           ? individualAssistantSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
           : integrations.agents && reachablePeers.length > 0
-            ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
+            ? TURN_PROMPTS.sectionPeers
             : "";
       const credentialPrompt = integrations.agents
-        ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
+        ? ` ${TURN_PROMPTS.credential}`
         : "";
       // The image tools are always in the agents server's tools/list, but the
       // model was never told how attachments relate to them: on 2026-09-17 a
@@ -5883,15 +5870,15 @@ async function startTurn(
       // bound is not inlined, and the sentence has to say so rather than tell
       // the bot a picture is in front of it when only its path is.
       const imagePromptFor = (outcome: ImageDeliveryOutcome) => integrations.agents
-        ? " To create or edit an image, use generate_image; list_image_models shows the configured connections and models. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with resolve_image_reference." +
+        ? ` ${TURN_PROMPTS.imageTools}` +
           IMAGE_DELIVERY_PROMPT[outcome] +
-          " Never search the computer for provider API keys, and never call an image provider directly."
+          ` ${TURN_PROMPTS.imageKeys}`
         : "";
       const routinePrompt = integrations.agents
-        ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
+        ? ` ${TURN_PROMPTS.routines}`
         : "";
       const learnPrompt = skillAuthoring
-        ? " If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list and skill_manage. Create new skills; update an existing learned skill only when the user explicitly asks to revise that exact name. Include source provenance and wait for the review card decision."
+        ? ` ${TURN_PROMPTS.learn}`
         : "";
 
       // (activeVpsThreads was already claimed above, before the provision or
@@ -7493,15 +7480,10 @@ async function runGroupMemberTurn(
   // One array joined with "\n", as it always was, now in labelled groups
   // for "What shapes <bot>" (bot-shapes.ts lineLayers keeps the bytes).
   const system = lineLayers([
-    { id: "persona", lines: [
-      `You are ${bot.name}, a bot in the room "${group.name}" in Murage.`,
-      bot.title && `Role: ${bot.title}.`,
-      bot.description && `About: ${bot.description}`,
-      `Personality: ${personalityImprint(bot.persona)}`,
-    ] },
+    { id: "persona", lines: roomPersonaLines(bot, group.name) },
     { id: "room", lines: [
-      `Room members: ${roster}, and ${userName} (the human).`,
-      group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
+      roomMembersLine(roster, userName),
+      group.bulletin.trim() && roomBulletinLine(group.bulletin.trim()),
       // When the room is a project, one labelled line saying what the work is,
       // right next to the room's instructions. One line and no more: the
       // context budget is real, and this release is not the place to redesign
@@ -7520,16 +7502,13 @@ async function runGroupMemberTurn(
             Boolean(integrations.agents),
             openMurageStatusSystemPrompt(),
           )
-        : `Reply as yourself, briefly and conversationally. Use @Name only when intentionally asking that teammate to respond or act; they will see the conversation and respond. To acknowledge or refer to a teammate, use their plain name without @. Do not prefix your reply with another member's @name.`,
+        : TURN_PROMPTS.roomReply,
     ] },
     // Talk to Moss, get Moss: whoever answers speaks only for itself.
-    { id: "speak-as", lines: [`You speak only as ${bot.name}. Never write lines as another member or answer on their behalf. If the latest message is addressed to another member, do not answer it for them: say briefly that it is for them, or hand it to them with @Name.`] },
-    { id: "credential", lines: [integrations.agents &&
-      "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."] },
-    { id: "routines", lines: [integrations.agents &&
-      "If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."] },
-    { id: "learn", lines: [skillAuthoring &&
-      "If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list and skill_manage. Create new skills; update an existing learned skill only when the user explicitly asks to revise that exact name. Include source provenance and wait for the review card decision."] },
+    { id: "speak-as", lines: [speakAsLine(bot.name)] },
+    { id: "credential", lines: [integrations.agents && TURN_PROMPTS.credential] },
+    { id: "routines", lines: [integrations.agents && TURN_PROMPTS.routines] },
+    { id: "learn", lines: [skillAuthoring && TURN_PROMPTS.learn] },
     { id: "goal", lines: [orchestration?.systemInstructions] },
   ]);
 

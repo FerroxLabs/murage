@@ -593,7 +593,7 @@ it.runIf(AUTO_REACHES_HOST)("tells a bot that it can drive a computer whenever o
     // The system prompt's computer paragraph and the primer's "you can" list
     // must agree with the mount. index.ts:4932 adds the local paragraph.
     expect(prompt).toMatch(/act on the user's computer through the computer tools/u);
-    expect(prompt).toMatch(/In this conversation you can[^\n]*drive a computer through the Cua tools/u);
+    expect(prompt).toMatch(/In this conversation you can[^\n]*drive a computer through the computer tools/u);
   } finally {
     await api("POST", `/api/bots/${auto.id}/interrupt`, { threadId: auto.threadId }).catch(() => undefined);
   }

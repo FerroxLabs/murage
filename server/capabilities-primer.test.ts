@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { capabilitiesPrimer, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
+import { TURN_PROMPTS } from "./bot-shapes.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
 import { canReach, isIndividualAssistant } from "./store.ts";
 
@@ -305,8 +306,7 @@ describe("golden blocks", () => {
  *
  * These cases assemble coordination fragment + primer exactly as index.ts
  * does and assert the primer contributes reachability and nothing else. */
-const COORD_GENERIC =
-  "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer.";
+const COORD_GENERIC = TURN_PROMPTS.sectionPeers;
 
 /** index.ts's own branch, so the test cannot drift from the call site. */
 function coordinationFor(bot: ChiefTeamMember, roster: ChiefTeamMember[], peers: number): string {

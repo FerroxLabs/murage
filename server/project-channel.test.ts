@@ -133,7 +133,7 @@ describe("the wiring into a member's turn", () => {
   // leave every test above passing and every bot ignorant of the work.
   it("sits next to the room bulletin in the system prompt", () => {
     const source = readFileSync(join(import.meta.dirname, "index.ts"), "utf8").split("\n");
-    const bulletin = source.findIndex((line) => line.includes("Room bulletin (shared instructions for everyone)"));
+    const bulletin = source.findIndex((line) => line.includes("roomBulletinLine("));
     expect(bulletin).toBeGreaterThan(-1);
     const nearby = source.slice(bulletin, bulletin + 10).join("\n");
     expect(nearby).toContain("channelProjectSystemLine(group.channelProject)");

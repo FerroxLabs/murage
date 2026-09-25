@@ -105,7 +105,7 @@ export const IMAGE_DELIVERY_PROMPT: Readonly<Record<ImageDeliveryOutcome, string
   inline:
     " Images attached to this turn are already in front of you: look at them directly and do not open image files with shell or file-read tools to see them.",
   path:
-    " You are not shown attached images directly — an attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.",
+    " You are not shown attached images directly. An attachment reaches you only as the <attached-image path=…> reference in the message, so open that path with your file-read tool if you need to look at it.",
   unsighted:
     " You will not be able to see an image attached here: say so and ask for a description instead of opening the file or guessing at it. Reading the image file would only fill your context with bytes you cannot interpret.",
   mixed:
