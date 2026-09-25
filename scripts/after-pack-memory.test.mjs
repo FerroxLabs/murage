@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { validatePackagedMemoryRuntime } from "./after-pack.mjs";
 
 const roots=[];
@@ -37,7 +37,7 @@ it("records the actual target and validated native files while retaining the dis
     const f=fixture(platform,arch),result=await validatePackagedMemoryRuntime(f.root,platform,value);
     expect(result).toMatchObject({platform,arch,stagingHost:{platform:"darwin",arch:"arm64"},nativeBackendAvailable:true});
     expect(result.nativeBackend.files).toHaveLength(f.names.length);
-    expect(result.thumbnailBackend).toEqual({package:"sharp",version:"0.34.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});expect(result.nativeBackend.missingFiles).toEqual([]);
+    expect(result.thumbnailBackend).toEqual({available:true,package:"sharp",version:"0.34.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});expect(result.nativeBackend.missingFiles).toEqual([]);
     expect(JSON.parse(fs.readFileSync(f.manifest,"utf8"))).toEqual(result);
     expect((await validatePackagedMemoryRuntime(f.root,platform,value)).stagingHost).toEqual({platform:"darwin",arch:"arm64"});
   }
@@ -68,16 +68,39 @@ it("requires worker and manifests in real packages but preserves legacy memory-f
   await expect(validatePackagedMemoryRuntime(f.root,"darwin",3,true)).rejects.toThrow();
 });
 
-it("refuses a package whose thumbnail runtime (sharp and its native addon and libvips) did not ship for the target",async()=>{
-  for(const [platform,arch] of [["darwin","arm64"],["darwin","x64"],["linux","x64"],["win32","x64"]]){
+it("refuses a package whose thumbnail runtime (sharp, its native addon and libvips) did not ship for a target that requires the memory runtime",async()=>{
+  for(const [platform,arch] of [["darwin","arm64"],["linux","x64"],["win32","x64"]]){
     const missingAddon=fixture(platform,arch);fs.unlinkSync(missingAddon.addon);
     await expect(validatePackagedMemoryRuntime(missingAddon.root,platform,arch)).rejects.toThrow("thumbnail runtime is missing");
     const missingLibvips=fixture(platform,arch);fs.unlinkSync(missingLibvips.libvips);
     await expect(validatePackagedMemoryRuntime(missingLibvips.root,platform,arch)).rejects.toThrow("missing libvips");
+    const missingPackage=fixture(platform,arch);fs.rmSync(path.join(missingPackage.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"),{recursive:true});
+    await expect(validatePackagedMemoryRuntime(missingPackage.root,platform,arch)).rejects.toThrow("thumbnail runtime is missing");
+    expect(JSON.parse(fs.readFileSync(missingPackage.manifest,"utf8"))).not.toHaveProperty("thumbnailBackend");
   }
   const unlisted=fixture("linux","x64"),manifest=JSON.parse(fs.readFileSync(unlisted.manifest,"utf8"));
   manifest.packages=manifest.packages.filter(entry=>entry.name!=="sharp");fs.writeFileSync(unlisted.manifest,JSON.stringify(manifest));
-  await expect(validatePackagedMemoryRuntime(unlisted.root,"linux","x64")).rejects.toThrow("sharp");
+  await expect(validatePackagedMemoryRuntime(unlisted.root,"linux","x64")).rejects.toThrow("sharp is not in the memory runtime manifest");
+});
+
+it("only warns about a missing thumbnail runtime where the memory runtime may be absent (Intel Macs), but still refuses a wrong-arch one",async()=>{
+  const warn=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  try{
+    for(const drop of ["addon","libvips","package","manifest"]){
+      const f=fixture("darwin","x64");
+      if(drop==="addon")fs.unlinkSync(f.addon);
+      else if(drop==="libvips")fs.unlinkSync(f.libvips);
+      else if(drop==="package")fs.rmSync(path.join(f.root,"server/node_modules/@huggingface/transformers/node_modules/sharp"),{recursive:true});
+      else{const manifest=JSON.parse(fs.readFileSync(f.manifest,"utf8"));manifest.packages=manifest.packages.filter(entry=>entry.name!=="sharp");fs.writeFileSync(f.manifest,JSON.stringify(manifest));}
+      warn.mockClear();
+      const result=await validatePackagedMemoryRuntime(f.root,"darwin",1);
+      expect(result.thumbnailBackend,drop).toMatchObject({available:false,package:"sharp"});
+      expect(result.thumbnailBackend.missing,drop).toContain("darwin-x64");
+      expect(JSON.parse(fs.readFileSync(f.manifest,"utf8")).thumbnailBackend,drop).toEqual(result.thumbnailBackend);
+      expect(warn,drop).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0]),drop).toContain("full-size images");
+    }
+  }finally{warn.mockRestore();}
   const wrongArch=fixture("darwin","x64");fs.writeFileSync(wrongArch.addon,header("darwin","arm64"));
   await expect(validatePackagedMemoryRuntime(wrongArch.root,"darwin","x64")).rejects.toThrow("thumbnail architecture mismatch");
   expect(JSON.parse(fs.readFileSync(wrongArch.manifest,"utf8"))).not.toHaveProperty("thumbnailBackend");
