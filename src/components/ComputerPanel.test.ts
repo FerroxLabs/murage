@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { transitionComputerControlLease } from "../lib/computer-control";
 
@@ -182,5 +184,14 @@ describe("ComputerPanel destination change on an Auto-on bot", () => {
       next: "local",
       autoApprove: true,
     })).toEqual({ kind: "warn", choice: "local" });
+  });
+});
+
+describe("the preview poll on a phone (spec §6)", () => {
+  const source = readFileSync(fileURLToPath(new URL("./ComputerPanel.tsx", import.meta.url)), "utf8");
+  it("halves both preview polls on a phone and leaves the desktop's rate alone", () => {
+    expect(source).toContain("setInterval(shoot, phonePollMs(bot.busy ? 4000 : 30_000, phone))");
+    expect(source).toContain("window.setInterval(() => void shoot(), phonePollMs(bot.busy ? 3000 : 30_000, phone))");
+    expect(source).toMatch(/const phone = isPhoneClient\(\);/);
   });
 });
