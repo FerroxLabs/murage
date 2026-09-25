@@ -759,11 +759,18 @@ export class DeviceRegistry {
    * Old clients receive the token exactly once. A client that supplies a
    * request id may repeat that same logical redemption until the pairing
    * window's original expiry, which is just enough to survive losing the
-   * response while changing routes. There is no general token-read endpoint. */
+   * response while changing routes. There is no general token-read endpoint.
+   *
+   * An `installId` (from the phone app, see `cleanInstallId`) that matches a
+   * paired record replaces that record: same install, reinstalled, is the
+   * same phone. Its sessions end with it. Nothing else about the old record
+   * carries over, cloud desktop access included; the owner grants that to a
+   * record, not to an install id anyone could claim. */
   redeem(
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
+    installId?: unknown,
   ): { device: PublicDevice; token: string } | { error: string; reason: RedeemFailure } {
     const presented = String(credential ?? "");
     const requestId =
@@ -846,7 +853,10 @@ export class DeviceRegistry {
         reason: "unavailable",
       };
     }
-    if (this.devices.length >= MAX_DEVICES) {
+    const install = cleanInstallId(installId);
+    const replaced = install ? this.devices.find((d) => d.installId === install) : undefined;
+    // A reinstall frees its own slot, so a full fleet still takes it back.
+    if (this.devices.length - (replaced ? 1 : 0) >= MAX_DEVICES) {
       return { error: "too many paired devices — remove one first", reason: "full" };
     }
     // Consume the window without clearing a possible replay. `closePairing`
@@ -863,17 +873,27 @@ export class DeviceRegistry {
       cloudDesktopAccess: false,
       sessionGeneration: 0,
     };
-    this.devices.push(device);
+    if (install) device.installId = install;
+    const previous = this.devices;
+    this.devices = [...previous.filter((d) => d !== replaced), device];
     // Unlike the lastSeenAt write below, this one must not be swallowed. A
     // device that lives in memory but not on disk is paired until the next
     // restart and then silently is not — the phone keeps a token that stops
-    // working for no reason it can show. Roll the registration back and say
-    // so, so the user retries now rather than discovering it days later.
+    // working for no reason it can show. Roll the registration back (and the
+    // replacement with it) and say so, so the user retries now rather than
+    // discovering it days later.
     try {
       this.persist();
     } catch (e) {
-      this.devices.pop();
+      this.devices = previous;
       return { error: `could not save the pairing: ${(e as Error).message}`, reason: "save-failed" };
+    }
+    if (replaced) {
+      this.lastSeenWrites.delete(replaced.id);
+      // Only browser sessions can be live here. A record the browser door
+      // paired never let its bearer token out of the sidecar (`browser.ts`
+      // discards it), so no device-port stream can be holding it.
+      this.sessionsEnded(replaced.id, replaced.sessions ?? []);
     }
     const result = { device: publicDevice(device), token };
     if (requestId) {

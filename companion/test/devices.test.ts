@@ -814,3 +814,78 @@ describe("cleanInstallId", () => {
     expect(cleanInstallId({ toString: () => "a".repeat(16) })).toBeUndefined();
   });
 });
+
+describe("pairing again from the same app install", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const INSTALL = "ios-install-0123456789abcdef";
+
+  const pairAs = (registry: DeviceRegistry, installId: unknown, name = "iPhone") => {
+    const { code } = registry.openPairing();
+    const result = registry.redeem(code, name, undefined, installId);
+    if ("error" in result) throw new Error(`pairing failed: ${result.error}`);
+    return result;
+  };
+
+  it("replaces that install's old record, and its sessions with it", () => {
+    const registry = new DeviceRegistry();
+    const before = pairAs(registry, INSTALL, "iPhone (old)");
+    const { value } = registry.openSession(before.device.id, "Murage on iPhone")!;
+    const { sessionId } = registry.resolveSession(value)!;
+    const ended: string[] = [];
+    registry.onSessionEnded((event) => ended.push(event.sessionId));
+
+    const after = pairAs(registry, INSTALL, "iPhone (reinstalled)");
+    expect(after.device.id).not.toBe(before.device.id);
+    expect(registry.list().map((d) => d.name)).toEqual(["iPhone (reinstalled)"]);
+    expect(registry.authenticate(before.token)).toBeNull();
+    expect(registry.resolveSession(value)).toBeNull();
+    expect(ended).toEqual([sessionId]);
+    // And on disk.
+    expect(new DeviceRegistry().list().map((d) => d.id)).toEqual([after.device.id]);
+  });
+
+  it("does not carry the old record's cloud desktop permission across", () => {
+    const registry = new DeviceRegistry();
+    const before = pairAs(registry, INSTALL);
+    registry.setCloudDesktopAccess(before.device.id, true);
+    const after = pairAs(registry, INSTALL);
+    expect(after.device.cloudDesktopAccess).toBe(false);
+  });
+
+  it("leaves other installs, and pairings with no install id, alone", () => {
+    const registry = new DeviceRegistry();
+    pairAs(registry, INSTALL, "iPhone");
+    pairAs(registry, "android-install-fedcba9876543210", "Pixel");
+    pairAs(registry, undefined, "Chrome on Mac");
+    pairAs(registry, undefined, "Chrome on Mac");
+    pairAs(registry, INSTALL, "iPhone again");
+    expect(registry.list().map((d) => d.name).sort()).toEqual(["Chrome on Mac", "Chrome on Mac", "Pixel", "iPhone again"]);
+  });
+
+  it("ignores an install id it would not key a record on", () => {
+    const registry = new DeviceRegistry();
+    pairAs(registry, "short", "one");
+    pairAs(registry, "short", "two");
+    pairAs(registry, { not: "a string" }, "three");
+    expect(registry.count()).toBe(3);
+    const stored = JSON.parse(readFileSync(join(DATA_DIR, "devices.json"), "utf8"));
+    expect(stored.devices.every((d: { installId?: string }) => d.installId === undefined)).toBe(true);
+  });
+
+  it("keeps the old record when the replacement cannot be written", () => {
+    const registry = new DeviceRegistry();
+    const before = pairAs(registry, INSTALL);
+    const target = registry as unknown as { persist?: () => void };
+    target.persist = () => {
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+    const { code } = registry.openPairing();
+    expect(registry.redeem(code, "iPhone", undefined, INSTALL)).toMatchObject({ reason: "save-failed" });
+    delete target.persist;
+    expect(registry.authenticate(before.token)?.id).toBe(before.device.id);
+    expect(registry.count()).toBe(1);
+  });
+});

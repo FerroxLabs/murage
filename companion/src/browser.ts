@@ -62,6 +62,7 @@ export interface BrowserDeviceStore {
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
+    installId?: unknown,
   ): { device: PublicDevice; token: string } | { error: string; reason?: string };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
   /** `sessionId` names the session RECORD, which survives renewal; the cookie
@@ -865,7 +866,15 @@ ${codeEntryScript()}
     document.getElementById("t").textContent = title;
     document.getElementById("m").textContent = detail || "";
   };
-  var credential = location.hash.slice(1);
+  var fragment = location.hash.slice(1);
+  // The phone app appends its install id after the credential, so pairing
+  // again after a reinstall replaces its own old record instead of taking a
+  // new slot. A camera-app scan has no such suffix and pairs as it always
+  // did. indexOf, not a regular expression: see the note below about this
+  // being a template literal.
+  var cut = fragment.indexOf("&installId=");
+  var credential = cut < 0 ? fragment : fragment.slice(0, cut);
+  var installId = cut < 0 ? "" : fragment.slice(cut + 11);
   // Before anything else, and before any network call: the address bar and
   // the session history must not keep it.
   history.replaceState(null, "", "/enter");
@@ -936,7 +945,7 @@ ${codeEntryScript()}
     fetch("/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ credential: credential })
+      body: JSON.stringify(installId ? { credential: credential, installId: installId } : { credential: credential })
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
@@ -1454,6 +1463,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             const result = options.devices.redeem(
               normalizeCredential(body.credential),
               browserLabel(String(req.headers["user-agent"] ?? "")),
+              undefined,
+              // The phone app's install id, when `/enter` was opened by the
+              // app. Absent from every camera-app scan and typed code.
+              body.installId,
             );
             if ("error" in result) {
               // Each case keeps the registry's own sentence — expired,

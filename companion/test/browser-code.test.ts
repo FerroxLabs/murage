@@ -62,9 +62,9 @@ let asked: string[] = [];
 let limiter: SignInLimiter | null = null;
 
 const store: BrowserDeviceStore = {
-  redeem: (credential, name, pairRequestId) => {
+  redeem: (credential, name, pairRequestId, installId) => {
     asked.push(credential);
-    return registry.redeem(credential, name, pairRequestId);
+    return registry.redeem(credential, name, pairRequestId, installId);
   },
   openSession: (deviceId, label) => registry.openSession(deviceId, label),
   resolveSession: (value) => registry.resolveSession(value),
@@ -558,5 +558,93 @@ describe("the phone app is not told to open a real browser", () => {
     // The token only exempts the app it names. Instagram's webview does not
     // become ours by carrying an unrelated string somewhere else in it.
     expect((await enterWith(`${IOS_WEBVIEW} Instagram 312.0.0.32.112`)).warning).toContain("built-in browser");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The app's install id, carried through /enter
+// ─────────────────────────────────────────────────────────────────────────
+interface StubNode {
+  textContent: string;
+  hidden: boolean;
+  disabled: boolean;
+  value: string;
+  listeners: Record<string, () => void>;
+  addEventListener(type: string, fn: () => void): void;
+  focus(): void;
+}
+
+/** Run the served `/enter` script against a stub page with `hash` in the
+ * address bar. `replies` answer its POSTs in order. */
+const runEnter = (html: string, hash: string, replies: Array<{ ok: boolean; body: Record<string, unknown> }>) => {
+  const nodes = new Map<string, StubNode>();
+  const node = (id: string): StubNode => {
+    let found = nodes.get(id);
+    if (!found) {
+      const listeners: Record<string, () => void> = {};
+      found = {
+        textContent: "",
+        hidden: true,
+        disabled: false,
+        value: "",
+        listeners,
+        addEventListener: (type, fn) => {
+          listeners[type] = fn;
+        },
+        focus: () => {},
+      };
+      nodes.set(id, found);
+    }
+    return found;
+  };
+  const posted: Array<Record<string, unknown>> = [];
+  const sandbox = {
+    location: { hash, replace: () => {} },
+    history: { replaceState: () => {} },
+    navigator: { userAgent: "Mozilla/5.0 (iPhone) MurageApp/1.0 (ios)" },
+    document: { getElementById: node },
+    fetch: (_url: string, init: { body: string }) => {
+      posted.push(JSON.parse(init.body));
+      const reply = replies.shift() ?? { ok: true, body: {} };
+      return Promise.resolve({ ok: reply.ok, json: () => Promise.resolve(reply.body) });
+    },
+    setInterval: () => 0,
+    clearInterval: () => {},
+  };
+  createContext(sandbox);
+  runInContext(inlineScripts(html)[0], sandbox);
+  return { node, posted };
+};
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe("pairing from the app replaces its own old record", () => {
+  it("sends the install id from the fragment, and the credential without it", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", []);
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+  });
+
+  it("sends exactly what it always sent when there is no install id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc", []);
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc" }]);
+  });
+
+  it("replaces the record at the door, so a reinstall does not take a second slot", async () => {
+    const origin = { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` };
+    const install = "ios-install-0123456789abcdef";
+    const first = await knock("POST", "/session", origin, JSON.stringify({ credential: registry.openPairing().token, installId: install }));
+    expect(first.status).toBe(201);
+    const oldCookie = String(first.headers["set-cookie"]?.[0] ?? "").split(";")[0].split("=")[1];
+
+    const second = await knock("POST", "/session", origin, JSON.stringify({ credential: registry.openPairing().token, installId: install }));
+    expect(second.status).toBe(201);
+    expect(registry.count()).toBe(1);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${oldCookie}` })).status).toBe(401);
   });
 });
