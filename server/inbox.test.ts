@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
-import { inboxRequest, initializeInbox, listInbox, updateInboxState, type InboxAccess } from "./inbox.ts";
+import { inboxRequest, initializeInbox, listInbox, owedThreads, updateInboxState, type InboxAccess } from "./inbox.ts";
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -510,4 +510,45 @@ it("an Inbox database from before clearing gains the column and keeps its read m
   initializeInbox(db); initializeInbox(db);
   expect((db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>).map(c => c.name)).toEqual(["source_key", "read_version", "read_at", "snoozed_until", "cleared_at"]);
   expect(db.prepare("SELECT read_version FROM inbox_item_state WHERE source_key='k'").get()).toEqual({ read_version: "v" });
+});
+
+// THE QUESTION BADGE ATTRIBUTES, IT NEVER ADDS.
+//
+// A conversation row shows how many questions are waiting in it. Those
+// numbers are the Decisions segment's `questions` split by thread, so they
+// sum to it exactly, count nothing the umbrella does not, and follow the
+// same live rules (an item the owner snoozed in the Inbox is not counted).
+it("splits the questions count by conversation without adding to any total", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  const scope: InboxAccess = { owner: true, threads: [
+    { threadId: "thread", label: "Research bot", botId: "bot" }, { threadId: "other", label: "Writer", botId: "writer" }, { threadId: "room", label: "Launch" }] };
+  put(db, { id: "ask-1", at: now - 5_000, card: { requestId: "ask-1", title: "Which format?", options: ["A", "B"] } });
+  put(db, { id: "ask-2", at: now - 4_000, card: { requestId: "ask-2", title: "Which tone?", options: ["Warm", "Plain"] } });
+  put(db, { id: "approve", at: now - 3_000, card: { requestId: "approve", title: "Send it", options: ["Allow", "Deny"], tool: "Gmail" } }, "other");
+  put(db, { id: "ask-room", at: now - 2_000, card: { requestId: "ask-room", title: "Ship Friday?", options: ["Yes", "No"] } }, "room");
+  put(db, { id: "answered", at: now - 1_000, card: { requestId: "answered", title: "Old", options: [], answered: "Yes" } }, "other");
+  const page = listInbox(db, { view: "decisions" }, scope, now);
+  expect(page.questionThreads).toEqual({ thread: 2, room: 1 });
+  expect(Object.values(page.questionThreads!).reduce((sum, n) => sum + n, 0)).toBe(page.questions);
+  expect(page.decisions).toBe(4);
+  // Snoozing one question in the Inbox removes it from both numbers alike.
+  const ask = listInbox(db, { view: "questions" }, scope, now).items.find(item => item.link.messageId === "ask-1")!;
+  updateInboxState(db, { id: ask.id, version: ask.version, snoozedUntil: now + 60_000 }, scope, now);
+  const after = listInbox(db, { view: "decisions" }, scope, now);
+  expect(after.questionThreads).toEqual({ thread: 1, room: 1 });
+  expect(after.questions).toBe(2);
+  // Only the view the sidebar polls pays for the split.
+  expect(listInbox(db, { view: "all" }, scope, now).questionThreads).toBeUndefined();
+});
+
+it("names every conversation that owes the owner something, snoozed in the Inbox or not", () => {
+  const { db } = fixture(), now = 1_700_000_000_000;
+  const scope: InboxAccess = { owner: true, threads: [
+    { threadId: "thread", label: "Research bot", botId: "bot" }, { threadId: "other", label: "Writer", botId: "writer" }, { threadId: "quiet", label: "Quiet" }] };
+  put(db, { id: "approve", at: now - 3_000 });
+  put(db, { id: "ask", at: now - 2_000, card: { requestId: "ask", title: "Which?", options: ["A"] } }, "other");
+  put(db, { id: "done", at: now - 1_000, card: { requestId: "done", title: "Old", options: [], answered: "A" } }, "quiet");
+  const ask = listInbox(db, { view: "questions" }, scope, now).items[0]!;
+  updateInboxState(db, { id: ask.id, version: ask.version, snoozedUntil: now + 60_000 }, scope, now);
+  expect([...owedThreads(db, scope)].sort()).toEqual(["other", "thread"]);
 });

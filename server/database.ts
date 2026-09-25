@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, migrateMemorySchema } from "./memory/schema.ts";
 import { initializeInbox } from "./inbox.ts";
+import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 
@@ -24,6 +25,7 @@ export function database(): DatabaseSync {
     initializeMessageTables(db);
     migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT) });
     initializeInbox(db);
+    initializeThreadSnooze(db);
     initializeArtifacts(db);
   } catch (error) { db.close(); throw error; }
   handle = db; handlePath = file;
