@@ -140,6 +140,9 @@ describe("Always allow for this routine", () => {
     }
     const stamped = (when: string) => ({ ...exact, command: `echo "run at ${when}" >> notes/log-${when.slice(0, 10)}.md` });
     expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: stamped("2026-09-26T07:00:00Z"), routineAllow: [exactCommandKey(stamped("2026-09-25T07:00:00Z"))!] }).source).toBe("routine-allow");
+    // `date` output, and a time right after a date
+    const said = (when: string) => ({ ...exact, command: `echo "${when}" >> notes/log.md` });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: said("Sat Sep 26 07:00:02 ICT 2026"), routineAllow: [exactCommandKey(said("Fri Sep 25 13:25:07 ICT 2026"))!] }).source).toBe("routine-allow");
     expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "date; echo Fri 25 Sep 2026 1:25 PM" }, routineAllow: [exactCommandKey({ ...exact, command: "date; echo Thu 24 Sep 2026 11:05 AM" })!] }).source).toBe("routine-allow");
   });
 
@@ -154,6 +157,10 @@ describe("Always allow for this routine", () => {
     // nor a port mapping, a version or a ratio that only looks like a time
     for (const [before, after] of [["docker run -p 80:80 web", "docker run -p 22:22 web"], ["npm i left-pad@1.2.3", "npm i left-pad@1.3.0"], ["echo 99:99", "echo 12:30"]]) {
       expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: after }, routineAllow: [exactCommandKey({ ...exact, command: before })!] }).source).toBe("no-grant");
+    }
+    // a time of day on its own is not a date/time value: only beside a date
+    for (const [before, after] of [["docker run -p 22:22 web", "docker run -p 10:10 web"], ['echo "tick at 13:25" >> log', 'echo "tick at 13:30" >> log']]) {
+      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: after }, routineAllow: [exactCommandKey({ ...exact, command: before })!] }).source, after).toBe("no-grant");
     }
     // a date where the grant had other text is not a match either
     expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "echo 2026-09-25" }, routineAllow: [exactCommandKey({ ...exact, command: "echo main" })!] }).source).toBe("no-grant");

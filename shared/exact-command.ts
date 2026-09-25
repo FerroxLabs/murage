@@ -151,31 +151,44 @@ export function commandCwdFromToolInput(input: unknown): string | null | undefin
 // loosened. A changed word, path, flag or plain number is a different
 // command, and a date or time only matches another date or time.
 
-const MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
-const WEEKDAY = "(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)";
+/** Letters in either case, without the `i` flag: a time zone must stay
+ * upper case, so "13:25 tick" never reads as a zone. */
+const anyCase = (pattern: string) => pattern.replace(/[a-z]/g, (ch) => `[${ch}${ch.toUpperCase()}]`);
+const MONTH = anyCase("(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)");
+const WEEKDAY = anyCase("(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)");
 const HOUR = "(?:[01]?\\d|2[0-3])";
 const MIN = "[0-5]\\d";
 const TIME = `${HOUR}:${MIN}(?::${MIN}(?:\\.\\d{1,9})?)?(?:Z|[+-]\\d{2}:?\\d{2})?`;
 const YMD = "\\d{4}([-/.])(?:0[1-9]|1[0-2])\\1(?:0[1-9]|[12]\\d|3[01])";
-const DATE_TIME_PATTERNS: readonly RegExp[] = [
-  // 2026-09-25, 2026/09/25, 2026-09-25T13:25:07Z, 2026-09-25 13:25
-  new RegExp(`(?<![\\w.])${YMD}(?:[T _]${TIME})?(?![\\w])`, "gi"),
+const TZ = "(?:Z|[+-]\\d{2}:?\\d{2}|[A-Z]{2,5})";
+const AMPM = "(?:\\s?[aApP]\\.?[mM]\\.?)?";
+/** Dates, each replaced by the placeholder first. */
+const DATE_PATTERNS: readonly RegExp[] = [
+  // `date` output: Fri Sep 25 13:25:07 ICT 2026
+  new RegExp(`(?<![\\w])${WEEKDAY}\\s+${MONTH}\\s+\\d{1,2}\\s+${TIME}(?:\\s+${TZ})?\\s+\\d{4}(?![\\w])`, "g"),
+  // 2026-09-25, 2026/09/25, 2026-09-25T13:25:07Z (an ISO timestamp)
+  new RegExp(`(?<![\\w.])${YMD}(?:T${TIME})?(?![\\w])`, "g"),
   // 20260925T130500Z
-  /(?<![\w.])\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])T\d{4,6}Z?(?![\w])/gi,
+  /(?<![\w.])\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])T\d{4,6}Z?(?![\w])/g,
   // 25/09/2026, 9/25/2026
   /(?<![\w./])\d{1,2}([/.-])\d{1,2}\1\d{4}(?![\w/])/g,
-  // 13:25, 13:25:07, 1:25 PM, 13:25:07.123Z
-  new RegExp(`(?<![\\w:.])${TIME}(?:\\s?[ap]\\.?m\\.?)?(?![\\w:])`, "gi"),
   // 25 Sep 2026, Sep 25, 2026, September 25
-  new RegExp(`(?<![\\w])(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\.?(?:,?\\s+\\d{4})?|${MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?)(?![\\w])`, "gi"),
-  // a weekday next to a date or time placeholder
-  new RegExp(`(?<![\\w])${WEEKDAY}\\.?,?(?=\\s+\\u0000)`, "gi"),
+  new RegExp(`(?<![\\w])(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\.?(?:,?\\s+\\d{4})?|${MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?)(?![\\w])`, "g"),
+];
+/** Then a time of day, but only right beside a date (13:25 after
+ * 2026-09-25, or before one): a time on its own (a port mapping 22:22, "at
+ * 13:25") is part of the command. Then a weekday beside a date. */
+const BESIDE_DATE: readonly RegExp[] = [
+  new RegExp(`(?<=\\u0000[ ,T]{0,3})${TIME}${AMPM}(?:\\s+${TZ})?(?![\\w:])`, "g"),
+  new RegExp(`(?<![\\w:.])${TIME}${AMPM}(?:\\s+${TZ})?(?=[ ,]{1,3}\\u0000)`, "g"),
+  new RegExp(`(?<![\\w])${WEEKDAY}\\.?,?(?=\\s+\\u0000)`, "g"),
 ];
 
-/** The command with every date and time value replaced by one placeholder. */
+/** The command with every date (and time beside a date) replaced by one
+ * placeholder. */
 export function commandWithoutDateTimes(command: string): string {
   let out = normalizeCommand(command).replace(/\u0000/g, "");
-  for (const pattern of DATE_TIME_PATTERNS) out = out.replace(pattern, "\u0000");
+  for (const pattern of [...DATE_PATTERNS, ...BESIDE_DATE]) out = out.replace(pattern, "\u0000");
   return out;
 }
 
