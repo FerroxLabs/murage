@@ -163,7 +163,7 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
               ))}
             </>
           )}
-          {filters.genders.length > 1 && filters.accents.length > 0 && <span aria-hidden className="mx-1 my-1.5 w-px bg-hairline/50" />}
+          {filters.genders.length > 1 && filters.accents.length > 0 && <span aria-hidden className="mx-1 my-1.5 hidden w-px bg-hairline/50 sm:block" />}
           {filters.accents.map((a) => (
             <Chip key={a} pressed={accent === a} onClick={() => setAccent(accent === a ? "all" : a)}>
               {a}
