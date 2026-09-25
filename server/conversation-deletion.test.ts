@@ -140,7 +140,7 @@ function seed(data: string, fuigoHome: string, claudeHome: string, codexHome: st
 }
 
 describe("ConversationDeletions", () => {
-  it("removes every file of the conversation and keeps what other conversations use", () => {
+  it("removes every file of the conversation and keeps what other conversations use", async () => {
     const data = fresh("data");
     const fuigoHome = fresh("fuigo");
     const claudeHome = fresh("claude");
@@ -148,14 +148,20 @@ describe("ConversationDeletions", () => {
     const db = messagesDb(data);
     const seeded = seed(data, fuigoHome, claudeHome, codexHome, db);
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    const { report } = runConversationDeletion(deletions, {
+    const order: string[] = [];
+    const { report } = await runConversationDeletion(deletions, {
       threadIds: [THREAD],
       engineKinds: ["fuigoAgent", "geminiAgent", "grok"],
       engineHomes: [{ engine: "fuigo", home: fuigoHome }, { engine: "claude", home: claudeHome }, { engine: "codex", home: codexHome }],
     }, () => {
       db.prepare("DELETE FROM messages WHERE thread_id=?").run(THREAD);
+      order.push("commit");
       return true;
+    }, async () => {
+      // settled after the commit, before any file goes
+      order.push(existsSync(seeded.desk) ? "settle-before-files" : "settle-late");
     });
+    expect(order).toEqual(["commit", "settle-before-files"]);
 
     expect(existsSync(seeded.desk)).toBe(false);
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(false);
@@ -182,7 +188,7 @@ describe("ConversationDeletions", () => {
     for (const item of report.leftovers) expect(item.reason).not.toMatch(/\u2014|\bsafe(ly)?\b/i);
   });
 
-  it("leaves a Claude Code folder whose sessions name another folder", () => {
+  it("leaves a Claude Code folder whose sessions name another folder", async () => {
     const data = fresh("data");
     const claudeHome = fresh("claude");
     const db = messagesDb(data);
@@ -191,12 +197,12 @@ describe("ConversationDeletions", () => {
     const dir = join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"));
     touch(join(dir, "s1.jsonl"), `${JSON.stringify({ cwd: desk.replace(/threads/, "threads-") })}\n`);
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    const { report } = runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }] }, () => true);
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }] }, () => true);
     expect(existsSync(dir)).toBe(true);
     expect(report.leftovers.some((item) => item.place === dir)).toBe(true);
   });
 
-  it("finds a long Fuigo folder by the .cwd file beside its sessions", () => {
+  it("finds a long Fuigo folder by the .cwd file beside its sessions", async () => {
     const data = join(fresh("data"), "d".repeat(120));
     mkdirSync(data, { recursive: true });
     const fuigoHome = fresh("fuigo");
@@ -211,32 +217,32 @@ describe("ConversationDeletions", () => {
     touch(join(ours, ".cwd"), desk);
     touch(join(theirs, ".cwd"), `${desk}-other`);
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
+    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
     expect(existsSync(ours)).toBe(false);
     expect(existsSync(theirs)).toBe(true);
   });
 
-  it("reports a folder shared with other conversations instead of removing it", () => {
+  it("reports a folder shared with other conversations instead of removing it", async () => {
     const data = fresh("data");
     const picked = fresh("picked");
     touch(join(picked, "work.md"));
     const db = messagesDb(data);
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    const { report } = runConversationDeletion(deletions, { threadIds: [THREAD], sharedFolders: [picked] }, () => true);
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], sharedFolders: [picked] }, () => true);
     expect(existsSync(join(picked, "work.md"))).toBe(true);
     expect(report.leftovers.some((item) => item.place === picked)).toBe(true);
   });
 
-  it("drops the record and removes nothing when the delete is refused", () => {
+  it("drops the record and removes nothing when the delete is refused", async () => {
     const data = fresh("data");
     const db = messagesDb(data);
     touch(join(data, "events", `${THREAD}.ndjson`));
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
-    const { result } = runConversationDeletion(deletions, { threadIds: [THREAD] }, () => null);
+    const { result } = await runConversationDeletion(deletions, { threadIds: [THREAD] }, () => null);
     expect(result).toBeNull();
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(true);
     expect(deletions.pending()).toEqual([]);
-    expect(() => runConversationDeletion(deletions, { threadIds: [THREAD] }, () => { throw new Error("roster write failed"); })).toThrow("roster write failed");
+    await expect(runConversationDeletion(deletions, { threadIds: [THREAD] }, () => { throw new Error("roster write failed"); })).rejects.toThrow("roster write failed");
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(true);
     expect(deletions.pending()).toEqual([]);
   });

@@ -573,9 +573,11 @@ function dedupeLeftovers(leftovers: DeletionLeftover[]): DeletionLeftover[] {
   });
 }
 
-/** Begin, commit, finish. `commit` returns a falsy value when it refused;
- * the record is then dropped and nothing is removed. */
-export function runConversationDeletion<T>(deletions: ConversationDeletions, input: DeletionInput, commit: () => T): { result: T; report: DeletionReport } {
+/** Begin, commit, settle, finish. `commit` returns a falsy value when it
+ * refused; the record is then dropped and nothing is removed. `settle` runs
+ * after the commit and before any file goes (retire idle engine sessions, so
+ * nothing writes to a transcript after it is removed). */
+export async function runConversationDeletion<T>(deletions: ConversationDeletions, input: DeletionInput, commit: () => T, settle?: () => Promise<void>): Promise<{ result: T; report: DeletionReport }> {
   const entry = deletions.begin(input);
   let result: T;
   try {
@@ -588,5 +590,6 @@ export function runConversationDeletion<T>(deletions: ConversationDeletions, inp
     deletions.abandon(entry);
     return { result, report: { leftovers: [], failed: [] } };
   }
+  try { await settle?.(); } catch { /* the files go regardless */ }
   return { result, report: deletions.finish(entry) };
 }
