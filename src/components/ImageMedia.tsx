@@ -512,10 +512,45 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
 
 // ── Surface wrappers ─────────────────────────────────────────────────────
 
-/** A screen frame from the bot's computer, enlargeable in place. */
-export function ScreenFrameMedia({ png, mime, className }: { png: string; mime?: string; className?: string }) {
-  const item = useMemo(() => screenFrameItem(png, mime), [png, mime]);
-  return <ImageMedia item={item} label={t("media.screenFrame.open")} className={className} imgClassName="h-auto w-full" />;
+/** A screen frame from the bot's computer, enlargeable in place. On a phone
+ * the bytes already on screen may be capped to `PHONE_SCREEN_FRAME_WIDTH`
+ * (E13); `fetchOriginal`, when given, is asked for the untouched frame the
+ * moment the enlarged view opens, so pinch-zoom is not stuck at the capped
+ * width. The capped frame stays visible until it resolves — never a blank
+ * dialog, and nothing is asked for on the desktop path, which is already
+ * the original. */
+export function ScreenFrameMedia({ png, mime, className, fetchOriginal }: {
+  png: string;
+  mime?: string;
+  className?: string;
+  fetchOriginal?: () => Promise<{ png: string; mime: string } | null>;
+}) {
+  const capped = useMemo(() => screenFrameItem(png, mime), [png, mime]);
+  const [open, setOpen] = useState(false);
+  const [original, setOriginal] = useState<ImageMediaItem | null>(null);
+  const items = useMemo(() => [original ?? capped], [original, capped]);
+  return (
+    <>
+      <ImageThumb
+        key={capped.id}
+        item={capped}
+        label={t("media.screenFrame.open")}
+        onOpen={() => {
+          setOpen(true);
+          if (fetchOriginal && !original) {
+            fetchOriginal()
+              .then((full) => {
+                if (full) setOriginal(screenFrameItem(full.png, full.mime));
+              })
+              .catch(() => {});
+          }
+        }}
+        className={className}
+        imgClassName="h-auto w-full"
+      />
+      {open && <ImageLightbox items={items} index={0} onClose={() => setOpen(false)} />}
+    </>
+  );
 }
 
 /** The Files browser's saved-copy image preview. */

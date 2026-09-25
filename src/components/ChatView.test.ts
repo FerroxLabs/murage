@@ -158,6 +158,20 @@ describe("one image surface", () => {
     expect(chat).toContain("<ScreenFrame png={m.png} mime={m.mime} />");
   });
 
+  it("lets a phone's enlarged screen frame fetch the uncapped original, but only on a phone with an id to ask for", () => {
+    expect(chat).toContain('import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-screen-frame"');
+    expect(chat).toContain('import { isPhoneClient } from "@/lib/phone-client"');
+    expect(chat).toMatch(/if \(!threadId \|\| !messageId \|\| !isPhoneClient\(\)\) return undefined;\s*return \(\) => fetchOriginalScreenFrame\(threadId, messageId\);/);
+    expect(chat).toContain("fetchOriginal={fetchOriginal}");
+    expect(chat).toContain('<ScreenFrame png={frame.png} mime={frame.mime} threadId={threadId} messageId={messageId} />');
+  });
+
+  it("shows the capped screen frame until the fetched original resolves, then swaps it in", () => {
+    const media = read("./ImageMedia.tsx");
+    expect(media).toMatch(/fetchOriginal\(\)\s*\.then\(\(full\) => \{\s*if \(full\) setOriginal\(screenFrameItem\(full\.png, full\.mime\)\);/);
+    expect(media).toContain("const items = useMemo(() => [original ?? capped], [original, capped]);");
+  });
+
   it("lets the browser pick a thumbnail width and keeps the original for the lightbox", () => {
     const media = read("./ImageMedia.tsx");
     expect(media).toContain("const srcSet = smallOriginal ? undefined : thumbnailSrcSet(item.src);");

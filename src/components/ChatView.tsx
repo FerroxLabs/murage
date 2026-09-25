@@ -103,7 +103,8 @@ import {
   bubbleTapOpensActions,
 } from "@/lib/transcript-chrome";
 import { useNarrowViewport } from "@/lib/media-query";
-import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
+import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-screen-frame";
+import { isPhoneClient } from "@/lib/phone-client";
 import { useMessageById } from "@/lib/held-message";
 import { needsNewestPage } from "@/lib/scrollback";
 import {
@@ -864,13 +865,21 @@ function ActivityChip({ message }: { message: Message }) {
 // The exact frame already in the transcript, enlargeable through the shared
 // image lightbox (F5-T2). Enlarging never requests a new capture, and a frame
 // the store has stripped (png undefined) unmounts along with any open dialog.
-function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
+// On a phone, the paged route (below) may have capped `png` to
+// PHONE_SCREEN_FRAME_WIDTH (E13); `threadId`/`messageId`, when given, let the
+// enlarged view fetch the untouched original once it opens.
+function ScreenFrame({ png, mime, threadId, messageId }: { png: string; mime?: string; threadId?: string; messageId?: string }) {
+  const fetchOriginal = useMemo(() => {
+    if (!threadId || !messageId || !isPhoneClient()) return undefined;
+    return () => fetchOriginalScreenFrame(threadId, messageId);
+  }, [threadId, messageId]);
   return (
     <div className="flex justify-start">
       <ScreenFrameMedia
         png={png}
         mime={mime}
         className="block w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40"
+        fetchOriginal={fetchOriginal}
       />
     </div>
   );
@@ -879,7 +888,7 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
 /** A screen row from a bounded page: pixels fetched once it is mounted. */
 function PagedScreenFrame({ threadId, messageId }: { threadId: string; messageId: string }) {
   const frame = usePagedScreenFrame(threadId, messageId);
-  return frame ? <ScreenFrame png={frame.png} mime={frame.mime} /> : null;
+  return frame ? <ScreenFrame png={frame.png} mime={frame.mime} threadId={threadId} messageId={messageId} /> : null;
 }
 
 /** The settled transcript, memoized as one unit: during streaming every

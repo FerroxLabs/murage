@@ -12,15 +12,27 @@ export interface ScreenFramePixels {
   mime: string;
 }
 
-async function fetchScreenFrame(threadId: string, messageId: string): Promise<ScreenFramePixels | null> {
+async function fetchScreenFramePixels(path: string): Promise<ScreenFramePixels | null> {
   await ensureDesktopSurfaceSecret();
-  const res = await fetch(screenFramePath(threadId, messageId, isPhoneClient()), { headers: desktopSurfaceHeaders() });
+  const res = await fetch(path, { headers: desktopSurfaceHeaders() });
   if (!res.ok) return null;
   const blob = await res.blob();
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
   return { png: btoa(binary), mime: blob.type || "image/png" };
+}
+
+function fetchScreenFrame(threadId: string, messageId: string): Promise<ScreenFramePixels | null> {
+  return fetchScreenFramePixels(screenFramePath(threadId, messageId, isPhoneClient()));
+}
+
+/** The same message's frame, uncapped: fetched once a phone's enlarged view
+ * opens, so pinch-zoom is not limited to the phone-width bytes already on
+ * screen (E13 fix round). Not a new capture — the same stored message, just
+ * the `?w=`-free route. */
+export function fetchOriginalScreenFrame(threadId: string, messageId: string): Promise<ScreenFramePixels | null> {
+  return fetchScreenFramePixels(screenFramePath(threadId, messageId, false));
 }
 
 /** The pixels of one screen message, or null until (unless) they arrive.
