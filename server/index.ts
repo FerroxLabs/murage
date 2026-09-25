@@ -5374,6 +5374,10 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Edit-and-rerun: fork the conversation at this user message, but only
+     * once every refusal below has passed, so a refused rerun leaves no
+     * orphan fork (upstream #1387). */
+    editedMessageId?: string;
     /** Server-owned: the surface the sending request proved (MessageOrigin). */
     origin?: MessageOrigin;
     /** Server-owned: this is the single re-dispatch of a turn whose prepared
@@ -5472,8 +5476,14 @@ async function startTurn(
   // text is about to be recorded and naming the task from it is safe.
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
-  // an edit hands us its already-branched user message; a plain send appends
+  // an edit forks here, after every refusal above; a plain send appends
   let userMessage = opts?.userMessage;
+  if (opts?.editedMessageId) {
+    const edited = store.branchMessage(threadId, opts.editedMessageId, text, opts.origin, opts.sendId);
+    if (!edited) throw Object.assign(new Error("no such message"), { status: 404 });
+    store.patchTask(bot.id, threadId, { rewound: true });
+    userMessage = edited;
+  }
   if (!userMessage) {
     userMessage = opts?.cardContinuation
       ? { id: `card-${randomUUID()}`, at: Date.now(), role: "user", kind: "text", text }
@@ -5513,7 +5523,9 @@ async function startTurn(
   // inline (transcript-replay drivers get it via transcript). The flag is
   // cleared only once the turn is actually dispatched — clearing it here
   // would cost the next attempt its history if this dispatch fails.
-  const rewound = threadId === bot.threadId && Boolean(bot.rewound);
+  // An edit forked just above, after `bot` was read, so its rewind is not in
+  // that snapshot yet.
+  const rewound = Boolean(opts?.editedMessageId) || (threadId === bot.threadId && Boolean(bot.rewound));
   // A fresh engine — the user switched this bot's model mid-thread — has no
   // current session here either, so it gets the same replay. Distinct from
   // rewound: the OTHER instances' cursors are left alone (a rewind wipes
@@ -15204,14 +15216,27 @@ const server = createServer(async (req, res) => {
       if (!text) return json(res, 400, { error: "text required" });
       const tooLarge = messageTooLargeRefusal(text);
       if (tooLarge) return json(res, 413, tooLarge);
+      const threadMessages = store.messagesFor(bot.threadId);
+      const source = threadMessages.find((msg) => msg.id === messageId);
+      if (!source || source.role !== "user" || source.kind !== "text") {
+        return json(res, 404, { error: "only user messages can be edited" });
+      }
+      // The client's id for this edit (upstream #1387). A retry of an edit
+      // the server already forked answers with that fork instead of forking
+      // and rerunning again. Checked before the busy guard: that fork's own
+      // turn is what is busy.
+      const sendId = parseSendId(body.sendId);
+      if (sendId) {
+        const accepted = acceptedSendMatch(threadMessages, sendId, text, source.replyToId);
+        if (accepted.kind === "conflict" || (accepted.kind === "match" && (accepted.message.parentId ?? null) !== (source.parentId ?? null))) {
+          return json(res, 409, { error: "sendId already belongs to another message" });
+        }
+        if (accepted.kind === "match") return json(res, 202, { ok: true, message: accepted.message });
+      }
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the
       // next request is handled
       if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before editing" });
-      const source = store.messagesFor(bot.threadId).find((msg) => msg.id === messageId);
-      if (!source || source.role !== "user" || source.kind !== "text") {
-        return json(res, 404, { error: "only user messages can be edited" });
-      }
       if (!registry.get(bot.modelSelection.instanceId)) {
         return json(res, 409, {
           error: unavailableModelMessage(bot.modelSelection.instanceId),
@@ -15221,12 +15246,13 @@ const server = createServer(async (req, res) => {
       if (editOrigin === "unproven" && wouldRunEngineCommand(bot, text, source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined)) {
         return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
       }
-      const message = store.branchMessage(bot.threadId, messageId, text, editOrigin);
-      if (!message) return json(res, 404, { error: "no such message" });
-      store.patchTask(bot.id,bot.threadId, { rewound: true });
-      const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;
-      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo, ...(editOrigin === "unproven" ? { unattended: true } : {}) });
-      return json(res, 202, { ok: true });
+      // startTurn admits the rerun before it forks: a thread-limit, group or
+      // engine refusal must leave the original conversation untouched. The
+      // edit still records the surface that proved it (origin), and an
+      // unproven edit runs unattended.
+      const replyTo = source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined;
+      const message = await startTurn(bot.id, text, { threadId:bot.threadId, editedMessageId: messageId, sendId, origin: editOrigin, replyTo, ...(editOrigin === "unproven" ? { unattended: true } : {}) });
+      return json(res, 202, { ok: true, message });
     }
 
     // switch which fork of the conversation is visible (no new turn)

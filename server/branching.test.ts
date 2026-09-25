@@ -171,7 +171,18 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       const originalLeaf = bot.activeLeafId;
 
       // edit → fork + a fresh turn on the new branch
-      expect((await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, { text: "edited question" })).status).toBe(202);
+      const editBody = { text: "edited question", sendId: "edit-retry-0000000001" };
+      const firstEdit = await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, editBody);
+      expect(firstEdit.status).toBe(202);
+      expect(firstEdit.body.message.sendId).toBe("edit-retry-0000000001");
+      // Upstream #1387: a network retry of the same edit answers with the
+      // same fork, even while that fork's own turn is still running, and
+      // never forks (or reruns) again.
+      const retried = await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, editBody);
+      expect(retried.status).toBe(202);
+      expect(retried.body.message.id).toBe(firstEdit.body.message.id);
+      const reused = await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, { text: "something else", sendId: "edit-retry-0000000001" });
+      expect(reused.status).toBe(409);
       await waitFor(async () => {
         const b = await getBot(created.id);
         const edited = b.messages.find((m: Msg) => m.role === "user" && m.text === "edited question");
@@ -184,6 +195,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       bot = await getBot(created.id);
       const edited: Msg = bot.messages.find((m: Msg) => m.role === "user" && m.text === "edited question");
       expect(edited.parentId).toBe(original.parentId); // sibling versions
+      expect(bot.messages.filter((m: Msg) => m.role === "user" && m.text === "edited question")).toHaveLength(1);
 
       // the visible path carries only the edited branch…
       const path = activePath(bot.messages, bot.activeLeafId);
@@ -267,6 +279,62 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       // and only one copy of each attempt ever exists — no duplicated turns
       expect(bot.messages.filter((m: Msg) => m.text === "first try")).toHaveLength(1);
       expect(bot.messages.filter((m: Msg) => m.text === "second try")).toHaveLength(1);
+    },
+    45_000,
+  );
+
+  // Upstream #1387: the rerun is admitted BEFORE the conversation forks. A
+  // refusal the route cannot see (here the bot's three-thread limit, held by
+  // three other tasks) used to leave a forked message with no turn behind it
+  // and the thread marked rewound.
+  it(
+    "a refused rerun leaves the conversation exactly as it was, with no orphan fork",
+    async () => {
+      const created = (await api("POST", "/api/bots")).body.bot;
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
+        modelSelection: { instanceId: "happy", model: "fake-model" },
+      })).status).toBe(200);
+      const home = created.threadId as string;
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { threadId: home, text: "keep this question" })).status).toBe(202);
+      await waitFor(async () => {
+        const messages = (await api("GET", `/api/threads/${home}/messages?limit=100`)).body.messages as Msg[];
+        const b = await getBot(created.id);
+        return !b.tasks?.find((t: any) => t.threadId === home)?.busy
+          && messages.some((m) => m.role === "bot" && m.kind === "text" && m.text?.includes("fake acp"));
+      }, "the first reply");
+      const before = (await api("GET", `/api/threads/${home}/messages?limit=100`)).body.messages as Msg[];
+      const original = before.find((m) => m.role === "user" && m.text === "keep this question")!;
+
+      // three other tasks of the same bot, each running a turn that never ends
+      const held: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const task = (await api("POST", `/api/bots/${created.id}/tasks`, { title: `Held ${i}` })).body.task;
+        expect((await desktopApi("PATCH", `/api/bots/${created.id}/tasks/${task.threadId}`, {
+          modelSelection: { instanceId: "hang", model: "fake-model" },
+        })).status).toBe(200);
+        expect((await api("POST", `/api/bots/${created.id}/messages`, { threadId: task.threadId, text: `hold ${i}` })).status).toBe(202);
+        held.push(task.threadId);
+      }
+      await waitFor(async () => {
+        const b = await getBot(created.id);
+        return held.every((threadId) => b.tasks?.find((t: any) => t.threadId === threadId)?.busy === true);
+      }, "three held tasks");
+
+      const refused = await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, {
+        threadId: home,
+        text: "rewritten question",
+        sendId: "edit-refused-000000001",
+      });
+      expect(refused.status).toBe(409);
+      const after = (await api("GET", `/api/threads/${home}/messages?limit=100`)).body.messages as Msg[];
+      expect(after.filter((m) => m.text === "rewritten question")).toHaveLength(0);
+      expect(after.map((m) => m.id)).toEqual(before.map((m) => m.id));
+      const task = (await getBot(created.id)).tasks?.find((t: any) => t.threadId === home);
+      expect(task?.rewound ?? false).toBe(false);
+
+      for (const threadId of held) {
+        expect((await api("POST", `/api/bots/${created.id}/interrupt`, { threadId })).status).toBe(200);
+      }
     },
     45_000,
   );
