@@ -16,7 +16,7 @@ body:
         - Harness server / API (server/)
         - Provider drivers (claude / codex / grok)
         - Computer use (cloud box / local)
-        - Connected apps (Composio)
+        - Connected apps
         - Desktop shell / packaging (electron/)
         - Docs
         - Not sure
@@ -35,15 +35,24 @@ body:
   - type: input
     attributes:
       label: Version and install
-      description: App version (About / release tag) and whether you run the .dmg or from source
-      placeholder: v0.1.3 dmg · macOS 15.5
+      description: >-
+        The app version is shown in Settings, General, Updates (it starts
+        with "Murage" and a number). Tell us your operating system and
+        whether you installed the app or run it from source.
+      placeholder: Murage 0.1.60 · macOS 15.5 · installed app
     validations:
       required: true
   - type: textarea
     attributes:
       label: Logs
       description: >-
-        Anything from the terminal running `pnpm dev:server`, or the per-thread
-        event logs in `~/.murage/events/`. Redact anything that looks like
-        a key or token before pasting.
+        The app keeps its logs in one folder. Open server.log from there and
+        paste the last part of it here.
+        On a Mac the folder is ~/Library/Logs/murage (in Finder use Go, Go to
+        Folder and paste that). On Windows it is %APPDATA%\murage\logs (paste
+        that into the File Explorer address bar). On Linux it is
+        ~/.config/murage/logs. You can also use Settings, General,
+        Diagnostics, Export Diagnostics to save a report with the log tail.
+        Before you share anything, remove anything that looks like a key,
+        token or password.
       render: text
