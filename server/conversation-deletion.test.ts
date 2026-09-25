@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +10,10 @@ import {
   ConversationDeletions,
   claudeProjectKey,
   engineSlug,
+  fuigoMemoryKey,
   fuigoSessionKey,
+  insideGitRepository,
+  scrubJsonlInPlace,
   isStrictlyInside,
   removeConfined,
   runConversationDeletion,
@@ -30,6 +33,7 @@ const touch = (file: string, text = "x") => {
   writeFileSync(file, text);
 };
 
+const MARKER_TEXT = "private-words-8841";
 const BOT = "f25024c1-a18e-4251-acf1-0c1713d9b6d9";
 const THREAD = "2e9018ee-1f45-46be-8ed1-7a02fc022807";
 const OTHER = "9b0e3c1a-0000-4000-8000-000000000001";
@@ -37,9 +41,7 @@ const OTHER = "9b0e3c1a-0000-4000-8000-000000000001";
 describe("engine folder keys", () => {
   it("encodes a Windows folder the way Fuigo named it on the customer machine", () => {
     const cwd = `C:\\cust\\wd\\data\\workspaces\\${BOT}\\threads\\${THREAD}`;
-    expect(fuigoSessionKey(cwd)).toEqual({
-      exact: `C%3A%5Ccust%5Cwd%5Cdata%5Cworkspaces%5C${BOT}%5Cthreads%5C${THREAD}`,
-    });
+    expect(fuigoSessionKey(cwd)).toBe(`C%3A%5Ccust%5Cwd%5Cdata%5Cworkspaces%5C${BOT}%5Cthreads%5C${THREAD}`);
   });
 
   it("encodes a POSIX folder with the urlencoding crate's unreserved set", () => {
@@ -51,7 +53,8 @@ describe("engine folder keys", () => {
 
   it("switches to the slug form past 255 encoded bytes", () => {
     const long = `/Users/${"x".repeat(200)}/workspaces/${BOT}/threads/${THREAD}`;
-    expect(fuigoSessionKey(long)).toEqual({ slugPrefix: `${THREAD}-` });
+    // blake3 digest from the blake3 crate's C reference for this exact string
+    expect(fuigoSessionKey(long)).toBe(`${THREAD}-bf24c475b6ab630d`);
     expect(engineSlug("My Project__Name!!", 40)).toBe("my-project-name");
     expect(engineSlug("---", 40)).toBe("");
   });
@@ -202,7 +205,32 @@ describe("ConversationDeletions", () => {
     expect(report.leftovers.some((item) => item.place === dir)).toBe(true);
   });
 
-  it("finds a long Fuigo folder by the .cwd file beside its sessions", async () => {
+  it("names Fuigo's memory folder the way Fuigo does, outside a git repository", () => {
+    // blake3 of the customer's folder, from the blake3 crate's C reference
+    expect(fuigoMemoryKey(`C:\\cust\\wd\\data\\workspaces\\${BOT}\\threads\\${THREAD}`)).toBe(`${THREAD}-175c01e3`);
+    expect(fuigoMemoryKey("/Users/a/My Project")).toMatch(/^my-project-[0-9a-f]{8}$/);
+    const repo = fresh("repo");
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, "sub", "deeper"), { recursive: true });
+    expect(insideGitRepository(join(repo, "sub", "deeper"))).toBe(true);
+    expect(insideGitRepository(fresh("plain"))).toBe(false);
+  });
+
+  it("removes only the deleted sessions' lines from Fuigo's shared log, keeping its inode", () => {
+    const dir = fresh("log");
+    const log = join(dir, "unified.jsonl");
+    writeFileSync(log, [JSON.stringify({ sid: "gone", msg: MARKER_TEXT }), JSON.stringify({ sid: "kept", msg: "other" }), "{torn", JSON.stringify({ msg: "no session" }), ""].join("\n"));
+    const inode = lstatSync(log).ino;
+    expect(scrubJsonlInPlace(log, (row) => row.sid === "gone")).toBe(1);
+    expect(lstatSync(log).ino).toBe(inode);
+    const text = readFileSync(log, "utf8");
+    expect(text).not.toContain(MARKER_TEXT);
+    expect(text).toContain("\"kept\"");
+    expect(text).toContain("{torn");
+    expect(text).toContain("no session");
+  });
+
+  it("finds a long Fuigo folder by its hashed name, and its log lines and memory notes", async () => {
     const data = join(fresh("data"), "d".repeat(120));
     mkdirSync(data, { recursive: true });
     const fuigoHome = fresh("fuigo");
@@ -210,16 +238,26 @@ describe("ConversationDeletions", () => {
     const desk = join(data, "workspaces", BOT, "threads", THREAD);
     touch(join(desk, "a.md"));
     const key = fuigoSessionKey(desk);
-    expect("slugPrefix" in key).toBe(true);
-    const prefix = (key as { slugPrefix: string }).slugPrefix;
-    const ours = join(fuigoHome, "sessions", `${prefix}0123456789abcdef`);
-    const theirs = join(fuigoHome, "sessions", `${prefix}fedcba9876543210`);
+    expect(key).toMatch(new RegExp(`^${THREAD}-[0-9a-f]{16}$`));
+    const ours = join(fuigoHome, "sessions", key);
+    const theirs = join(fuigoHome, "sessions", `${THREAD}-fedcba9876543210`);
     touch(join(ours, ".cwd"), desk);
+    touch(join(ours, "01a0d905", "chat_history.jsonl"), MARKER_TEXT);
     touch(join(theirs, ".cwd"), `${desk}-other`);
+    touch(join(fuigoHome, "logs", "unified.jsonl"), `${JSON.stringify({ sid: "01a0d905", msg: MARKER_TEXT })}\n${JSON.stringify({ sid: "other", msg: "kept" })}\n`);
+    const memory = join(fuigoHome, "memory", fuigoMemoryKey(realpathSync(desk)));
+    const otherMemory = join(fuigoHome, "memory", "project-0123abcd");
+    touch(join(memory, "notes.md"), MARKER_TEXT);
+    touch(join(otherMemory, "notes.md"), "kept");
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
     expect(existsSync(ours)).toBe(false);
     expect(existsSync(theirs)).toBe(true);
+    expect(existsSync(memory)).toBe(false);
+    expect(existsSync(otherMemory)).toBe(true);
+    const log = readFileSync(join(fuigoHome, "logs", "unified.jsonl"), "utf8");
+    expect(log).not.toContain(MARKER_TEXT);
+    expect(log).toContain("kept");
   });
 
   it("reports a folder shared with other conversations instead of removing it", async () => {

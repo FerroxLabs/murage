@@ -25,12 +25,13 @@
 //    and cleared only after the files are gone; boot finishes any record a
 //    crash left behind.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync } from "node:fs";
+import { closeSync, ftruncateSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import nodePath from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { blake3Hex } from "./blake3.ts";
 
 const ID = /^[\w-]+$/;
 const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i;
@@ -50,7 +51,7 @@ export interface PendingConversationDeletion {
   createdAt: number;
   threadIds: string[];
   /** one entry per working folder found for a thread (a channel has one per member) */
-  desks: Array<{ botId: string; threadId: string; checkpointKey?: string }>;
+  desks: Array<{ botId: string; threadId: string; checkpointKey?: string; memoryFolder?: string }>;
   engineHomes: DeletionEngineHome[];
   /** bots deleted with these conversations: their own folder was theirs alone */
   botIds?: string[];
@@ -116,14 +117,69 @@ export function engineSlug(input: string, maxLength: number): string {
   return [...result.replace(/^-+|-+$/g, "")].slice(0, maxLength).join("");
 }
 
-/** Fuigo/Grok `sessions/<key>` for a folder. Short keys are exact. A key
- * over 255 bytes is `<slug>-<blake3 prefix>` with the folder written in a
- * `.cwd` file beside the sessions; that form is matched by the file. */
-export function fuigoSessionKey(cwd: string): { exact: string } | { slugPrefix: string } {
+/** Fuigo/Grok `sessions/<key>` for a folder (fuigo-config paths.rs
+ * `encode_cwd_dirname`): the urlencoded folder, or past 255 bytes
+ * `<slug of the leaf>-<first 16 hex of blake3(folder)>`. */
+export function fuigoSessionKey(cwd: string): string {
   const encoded = rustUrlEncode(cwd);
-  if (Buffer.byteLength(encoded) <= 255) return { exact: encoded };
+  if (Buffer.byteLength(encoded) <= 255) return encoded;
   const leaf = pathApiFor(cwd).basename(cwd) || "workspace";
-  return { slugPrefix: `${engineSlug(leaf, 40) || "workspace"}-` };
+  return `${engineSlug(leaf, 40) || "workspace"}-${blake3Hex(cwd).slice(0, 16)}`;
+}
+
+/** Fuigo/Grok memory folder `memory/<slug>-<first 8 hex of blake3>` for a
+ * folder outside any git repository (fuigo-memory storage.rs
+ * `compute_workspace_hash`): slug and hash both come from the canonical
+ * path. Inside a repository the name follows the repository's remote and is
+ * shared by every clone, so it is never computed here. */
+export function fuigoMemoryKey(canonicalFolder: string): string {
+  const leaf = pathApiFor(canonicalFolder).basename(canonicalFolder) || "workspace";
+  return `${engineSlug(leaf, 40) || "workspace"}-${blake3Hex(canonicalFolder).slice(0, 8)}`;
+}
+
+/** Is `folder` inside a git repository (a `.git` entry in it or any parent)? */
+export function insideGitRepository(folder: string): boolean {
+  const api = pathApiFor(folder);
+  let at = api.resolve(folder);
+  for (;;) {
+    if (lstatOrNull(api.join(at, ".git"))) return true;
+    const parent = api.dirname(at);
+    if (parent === at) return false;
+    at = parent;
+  }
+}
+
+/** Remove the lines a predicate picks from a shared JSONL log, keeping the
+ * file's inode: Fuigo writers hold O_APPEND handles on it and its own trim
+ * rewrites in place for that reason (fuigo-telemetry unified_log.rs
+ * `trim_file`). Kept lines are written over the head, then the file is cut. */
+export function scrubJsonlInPlace(path: string, drop: (row: Record<string, unknown>) => boolean): number {
+  const stat = lstatOrNull(path);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return 0;
+  const text = readFileSync(path, "utf8");
+  let removed = 0;
+  const kept = text.split("\n").filter((line) => {
+    if (!line.trim()) return true;
+    try {
+      const row = JSON.parse(line) as unknown;
+      if (row && typeof row === "object" && drop(row as Record<string, unknown>)) {
+        removed++;
+        return false;
+      }
+    } catch { /* a torn line is kept as it is */ }
+    return true;
+  });
+  if (!removed) return 0;
+  const bytes = Buffer.from(kept.join("\n"), "utf8");
+  const fd = openSync(path, "r+");
+  try {
+    writeSync(fd, bytes, 0, bytes.length, 0);
+    ftruncateSync(fd, bytes.length);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  return removed;
 }
 
 /** Claude Code `projects/<key>`: every character that is not an ASCII letter
@@ -216,15 +272,30 @@ function readHead(path: string, bytes = FIRST_LINE_BYTES): string | null {
 // ── engine transcripts ──────────────────────────────────────────────────
 
 /** Fuigo and Grok: `<home>/sessions/<key>` for each exact folder. */
-function removeFuigoSessions(home: string, folders: string[], removed: string[], failed: string[]): void {
-  const sessions = pathApiFor(home).join(home, "sessions");
+/** Fuigo and Grok: `<home>/sessions/<key>` for each folder, the lines those
+ * sessions wrote to the shared `logs/unified.jsonl` (keyed `sid`), and the
+ * folder's memory notes when the folder is outside any repository. */
+function removeFuigoSessions(home: string, folders: string[], memoryFolders: string[], removed: string[], failed: string[]): void {
+  const api = pathApiFor(home);
+  const sessions = api.join(home, "sessions");
+  const sessionIds = new Set<string>();
   for (const folder of folders) {
-    const key = fuigoSessionKey(folder);
-    const names = "exact" in key
-      ? [key.exact]
-      : listDir(sessions).filter((name) => name.startsWith(key.slugPrefix) && /^[a-f0-9]{16}$/.test(name.slice(key.slugPrefix.length))
-        && readHead(pathApiFor(home).join(sessions, name, ".cwd"), 64 * 1024)?.trim() === folder);
-    for (const name of names) record(removeConfined(sessions, pathApiFor(home).join(sessions, name)), pathApiFor(home).join(sessions, name), removed, failed);
+    const dir = api.join(sessions, fuigoSessionKey(folder));
+    for (const name of listDir(dir)) if (lstatOrNull(api.join(dir, name))?.isDirectory()) sessionIds.add(name);
+    record(removeConfined(sessions, dir), dir, removed, failed);
+  }
+  if (sessionIds.size) {
+    const log = api.join(home, "logs", "unified.jsonl");
+    try {
+      if (scrubJsonlInPlace(log, (row) => typeof row.sid === "string" && sessionIds.has(row.sid))) removed.push(log);
+    } catch {
+      failed.push(log);
+    }
+  }
+  const memory = api.join(home, "memory");
+  for (const folder of new Set(memoryFolders)) {
+    const dir = api.join(memory, fuigoMemoryKey(folder));
+    record(removeConfined(memory, dir), dir, removed, failed);
   }
 }
 
@@ -387,9 +458,12 @@ export class ConversationDeletions {
         const desk = nodePath.join(dirs.workspaces, botId, "threads", threadId);
         const stat = lstatOrNull(desk);
         if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) continue;
-        let key: string | undefined;
-        try { key = checkpointKey(realpathSync.native(desk)); } catch { key = undefined; }
-        desks.push({ botId, threadId, ...(key ? { checkpointKey: key } : {}) });
+        let real: string | undefined;
+        try { real = realpathSync.native(desk); } catch { real = undefined; }
+        // Engines that file notes by folder (Fuigo/Grok memory) name them by
+        // the canonical path only outside a git repository.
+        const memoryFolder = real && !insideGitRepository(real) ? real : undefined;
+        desks.push({ botId, threadId, ...(real ? { checkpointKey: checkpointKey(real) } : {}), ...(memoryFolder ? { memoryFolder } : {}) });
       }
     }
     const leftovers: DeletionLeftover[] = [];
@@ -476,7 +550,8 @@ export class ConversationDeletions {
       const path = nodePath.join(dirs.artifacts, name);
       record(removeConfined(dirs.artifacts, path), path, removed, failed);
     }
-    if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], removed, failed, leftovers);
+    const memoryFolders = entry.desks.filter((desk) => threadIds.includes(desk.threadId) && typeof desk.memoryFolder === "string" && desk.memoryFolder.endsWith(desk.threadId)).map((desk) => desk.memoryFolder!);
+    if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], memoryFolders, removed, failed, leftovers);
     // The rows are gone and overwritten (secure_delete); the write-ahead log
     // still holds the old pages until it is checkpointed and truncated.
     try { this.options.database().exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* the next checkpoint takes it */ }
@@ -504,13 +579,13 @@ export class ConversationDeletions {
     return finished;
   }
 
-  private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
+  private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], memoryFolders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
     const seen = new Set<string>();
     for (const { engine, home } of homes) {
       if (seen.has(`${engine}\0${home}`)) continue;
       seen.add(`${engine}\0${home}`);
       const before = removed.length;
-      if (engine === "fuigo" || engine === "grok") removeFuigoSessions(home, folders, removed, failed);
+      if (engine === "fuigo" || engine === "grok") removeFuigoSessions(home, folders, memoryFolders, removed, failed);
       else if (engine === "claude") removeClaudeProjects(home, folders, removed, failed, leftovers);
       else if (engine === "codex") removeCodexRollouts(home, folders, removed, failed);
       if (removed.length === before) continue;
