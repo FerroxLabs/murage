@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
@@ -91,5 +91,29 @@ it("answers ?w= with a smaller WebP, the original when it is already small, and 
     const refused = await fetch(`${session.info.url}/api/attachments/${wideName}?w=321`);
     expect(refused.status).toBe(400);
     await refused.text();
+  } finally { await session.close(); }
+}, 30000);
+
+it("gives a reused attachment name a fresh thumbnail when its bytes changed", async () => {
+  const session = await launchVerificationServer();
+  try {
+    const uploadId = "33333333-3333-4333-8333-333333333333";
+    const upload = async (bytes: Buffer) => {
+      const res = await fetch(`${session.info.url}/api/attachments?uploadId=${uploadId}`, { method: "POST", headers: { "content-type": "image/png" }, body: bytes });
+      expect(res.status).toBe(201);
+      return (await res.json() as { path: string }).path;
+    };
+    const thumb = async (name: string) => Buffer.from(await (await fetch(`${session.info.url}/api/attachments/${name}?w=320`)).arrayBuffer());
+    const saved = await upload(png(2000, 40));
+    const name = saved.split(/[\\/]/).at(-1)!;
+    const before = await thumb(name);
+    expect(await thumb(name)).toEqual(before);
+    // What deleting the message does to its attachment, then the same
+    // client-chosen uploadId saved again with other pixels.
+    unlinkSync(saved);
+    expect(await upload(png(2000, 80))).toBe(saved);
+    const after = await thumb(name);
+    expect(after.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    expect(after).not.toEqual(before);
   } finally { await session.close(); }
 }, 30000);

@@ -10396,15 +10396,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
 const thumbnails = createThumbnails({ resize: loadResize, maxBytes: 32 * 1024 * 1024, maxConcurrent: 2 });
 
 /** One immutable image, or its `?w=` thumbnail when that is smaller. `key`
- * names the stored image, never anything the client sent, and the cache key
- * adds a digest of its bytes: an attachment deleted with its message can be
- * saved again under the same client-chosen uploadId with other pixels. */
-async function sendImage(res: ServerResponse, url: URL, key: string, bytes: Buffer, mime: string, headers: Record<string, string> = {}) {
+ * names the stored image, never anything the client sent, and `version`
+ * names its bytes, also server-side: an attachment deleted with its message
+ * can be saved again under the same client-chosen uploadId with other
+ * pixels. The version is read off the file or the message rather than hashed
+ * from the pixels, which a gallery scroll would otherwise do per row. */
+async function sendImage(res: ServerResponse, url: URL, key: string, version: string, bytes: Buffer, mime: string, headers: Record<string, string> = {}) {
   const width = thumbnailWidth(url.searchParams.get("w"));
   if (width === null) return json(res, 400, { error: `w must be one of ${THUMBNAIL_WIDTHS.join(", ")}` });
   const served = width === undefined
     ? { image: null, final: true }
-    : await thumbnails.serve(`${key}:${createHash("sha256").update(bytes).digest("base64url")}`, bytes, mime, width);
+    : await thumbnails.serve(`${key}:${version}`, bytes, mime, width);
   const body = served.image ?? { bytes, mime };
   res.writeHead(200, {
     "content-type": body.mime,
@@ -12324,7 +12326,9 @@ const server = createServer(async (req, res) => {
       }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
-      return sendImage(res, url, `screen:${m[1]}:${message.id}`, Buffer.from(message.png, "base64"), message.mime ?? "image/png");
+      // A settled message's image is never rewritten; its length stands in
+      // for a digest should that ever change.
+      return sendImage(res, url, `screen:${m[1]}:${message.id}`, String(message.png.length), Buffer.from(message.png, "base64"), message.mime ?? "image/png");
     }
 
     // ── image attachments ────────────────────────────────────────────────
@@ -12455,7 +12459,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "GET") {
       const attachment = readAttachment(m[1]!);
       if (!attachment) return json(res, 404, { error: "no such attachment" });
-      return sendImage(res, url, `attachment:${m[1]}`, attachment.bytes, attachment.mime, { "x-content-type-options": "nosniff" });
+      return sendImage(res, url, `attachment:${m[1]}`, attachment.version, attachment.bytes, attachment.mime, { "x-content-type-options": "nosniff" });
     }
 
     // ── search across every transcript ──────────────────────────────────

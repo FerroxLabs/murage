@@ -5,9 +5,12 @@
 // Murage quota-pressure cleanup and failed-partial byte accounting retained.
 import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
   createReadStream,
+  fstatSync,
   linkSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   statSync,
@@ -602,15 +605,26 @@ export function attachmentExists(name: string): boolean {
 
 /** Read an attachment back for serving. Only names that are exactly a bare
  * filename (no separators, no dotfiles) inside ATTACHMENTS_DIR resolve —
- * the route must never become a general file server for the data dir. */
-export function readAttachment(name: string): { bytes: Buffer; mime: string } | null {
+ * the route must never become a general file server for the data dir.
+ *
+ * `version` names these bytes without hashing them: size, modification time
+ * in nanoseconds and inode, read from the same open file as the bytes. A
+ * name is reused only when its file was deleted and saved again under the
+ * same uploadId, which writes a new file (a fresh partial linked into place),
+ * so the version changes with the bytes. */
+export function readAttachment(name: string): { bytes: Buffer; mime: string; version: string } | null {
   if (!/^[A-Za-z0-9-]+\.(png|jpg|jpeg|gif|webp)$/.test(name)) return null;
   const path = join(ATTACHMENTS_DIR, name);
   if (extname(path) === ".jpeg") return null; // saved as .jpg; .jpeg is not a name we write
+  let fd: number | undefined;
   try {
-    return { bytes: readFileSync(path), mime: mimeForExt(extname(path)) };
+    fd = openSync(path, "r");
+    const stat = fstatSync(fd, { bigint: true });
+    return { bytes: readFileSync(fd), mime: mimeForExt(extname(path)), version: `${stat.size}:${stat.mtimeNs}:${stat.ino}` };
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 

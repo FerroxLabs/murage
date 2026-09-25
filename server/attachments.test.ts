@@ -119,6 +119,24 @@ describe("saveImage", () => {
     expect(back?.mime).toBe("image/gif");
   });
 
+  it("names the bytes it read with a version that changes when a reused name gets other bytes", () => {
+    const uploadId = "22222222-2222-4222-8222-222222222222";
+    const saved = saveImage(Buffer.from("pixels-A"), "image/png", uploadId);
+    const name = saved.path.split(/[\\/]/).pop()!;
+    const first = readAttachment(name);
+    expect(first?.version).toMatch(/^8:\d+:\d+$/);
+    // Read again, unchanged: the same version, so a cached thumbnail is reused.
+    expect(readAttachment(name)?.version).toBe(first?.version);
+    // Deleted with its message, then saved again under the same uploadId with
+    // other bytes of the same length: the thumbnail cache must not match.
+    deleteAttachment(saved.path);
+    saveImage(Buffer.from("pixels-B"), "image/png", uploadId);
+    const second = readAttachment(name);
+    expect(second?.bytes.toString()).toBe("pixels-B");
+    expect(second?.version).not.toBe(first?.version);
+    deleteAttachment(saved.path);
+  });
+
   it("rejects unsupported mimes, empty bodies, and oversize bodies", () => {
     expect(() => saveImage(Buffer.from("x"), "image/svg+xml")).toThrow(/unsupported image type/);
     expect(() => saveImage(Buffer.alloc(0), "image/png")).toThrow(/empty/);
