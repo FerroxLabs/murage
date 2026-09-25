@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   cookieName,
   createBrowserHandler,
+  keptCacheControl,
   type BoundIdentity,
   type BrowserDeviceStore,
   type SignInLimiter,
@@ -310,5 +311,59 @@ describe("what a call needs, through the door", () => {
     expect((await knock("GET", MODEL)).status).toBe(401);
     expect((await knock("POST", "/api/tts/prepare", write(), "{}")).status).toBe(401);
     expect(asked).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("images a chat has already downloaded", () => {
+  const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+  const FOREVER = "private, max-age=31536000, immutable";
+
+  it("keeps the harness's lifetime on an attachment and on a message image", async () => {
+    // `no-store` here meant a phone scrolling back through a chat of photos
+    // downloaded every one of them again, every time, over cellular.
+    replies.set("/api/attachments/avatar-1.png", reply(200, { "content-type": "image/png", "cache-control": FOREVER }, PNG));
+    replies.set("/api/threads/th_1/messages/msg_1/image", reply(200, { "content-type": "image/png", "cache-control": FOREVER }, PNG));
+    const cookie = await signedIn();
+    for (const path of ["/api/attachments/avatar-1.png", "/api/threads/th_1/messages/msg_1/image"]) {
+      const answer = await knock("GET", path, cookie);
+      expect(answer.status, path).toBe(200);
+      expect(answer.headers["cache-control"], path).toBe(FOREVER);
+      expect(answer.raw.equals(PNG), path).toBe(true);
+      // Only the lifetime is the harness's; the door's other headers stand.
+      expect(answer.headers["x-frame-options"], path).toBe("DENY");
+      expect(answer.headers["referrer-policy"], path).toBe("no-referrer");
+    }
+  });
+
+  it("never lets a shared cache keep one", async () => {
+    replies.set("/api/attachments/avatar-2.png", reply(200, { "content-type": "image/png", "cache-control": "public, max-age=31536000" }, PNG));
+    replies.set("/api/attachments/avatar-3.png", reply(200, { "content-type": "image/png" }, PNG));
+    const cookie = await signedIn();
+    expect((await knock("GET", "/api/attachments/avatar-2.png", cookie)).headers["cache-control"]).toBe("private, no-store");
+    // Saying nothing is not permission either.
+    expect((await knock("GET", "/api/attachments/avatar-3.png", cookie)).headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("keeps no-store on a refusal and on every other route", async () => {
+    replies.set("/api/threads/th_1/messages/msg_9/image", reply(404, { "content-type": "application/json", "cache-control": FOREVER }, '{"error":"no image on that message"}'));
+    replies.set("/api/tts/speak", reply(200, { "content-type": "audio/mpeg", "cache-control": "private, max-age=60" }, Buffer.from([1, 2, 3])));
+    const cookie = await signedIn();
+    const missing = await knock("GET", "/api/threads/th_1/messages/msg_9/image", cookie);
+    expect(missing.status).toBe(404);
+    expect(missing.headers["cache-control"]).toBe("private, no-store");
+    const speech = await knock("POST", "/api/tts/speak", write(cookie), '{"text":"hi"}');
+    expect(speech.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("decides it as a function", () => {
+    const image = "/api/threads/th_1/messages/msg_1/image";
+    expect(keptCacheControl("GET", image, 200, FOREVER)).toBe(FOREVER);
+    expect(keptCacheControl("HEAD", image, 200, FOREVER)).toBeNull();
+    expect(keptCacheControl("GET", image, 206, FOREVER)).toBeNull();
+    expect(keptCacheControl("GET", image, 200, "privately, max-age=1")).toBeNull();
+    expect(keptCacheControl("GET", image, 200, [FOREVER])).toBeNull();
+    expect(keptCacheControl("GET", "/api/attachments/x.svg", 200, FOREVER)).toBeNull();
+    expect(keptCacheControl("GET", "/api/bots", 200, FOREVER)).toBeNull();
   });
 });

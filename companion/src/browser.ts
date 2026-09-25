@@ -526,6 +526,37 @@ export function staticCacheControl(path: string): string {
   return "private, no-store";
 }
 
+/** The harness routes whose `cache-control` this door passes on instead of
+ * replacing. Both serve bytes that never change under their name: an
+ * attachment is stored under a generated filename, and a message image is the
+ * image of a settled message (`server/index.ts:11983-11988`, `:12119-12124`).
+ * The same two patterns `BROWSER_ALLOWED` lets through. */
+const UPSTREAM_CACHEABLE: ReadonlyArray<RegExp> = [
+  /^\/api\/attachments\/[\w-]+\.(?:png|jpe?g|gif|webp)$/i,
+  /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/,
+];
+
+/** The harness's own cache lifetime for this response when this door keeps
+ * it, or null for the door's `no-store`.
+ *
+ * `no-store` on everything was the right default and the wrong answer here:
+ * a phone scrolling back through a chat of photos downloaded every one of
+ * them again, every time, over cellular. Kept only for a successful GET on
+ * the two routes above, and only when the harness itself said `private` — no
+ * cache shared between a person and this door may hold their pictures, and a
+ * harness that stops saying `private` gets `no-store` rather than trust. */
+export function keptCacheControl(
+  method: string,
+  path: string,
+  status: number,
+  upstream: string | string[] | undefined,
+): string | null {
+  if (method !== "GET" || status !== 200 || typeof upstream !== "string") return null;
+  if (!UPSTREAM_CACHEABLE.some((route) => route.test(path))) return null;
+  const value = upstream.trim();
+  return /^private\s*(?:,|$)/i.test(value) ? value : null;
+}
+
 /** Read a body as raw bytes, bounded, so it can be inspected and then
  * forwarded byte-for-byte. */
 const readRaw = (req: IncomingMessage, limit = 64 * 1024): Promise<Buffer> =>
@@ -1434,7 +1465,13 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             // body reaches here too — `forwardedHeaders` never sends
             // accept-encoding, so this is a guard rather than a path, and it
             // passes through intact rather than scrubbed and broken.
-            res.writeHead(harness.statusCode ?? 200, { ...harness.headers, ...BASE_HEADERS });
+            const status = harness.statusCode ?? 200;
+            res.writeHead(status, {
+              ...harness.headers,
+              ...BASE_HEADERS,
+              "cache-control":
+                keptCacheControl(method, path, status, harness.headers["cache-control"]) ?? BASE_HEADERS["cache-control"],
+            });
             harness.on("error", () => res.destroy());
             harness.pipe(res);
             return;
