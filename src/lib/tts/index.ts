@@ -18,7 +18,8 @@ export type SpeechStatus = "idle" | "preparing" | "speaking";
 
 export interface SpeechSnapshot {
   status: SpeechStatus;
-  /** what is being spoken, so the UI can show a stop button in the right place */
+  /** what is being spoken, so the UI can show a stop button in the right place;
+   *  after a failure, what failed, so the error shows where it was asked for */
   botId?: string;
   messageId?: string;
   /** the utterance currently audible — call mode shows it as a caption */
@@ -197,7 +198,7 @@ export class Speaker {
     try {
       utterances = await this.prepare(text, opts.voiceId, controller.signal, opts.botId);
     } catch (e) {
-      if (live()) this.set({ ...IDLE, error: e instanceof Error ? e.message : String(e) });
+      if (live()) this.set({ ...IDLE, botId: opts.botId, messageId: opts.messageId, error: e instanceof Error ? e.message : String(e) });
       if (this.request === controller) this.request = null;
       return;
     }
@@ -226,7 +227,7 @@ export class Speaker {
       if ("error" in rendered) {
         if (live()) {
           this.set({
-            ...IDLE,
+            ...IDLE, botId: opts.botId, messageId: opts.messageId,
             error: rendered.error instanceof Error ? rendered.error.message : String(rendered.error),
           });
         }
@@ -237,7 +238,7 @@ export class Speaker {
       this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: utterances[i] });
       const finished = await this.play(rendered.blob, live);
       if (!finished || !live()) {
-        if (live()) this.set({ ...IDLE, error: "The generated voice clip couldn't be played." });
+        if (live()) this.set({ ...IDLE, botId: opts.botId, messageId: opts.messageId, error: "The generated voice clip couldn't be played." });
         if (this.request === controller) this.request = null;
         return;
       }
@@ -306,7 +307,7 @@ export class Speaker {
         if (!live()) return false;
         if (rendered.error !== undefined || !rendered.blob) {
           const error = rendered.error;
-          this.set({ ...IDLE, error: error instanceof Error ? error.message : String(error ?? "the voice failed") });
+          this.set({ ...IDLE, botId: opts.botId, messageId: opts.messageId, error: error instanceof Error ? error.message : String(error ?? "the voice failed") });
           return false;
         }
         this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: rendered.text });
