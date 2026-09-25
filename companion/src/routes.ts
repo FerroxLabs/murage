@@ -63,6 +63,32 @@ export function isCloudDesktopJoin(method: string, path: string): boolean {
   return method === CLOUD_DESKTOP_JOIN_ROUTE.method && CLOUD_DESKTOP_JOIN_ROUTE.path.test(path);
 }
 
+/** Requests that speak as the owner: answering a card, and the owner's own
+ * chat words. The harness takes a yes on a card (allow, allow for this task,
+ * or an answer to a question), and records a message as the owner's, only
+ * from the desktop or from a request carrying the launch credential, because
+ * any process on the computer can reach its loopback port and the companion
+ * marker alone proves nothing. A paired device is the owner, so the door
+ * vouches for these here. */
+export const OWNER_VOICE_ROUTES = [
+  { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages\/[\w-]+\/edit$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/messages$/ },
+] as const;
+
+/** The private launch proof to add when forwarding this request, if any. It
+ * is only ever the value this door was started with, never the client's. A
+ * cloud-desktop join has already been refused without a usable credential;
+ * an owner-voice request without one is still forwarded, and the harness then
+ * takes only a decline and records the words as unproven. */
+export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
+  const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+  if (usable && OWNER_VOICE_ROUTES.some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
+  return {};
+}
+
 /** The two routine routes that can carry a `runOn` field.
  *
  * Creating or amending a routine is an ordinary thing to do from a phone, but

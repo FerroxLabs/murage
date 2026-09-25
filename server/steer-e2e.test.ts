@@ -165,7 +165,7 @@ posixOnly("mid-turn steering e2e", () => {
       const instances = (await api("GET", "/api/instances")).body.instances;
       expect(instances.find((i: any) => i.instanceId === "claude").capabilities.queueing).toBe(true);
 
-      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to start");
       // Only the fake's completed Bash chip proves its live turn reached the
       // reply gate. Setup/runtime errors are activity messages too.
@@ -175,7 +175,7 @@ posixOnly("mid-turn steering e2e", () => {
         if (failure) throw new Error(`fake turn failed before steering: ${JSON.stringify(failure)}; stderr: ${stderr}`);
         return bot.busy === true && bot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Bash" && m.tool.ok === true);
       }, "the fake's completed Bash tool");
-      const second = await api("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
+      const second = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
       expect(second.status).toBe(202);
       expect(second.body.steered, JSON.stringify({ second, bot: await getBot(created.id), stderr })).toBe(true);
 
@@ -203,7 +203,7 @@ posixOnly("mid-turn steering e2e", () => {
   it("rejects a delayed steer acknowledgement after the bot is deleted", async () => {
     const created = await makeBot("claudeRace", "claude-fake");
 
-    expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first race turn" })).status).toBe(202);
+    expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first race turn" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the race turn to start");
     await waitFor(
       async () => (await getBot(created.id))?.messages.some((message: any) => message.kind === "activity"),
@@ -213,7 +213,7 @@ posixOnly("mid-turn steering e2e", () => {
     // The fake has paused stdin after the first prompt. This exceeds a pipe's
     // writable buffer, so the steer promise cannot acknowledge until the gate
     // opens; meanwhile the first turn is free to settle normally.
-    const delayed = api("POST", `/api/bots/${created.id}/messages`, {
+    const delayed = desktopApi("POST", `/api/bots/${created.id}/messages`, {
       text: `delayed ownership check ${"x".repeat(900_000)}`,
       threadId: created.threadId,
     });
@@ -234,9 +234,9 @@ posixOnly("mid-turn steering e2e", () => {
 
   it("an engine without a live session preserves the message in the server-side queue", async () => {
     const created = await makeBot("acp", "fake-model");
-    expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
+    expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
-    const queued = await api("POST", `/api/bots/${created.id}/messages`, { text: "second" });
+    const queued = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "second" });
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);
     expect((await getBot(created.id)).messages.some((m: any) => m.text === "second")).toBe(false);

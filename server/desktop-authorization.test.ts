@@ -35,6 +35,7 @@ const administration: Array<[string, string]> = [
   ["PATCH", "/api/webhooks/example"], ["DELETE", "/api/webhooks/example"],
   ["POST", "/api/connectors/example/authorize"], ["DELETE", "/api/connectors/example/accounts/account-a"], ["DELETE", "/api/connectors/example"],
   ["POST", "/api/bots/{bot}/connector-cards/example/authorize"],
+  ["POST", "/api/flux-connection/mutate"],
 ];
 
 async function api(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
@@ -122,7 +123,7 @@ describe("desktop authority at the actual harness boundary", () => {
     expect(profile.body.bot.autoApprove).toBe(false);
   });
 
-  it("preserves remote chat, tasks, room sends and content-bound single-use routine approval", async () => {
+  it("preserves remote chat, tasks and room sends, and approves a content-bound routine only from the owner's surface", async () => {
     const sent = await api("POST", `/api/bots/${botId}/messages`, { text: "Fixture authority chat" }, remote);
     expect(sent.status).toBe(202);
     await expect.poll(async () => {
@@ -143,10 +144,16 @@ describe("desktop authority at the actual harness boundary", () => {
     }, { authorization: `Bearer ${token}` });
     expect(proposed.status).toBe(201);
     expect((await api("POST", `/api/bots/${botId}/interrupt`, undefined, remote)).status).toBe(200);
-    const approved = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, remote);
+    // The companion marker alone is not the paired phone: any local process
+    // can send it. It may not approve (the real phone door adds the launch
+    // credential; respond-authority.test.ts covers that path).
+    const unproven = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, remote);
+    expect(unproven.status).toBe(403);
+    expect((await api("GET", "/api/routines", undefined, desktop)).body.routines).toHaveLength(0);
+    const approved = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, desktop);
     expect(approved.status).toBe(200);
     expect((await api("GET", "/api/routines", undefined, desktop)).body.routines).toHaveLength(1);
-    expect((await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, remote)).status).toBe(200);
+    expect((await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, desktop)).status).toBe(200);
     expect((await api("GET", "/api/routines", undefined, desktop)).body.routines).toHaveLength(1);
     expect((await api("POST", `/api/bots/${botId}/tasks`, { title: "Remote task" }, remote)).status).toBe(201);
     expect((await api("POST", `/api/groups/${groupId}/messages`, { text: "Fixture room authority chat" }, remote)).status).toBe(202);

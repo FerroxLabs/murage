@@ -264,6 +264,8 @@ describe("local computer descriptor", () => {
       join(userData, "cua-connection.json"),
       JSON.stringify({
         mode: "embedded",
+        status: "ready",
+        socketPath: "\\\\.\\pipe\\cua-driver",
         mcpCommand: "C:\\cua-driver.exe",
         mcpArgs: ["mcp"],
         mcpEnv: { CUA_DRIVER_EMBEDDED: "1" },
@@ -294,7 +296,7 @@ describe("local computer descriptor", () => {
 // write that file chose what the harness executes. These hold the runtime
 // check that the Linux branch has always had.
 describe("legacy descriptor runtime custody", () => {
-  const legacy = { mode: "embedded", mcpCommand: "/usr/local/bin/cua-driver", mcpArgs: ["mcp"], mcpEnv: {} };
+  const legacy = { mode: "embedded", status: "ready", socketPath: "/tmp/cua.sock", mcpCommand: "/usr/local/bin/cua-driver", mcpArgs: ["mcp"], mcpEnv: {} };
   const expected = {
     command: "/usr/local/bin/cua-driver",
     args: ["mcp"],
@@ -346,5 +348,76 @@ describe("legacy descriptor runtime custody", () => {
     writeFileSync(file, JSON.stringify(legacy), { mode: 0o666 });
     expect(validateLegacyDescriptorRuntime(file, "win32", { uid: -12345 })).toBe(true);
     expect(validateLegacyDescriptorRuntime(file, "darwin", { uid: -12345 })).toBe(false);
+  });
+});
+
+// Upstream #1730: the descriptor used to fail open. A stale or broken file at
+// the exact app-data path fell through to older folders (a previous install's
+// OpenGrokBot descriptor, say), and any mode but "unavailable" mounted. Now
+// the first descriptor that exists decides, and only a complete, ready one
+// becomes a connection.
+describe.skipIf(process.platform === "win32")("legacy descriptor fails closed", () => {
+  const ready = { mode: "embedded", status: "ready", socketPath: "/tmp/cua.sock", mcpCommand: "/usr/local/bin/cua-driver", mcpArgs: ["mcp", "--embedded"], mcpEnv: {} };
+  const write = (directory: string, value: unknown) => {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(directory, 0o700);
+    writeFileSync(join(directory, "cua-connection.json"), JSON.stringify(value), { mode: 0o600 });
+  };
+  const appSupport = (home: string, name: string) => join(home, "Library", "Application Support", name);
+
+  it("mounts a complete, ready descriptor", () => {
+    const userData = privateUserData("ready");
+    write(userData, ready);
+    for (const platform of ["darwin", "win32"] as const) {
+      expect(readCuaConnection({ platform, userData })).toMatchObject({ command: ready.mcpCommand, args: ready.mcpArgs, platform });
+    }
+  });
+
+  it.each([
+    ["no status", { status: undefined }],
+    ["an unavailable status", { status: "unavailable" }],
+    ["a null status", { status: null }],
+    ["an object status", { status: {} }],
+    ["no socket", { socketPath: undefined }],
+    ["an empty socket", { socketPath: "" }],
+    ["no argv", { mcpArgs: undefined }],
+    ["argv that is not the MCP subcommand", { mcpArgs: ["--eval", "x"] }],
+    ["an empty argv", { mcpArgs: [] }],
+    ["an unknown mode", { mode: "bundled" }],
+    ["no mode", { mode: undefined }],
+    ["a blank command", { mcpCommand: "  " }],
+  ])("refuses a descriptor with %s", (_label, change) => {
+    const userData = privateUserData("incomplete");
+    write(userData, { ...ready, ...change });
+    expect(readCuaConnection({ platform: "darwin", userData })).toBeNull();
+    expect(readCuaConnection({ platform: "win32", userData })).toBeNull();
+  });
+
+  it("never falls back past a stale exact descriptor to an older folder", () => {
+    const userData = privateUserData("exact-stale");
+    const home = privateUserData("exact-stale-home");
+    write(appSupport(home, "OpenGrokBot"), ready);
+    write(userData, { mode: "unavailable", reason: "Screen Recording required" });
+    expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
+    write(userData, { mode: "embedded" });
+    expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
+    writeFileSync(join(userData, "cua-connection.json"), "{ not json", { mode: 0o600 });
+    expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
+  });
+
+  it("uses only the app's exact folder when it names one, even before the app has written there", () => {
+    const userData = privateUserData("exact-missing");
+    const home = privateUserData("exact-missing-home");
+    write(appSupport(home, "Murage"), ready);
+    expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
+  });
+
+  it("treats the first present older descriptor as the answer", () => {
+    const home = privateUserData("legacy-order-home");
+    write(appSupport(home, "Murage"), { ...ready, status: "unavailable" });
+    write(appSupport(home, "OpenGrokBot"), ready);
+    expect(readCuaConnection({ platform: "darwin", userData: undefined, home })).toBeNull();
+    write(appSupport(home, "Murage"), ready);
+    expect(readCuaConnection({ platform: "darwin", userData: undefined, home })).toMatchObject({ command: ready.mcpCommand });
   });
 });

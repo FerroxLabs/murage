@@ -36,10 +36,14 @@ const path = await import('node:path');
 process.env.MURAGE_USER_DATA = process.env.MURAGE_DATA_DIR;
 const dataDir = fs.realpathSync(process.env.MURAGE_DATA_DIR);
 const driver = path.join(dataDir, 'fake-host-driver.mjs');
-fs.writeFileSync(driver, ${JSON.stringify(fakeHostSource)});
+fs.writeFileSync(driver, '#!' + process.execPath + String.fromCharCode(10) + ${JSON.stringify(fakeHostSource)});
+fs.chmodSync(driver, 0o755);
 fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({
-  mcpCommand: process.execPath,
-  mcpArgs: [driver],
+  mode: 'embedded',
+  status: 'ready',
+  socketPath: path.join(dataDir, 'cua.sock'),
+  mcpCommand: driver,
+  mcpArgs: ['mcp'],
   mcpEnv: { FIXTURE_HOST_LOG: path.join(dataDir, 'host-calls.log') },
 }));
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';

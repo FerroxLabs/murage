@@ -25,7 +25,7 @@ import {
   MAX_COMPANION_ENDPOINTS,
   type CompanionEndpoint,
 } from "./endpoints.ts";
-import { denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
+import { denyReason, isCloudDesktopJoin, isRoutineWrite, launchProofHeaders } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** What the forwarding handler needs from the process around it. */
@@ -439,7 +439,7 @@ export function createProxyHandler(options: ProxyOptions) {
           method,
           headers: {
             ...forwardHeaders(req, body),
-            ...(isCloudDesktopJoin(method, path) ? { "x-murage-companion-token": options.companionToken! } : {}),
+            ...launchProofHeaders(method, path, options.companionToken),
           },
         },
         (harness) => {

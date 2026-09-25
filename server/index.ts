@@ -310,6 +310,8 @@ import {
   type GroupDefaultResponder,
   type GroupRecord,
   type Message,
+  type MessageOrigin,
+  isOwnerOrigin,
   type OptionCardData,
   type TaskRecord,
   type TaskResourceWaitKind,
@@ -2024,7 +2026,8 @@ function echoSetupAnswer(step: SetupStep, answer: string): void {
       .messagesFor(chief.threadId)
       .some((message) => message.role === "user" && (message.text ?? "").trim() === said);
     if (already) return;
-    store.appendMessage(chief.threadId, { role: "user", kind: "text", text: said });
+    // /api/setup is desktop only, so the answer is the owner's own words.
+    store.appendMessage(chief.threadId, { role: "user", kind: "text", text: said, origin: "desktop" });
   } catch {
     // The transcript is the nice half of this route, never the job. A store
     // that refused the line must not cost them the step they just answered.
@@ -5143,7 +5146,11 @@ function drainQueuedSends() {
     // Drain just appended the held lines; userMessage keeps startTurn
     // from duplicating the last one, and excludeIds drops every drained
     // line from the transcript-replay so they are not also in `prompt`.
-    startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds }).then(() => undefined).catch((err) => {
+    // ...unless a drained line came from an unproven caller: then the whole
+    // turn runs unattended, like a webhook turn.
+    startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds,
+      ...(store.messagesFor(threadId).some((message) => excludeIds.includes(message.id) && message.origin === "unproven") ? { unattended: true } : {}),
+    }).then(() => undefined).catch((err) => {
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
@@ -5367,6 +5374,8 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Server-owned: the surface the sending request proved (MessageOrigin). */
+    origin?: MessageOrigin;
     /** Server-owned: this is the single re-dispatch of a turn whose prepared
      * memory context was revoked before the provider accepted it (see the
      * catch below). Never taken from a request body. */
@@ -5475,6 +5484,7 @@ async function startTurn(
           replyToId: opts?.replyTo?.id,
           sendId: opts?.sendId,
           attachments: turnImages.promote(threadId, text),
+          ...(opts?.origin ? { origin: opts.origin } : {}),
         });
   }
 
@@ -8381,6 +8391,8 @@ type StartGroupTurnOptions = {
   goalCoordinatorBotId?: string;
   /** Correlates a room goal card with its durable RoutineRun receipt. */
   goalRunId?: string;
+  /** Server-owned: the surface the sending request proved (MessageOrigin). */
+  origin?: MessageOrigin;
 };
 
 function startGroupTurn(
@@ -8429,6 +8441,7 @@ function startGroupTurn(
     channelMode,
     queueId,
     attachments: turnImages.promote(threadId, text),
+    ...(options.origin ? { origin: options.origin } : {}),
   });
   if (!group.dm) store.titleGroupTaskFromFirstMessage(group.id, text, threadId);
 
@@ -8565,14 +8578,16 @@ function drainQueuedChannelSends(): void {
       const group = store.group(groupId);
       return group ? groupIsWorking(group) : false;
     },
-    ({ groupId, threadId, text, replyToId, sendId, mode, id }) => {
+    ({ groupId, threadId, text, replyToId, sendId, mode, id, origin }) => {
       const group = store.group(groupId);
       const ownsThread = group?.dm
         ? group.threadId === threadId
         : Boolean(group && store.groupTaskByThread(group.id, threadId));
       if (!group || !ownsThread) return;
       try {
-        startGroupTurn(groupId, text, resolveReplyTarget(threadId, replyToId), sendId, mode, id);
+        if (origin === "unproven") markUnattended(threadId);
+        else if (origin) clearUnattended(threadId);
+        startGroupTurn(groupId, text, resolveReplyTarget(threadId, replyToId), sendId, mode, id, origin ? { origin } : {});
       } catch (error) {
         store.appendMessage(threadId, {
           role: "bot",
@@ -10287,6 +10302,33 @@ function mayReadThread(req: IncomingMessage, url: URL, threadId: string): boolea
   return visibleToCompanion(store, { scope: "thread", threadId });
 }
 
+/** May this request say yes to a card on the owner's behalf?
+ *
+ * Only the owner's own surfaces: the desktop app with this launch's secret,
+ * or the paired phone's companion carrying the launch credential it shares
+ * with this harness. The Telegram, Slack and Discord buttons answer inside
+ * this process and never come through HTTP. Anything else on loopback (a
+ * script, or a bot's own shell under Full access) may decline or skip a card
+ * but never allow it, allow it for the task, or answer a question: otherwise
+ * the stop line is a card the bot can click itself. */
+function mayApprove(req: IncomingMessage, url: URL): boolean {
+  return requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
+}
+const APPROVAL_NEEDS_OWNER = "Approving or answering happens in the Murage app or on your paired phone. From here you can only decline.";
+/** The origin stamped on a user message this request writes: what the request
+ * proved, never what its body says. */
+function requestOrigin(req: IncomingMessage, url: URL): MessageOrigin {
+  if (requestSurface(req.headers, url.searchParams) === "desktop") return "desktop";
+  return companionAuthorized(req.headers) ? "companion" : "unproven";
+}
+const ENGINE_COMMAND_NEEDS_OWNER = "Engine commands run only from the Murage app or your paired phone.";
+/** Would this text run as an engine "/" command for this bot? Asked before an
+ * unproven caller's send is taken: such a caller never runs one. */
+function wouldRunEngineCommand(bot: { id: string; modelSelection: { instanceId: string } }, text: string, replyTo?: Message): boolean {
+  const instance = registry.get(bot.modelSelection.instanceId);
+  return Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
+}
+
 const server = createServer(async (req, res) => {
   let url: URL;
   try {
@@ -10623,7 +10665,15 @@ const server = createServer(async (req, res) => {
         if (fullAccessTurnOrigin(internalClaim.threadId) !== "owner" || internalClaim.depth !== 0 || internalEventId) {
           return json(res, 403, { error: "Only the owner can allow this, in a conversation they are having with you right now. Ask the owner to confirm it on the card instead." });
         }
-        const ownerText = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user")?.text ?? "";
+        // The owner's say-so is the latest user message, and only when it
+        // came from a surface that proved it is the owner. Words a local
+        // caller posted into the chat (a script, or this bot's own shell)
+        // are not the owner's, whatever they say.
+        const latestUser = [...store.messagesFor(internalClaim.threadId)].reverse().find((message) => message.role === "user");
+        if (!isOwnerOrigin(latestUser?.origin)) {
+          return json(res, 403, { error: "The latest message did not come from the owner's app or phone, so it cannot allow this. Ask the owner to confirm it on the card instead." });
+        }
+        const ownerText = latestUser?.text ?? "";
         const decided = chatAllowance(body, ownerText, homedir(), stopLineRealpath);
         if (!decided.ok) return json(res, 400, { error: decided.error });
         taskAllowances.grant(internalClaim.botId, internalClaim.threadId, decided.key);
@@ -13492,10 +13542,16 @@ const server = createServer(async (req, res) => {
               replyToId: replyTo?.id,
               sendId,
               mode: channelMode,
+              origin: requestOrigin(req, url),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode);
+          const origin = requestOrigin(req, url);
+          // An unproven send runs the room unattended, like a webhook turn;
+          // the owner's own next send ends that window (as it does in a chat).
+          if (origin === "unproven") markUnattended(threadId);
+          else clearUnattended(threadId);
+          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode, undefined, { origin });
           return { ok: true as const, threadId, message };
         },
       );
@@ -14901,7 +14957,7 @@ const server = createServer(async (req, res) => {
         }
         // (2) The person's words are NOT repeated. The composer's send put
         // them in the transcript; appending them here would say them twice.
-        if (!alongside) store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+        if (!alongside) store.appendMessage(bot.threadId, { role: "user", kind: "text", text, origin: requestOrigin(req, url) });
         store.patchMessage(bot.threadId, messageId, { card: { ...card, answered: text } });
         if (intake.step === "confirm") {
           // A confirm card is a decision, not a question, and typing instead
@@ -14994,6 +15050,13 @@ const server = createServer(async (req, res) => {
       }
       const sendId = parseSendId(body.sendId);
       const replyTo = resolveReplyTarget(threadId, body.replyToId);
+      // A send with no desktop or phone proof is not the owner at the
+      // keyboard: its turn runs like a webhook turn (unattended, so Full
+      // access and Auto's grants do not apply) and it never runs an engine
+      // command.
+      const origin = requestOrigin(req, url);
+      const unprovenSend = origin === "unproven";
+      if (unprovenSend && wouldRunEngineCommand(bot, text, replyTo)) return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
       const receipt = await sendSequencer.run(
         sendId ? `bot:${bot.id}:${threadId}:${sendId}` : undefined,
         sendFingerprint(text, replyTo?.id),
@@ -15042,7 +15105,9 @@ const server = createServer(async (req, res) => {
             // An engine command waits for its own turn: folded into the
             // running one it would reach the engine as chat.
             const isEngineCommand = Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
-            if (!isEngineCommand && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+            // An unproven line never steers the owner's running turn; it
+            // waits in the queue and runs as its own unattended turn.
+            if (!isEngineCommand && !unprovenSend && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
                 .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
                 .catch(() => false);
@@ -15078,32 +15143,36 @@ const server = createServer(async (req, res) => {
                 replyToId: replyTo?.id,
                 sendId,
                 steered: true,
+                origin,
               });
               return { ok: true as const, steered: true as const, threadId, message };
             }
             if (!current.busy && !activeGroupTurnForBot(current.id)) {
-              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
+              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin, ...(unprovenSend ? { unattended: true } : {}) });
               return { ok: true as const, threadId, message };
             }
             const queued = queueSteeredMessage(current.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
+              origin,
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
           // Idle here but speaking in a room: startTurn would refuse with 409.
           // Queue the words; the drain runs them when the room turn ends
-          // (upstream OpenMausBot #1664).
+          // (upstream OpenMausBot #1664). The sender's origin rides along, so
+          // an unproven line still runs unattended when it drains.
           if (activeGroupTurnForBot(currentAtStart.id)) {
             const queued = queueSteeredMessage(currentAtStart.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
+              origin,
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId });
+          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin, ...(unprovenSend ? { unattended: true } : {}) });
           return { ok: true as const, threadId, message };
         },
       );
@@ -15148,11 +15217,15 @@ const server = createServer(async (req, res) => {
           error: unavailableModelMessage(bot.modelSelection.instanceId),
         });
       }
-      const message = store.branchMessage(bot.threadId, messageId, text);
+      const editOrigin = requestOrigin(req, url);
+      if (editOrigin === "unproven" && wouldRunEngineCommand(bot, text, source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined)) {
+        return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
+      }
+      const message = store.branchMessage(bot.threadId, messageId, text, editOrigin);
       if (!message) return json(res, 404, { error: "no such message" });
       store.patchTask(bot.id,bot.threadId, { rewound: true });
       const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;
-      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo });
+      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo, ...(editOrigin === "unproven" ? { unattended: true } : {}) });
       return json(res, 202, { ok: true });
     }
 
@@ -15177,6 +15250,7 @@ const server = createServer(async (req, res) => {
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+      if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const question = questionReply(bot.threadId, String(body.requestId), body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
       if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
@@ -15223,6 +15297,7 @@ const server = createServer(async (req, res) => {
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+      if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const requestId = String(body.requestId);
       const question = questionReply(threadId, requestId, body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });

@@ -153,7 +153,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
 
       // The Chief's held turn is what gives create_bot its authority.
       rmSync(claudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${chief.id}/messages`, { text: "__fixture_hold_authority__", threadId: chief.threadId })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${chief.id}/messages`, { text: "__fixture_hold_authority__", threadId: chief.threadId })).status).toBe(202);
       const chiefTurn = await readJsonWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(claudeDump);
       const chiefEnv = chiefTurn.mcpConfig.mcpServers.agents.env;
       expect(chiefEnv.MURAGE_BOT_ID).toBe(chief.id);
@@ -185,7 +185,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       //    as a question, and offer no "Always allow".
       rmSync(acpDump, { force: true });
       rmSync(`${acpDump}.mcp.json`, { force: true });
-      expect((await api("POST", `/api/bots/${operator.id}/messages`, { text: "go", threadId: operator.threadId })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${operator.id}/messages`, { text: "go", threadId: operator.threadId })).status).toBe(202);
       let card: any = null;
       await expect.poll(async () => {
         card = (await messages(operator.threadId)).find((m) => m.kind === "options" && m.card?.requestId) ?? null;

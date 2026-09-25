@@ -212,6 +212,7 @@ async function attachStandalone(signal) {
   if (!(await socketAlive(STANDALONE_SOCKET, signal))) return null;
   return {
     mode: "standalone",
+    status: "ready",
     socketPath: STANDALONE_SOCKET,
     mcpCommand: driver,
     mcpArgs: ["mcp"],
@@ -242,6 +243,7 @@ async function startEmbedded(binary, signal) {
     signal.throwIfAborted();
     return {
       mode: "embedded",
+      status: "ready",
       socketPath: conn.socketPath,
       mcpCommand: binary,
       mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
@@ -311,6 +313,7 @@ async function initializeMacCua(signal) {
     // Dev machine with CuaDriver.app's daemon already running.
     nextConnection = {
       mode: "standalone",
+      status: "ready",
       socketPath: STANDALONE_SOCKET,
       mcpCommand: binary,
       mcpArgs: ["mcp"],

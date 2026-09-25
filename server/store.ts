@@ -155,6 +155,16 @@ export interface SecretRequestCardData {
   error?: string;
 }
 
+/** Who put a user message into the transcript. The harness decides this when
+ * it writes the message, from the surface the request proved (the desktop
+ * app's secret, the phone companion's launch credential), never from the
+ * request body. Absent means not proven: an older message, or a local caller
+ * with neither proof. Only an owner origin counts as the owner's say-so. */
+export type MessageOrigin = "desktop" | "companion" | "unproven";
+export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
+  return origin === "desktop" || origin === "companion";
+}
+
 export interface Message {
   id: string;
   /** Verified durable deliverable identities; raw paths never become download links. */
@@ -223,6 +233,8 @@ export interface Message {
   /** steer-queue entry this drained user line came from. The client pending
    * chip matches on this id, not on equal text. Absent on ordinary sends. */
   queueId?: string;
+  /** user messages: see MessageOrigin. Server-written only. */
+  origin?: MessageOrigin;
 }
 
 export type GroupDefaultResponder =
@@ -1891,7 +1903,7 @@ export class Store {
 
   /** Fork the conversation: a new user message that replaces `sourceId`
    * (same parent, new text) and becomes the active leaf. */
-  branchMessage(threadId: string, sourceId: string, text: string): Message | null {
+  branchMessage(threadId: string, sourceId: string, text: string, origin?: MessageOrigin): Message | null {
     const t = this.thread(threadId);
     const source = t.messages.find((m) => m.id === sourceId);
     if (!source) return null;
@@ -1903,6 +1915,7 @@ export class Store {
       text,
       parentId: source.parentId ?? null,
       replyToId: source.replyToId,
+      ...(origin ? { origin } : {}),
     };
     mdb.appendMessage(threadId, full);
     t.messages.push(full);

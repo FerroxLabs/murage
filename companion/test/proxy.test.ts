@@ -70,6 +70,8 @@ let HARNESS = "";
 let SIDECAR = "";
 
 const TOKEN = "murage_test_token";
+/** The private launch credential the harness and this sidecar share. */
+const LAUNCH_TOKEN = "b".repeat(64);
 let harness: ChildProcess;
 let sidecar: Server;
 let home: string;
@@ -144,6 +146,10 @@ beforeAll(async () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(HARNESS_PORT),
+      // As the desktop app and `murage start` do: one launch credential for
+      // the harness and its companion, so a paired device's answer to a card
+      // is the owner's.
+      MURAGE_COMPANION_TOKEN: LAUNCH_TOKEN,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -170,6 +176,7 @@ beforeAll(async () => {
   sidecar = createServer(
     createProxyHandler({
       harnessPort: HARNESS_PORT,
+      companionToken: LAUNCH_TOKEN,
       authenticate: (t) => (t === TOKEN ? { id: "d1", cloudDesktopAccess: true } : null),
       redeem: (code, deviceName) =>
         code === "424242"
