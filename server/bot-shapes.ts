@@ -18,7 +18,7 @@ import { renderSkillInstructions, type BundledSkill } from "./skill-library.ts";
 
 export type ShapeGroup = "rules" | "identity" | "tools" | "turn";
 /** Where a row's Edit link goes. */
-export type ShapeEditor = "houseRules" | "identity" | "memory" | "skills" | "teamBrief";
+export type ShapeEditor = "houseRules" | "identity" | "memory" | "skills" | "teamBrief" | "aboutMe";
 
 export interface ShapeLayer {
   id: string;
@@ -41,6 +41,8 @@ interface CatalogueEntry {
 
 export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "house-rules": { group: "rules", label: "House rules", what: "Your rules for every bot. They come first.", switchable: true, editor: "houseRules" },
+  // The owner's own profile (about-me.ts); standing-context.ts hands it only to owner-audience turns.
+  "about-me": { group: "rules", label: "About you", what: "What you wrote about yourself in Settings. Bots get it only when they are talking with you.", switchable: true, editor: "aboutMe" },
   persona: { group: "identity", label: "Description and personality", what: "Its name, role, description and personality.", editor: "identity" },
   room: { group: "identity", label: "This room", what: "Who is in the room, its shared instructions and its project.", locked: true },
   computer: { group: "tools", label: "Computer", what: "How to use the computer it has this turn.", locked: true },
@@ -124,6 +126,8 @@ AUTOMATION.manual = AUTOMATION.schedule!;
 /** Everything a direct turn's system prompt is made of, already decided. */
 export interface DirectTurnShapeInput {
   houseRules: string;
+  /** The owner's About me, already withheld for any audience but the owner. */
+  aboutMe?: string;
   persona: string;
   computerKind: "box" | "vps" | "vm" | "local" | null;
   /** Local VM mode is per-bot rather than shared. */
@@ -163,6 +167,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     : "";
   return [
     shapeLayer("house-rules", v.houseRules),
+    shapeLayer("about-me", v.aboutMe ?? ""),
     shapeLayer("persona", v.persona),
     shapeLayer("computer", computer),
     shapeLayer("computer-protected-input", kind ? COMPUTER.protectedInput : ""),
@@ -251,6 +256,8 @@ export interface ShapeRow {
 /** What the bot would carry now, where that is known without a message. */
 export interface CurrentShapes {
   houseRules: { on: boolean; text: string };
+  /** null or absent when the owner has not written one. */
+  aboutMe?: { on: boolean; text: string } | null;
   persona: string;
   /** null when its team has no brief. */
   teamBrief: { on: boolean; text: string; team: string } | null;
@@ -261,7 +268,7 @@ export interface CurrentShapes {
 }
 
 // The direct turn's order, with a room turn's own layers where they fit.
-const ORDER = ["house-rules", "persona", "room", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "speak-as",
+const ORDER = ["house-rules", "about-me", "persona", "room", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "speak-as",
   "credential", "images", "web-search", "routines", "learn", "goal", "skills-index", "own-skills", "team-brief", "memory", "capabilities", "skill:*", "chief-guide",
   "playbooks", "output-folder", "automation", "tagged", "now"];
 // Shown before the first turn as "decided when a message arrives".
@@ -282,6 +289,7 @@ export function botShapeRows(current: CurrentShapes, last: TurnShapes | null | u
   };
   for (const id of ORDER) {
     if (id === "house-rules") rows.push(row(id, current.houseRules.text, { on: current.houseRules.on }));
+    else if (id === "about-me") { if (current.aboutMe) rows.push(row(id, current.aboutMe.text, { on: current.aboutMe.on })); }
     else if (id === "persona") rows.push(row(id, current.persona));
     else if (id === "team-brief") { if (current.teamBrief) rows.push(row(id, current.teamBrief.text, { on: current.teamBrief.on, what: `The shared brief you wrote for its team, ${current.teamBrief.team}.` })); }
     else if (id === "memory") rows.push(row(id, current.memory));

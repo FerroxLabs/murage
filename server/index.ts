@@ -26,6 +26,7 @@ import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memo
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
 import { botShapeRows, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, shapeLayer, skillLayers, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
+import { aboutMePrompt, handleAboutMeApi } from "./about-me.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
 import { EngineCommandCache, engineCommandsView, engineReportsCommands } from "./engine-commands.ts";
 import { engineCommandInText } from "../shared/engine-commands.ts";
@@ -714,8 +715,10 @@ function botShapesView(bot: BotRecord) {
   const driver = registry.get(bot.modelSelection.instanceId)?.driverKind;
   const chiefGuide = isChiefForAttached(bot) ? availableSkills().find((skill) => skill.manifest.id === CHIEF_GUIDE_ID) : undefined;
   const last = lastTurnShapes(bot.id);
+  const aboutMe = aboutMePrompt();
   const rows = botShapeRows({
     houseRules: { on: rules.enabled, text: rules.text },
+    aboutMe: aboutMe ? { on: bot.aboutMe !== false, text: aboutMe } : null,
     persona: directTurnPersona(bot),
     teamBrief: brief ? { on: bot.teamBrief !== false, text: brief, team: sectionContextLabel(bot.section) } : null,
     memory: memorySystemPrompt(bot.id, { fileTools: driver !== "grok" && driver !== "boxAgent" }),
@@ -6066,6 +6069,8 @@ async function startTurn(
       const systemLayers = directTurnLayers({
         // The owner's House Rules open every bot's prompt (house-rules.ts).
         houseRules: houseRulesPrompt(),
+        // The owner's About me: owner audience only (standing-context.ts).
+        aboutMe: standing.aboutMe,
         persona,
         computerKind,
         vmPerBot: localVmMode(cfg) === "per-bot",
@@ -7559,6 +7564,7 @@ async function runGroupMemberTurn(
     // The owner's House Rules open every bot's prompt, rooms included
     // (house-rules.ts).
     shapeLayer("house-rules", houseRulesPrompt()),
+    shapeLayer("about-me", roomStanding.aboutMe),
     ...system,
     // The same connector paragraph the 1:1 turn gets, from the same builder.
     // A room turn mounts connectors on exactly the gating above (the bot's
@@ -12573,6 +12579,12 @@ const server = createServer(async (req, res) => {
       const answer = await handleHouseRulesApi({ method, path, readBody: () => readBody(req, 256 * 1024) });
       if (answer) return json(res, answer.status, answer.body);
     }
+    // Settings → About me (server/about-me.ts). Desktop only, like House Rules.
+    if (path === "/api/about-me") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const answer = await handleAboutMeApi({ method, path, readBody: () => readBody(req, 64 * 1024), seed: { name: cfg.profile?.name, timeZone: routineTimeZone() } });
+      if (answer) return json(res, answer.status, answer.body);
+    }
     // What's new (server/whats-new.ts): which release pages this install has
     // been shown. Desktop only; the page is for the person at the computer.
     // "Fresh install" is the first run's own answer: never set up, or the
@@ -13821,6 +13833,11 @@ const server = createServer(async (req, res) => {
       if (body.teamBrief !== undefined) {
         if (typeof body.teamBrief !== "boolean") return json(res, 400, { error: "teamBrief must be true or false" });
         patch.teamBrief = body.teamBrief ? undefined : false;
+      }
+      // per-bot switch for the owner's About me, the same way
+      if (body.aboutMe !== undefined) {
+        if (typeof body.aboutMe !== "boolean") return json(res, 400, { error: "aboutMe must be true or false" });
+        patch.aboutMe = body.aboutMe ? undefined : false;
       }
       // per-bot gate on the workspace's connected apps (Composio)
       if (body.composio !== undefined) {

@@ -304,3 +304,35 @@ describe("the date and time a turn starts at", () => {
     expect(withNowLine("hello", "")).toBe("hello");
   });
 });
+
+describe("About me, the owner's own profile", () => {
+  const ABOUT = "<about-the-owner>\nABOUT_CANARY\n</about-the-owner>\n\n";
+  const base: DirectTurnShapeInput = {
+    houseRules: HOUSE, persona: PERSONA, computerKind: null, vmPerBot: false, driverKind: "claudeAgent", connectors: "", requiredApps: "", browser: "",
+    coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: BRIEF, memory: MEMORY,
+    primer: " P", skills: [], playbooks: "", outputFolder: "", automationSource: undefined, tagged: [],
+  };
+
+  it("rides right after House Rules, in the stable prefix, as a switchable layer of the owner's", () => {
+    const layers = directTurnLayers({ ...base, aboutMe: ABOUT });
+    expect(layers.slice(0, 3).map((layer) => layer.id)).toEqual(["house-rules", "about-me", "persona"]);
+    expect(layers[1]).toMatchObject({ group: "rules", switchable: true, locked: false, text: ABOUT });
+    expect(joinShapeLayers(layers).startsWith(HOUSE + ABOUT + PERSONA)).toBe(true);
+    expect(joinShapeLayers(layers).indexOf("ABOUT_CANARY")).toBeLessThan(joinShapeLayers(layers).indexOf(" P"));
+  });
+
+  it("adds nothing when the turn was given none", () => {
+    expect(joinShapeLayers(directTurnLayers(base))).toBe(joinShapeLayers(directTurnLayers({ ...base, aboutMe: "" })));
+    expect(joinShapeLayers(directTurnLayers(base))).not.toContain("about-the-owner");
+  });
+
+  it("shows in the panel after House Rules with its switch, and not at all before the owner writes one", () => {
+    const current = { houseRules: { on: true, text: "Be kind." }, persona: PERSONA, teamBrief: null, memory: MEMORY, chiefGuide: null, skills: [] };
+    const rows = botShapeRows({ ...current, aboutMe: { on: false, text: "I run a shop." } }, null);
+    expect(rows.map((row) => row.id).slice(0, 3)).toEqual(["house-rules", "about-me", "persona"]);
+    expect(rows[1]).toMatchObject({ text: "I run a shop.", on: false, switchable: true, editor: "aboutMe", group: "rules" });
+    expect(rows[1]!.what).toMatch(/only when they are talking with you/);
+    expect(botShapeRows({ ...current, aboutMe: null }, null).map((row) => row.id)).not.toContain("about-me");
+    expect(botShapeRows(current, null).map((row) => row.id)).not.toContain("about-me");
+  });
+});
