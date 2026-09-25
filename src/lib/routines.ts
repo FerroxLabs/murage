@@ -29,6 +29,9 @@ export type RoutineRunStatus =
   | "queued"
   | "running"
   | "waiting"
+  /** The run limit came while a card waited on the owner; answering it lets
+   * the run finish. */
+  | "needs-you"
   | "completed"
   | "failed"
   | "cancelled"

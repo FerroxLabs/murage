@@ -56,7 +56,7 @@ import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } fro
 import { newSendId } from "@/lib/send-id";
 
 const MAX_ROUTINE_RUNS = 2_000;
-const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting"]);
+const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
 
 function trimRoutineRuns(runs: readonly RoutineRun[]): RoutineRun[] {
   const sorted = [...runs].sort((a, b) => b.scheduledFor - a.scheduledFor);

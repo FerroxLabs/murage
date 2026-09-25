@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { RoutineManager, type RoutineManagerOptions, type RoutineRun } from "./routines.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
 
 const dirs: string[] = [];
@@ -22,14 +22,20 @@ function harness(file?: string) {
   let now = new Date(2026, 8, 25, 8, 0, 0).getTime();
   let task = 0;
   const started: Array<{ threadId: string }> = [];
+  const interrupted: string[] = [];
+  const needsYou: RoutineRun[] = [];
+  const failed: RoutineRun[] = [];
   const options: RoutineManagerOptions = {
     file: file ?? join(dir, "routines.json"),
     now: () => now,
     botState: () => "ready",
     createTask: () => ({ threadId: `thread-${++task}` }),
     startTurn: async (_botId, threadId) => { started.push({ threadId }); },
+    interruptTurn: async (_botId, threadId) => { interrupted.push(threadId); },
+    onRunNeedsYou: (run) => needsYou.push(run),
+    onRunFailed: (run) => failed.push(run),
   };
-  return { manager: new RoutineManager(options), options, started, file: options.file!, advance: (ms: number) => (now += ms), now: () => now };
+  return { manager: new RoutineManager(options), options, started, interrupted, needsYou, failed, file: options.file!, advance: (ms: number) => (now += ms), now: () => now };
 }
 
 const input = (at: number, extra: Record<string, unknown> = {}) => ({
@@ -138,5 +144,86 @@ describe("a routine's own always-allow list", () => {
     disk.routines[0].alwaysAllow = ["Bash", exact, "Bash:rm"];
     writeFileSync(h.file, JSON.stringify(disk));
     expect(new RoutineManager({ ...h.options }).listRoutines()[0]?.alwaysAllow).toEqual([exact]);
+  });
+});
+
+describe("a run waiting on you at its run limit", () => {
+  const MIN = 60_000;
+  async function waitingRun(h: ReturnType<typeof harness>) {
+    const routine = h.manager.create(input(h.now(), { enabled: false, timeoutMinutes: 20 }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    const threadId = h.started[0]!.threadId;
+    h.manager.handleRuntimeEvent({ type: "request.opened", threadId, requestId: "r1", requestType: "permission", tool: "Bash", summary: "pkill -f x; rm -f /tmp/dax/a.txt" } as never);
+    const run = () => h.manager.listRuns().find((item) => item.routineId === routine.id)!;
+    return { routine, threadId, run };
+  }
+
+  it("ends as waiting on you, naming the action, instead of the generic time limit", async () => {
+    const h = harness();
+    const { run } = await waitingRun(h);
+    h.advance(21 * MIN);
+    await h.manager.enforceRunLimits();
+    expect(run()).toMatchObject({ status: "needs-you", attention: "pkill -f x; rm -f /tmp/dax/a.txt" });
+    expect(run().error).toBeUndefined();
+    expect(h.interrupted).toEqual([]);
+    expect(h.failed).toEqual([]);
+    expect(h.needsYou.map((item) => item.status)).toEqual(["needs-you"]);
+    // the clock has stopped: waiting longer changes nothing and says nothing new
+    h.advance(120 * MIN);
+    await h.manager.enforceRunLimits();
+    expect(run().status).toBe("needs-you");
+    expect(h.needsYou).toHaveLength(1);
+    // it is not a failure for the routine's health either
+    expect(h.manager.listRoutines()[0]).not.toHaveProperty("failureStreak");
+  });
+
+  it("answering resumes the same run with a fresh run limit", async () => {
+    const h = harness();
+    const { threadId, run } = await waitingRun(h);
+    h.advance(21 * MIN);
+    await h.manager.enforceRunLimits();
+    h.manager.handleRuntimeEvent({ type: "request.resolved", threadId, requestId: "r1" } as never);
+    expect(run()).toMatchObject({ status: "running" });
+    expect(run().attention).toBeUndefined();
+    h.advance(19 * MIN);
+    await h.manager.enforceRunLimits();
+    expect(run().status).toBe("running");
+    h.manager.handleRuntimeEvent({ type: "turn.completed", threadId, ok: true } as never);
+    expect(run().status).toBe("completed");
+  });
+
+  it("a run that is working, not waiting, still stops at its limit", async () => {
+    const h = harness();
+    const { threadId, run } = await waitingRun(h);
+    h.manager.handleRuntimeEvent({ type: "request.resolved", threadId, requestId: "r1" } as never);
+    h.advance(21 * MIN);
+    await h.manager.enforceRunLimits();
+    expect(run()).toMatchObject({ status: "failed", error: "Stopped after reaching the 20-minute run limit" });
+    expect(h.interrupted).toEqual([threadId]);
+  });
+
+  it("holds the next occurrences back while it waits, and can be cancelled", async () => {
+    const h = harness();
+    const { routine, threadId, run } = await waitingRun(h);
+    h.manager.update(routine.id, { enabled: true });
+    h.advance(21 * MIN);
+    await h.manager.enforceRunLimits();
+    h.advance(40 * MIN);
+    await h.manager.tick();
+    expect(h.manager.listRuns().filter((item) => item.routineId === routine.id)).toHaveLength(1);
+    expect(h.manager.listRoutines()[0]?.skippedRuns).toBeGreaterThan(0);
+    expect(h.manager.isActiveThread(threadId)).toBe(true);
+    expect((await h.manager.cancelRun(run().id))?.status).toBe("cancelled");
+    expect(h.interrupted).toEqual([threadId]);
+  });
+
+  it("a restart cannot keep the turn, so the run fails as before", async () => {
+    const h = harness();
+    await waitingRun(h);
+    h.advance(21 * MIN);
+    await h.manager.enforceRunLimits();
+    const reloaded = new RoutineManager({ ...h.options });
+    expect(reloaded.listRuns()[0]).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running" });
   });
 });

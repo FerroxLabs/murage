@@ -61,13 +61,13 @@ function statusFor(webhook: WebhookTrigger) {
 
 function outcomeTone(outcome: WebhookAttempt["outcome"], run?: RoutineRun) {
   if (outcome === "rejected" || run?.status === "failed" || run?.status === "missed") return "text-danger";
-  if (run && ["queued", "running", "waiting"].includes(run.status)) return "text-accent";
+  if (run && ["queued", "running", "waiting", "needs-you"].includes(run.status)) return "text-accent";
   if (run?.status === "completed" || outcome === "captured" || outcome === "accepted") return "text-success";
   return "text-ink-secondary";
 }
 
 function outcomeLabel(outcome: WebhookAttempt["outcome"], run?: RoutineRun) {
-  if (run) return run.status === "waiting" ? "Needs you" : run.status[0]!.toUpperCase() + run.status.slice(1);
+  if (run) return run.status === "waiting" || run.status === "needs-you" ? "Needs you" : run.status[0]!.toUpperCase() + run.status.slice(1);
   if (outcome === "captured") return "Test received";
   if (outcome === "duplicate") return "Duplicate";
   if (outcome === "ignored") return "Ignored";
@@ -343,7 +343,7 @@ export function WebhooksPanel({ bots }: { bots: Bot[] }) {
                   <div className="border-t border-hairline/35">
                     {activity.length === 0 ? <div className="px-2 py-12 text-center text-[11.5px] text-ink-secondary">No requests yet. Use the command in Setup to send one.</div> : activity.map((item) => (
                       <div key={item.id} className="flex items-center gap-2.5 border-b border-hairline/25 px-1 py-3.5">
-                        <span className={cn("size-2 shrink-0 rounded-full", item.outcome === "rejected" || item.run?.status === "failed" ? "bg-danger" : item.run && ["queued", "running", "waiting"].includes(item.run.status) ? "animate-pulse bg-accent" : item.outcome === "ignored" || item.outcome === "duplicate" ? "bg-ink-secondary/50" : "bg-success")} />
+                        <span className={cn("size-2 shrink-0 rounded-full", item.outcome === "rejected" || item.run?.status === "failed" ? "bg-danger" : item.run && ["queued", "running", "waiting", "needs-you"].includes(item.run.status) ? "animate-pulse bg-accent" : item.outcome === "ignored" || item.outcome === "duplicate" ? "bg-ink-secondary/50" : "bg-success")} />
                         <div className="min-w-0 flex-1"><div className="flex items-center gap-1.5 text-[11.5px]"><span className="truncate font-medium text-ink">{item.eventName}</span><span className="shrink-0 text-ink-secondary">· {relativeTime(item.at)}</span></div><div className="mt-0.5 truncate font-mono text-[10px] text-ink-secondary/85">{item.reason || item.preview || "Empty payload"}</div></div>
                         <span className={cn("shrink-0 text-[10px] font-medium", outcomeTone(item.outcome, item.run))}>{outcomeLabel(item.outcome, item.run)}</span>
                         {item.run?.threadId && selectedBot && <button onClick={() => { dispatch({ type: "select", id: selectedBot.id }); dispatch({ type: "switchTask", botId: selectedBot.id, threadId: item.run!.threadId! }); }} className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[10.5px] text-ink-secondary hover:bg-raised hover:text-ink" title="Open this run in the bot's chat"><ExternalLink size={11} />Open chat</button>}

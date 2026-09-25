@@ -57,7 +57,7 @@ export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as c
 
 /** Statuses where a person owes an answer. Shared so the query, the count and
  *  the tab can never disagree about what a decision is. */
-export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input"] as const;
+export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input", "needs-you"] as const;
 
 /** Statuses that are news rather than a question. */
 export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused"] as const;

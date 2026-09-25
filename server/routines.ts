@@ -46,10 +46,26 @@ export type RoutineRunStatus =
   | "queued"
   | "running"
   | "waiting"
+  /** The run limit came while a card was waiting on the owner. The turn
+   * stays open on that card with its clock stopped; answering it resumes the
+   * same run with a fresh run limit. Still active: it holds the routine's
+   * next occurrences back, and Cancel run ends it. */
+  | "needs-you"
   | "completed"
   | "failed"
   | "cancelled"
   | "missed";
+
+/** A run with a live turn (working, or waiting on a person). */
+const LIVE_RUN_STATUSES: readonly RoutineRunStatus[] = ["running", "waiting", "needs-you"];
+/** A run that is not settled yet. */
+const OPEN_RUN_STATUSES: readonly RoutineRunStatus[] = ["queued", ...LIVE_RUN_STATUSES];
+const isLive = (status: RoutineRunStatus) => LIVE_RUN_STATUSES.includes(status);
+const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
+/** Queued, running, waiting, or waiting on you: not settled yet. */
+export const isOpenRoutineRunStatus = (status: RoutineRunStatus): boolean => isOpen(status);
+/** Running, waiting, or waiting on you: the run owns a live turn. */
+export const isLiveRoutineRunStatus = (status: RoutineRunStatus): boolean => isLive(status);
 
 export interface RoutineInstructionRevision {
   id: string;
@@ -164,6 +180,9 @@ export interface RoutineRun {
   /** Provider identity for a Telegram turn in a reused conversation. */
   channelTurnId?: string;
   startedAt?: number;
+  /** When the owner answered a card this run was waiting on after its run
+   * limit; the limit counts again from here. */
+  resumedAt?: number;
   finishedAt?: number;
   output?: string;
   /** Human-readable reason the detached execution is waiting. */
@@ -299,6 +318,8 @@ export interface RoutineManagerOptions {
   /** Projects every durable transition into the source conversation. */
   onRunChanged?: (run: RoutineRun) => void;
   onRunFailed?: (run: RoutineRun) => void;
+  /** The run limit came while a card was waiting on the owner. */
+  onRunNeedsYou?: (run: RoutineRun) => void;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -695,7 +716,7 @@ export class RoutineManager {
     // A local process cannot still own these turns after a full restart.
     const recovered: RoutineRun[] = [];
     for (const run of this.runs) {
-      if (run.status === "running" || run.status === "waiting") {
+      if (isLive(run.status)) {
         run.status = "failed";
         if (run.target === "room-goal") run.goalStatus = "failed";
         run.error = "Murage restarted while this routine was running";
@@ -747,7 +768,7 @@ export class RoutineManager {
 
   activeRunForBot(botId: string): RoutineRun | null {
     const run = this.runs.find(
-      (candidate) => candidate.botId === botId && ["running", "waiting"].includes(candidate.status),
+      (candidate) => candidate.botId === botId && isLive(candidate.status),
     );
     return run ? cloneRun(run) : null;
   }
@@ -758,7 +779,7 @@ export class RoutineManager {
     const run = this.runs.find(
       (candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
-        ["running", "waiting"].includes(candidate.status),
+        isLive(candidate.status),
     );
     return run ? cloneRun(run) : null;
   }
@@ -770,7 +791,7 @@ export class RoutineManager {
       (candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
         candidate.threadId === threadId &&
-        ["running", "waiting"].includes(candidate.status),
+        isLive(candidate.status),
     );
     return run ? cloneRun(run) : null;
   }
@@ -779,7 +800,7 @@ export class RoutineManager {
     return this.runs
       .filter((candidate) => candidate.target === "bot" &&
         candidate.botId === botId &&
-        ["running", "waiting"].includes(candidate.status))
+        isLive(candidate.status))
       .map(cloneRun);
   }
 
@@ -839,14 +860,14 @@ export class RoutineManager {
 
   isActiveThread(threadId: string): boolean {
     return this.runs.some(
-      (run) => run.threadId === threadId && ["running", "waiting"].includes(run.status),
+      (run) => run.threadId === threadId && isLive(run.status),
     );
   }
 
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
   activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && ["running", "waiting"].includes(candidate.status));
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
     return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: structuredClone(run.humanPrincipal) } : {}) };
   }
@@ -856,7 +877,7 @@ export class RoutineManager {
    * at that level. Null for webhook and channel work, room goals, and a
    * routine that no longer exists: those keep their own rules. */
   routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && ["running", "waiting"].includes(candidate.status));
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run || run.target !== "bot") return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
@@ -1109,7 +1130,7 @@ export class RoutineManager {
       changed = true;
     }
     for (const run of this.runs) {
-      if (run.botId !== botId || !["queued", "running", "waiting"].includes(run.status)) continue;
+      if (run.botId !== botId || !isOpen(run.status)) continue;
       run.status = "cancelled";
       if (run.target === "room-goal") run.goalStatus = "stopped";
       run.attention = undefined;
@@ -1142,7 +1163,7 @@ export class RoutineManager {
       if (
         run.target !== "room-goal" ||
         run.groupId !== groupId ||
-        !["queued", "running", "waiting"].includes(run.status)
+        !isOpen(run.status)
       ) continue;
       run.status = "cancelled";
       run.goalStatus = "stopped";
@@ -1269,7 +1290,7 @@ export class RoutineManager {
 
   activeWebhookRunCount(webhookId: string): number {
     return this.runs.filter(
-      (run) => run.webhookId === webhookId && ["queued", "running", "waiting"].includes(run.status),
+      (run) => run.webhookId === webhookId && isOpen(run.status),
     ).length;
   }
 
@@ -1289,7 +1310,7 @@ export class RoutineManager {
 
   async cancelRun(id: string): Promise<RoutineRun | null> {
     const run = this.runs.find((r) => r.id === id);
-    if (!run || !["queued", "running", "waiting"].includes(run.status)) return null;
+    if (!run || !isOpen(run.status)) return null;
     this.commitMutation(() => {
       run.status = "cancelled";
       if (run.target === "room-goal") run.goalStatus = "stopped";
@@ -1384,11 +1405,22 @@ export class RoutineManager {
       const now = this.now();
       for (const run of this.runs) {
         if (
-          !["running", "waiting"].includes(run.status) ||
+          (run.status !== "running" && run.status !== "waiting") ||
           run.startedAt == null ||
           run.timeoutMinutes == null ||
-          now - run.startedAt < run.timeoutMinutes * 60_000
+          now - (run.resumedAt ?? run.startedAt) < run.timeoutMinutes * 60_000
         ) continue;
+        // Waiting on the owner is not a runaway. A bot routine whose card is
+        // still open ends its active time as "waiting on you", naming what it
+        // is waiting for, and keeps the turn open on the card so answering it
+        // carries on. (A room goal keeps its own limit rules.)
+        if (run.status === "waiting" && run.target === "bot") {
+          this.commitMutation(() => { run.status = "needs-you"; });
+          this.emitRun(run);
+          try { this.options.onRunNeedsYou?.(cloneRun(run)); }
+          catch (error) { console.error("routine: waiting-on-you notice failed", error); }
+          continue;
+        }
         const threadId = run.threadId;
         const detail = `Stopped after reaching the ${run.timeoutMinutes}-minute run limit`;
         if (run.target === "room-goal") run.goalStatus = "limit-reached";
@@ -1438,7 +1470,7 @@ export class RoutineManager {
         // whose run is still running or waiting when tomorrow comes round
         // stacked another copy every day, and nothing ever cleared them.
         const overlapping = routine.schedule.type !== "once" && this.runs.some(
-          (run) => run.routineId === routine.id && ["queued", "running", "waiting"].includes(run.status),
+          (run) => run.routineId === routine.id && isOpen(run.status),
         );
         // "queue" (upstream #1564) lets ONE scheduled occurrence wait behind
         // the active run, never a backlog: while a scheduled run is already
@@ -1519,7 +1551,7 @@ export class RoutineManager {
         // spare slots while the earlier run waits on a teammate. Resource
         // admission is unchanged; this only holds the run before it.
         const sameRoutineWorking = triggerSource === "schedule" && this.runs.some((other) =>
-          other.id !== run.id && other.routineId === run.routineId && ["running", "waiting"].includes(other.status));
+          other.id !== run.id && other.routineId === run.routineId && isLive(other.status));
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
         if (state === "busy") continue;
         if (state === "missing") {
@@ -1543,7 +1575,7 @@ export class RoutineManager {
           continue;
         }
         if (sharedChannel && (this.runs.some((active) => active.threadId === task.threadId &&
-          ["running", "waiting"].includes(active.status)) || this.options.threadBusy?.(run.botId, task.threadId))) continue;
+          isLive(active.status)) || this.options.threadBusy?.(run.botId, task.threadId))) continue;
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";
@@ -1553,7 +1585,7 @@ export class RoutineManager {
           if (!sharedChannel) return this.failThread(task.threadId, message);
           // A delayed callback from an earlier message cannot fail the next
           // message merely because both used this conversation.
-          if (!["running", "waiting"].includes(run.status)) return;
+          if (!isLive(run.status)) return;
           this.failRun(run, message);
           queueMicrotask(() => void this.tick());
         };
@@ -1598,7 +1630,7 @@ export class RoutineManager {
   }
 
   handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {
-    const run = this.runs.find((r) => r.threadId === event.threadId && ["running", "waiting"].includes(r.status));
+    const run = this.runs.find((r) => r.threadId === event.threadId && isLive(r.status));
     if (!run) return null;
     if (run.triggerSource === "channel" && this.options.channelThread) {
       // A reused conversation also receives late events from its previous
@@ -1624,6 +1656,8 @@ export class RoutineManager {
       run.status = "waiting";
       run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
     } else if (event.type === "request.resolved") {
+      // answered after the run limit: the limit counts again from now
+      if (run.status === "needs-you") run.resumedAt = this.now();
       run.status = "running";
       run.attention = undefined;
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
@@ -1661,7 +1695,7 @@ export class RoutineManager {
   }
 
   failThread(threadId: string, message: string) {
-    const run = this.runs.find((r) => r.threadId === threadId && ["running", "waiting"].includes(r.status));
+    const run = this.runs.find((r) => r.threadId === threadId && isLive(r.status));
     if (!run) return;
     this.failRun(run, message);
     queueMicrotask(() => void this.tick());
@@ -1671,7 +1705,7 @@ export class RoutineManager {
     const run = this.runs.find(
       (candidate) => candidate.id === runId &&
         candidate.target === "room-goal" &&
-        ["running", "waiting"].includes(candidate.status),
+        isLive(candidate.status),
     );
     if (!run || status === "working") return null;
     const safeDetail = redactSecretsInText(detail).trim();
@@ -1922,7 +1956,7 @@ export class RoutineManager {
     // active queue may exceed it until work settles.
     let excess = this.runs.length - MAX_RUNS;
     for (let index = 0; index < this.runs.length && excess > 0;) {
-      if (["queued", "running", "waiting"].includes(this.runs[index]!.status)) {
+      if (isOpen(this.runs[index]!.status)) {
         index += 1;
         continue;
       }

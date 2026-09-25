@@ -413,7 +413,7 @@ import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
 import { TEAM_INCIDENTS_THREAD_TITLE, TeamIncidentLedger, chiefForBrokenBot, drainWaitingTeamIncidents, routineIncidentMuteKeys, teamIncidentChip, teamIncidentDispatchDeferred, teamIncidentText, teamIncidentTurnOptions, waitForFreeTurn, type TeamIncident } from "./team-incidents.ts";
 import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
-import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
   applyDesktopBrowserConnectionMessage,
@@ -6595,7 +6595,9 @@ function drainTeamIncidents(): void {
 }
 
 function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
-  const visibleSummary = run.status === "waiting" ? run.attention : run.output;
+  const visibleSummary = run.status === "waiting" ? run.attention
+    : run.status === "needs-you" ? `Waiting on you: ${run.attention ?? "an approval"}. Answer it in the routine's conversation to let this run finish.`
+    : run.output;
   const summary = visibleSummary ? redactSecretsInText(visibleSummary).slice(0, 2_000) : undefined;
   const error = run.error ? redactSecretsInText(run.error).slice(0, 500) : undefined;
   const card: NonNullable<Message["routineRun"]> = {
@@ -6626,6 +6628,8 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
   const state = goalState ?? (
     card.status === "waiting"
       ? "needs your attention"
+      : card.status === "needs-you"
+        ? "is waiting on you"
       : card.status === "completed"
         ? "completed"
         : card.status === "failed"
@@ -6670,7 +6674,7 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
 
   // Merely queueing/running is ambient progress. Attention and terminal
   // states become unread in the conversation where the user asked for them.
-  if (statusChanged && ["waiting", "completed", "failed", "missed"].includes(run.status)) {
+  if (statusChanged && ["waiting", "needs-you", "completed", "failed", "missed"].includes(run.status)) {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchBot(source.bot.id, { unread: true });
   }
@@ -6774,6 +6778,15 @@ routines = new RoutineManager({
   interruptTurn: async (botId, threadId) => { await interruptDirectThread(botId,threadId); },
   interruptGoal: interruptRoutineGroupGoal,
   onRunChanged: syncRoutineRunToSource,
+  // The run limit came while a card waited on the owner: the card already
+  // rang when it opened; this says the run has stopped working and is only
+  // waiting on them now, and where.
+  onRunNeedsYou: (run) => {
+    const bot = store.bot(run.botId);
+    if (!bot) return;
+    notify(buildNotification("approval", bot, run.threadId ?? routineSourceThread(run) ?? bot.threadId,
+      `${run.routineName} is waiting on you: ${redactSecretsInText(run.attention ?? "an approval")}`));
+  },
   onRunFailed: (run) => {
     const bot = store.bot(run.watch?.ownerBotId ?? run.botId);
     if (!bot) return;
@@ -6956,7 +6969,7 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     revokeHumanConnection("telegram",connectionId);
     for (const run of routines!.listRuns().filter(run => run.telegramConnectionId === connectionId)) {
       routines!.closeEventBudget(run.id);
-      if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+      if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
     }
   },
 });
@@ -7010,7 +7023,7 @@ function makeSlack(targetBotId: string) {
       revokeHumanConnection("slack",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "slack" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
-        if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+        if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
       }
     },
   });
@@ -7069,7 +7082,7 @@ function makeDiscord(targetBotId: string) {
       revokeHumanConnection("discord",connectionId);
       for (const run of routines!.listRuns().filter(item => item.channelOrigin?.platform === "discord" && item.channelOrigin.connectionId === connectionId)) {
         routines!.closeEventBudget(run.id);
-        if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+        if (isOpenRoutineRunStatus(run.status)) await routines!.cancelRun(run.id);
       }
     },
   });
@@ -10615,7 +10628,7 @@ const server = createServer(async (req, res) => {
           procedureEvolution,
           runtimeStatus:()=>memoryWorker.status(),
           humanBindingChanged:async(bindingId)=>{
-            const roots=routines!.listRuns().filter(run=>run.humanPrincipal?.bindingId===bindingId&&["queued","running","waiting"].includes(run.status));
+            const roots=routines!.listRuns().filter(run=>run.humanPrincipal?.bindingId===bindingId&&isOpenRoutineRunStatus(run.status));
             const rootThreads=new Set(roots.map(run=>run.threadId));
             for(const run of roots)await routines!.cancelRun(run.id);
             for(const bot of store.bots)for(const run of directRuns.forBot(bot.id)){if(!rootThreads.has(run.threadId)&&threadHumanPrincipal(run.threadId).bindingId===bindingId)await interruptDirectThread(bot.id,run.threadId);}
@@ -13505,7 +13518,7 @@ const server = createServer(async (req, res) => {
           (run) =>
             run.target === "room-goal" &&
             run.groupId === existing.id &&
-            ["queued", "running", "waiting"].includes(run.status) &&
+            isOpenRoutineRunStatus(run.status) &&
             !roster.memberIds.includes(run.botId),
         );
         if (removedGoalLead) {
@@ -17369,7 +17382,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 /** The scheduler has already pinned instructions and assigned this thread. */
 function procedureRoutineSnapshot(threadId:string):{id:string;instructionRevision:string}|undefined {
-  const run=routines?.listRuns().find(item=>item.threadId===threadId && (item.status==="running"||item.status==="waiting"));
+  const run=routines?.listRuns().find(item=>item.threadId===threadId && isLiveRoutineRunStatus(item.status));
   return run?.instructionRevision ? {id:run.routineId,instructionRevision:run.instructionRevision} : undefined;
 }
 

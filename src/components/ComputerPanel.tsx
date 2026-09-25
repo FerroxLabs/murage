@@ -358,7 +358,7 @@ export function ComputerPanel({
       state.instances.some((instance) => instance.driverKind === "boxAgent" && instance.snapshot.state === "available"),
   );
   const activeRoutineRun = state.routineRuns.find(
-    (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
+    (run) => run.botId === bot.id && ["queued", "running", "waiting", "needs-you"].includes(run.status),
   );
   const computerDestination =
     bot.computer === "cloud"
@@ -1471,7 +1471,7 @@ export function ComputerPanel({
             >
               <Loader2 size={13} className={activeRoutineRun.status === "queued" ? "" : "animate-spin"} />
               <span className="min-w-0 flex-1 truncate">
-                {activeRoutineRun.routineName} · {activeRoutineRun.status === "waiting" ? "needs you" : activeRoutineRun.status}
+                {activeRoutineRun.routineName} · {activeRoutineRun.status === "waiting" ? "needs you" : activeRoutineRun.status === "needs-you" ? "waiting on you" : activeRoutineRun.status}
               </span>
             </button>
           )}
