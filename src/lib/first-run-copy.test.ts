@@ -508,6 +508,17 @@ describe("what the key card claims, to whom", () => {
     expect(key.recommendationBare).not.toMatch(/optional/i);
   });
 
+  // Linux customer pass, 0.1.60: nothing was found on the box, the person
+  // connected Flux, and the card above then read "You are already up and
+  // running". The only engine that could answer was the one Murage ships,
+  // running on the key they had just pasted. Nothing of theirs was found.
+  it("never says they were already running when only the shipped engine answers", () => {
+    const shipped = { id: "fuigo", installed: false };
+    expect(fluxRecommendation({ agents: [shipped], nothingToThinkWith: false })).toBe(key.recommendationBare);
+    expect(fluxRecommendation({ agents: [shipped], signedOutAgents: [{ id: "claude" }], nothingToThinkWith: false })).toBe(key.recommendation);
+    expect(fluxRecommendation({ agents: [shipped, { id: "codex", installed: true }], nothingToThinkWith: false })).toBe(key.recommendationBonus);
+  });
+
   it("takes the milder claim when it cannot tell", () => {
     // The claim that is never wrong is the one to make with no answer yet.
     expect(fluxRecommendation(null)).toBe(key.recommendation);
