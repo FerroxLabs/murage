@@ -15,6 +15,20 @@ import { join } from "node:path";
 
 import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
 
+/** A successor credential that has been handed out and not yet used.
+ *
+ * Only its hash is stored, and the plaintext is never needed again from
+ * disk: it is DERIVED (`successorValue`) from the server secret, the session
+ * and `generation`, so a retry of a renewal whose response was lost gets the
+ * identical value back without anything usable sitting in devices.json. */
+export interface PendingSuccessor {
+  hash: string;
+  /** The device generation it was derived at. Never reused. */
+  generation: number;
+  /** When it was first handed out. Refused `PENDING_TTL_MS` after this. */
+  issuedAt: number;
+}
+
 /** One browser signed in against a paired device.
  *
  * A browser session is a second credential *form* for an existing device, not
@@ -23,16 +37,28 @@ import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
  * so `revoke()` already kills every browser signed in on that device, and
  * `connectedDeviceTracker` already terminates their live streams. */
 export interface BrowserSession {
-  /** sha256 of the cookie value — same write-only rule as `tokenHash`. */
+  /** Stable across renewals and restarts, and part of what a successor is
+   * derived from, so no two sessions can ever derive the same value. Not the
+   * stream id `sessionId()` hands out, which is process-local and never
+   * written down. */
+  id: string;
+  /** sha256 of the cookie value currently in use — same write-only rule as
+   * `tokenHash`. */
   hash: string;
   /** "Safari on iPhone", clamped the same way a device name is. */
   label: string;
   createdAt: number;
   lastSeenAt: number;
-  /** The absolute cap. Set at sign-in and moved forward by `renewSession`,
-   * never past `createdAt + SESSION_MAX_LIFETIME_MS`. Use alone does not
-   * move it — only an explicit renewal does. */
+  /** The absolute cap. Set at sign-in and moved forward when a successor is
+   * committed, never past `createdAt + SESSION_MAX_LIFETIME_MS`. Use alone
+   * does not move it. */
   expiresAt: number;
+  /** When `hash` last became current: at sign-in, then at each commit.
+   * Renewal is due `SESSION_RENEWAL_DUE_MS` after this. */
+  committedAt: number;
+  /** At most one successor, handed out by `renewSession` and not yet
+   * presented. `hash` stays valid until it is. */
+  pending?: PendingSuccessor;
 }
 
 /** One paired phone, as it is written to disk. */
@@ -46,6 +72,15 @@ export interface DeviceRecord {
   /** Full interactive access to a bot's cloud desktop. Deliberately off on
    * every new and migrated device until the computer owner enables it. */
   cloudDesktopAccess: boolean;
+  /** The app install that paired this record, when it said. Pairing again
+   * with the same id replaces this record instead of taking a new slot. Not a
+   * secret: it proves nothing, and pairing still needs the pairing code. */
+  installId?: string;
+  /** The last successor generation derived for any session on this device.
+   * Only ever incremented, and written down before a successor derived from
+   * it is sent, so no two successors share one — not across sessions and not
+   * across a restart. */
+  sessionGeneration: number;
   /** Browsers signed in against this device. Hashes only. Absent on a device
    * that has never opened one, which is what every record predating the
    * browser door looks like. */
@@ -57,8 +92,10 @@ export interface DeviceRecord {
  * `sessions` goes too. Session hashes are not credentials — you cannot sign
  * in with a digest — but they are the only thing standing between a leaked
  * devices.json and an offline guess at a cookie value, and the control page
- * has no use for them. Same rule as `tokenHash`, for the same reason. */
-export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions">;
+ * has no use for them. Same rule as `tokenHash`, for the same reason. The
+ * install id and the generation are bookkeeping the page has no use for
+ * either. */
+export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions" | "installId" | "sessionGeneration">;
 
 /** A pairing window: two short-lived credentials, deliberately single-use.
  *
@@ -265,6 +302,18 @@ export const SESSION_ABSOLUTE_MS = 90 * 24 * 60 * 60 * 1000;
  * browser starts a fresh year, because that sign-in required the pairing
  * credential and therefore the desktop. */
 export const SESSION_MAX_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+/** How long after a credential became current before `renewSession` derives
+ * a successor for it.
+ *
+ * Measured from the last COMMIT, not from sign-in and not from the last
+ * renewal request: the client asks on every load and every unlock, and only a
+ * day after the value it holds became current does it get a new one. */
+export const SESSION_RENEWAL_DUE_MS = 24 * 60 * 60 * 1000;
+
+/** How long a successor that was handed out but never presented is still
+ * accepted. After this it is refused, the current credential it would have
+ * replaced carries on, and the next renewal derives a fresh one. */
+export const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** How often an unreadable paired-device list is read again on its own.
  *
@@ -318,6 +367,35 @@ function sessionExpired(session: BrowserSession, now: number): boolean {
   return session.expiresAt <= now || now - session.lastSeenAt > SESSION_IDLE_MS;
 }
 
+/** Whether an unused successor has aged out. Exported only until
+ * `renewSession` refuses stale successors with it; nothing else should. */
+export function pendingExpired(pending: PendingSuccessor, now: number): boolean {
+  return now - pending.issuedAt > PENDING_TTL_MS;
+}
+
+/** The cap a session gets when a credential becomes current at `now`.
+ * Monotonic without a guard: the previous cap was set the same way at an
+ * earlier `now`, and the ceiling term never moves. */
+function renewedExpiry(session: BrowserSession, now: number): number {
+  return Math.min(now + SESSION_ABSOLUTE_MS, session.createdAt + SESSION_MAX_LIFETIME_MS);
+}
+
+const INSTALL_ID = /^[A-Za-z0-9._-]{16,128}$/;
+
+/** An install id we are willing to key a record on, or nothing. Same shape
+ * rule as a pairing request id: long enough not to collide by accident, and
+ * nothing that needs escaping anywhere it is written. */
+export function cleanInstallId(raw: unknown): string | undefined {
+  return typeof raw === "string" && INSTALL_ID.test(raw) ? raw : undefined;
+}
+
+/** A device as the page may see it. One place, so a new private field cannot
+ * leak through one of the three call sites that used to strip by hand. */
+function publicDevice(device: DeviceRecord): PublicDevice {
+  const { tokenHash, sessions, installId, sessionGeneration, ...rest } = device;
+  return rest;
+}
+
 /** Device names come from the phone, so they are untrusted display text:
  * clamp the length and drop control characters before they reach a UI. */
 export function cleanDeviceName(raw: unknown): string {
@@ -346,7 +424,13 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
     createdAt,
     lastSeenAt: timestamp(record.lastSeenAt, createdAt),
     cloudDesktopAccess: record.cloudDesktopAccess === true,
+    sessionGeneration:
+      Number.isSafeInteger(record.sessionGeneration) && (record.sessionGeneration as number) > 0
+        ? (record.sessionGeneration as number)
+        : 0,
   };
+  const installId = cleanInstallId(record.installId);
+  if (installId) device.installId = installId;
   // A session without a hash cannot authenticate and cannot be signed out;
   // it is a row that would sit in the file forever doing nothing. Drop it
   // rather than complete it, which is the opposite call from the device
@@ -355,15 +439,43 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
   const sessions = Array.isArray(record.sessions) ? record.sessions : [];
   const kept = sessions
     .filter((s): s is BrowserSession => typeof (s as BrowserSession)?.hash === "string")
-    .map((s) => ({
-      hash: s.hash,
-      label: cleanDeviceName(s.label),
-      createdAt: timestamp(s.createdAt, createdAt),
-      lastSeenAt: timestamp(s.lastSeenAt, timestamp(s.createdAt, createdAt)),
-      expiresAt: timestamp(s.expiresAt, 0),
-    }))
+    .map((s) => {
+      const sessionCreatedAt = timestamp(s.createdAt, createdAt);
+      const session: BrowserSession = {
+        // A session written before ids existed gets one here. It reaches the
+        // file with the first successor derived from it, which is the only
+        // moment the id has to be the same after a restart.
+        id: typeof s.id === "string" && s.id ? s.id : randomUUID(),
+        hash: s.hash,
+        label: cleanDeviceName(s.label),
+        createdAt: sessionCreatedAt,
+        lastSeenAt: timestamp(s.lastSeenAt, sessionCreatedAt),
+        expiresAt: timestamp(s.expiresAt, 0),
+        // Committed when created, for a row that predates commits: an old
+        // session is due for renewal at once rather than a day after upgrade.
+        committedAt: timestamp(s.committedAt, sessionCreatedAt),
+      };
+      const pending = s.pending as Partial<PendingSuccessor> | undefined;
+      if (
+        pending &&
+        typeof pending.hash === "string" &&
+        Number.isSafeInteger(pending.generation) &&
+        (pending.generation as number) > 0 &&
+        typeof pending.issuedAt === "number" &&
+        Number.isFinite(pending.issuedAt)
+      ) {
+        session.pending = { hash: pending.hash, generation: pending.generation as number, issuedAt: pending.issuedAt };
+      }
+      return session;
+    })
     .slice(0, MAX_SESSIONS_PER_DEVICE);
   if (kept.length) device.sessions = kept;
+  // A hand-edited or partly restored file can hold a successor from a later
+  // generation than the device says. Never derive at or below one that
+  // already exists.
+  for (const session of kept) {
+    if (session.pending) device.sessionGeneration = Math.max(device.sessionGeneration, session.pending.generation);
+  }
   return device;
 }
 
@@ -488,7 +600,7 @@ export class DeviceRegistry {
   /** Every paired device, without the hash — this is what the page renders. */
   list(): PublicDevice[] {
     this.recover();
-    return this.devices.map(({ tokenHash, sessions, ...rest }) => rest);
+    return this.devices.map(publicDevice);
   }
 
   /** How many phones are paired, against MAX_DEVICES. */
@@ -685,6 +797,7 @@ export class DeviceRegistry {
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
       cloudDesktopAccess: false,
+      sessionGeneration: 0,
     };
     this.devices.push(device);
     // Unlike the lastSeenAt write below, this one must not be swallowed. A
@@ -698,8 +811,7 @@ export class DeviceRegistry {
       this.devices.pop();
       return { error: `could not save the pairing: ${(e as Error).message}`, reason: "save-failed" };
     }
-    const { tokenHash, sessions, ...pub } = device;
-    const result = { device: pub, token };
+    const result = { device: publicDevice(device), token };
     if (requestId) {
       this.replay = {
         requestId,
@@ -819,11 +931,13 @@ export class DeviceRegistry {
     if (!device) return null;
     const value = `murage_browser_${randomBytes(32).toString("base64url")}`;
     const session: BrowserSession = {
+      id: randomUUID(),
       hash: sha256(value),
       label: cleanDeviceName(label),
       createdAt: now,
       lastSeenAt: now,
       expiresAt: now + SESSION_ABSOLUTE_MS,
+      committedAt: now,
     };
     const live = (device.sessions ?? []).filter((s) => !sessionExpired(s, now));
     // Oldest use first, so the cap evicts the browser nobody has opened in
@@ -933,10 +1047,7 @@ export class DeviceRegistry {
       const previous = { hash: session.hash, lastSeenAt: session.lastSeenAt, expiresAt: session.expiresAt };
       session.hash = sha256(next);
       session.lastSeenAt = now;
-      // Monotonic without needing a guard: `expiresAt` was itself set to at
-      // most (some earlier now) + SESSION_ABSOLUTE_MS, so it can never be
-      // above `now + SESSION_ABSOLUTE_MS`, and the ceiling term is fixed.
-      session.expiresAt = Math.min(now + SESSION_ABSOLUTE_MS, session.createdAt + SESSION_MAX_LIFETIME_MS);
+      session.expiresAt = renewedExpiry(session, now);
       try {
         this.persist();
       } catch {

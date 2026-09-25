@@ -612,3 +612,65 @@ describe("the pairing TTL is stated once", () => {
     expect(wrong, `PAIRING_TTL_MS is ${minutes} minutes, but the file also says:\n${wrong.join("\n")}`).toEqual([]);
   });
 });
+
+describe("session records written before derived renewal", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const file = () => join(DATA_DIR, "devices.json");
+
+  it("loads an old session, gives it an id and a commit time, and keeps its cookie working", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    const { value } = registry.openSession(device.id, "Safari on iPhone")!;
+
+    // Exactly what an older build wrote: no id, no commit time, no successor,
+    // and no generation on the device.
+    const stored = JSON.parse(readFileSync(file(), "utf8"));
+    const old = stored.devices[0].sessions[0];
+    delete old.id;
+    delete old.committedAt;
+    delete old.pending;
+    delete stored.devices[0].sessionGeneration;
+    writeFileSync(file(), JSON.stringify(stored));
+
+    const resolved = new DeviceRegistry().resolveSession(value)!;
+    expect(resolved.device.id).toBe(device.id);
+    expect(resolved.session.id).toMatch(/^[0-9a-f-]{36}$/);
+    // Treated as committed when it was created, so an old session is due for
+    // renewal straight away rather than a day after the upgrade.
+    expect(resolved.session.committedAt).toBe(old.createdAt);
+    expect(resolved.session.pending).toBeUndefined();
+  });
+
+  it("drops a malformed successor, and never lets the generation run backwards", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    const first = registry.openSession(device.id, "Safari on iPhone")!;
+    const second = registry.openSession(device.id, "Chrome on iPhone")!;
+
+    const stored = JSON.parse(readFileSync(file(), "utf8"));
+    stored.devices[0].sessionGeneration = 2;
+    stored.devices[0].sessions[0].pending = { hash: "ab", generation: "7", issuedAt: Date.now() };
+    stored.devices[0].sessions[1].pending = { hash: "cd".repeat(32), generation: 9, issuedAt: Date.now() };
+    writeFileSync(file(), JSON.stringify(stored));
+
+    const reloaded = new DeviceRegistry();
+    expect(reloaded.resolveSession(first.value)!.session.pending).toBeUndefined();
+    expect(reloaded.resolveSession(second.value)!.session.pending?.generation).toBe(9);
+    // SAFETY: private field, read only. The next successor must be 10, not 3.
+    const devices = (reloaded as unknown as { devices: Array<{ sessionGeneration: number }> }).devices;
+    expect(devices[0].sessionGeneration).toBe(9);
+  });
+
+  it("keeps generations and session rows off the page", () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    registry.openSession(device.id, "Safari on iPhone");
+    const [listed] = registry.list();
+    expect(listed).not.toHaveProperty("sessionGeneration");
+    expect(listed).not.toHaveProperty("sessions");
+    expect(listed).not.toHaveProperty("installId");
+  });
+});
