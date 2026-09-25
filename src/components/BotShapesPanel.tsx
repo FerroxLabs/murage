@@ -17,7 +17,7 @@ import { SectionContextDialog } from "./SectionContextDialog";
 import { useBotSettingsNavigation } from "./bot-settings-drafts";
 
 export type ShapeGroup = "rules" | "identity" | "tools" | "turn";
-export type ShapeEditor = "houseRules" | "identity" | "memory" | "skills" | "teamBrief";
+export type ShapeEditor = "houseRules" | "identity" | "memory" | "skills" | "teamBrief" | "aboutMe";
 export interface ShapeRow {
   id: string;
   group: ShapeGroup;
@@ -47,6 +47,7 @@ export const SHAPE_GROUPS: ReadonlyArray<{ id: ShapeGroup; title: string }> = [
 ];
 const EDIT_LABEL: Record<ShapeEditor, string> = {
   houseRules: "Edit in Settings",
+  aboutMe: "Edit in Settings",
   identity: "Edit",
   memory: "Edit",
   teamBrief: "Edit",
@@ -192,6 +193,7 @@ export function BotShapesPanel({ bot, active = true }: { bot: { id: string; name
     setError("");
     try {
       if (row.id === "house-rules") await api("/api/house-rules", { method: "PUT", body: JSON.stringify({ enabled: on }) });
+      else if (row.id === "about-me") await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify({ aboutMe: on }) });
       else if (row.id === "team-brief") await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify({ teamBrief: on }) });
       else if (row.id === "chief-guide") await setSkillForBot(CHIEF_GUIDE_REF, bot.id, on);
       else if (row.skillName) await api(`/api/bots/${encodeURIComponent(bot.id)}/skills/${encodeURIComponent(row.skillName)}`, { method: "PATCH", body: JSON.stringify({ enabled: on }) });
@@ -204,6 +206,7 @@ export function BotShapesPanel({ bot, active = true }: { bot: { id: string; name
   };
   const edit = (row: ShapeRow) => {
     if (row.editor === "houseRules") navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "houseRules" }));
+    else if (row.editor === "aboutMe") navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "aboutMe" }));
     else if (row.editor === "teamBrief") setEditingBrief(true);
     else if (row.editor === "identity" || row.editor === "memory") dispatch({ type: "toggleSettings", open: true, intent: { section: row.editor } });
     else if (row.editor === "skills") dispatch({ type: "toggleSettings", open: true, intent: { section: "skills", addSkill: false } });

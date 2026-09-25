@@ -93,7 +93,7 @@ describe("the about me routes", () => {
     expect((await put({}))?.status).toBe(400);
     const long = await put({ text: "y".repeat(ABOUT_ME_MAX_CHARS + 1) });
     expect(long?.status).toBe(413);
-    expect((long?.body as { error: string }).error).toMatch(/^About me can be up to/);
+    expect((long!.body as { error: string }).error).toMatch(/^About me can be up to/);
     expect(readAboutMe(dir).text).toBe("Hello.");
     expect((await handleAboutMeApi({ method: "DELETE", path: "/api/about-me", readBody: readBody(undefined), seed }, dir))?.status).toBe(405);
     expect(await handleAboutMeApi({ method: "GET", path: "/api/other", readBody: readBody(undefined), seed }, dir)).toBeNull();

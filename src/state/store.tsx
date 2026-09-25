@@ -606,6 +606,7 @@ export type AppSettingsSection =
   | "computer"
   | "skills"
   | "houseRules"
+  | "aboutMe"
   | "usage";
 
 /** Where the bot window opens: Skills with or without its picker open, or
