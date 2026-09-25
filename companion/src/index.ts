@@ -430,6 +430,8 @@ const browserRequests = createBrowserHandler({
   companionToken,
   identity: browserIdentity,
   devices,
+  // The same name the device door pairs with, for the launcher's probe.
+  serverName: machineName,
   connected: connectedDevices.open,
   // The same instance the device door got. A lockout earned at either door
   // is spent at both, which is the only reading of "locked out" that means

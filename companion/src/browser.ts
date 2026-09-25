@@ -104,6 +104,11 @@ export interface BrowserDoorOptions {
   /** The sign-in rate limiter. Injectable so a test can drive its clock;
    * every real door gets its own from `createSignInLimiter`. */
   signInLimiter?: SignInLimiter;
+  /** What this computer is called, for `GET /healthz`. The same name the
+   * device door hands a phone when it pairs (`index.ts` `machineName`), so a
+   * workspace the launcher saved and the pairing agree on what to call it.
+   * Optional: a door without one answers "Murage". */
+  serverName?: () => string;
 }
 
 /** Headers only. Once they arrive the clock is off and the body may take as
@@ -1165,6 +1170,31 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
 
     const gate = originGate(req, identity);
     if (gate) return sendJson(res, gate.status, { error: gate.error });
+
+    // ── the launcher's probe ─────────────────────────────────────────────
+    //
+    // The phone app asks this before it loads anything, to tell three cases
+    // apart: this door (200 with `mobile`), an older door (any other answer —
+    // it 401s a path it does not know), and nothing at all. So it answers
+    // without a session, and it is answered here, above the cookie and above
+    // the sign-in limiter, on purpose: a launcher retrying every few seconds
+    // on a flaky tailnet must never be what spends or checks the budget of
+    // the person typing a code.
+    //
+    // Below the origin gate, not above it. The Host allowlist is still what
+    // stops a rebound DNS name from reading the computer's name back, and a
+    // native HTTP client sends neither `Origin` nor `Sec-Fetch-*`, so it
+    // passes the gate the way `curl` does. No CORS header, like everything
+    // else here: a page on another origin cannot read the answer.
+    //
+    // The name discloses nothing a tailnet peer does not already have: the
+    // MagicDNS name is usually the same words, and the Bonjour record has
+    // broadcast it on the LAN since the first release.
+    if (path === "/healthz") {
+      if (method !== "GET" && method !== "HEAD") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
+      const name = [...(options.serverName?.() || "Murage")].slice(0, 200).join("");
+      return sendJson(res, 200, { ok: true, name, mobile: 1 });
+    }
 
     // ── first contact ────────────────────────────────────────────────────
     if (method === "GET" && path === "/enter") {
