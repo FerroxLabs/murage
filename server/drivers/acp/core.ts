@@ -616,6 +616,16 @@ export function skipSubscriptionAuthForLocalInject(model: string | undefined): b
 }
 
 /** Never copy CLI stderr/error.message: a version failure can contain secrets. */
+/** The banner an ACP CLI prints for `--version`. Hermes writes its whole banner
+ *  to stderr with an empty stdout, so a stdout-only read reports a working
+ *  install as "CLI not found". Prefer stdout; fall back to the first stderr
+ *  line; empty when both are empty. Upstream OpenMausBot #1524. */
+export function versionFromProbe(stdout: string | undefined, stderr: string | undefined): string {
+  const out = (stdout ?? "").trim();
+  if (out) return out;
+  return (stderr ?? "").trim().split(/\r\n|\n|\r/, 1)[0]?.trim() ?? "";
+}
+
 export function acpVersionFailureDetail(error: Error | null): string {
   if (!error) return "returned no version from --version";
   const { code, killed, signal } = error as Error & { code?: string | number; killed?: boolean; signal?: string };
@@ -2640,8 +2650,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const snapshot = async (): Promise<ProviderSnapshot> => {
         const env = childEnv();
         const probe = await new Promise<{ error: Error | null; version: string }>((resolve) => {
-          execCli(config.cli, ["--version"], { timeout: 8000, env }, (error, stdout) =>
-            resolve({ error, version: stdout.trim() }),
+          execCli(config.cli, ["--version"], { timeout: 8000, env }, (error, stdout, stderr) =>
+            resolve({ error, version: versionFromProbe(stdout, stderr) }),
           );
         });
         if (probe.error || !probe.version) {
