@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
-import { nativeHello } from "./lib/native-shell";
+import { inNativeShell, nativeHello } from "./lib/native-shell";
+import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import "./styles.css";
@@ -27,6 +28,10 @@ registerServiceWorker();
 // tap makes (save, open a link) already have the answer; a plain browser
 // answers null at once and costs nothing.
 void nativeHello();
+
+// Links that leave the page, and a[download] anchors, inside the phone app.
+// A browser and the desktop never install this listener at all.
+if (inNativeShell()) routeNativeClicks();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
