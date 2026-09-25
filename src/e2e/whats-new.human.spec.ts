@@ -25,6 +25,9 @@ import { axeScriptPath } from "./axe";
 
 let server: ViteDevServer, origin: string, cache: string, harness: VerificationServer, headers: Record<string, string>;
 const VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
+// A version with no page (WHATS_NEW_BY_VERSION says "none") shows nothing:
+// the page tests run for the newest version that has one.
+const HAS_PAGE = new RegExp(`"${VERSION.replace(/\./g, "\\.")}": \\{ kind: "page"`).test(readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8"));
 const seen = async () => (await (await fetch(`${harness.info.url}/api/whats-new?version=${VERSION}`, { headers })).json()) as { show: boolean };
 
 test.beforeAll(async () => {
@@ -101,6 +104,7 @@ async function walkCards(page: Page, skin: string, dir: string) {
 }
 
 test("shows once after an update, walks all four cards, and a dismissal survives a reload", async ({ page }, info) => {
+  test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 860 });
   const dir = shotsDir(info.outputPath("shots"));
@@ -131,6 +135,7 @@ test("shows once after an update, walks all four cards, and a dismissal survives
 });
 
 test("reopens from Tools in the light skin, closes on Escape, and each highlight goes somewhere", async ({ page }, info) => {
+  test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 860 });
   const dir = shotsDir(info.outputPath("shots"));
@@ -176,6 +181,7 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
 });
 
 test("fits the smallest main window without clipping a card", async ({ page }, info) => {
+  test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 900, height: 600 });
   const dir = shotsDir(info.outputPath("shots"));
@@ -194,4 +200,15 @@ test("fits the smallest main window without clipping a card", async ({ page }, i
     const next = dialog(page).getByRole("button", { name: "Next", exact: true });
     if (index < 3) { await next.scrollIntoViewIfNeeded(); await next.click(); }
   }
+});
+
+test("a version with no page opens nothing and hides the Tools entry", async ({ page }) => {
+  test.skip(HAS_PAGE, `${VERSION} has a What's new page`);
+  await page.goto(origin + "/__whats-new?skin=dark");
+  await expect(page.getByText("The app behind the page.")).toBeVisible();
+  await page.waitForTimeout(1500);
+  await expect(dialog(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Tools" }).click();
+  await expect(page.getByRole("menuitem", { name: "Keyboard shortcuts" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "What's new" })).toHaveCount(0);
 });
