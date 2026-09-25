@@ -19,15 +19,18 @@ test("Slack credentials use canonical encrypted rows and preserve chosen identit
 test("actual Slack credential IPC uses encrypted commit even in dev, and refuses unavailable encryption", async () => {
   const handler = source.slice(source.indexOf('ipcMain.handle("credential:set"'), source.indexOf("async function broadcastDesktopCapabilities"));
   for (const encrypted of [true, false]) {
-    let invoke, persisted = 0, posted = 0;
-    new Function("ipcMain", "safeStorage", "updateSecureCredentialDocument", "fetch", `
+    let invoke, persisted = 0, posted = 0, proofAsked = 0;
+    // The handler asks for the desktop proof on demand (the harness may not be
+    // one this process forked), so the fixture answers that request too.
+    new Function("ipcMain", "safeStorage", "updateSecureCredentialDocument", "fetch", "ensureDesktopSurfaceSecret", `
       const app={isPackaged:false},desktopSurfaceSecret="fixture-proof",SERVER_PORT=1;
       const CREDENTIAL_PATCH={slackAppToken:value=>({slack:{appToken:value}})};
       ${handler}
     `)({ handle: (_name, fn) => { invoke = fn; } }, { isAsyncEncryptionAvailable: async () => encrypted },
       async (derive, apply) => { assert.equal(derive({}).slackAppToken, "fake-secret"); persisted++; return apply(); },
-      async (url, init) => { assert.match(url, /secretStorage=external$/); assert.equal(init.headers["x-murage-surface-secret"], "fixture-proof"); posted++; return { ok: true, json: async () => ({ saved: true }) }; });
-    if (encrypted) { await invoke({}, "slackAppToken", "fake-secret"); assert.equal(persisted, 1); assert.equal(posted, 1); }
-    else { await assert.rejects(invoke({}, "slackAppToken", "fake-secret"), /credential store is unavailable/); assert.equal(persisted, 0); assert.equal(posted, 0); }
+      async (url, init) => { assert.match(url, /secretStorage=external$/); assert.equal(init.headers["x-murage-surface-secret"], "fixture-proof"); posted++; return { ok: true, json: async () => ({ saved: true }) }; },
+      async () => { proofAsked++; return "fixture-proof"; });
+    if (encrypted) { await invoke({}, "slackAppToken", "fake-secret"); assert.equal(persisted, 1); assert.equal(posted, 1); assert.equal(proofAsked, 1); }
+    else { await assert.rejects(invoke({}, "slackAppToken", "fake-secret"), /credential store is unavailable/); assert.equal(persisted, 0); assert.equal(posted, 0); assert.equal(proofAsked, 0); }
   }
 });

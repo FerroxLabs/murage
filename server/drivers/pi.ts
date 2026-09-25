@@ -59,6 +59,7 @@ import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
+import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -667,6 +668,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       });
       let assistantText = "";
+      // Pi runs local models with no plan channel; a <todo> block one writes
+      // into its answer becomes a plan update and leaves the answer (issue #7).
+      // One filter per text item, so the streamed text and the item agree.
+      let todo = createTodoBlockFilter();
+      const emitTodoOutput = (out: TodoFilterOutput) => {
+        for (const entries of out.plans) emit({ ...base(threadId, turnId), type: "plan.updated", entries });
+        if (out.text) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: out.text });
+      };
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
       const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
       const rejectWaiters = (err: Error) => {
@@ -695,7 +704,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
       /** Emit buffered assistant text as its own item, then clear it. */
       const flushAssistantText = () => {
-        const text = assistantText;
+        emitTodoOutput(todo.flush());
+        todo = createTodoBlockFilter();
+        // The same text the filter saw, so its plans were already sent.
+        const text = extractTodoBlocks(assistantText).text;
         assistantText = "";
         if (!text.trim()) return;
         emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
@@ -763,7 +775,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             if (!e) return;
             if (e.type === "text_delta" && typeof e.delta === "string") {
               assistantText += e.delta;
-              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: e.delta });
+              emitTodoOutput(todo.push(e.delta));
             } else if (e.type === "thinking_delta" && typeof e.delta === "string") {
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: e.delta });
             }

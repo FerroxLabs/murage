@@ -50,25 +50,32 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await page.mouse.move(1200,850);
   await page.screenshot({path:testInfo.outputPath(process.env.SIDEBAR_BASELINE ? 'sidebar-before.png' : 'sidebar-after.png')});
   if(process.env.SIDEBAR_BASELINE)return;
-  const row=page.locator('div[role="button"]').filter({has:page.getByText('Market Research Analyst',{exact:true})});
+  // The row is a plain container now; selection is its own button inside it
+  // (bot rows no longer nest controls in a role=button).
+  const row=page.locator('[data-sidebar-bot-row="analyst"]');
+  const select=page.locator('[data-sidebar-select="analyst"]');
   await expect(row).toHaveCSS('padding-right',canHover?'12px':'84px');
   const name=page.getByText('Market Research Analyst',{exact:true});
   if(canHover){
-    const metrics=await name.evaluate(element=>{const style=getComputedStyle(element);return {scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,width:element.getBoundingClientRect().width,fontFamily:style.fontFamily,fontSize:style.fontSize,fontWeight:style.fontWeight};});
+    const metrics=await name.evaluate(element=>{const style=getComputedStyle(element);const column=element.closest('[data-sidebar-bot-row]')?.querySelector(':scope > .flex-1') as HTMLElement|null;return {scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,width:element.getBoundingClientRect().width,available:column?.clientWidth,rowWidth:element.closest('[data-sidebar-bot-row]')?.getBoundingClientRect().width,fontFamily:style.fontFamily,fontSize:style.fontSize,fontWeight:style.fontWeight};});
     await testInfo.attach('desktop-name-metrics',{body:JSON.stringify(metrics),contentType:'application/json'});
     // Keep the real desktop clipping gate; do not substitute a narrower font
     // or allow ellipsis merely because another platform's font is wider.
     expect(metrics.scrollWidth,JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.clientWidth);
+    // Issue #2: Ubuntu's default sans (DejaVu Sans Bold at 15px) needs 211.2px
+    // for this name. The row must leave that much at rest on every platform,
+    // not only pass where the system font happens to be narrower.
+    expect(metrics.available,JSON.stringify(metrics)).toBeGreaterThanOrEqual(212);
     await row.hover();
     await expect(row).toHaveCSS('padding-right','84px');
   }else{
     await expect(name).toHaveAttribute('aria-label','Rename Market Research Analyst');
   }
   await expect(page.getByRole('button',{name:'More actions for Market Research Analyst'})).toHaveCSS('opacity','1');
-  await row.focus();
+  await select.focus();
   await page.mouse.move(1200,850);
   await expect(row).toHaveCSS('padding-right','84px');
-  await row.press('Shift+F10');
+  await select.press('Shift+F10');
   await expect(page.getByRole('menuitem',{name:'Hide from sidebar',exact:true})).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'More actions for Market Research Analyst'}).click();
@@ -80,7 +87,10 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await expect(row).toHaveCSS('padding-right',canHover?'8px':'84px');
   await page.screenshot({path:testInfo.outputPath('sidebar-compact.png')});
   await page.getByRole('button',{name:'Collapse sidebar to avatars'}).click();
-  await expect(page.getByRole('button',{name:'Market Research Analyst',exact:true})).toBeVisible();
+  // Avatars only: the full name still leads the button's accessible name
+  // (the unread mark follows it).
+  await expect(select).toBeVisible();
+  await expect(select).toHaveAccessibleName(/^Market Research Analyst( · |$)/);
   await page.getByRole('button',{name:'Expand sidebar'}).click();
   await page.setViewportSize({width:390,height:844});
   await expect(row).toHaveCSS('padding-right','84px');
