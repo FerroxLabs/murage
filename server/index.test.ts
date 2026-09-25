@@ -9508,7 +9508,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
 // index.ts (the desktop-authority gate, inboxDoor, callAccess) with the real
 // companionAuthorized, over a socket. The marker alone proves nothing.
 describe("the Inbox and calls open only to a proven companion", () => {
-  const send = async (method: string, path: string, headers: Record<string, string>, body?: unknown) => {
+  const send = async (method: string, path: string, headers: Record<string, string>, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
       headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
