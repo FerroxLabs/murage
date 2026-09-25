@@ -451,7 +451,9 @@ const PENDING_CLOCK_SKEW_MS = 5 * 60_000;
  * count; reading it as 0 would let the next successor reuse a generation. */
 function storedGeneration(raw: unknown): number {
   const generation = Math.floor(Number(raw));
-  return Number.isFinite(generation) && generation > 0 ? generation : 0;
+  // Past MAX_SAFE_INTEGER a double stops counting exactly, so `+ 1` would not
+  // move it. That is a hand-edited file, not a real count: malformed, so 0.
+  return Number.isSafeInteger(generation) && generation > 0 ? generation : 0;
 }
 
 /** A stored successor, or nothing when any part of it is not believable. */
@@ -1168,7 +1170,8 @@ export class DeviceRegistry {
    *
    *  - presented `current`, with a live `pending`: the same `pending` again.
    *    Every retry gets an identical value, so replies that arrive out of
-   *    order cannot disagree.
+   *    order cannot disagree. If the secret has changed since, it cannot be
+   *    re-derived: null, and that `pending` is kept, not replaced.
    *  - presented `current`, no `pending`, due (`SESSION_RENEWAL_DUE_MS` after
    *    the last commit): a new `pending`, written down first.
    *  - presented `pending`: commit it, and return it so the door can refresh
@@ -1206,9 +1209,13 @@ export class DeviceRegistry {
           if (sameDigest(sha256(resent), pending.hash)) {
             return { value: resent, session, expiresAt: renewedExpiry(session, now) };
           }
-          // The secret changed under it (the file was lost and recreated).
-          // That successor can still be committed by its hash if anyone holds
-          // it, but it cannot be sent again, so derive the next one.
+          // The secret changed under it (the file was lost and recreated), so
+          // that successor cannot be sent again. It is kept, not replaced: a
+          // phone whose reply got through holds it and commits it by its hash
+          // on its next request. Deriving over it would sign that phone out.
+          // Nothing is due until it is committed or ages out, at which point
+          // renewal derives from the new secret.
+          return null;
         } else if (now - session.committedAt < SESSION_RENEWAL_DUE_MS) {
           return null;
         }
@@ -1220,17 +1227,23 @@ export class DeviceRegistry {
 
   /** Sign one browser out. Other browsers on the same device survive, which
    * is the difference between this and `revoke`. */
-  closeSession(value: string | undefined): boolean {
+  closeSession(value: string | undefined, now = Date.now()): boolean {
     if (!value) return false;
     this.recover();
     const hash = sha256(value);
+    // A successor past its week is no longer a sign-in, so it cannot be a
+    // sign-out either.
+    const matches = (s: BrowserSession) => {
+      const which = this.match(s, hash);
+      return which === "current" || (which === "pending" && !pendingExpired(s.pending!, now));
+    };
     for (const device of this.devices) {
       const before = device.sessions?.length ?? 0;
       if (!before) continue;
       const previous = device.sessions!;
       // Either value signs the browser out: a cookie jar holding the
       // successor is the same browser as one still holding `current`.
-      const kept = previous.filter((s) => !this.match(s, hash));
+      const kept = previous.filter((s) => !matches(s));
       if (kept.length === before) continue;
       const ended = previous.filter((s) => !kept.includes(s));
       device.sessions = kept.length ? kept : undefined;

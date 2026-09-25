@@ -394,6 +394,49 @@ describe("renewal is derived, idempotent and committed on first use", () => {
       rmSync(SESSION_SECRET_FILE, { recursive: true, force: true });
     }
   });
+
+  it("keeps a successor it can no longer re-send, rather than deriving over it", () => {
+    // The secret file was lost and recreated between the renewal and its
+    // retry. The phone whose reply got through holds that successor; deriving
+    // a new one over it would sign that phone out.
+    const { registry, value } = signedIn();
+    dayLater();
+    const sent = registry.renewSession(value)!.value;
+    const before = storedSessions()[0].pending;
+    writeFileSync(SESSION_SECRET_FILE, `${"ab".repeat(32)}\n`);
+
+    const restarted = new DeviceRegistry();
+    expect(restarted.renewSession(value)).toBeNull();
+    expect(storedSessions()[0].pending).toEqual(before);
+    // What was sent still commits, by its hash.
+    expect(restarted.resolveSession(sent)).not.toBeNull();
+    expect(restarted.resolveSession(value)).toBeNull();
+  });
+
+  it("does not sign a browser out with a successor that has aged out", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const stale = registry.renewSession(value)!.value;
+    vi.setSystemTime(Date.now() + PENDING_TTL_MS + 60_000);
+    expect(registry.closeSession(stale)).toBe(false);
+    expect(registry.resolveSession(value)).not.toBeNull();
+    expect(new DeviceRegistry().resolveSession(value)).not.toBeNull();
+  });
+
+  it("reads a generation past what a double counts exactly as malformed", () => {
+    // Left as it was, the counter could never move again and this device
+    // could never renew.
+    const { value } = signedIn();
+    const file = join(DATA_DIR, "devices.json");
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    stored.devices[0].sessionGeneration = 2 ** 60;
+    writeFileSync(file, JSON.stringify(stored));
+
+    const restarted = new DeviceRegistry();
+    dayLater();
+    expect(restarted.renewSession(value)).not.toBeNull();
+    expect(pendingGeneration()).toBe(1);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -534,6 +577,7 @@ const signIn = async (): Promise<string> => {
 describe("the door's renewal route", () => {
   it("rotates the cookie and retires the one that was presented", async () => {
     const first = await signIn();
+    dayLater();
     const answer = await knock("POST", "/session/renew", {
       ...write(),
       cookie: `${cookieName("http")}=${first}`,
@@ -586,6 +630,90 @@ describe("the door's renewal route", () => {
 
     // None of the three rotated anything.
     expect((await knock("GET", "/session", header)).status).toBe(200);
+  });
+
+  /** Make the next write to devices.json fail, as a full disk would. */
+  const failWrites = () => {
+    (registry as unknown as { persist: () => void }).persist = () => {
+      throw new Error("disk full");
+    };
+    return () => delete (registry as unknown as { persist?: unknown }).persist;
+  };
+  const inMemory = () => JSON.stringify((registry as unknown as { devices: unknown }).devices);
+  const onDisk = () => readFileSync(join(DATA_DIR, "devices.json"), "utf8");
+
+  it("still serves a successor it could not commit, and commits it on the next request", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const memory = inMemory();
+    const disk = onDisk();
+
+    const restore = failWrites();
+    // Pending on disk is an authorisation, so the request is served...
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+    // ...and nothing moved: not the hash, not the pending, not the cap.
+    expect(inMemory()).toBe(memory);
+    expect(onDisk()).toBe(disk);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    restore();
+
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("answers a renewal it could not commit with silence, and changes nothing", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const memory = inMemory();
+    const disk = onDisk();
+
+    const restore = failWrites();
+    const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
+    expect(answer.status).toBe(204);
+    expect(answer.headers["set-cookie"]).toBeUndefined();
+    expect(inMemory()).toBe(memory);
+    expect(onDisk()).toBe(disk);
+    restore();
+
+    // Both values still sign in until the successor is committed.
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    expect((await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("says nothing while renewal is not due", async () => {
+    const cookie = await signIn();
+    const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${cookie}` });
+    expect(answer.status).toBe(204);
+    expect(answer.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("gives a retried renewal the same cookie, and keeps the old one working until the new one is used", async () => {
+    const first = await signIn();
+    dayLater();
+    const header = { ...write(), cookie: `${cookieName("http")}=${first}` };
+    // The first reply is "lost": the browser never stored it and asks again.
+    const lost = await knock("POST", "/session/renew", header);
+    const retried = await knock("POST", "/session/renew", header);
+    expect(retried.status).toBe(200);
+    expect(cookieOf(retried)).toBe(cookieOf(lost));
+
+    // Until the new value is presented, the old one is still a sign-in.
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${cookieOf(retried)}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("refreshes the cookie when the successor itself is presented for renewal", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const again = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
+    expect(again.status).toBe(200);
+    expect(cookieOf(again)).toBe(next);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
   });
 });
 
@@ -689,6 +817,43 @@ describe("the browser actually calls it", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("presents a new cookie straight away, which is what commits it", async () => {
+    const calls: Array<{ url: string; method: unknown }> = [];
+    const sandbox = {
+      fetch: (url: string, init: Record<string, unknown>) => {
+        calls.push({ url, method: init?.method });
+        return Promise.resolve(url === "/session/renew" ? { status: 200 } : { status: 200 });
+      },
+      setInterval: () => 0,
+      Date: { now: () => 1_700_000_000_000 },
+      document: { visibilityState: "visible", addEventListener: () => {} },
+    };
+    createContext(sandbox);
+    runInContext(renewalScript(), sandbox);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([
+      { url: "/session/renew", method: "POST" },
+      { url: "/session", method: undefined },
+    ]);
+  });
+
+  it("asks for nothing more when the door had nothing to renew", async () => {
+    const calls: string[] = [];
+    const sandbox = {
+      fetch: (url: string) => {
+        calls.push(url);
+        return Promise.resolve({ status: 204 });
+      },
+      setInterval: () => 0,
+      Date: { now: () => 1_700_000_000_000 },
+      document: { visibilityState: "visible", addEventListener: () => {} },
+    };
+    createContext(sandbox);
+    runInContext(renewalScript(), sandbox);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(["/session/renew"]);
+  });
+
   it("puts the script in even when the shell has lost its closing tag", () => {
     expect(injectRenewal("<html><body>x</body></html>")).toContain("</script></body>");
     // A shell with no </body> still runs a trailing script; refusing to
@@ -706,6 +871,7 @@ describe("the browser actually calls it", () => {
 
   it("keeps the absolute cap it advertises in the cookie", async () => {
     const cookie = await signIn();
+    dayLater();
     const answer = await knock("POST", "/session/renew", {
       ...write(),
       cookie: `${cookieName("http")}=${cookie}`,

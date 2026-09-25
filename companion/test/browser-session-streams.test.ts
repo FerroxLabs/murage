@@ -147,14 +147,15 @@ const doorWrite = (
 const signOut = (cookie: string) => doorWrite("DELETE", "/session", cookie);
 
 /** Renew as a browser does: a day after the value became current, when
- * renewal is next due, taking the successor and then presenting it, which
- * commits it and retires the value it replaced. */
+ * renewal is next due, taking the successor and then presenting it with
+ * `GET /session`, which commits it and retires the value it replaced. */
 const renew = async (cookie: string): Promise<string> => {
   vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 60_000);
   const answer = await doorWrite("POST", "/session/renew", cookie);
   expect(answer.status).toBe(200);
   const next = answer.setCookie.slice(answer.setCookie.indexOf("=") + 1, answer.setCookie.indexOf(";"));
-  expect(registry.resolveSession(next)).not.toBeNull();
+  // Committed the way the page's renewal script does it: through the door.
+  expect((await doorWrite("GET", "/session", next)).status).toBe(200);
   return next;
 };
 

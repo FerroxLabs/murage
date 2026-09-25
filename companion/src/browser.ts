@@ -78,12 +78,14 @@ export interface BrowserDeviceStore {
    * Never extends or revives anything. */
   sessionDeadline(sessionId: string): number | null;
   closeSession(value: string | undefined): boolean;
-  /** Rotate the credential of a live session, inside its existing device
-   * record. `null` for anything that is not a live session — the door turns
-   * that into a silent no-op, never a sign-out. */
+  /** Renew a live session (`DeviceRegistry.renewSession`): the successor to
+   * set as the cookie, the same successor again on a retry, or the committed
+   * value when the successor itself is presented. `expiresAt` is the cap that
+   * cookie will carry. `null` for anything else, including "not due yet" —
+   * the door turns that into a silent no-op, never a sign-out. */
   renewSession(
     value: string | undefined,
-  ): { value: string; session: { expiresAt: number } } | null;
+  ): { value: string; expiresAt: number } | null;
 }
 
 export interface BrowserDoorOptions {
@@ -1033,6 +1035,10 @@ const RENEW_MIN_GAP_MS = 60_000;
  * not told, because there is nothing it could usefully do about it and the
  * one thing it must never do is sign somebody out that the server has not.
  *
+ * A 200 is followed by one `GET /session`, which presents the new cookie and
+ * so commits it (see `DeviceRegistry.renewSession`). Without it, a tab that
+ * then sat idle would leave its successor uncommitted until it aged out.
+ *
  * NOTE FOR ANYONE EDITING THE STRING BELOW: it is a TEMPLATE LITERAL. A
  * backtick ends it and a backslash is consumed as an escape before JavaScript
  * ever sees it — that is how a word-boundary escape in `enterPage` once
@@ -1053,6 +1059,13 @@ export function renewalScript(): string {
     last = now;
     try {
       fetch("/session/renew", { method: "POST", credentials: "same-origin" }).then(
+        function (r) {
+          // A 200 set a new cookie. Present it once, now, while the page is
+          // known to be awake: that commits it on the server, and a committed
+          // value can never age out the way an unused successor does.
+          if (r && r.status === 200) return fetch("/session", { credentials: "same-origin" });
+        }
+      ).then(
         function () {},
         function () {}
       );
@@ -1393,10 +1406,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     // have been a credential rotation any cross-site `<img>` could trigger.
     //
     // The failure answer is 204 with no body and no `Set-Cookie`: nothing
-    // happened, nothing to say. Not 401 — a 401 here would invite a client to
-    // conclude it had been signed out, which is precisely the outcome renewal
-    // exists to avoid and which no client should ever infer from a
-    // best-effort background call.
+    // happened, nothing to say. That includes "not due yet", which is most
+    // calls: the page asks on every load and unlock, and the registry only
+    // derives a successor a day after the last commit. Not 401 — a 401 here
+    // would invite a client to conclude it had been signed out, which is
+    // precisely the outcome renewal exists to avoid.
     if (path === "/session/renew") {
       if (method !== "POST") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
       // Nothing in the body is read. Drain it so the socket can be reused
@@ -1409,9 +1423,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         res.end();
         return;
       }
-      const maxAge = Math.floor((renewed.session.expiresAt - Date.now()) / 1000);
+      // The successor's own cap, not the current value's: once it is
+      // committed, this is how long it lives.
+      const maxAge = Math.floor((renewed.expiresAt - Date.now()) / 1000);
       res.setHeader("set-cookie", sessionCookie(renewed.value, identity, maxAge));
-      return sendJson(res, 200, { ok: true, expiresAt: renewed.session.expiresAt });
+      return sendJson(res, 200, { ok: true, expiresAt: renewed.expiresAt });
     }
 
     if (path === "/session") {

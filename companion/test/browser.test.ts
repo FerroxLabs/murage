@@ -87,7 +87,7 @@ const devices: BrowserDeviceStore = {
     // Same record identity, as the registry keeps it.
     const renewed = { id: session.id, expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
     sessions.set(next, renewed);
-    return { value: next, session: renewed };
+    return { value: next, session: renewed, expiresAt: renewed.expiresAt };
   },
 };
 
