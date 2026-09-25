@@ -168,9 +168,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "title": "Connected apps",
     "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
     "breadcrumb": "Murage docs → Connected apps",
-    "where": "Murage docs → Connected apps",
+    "where": "Tools → Connected apps",
     "url": "https://murage.app/docs/connected-apps",
-    "text": "Open Connected apps from the sidebar, choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use."
+    "text": "Open Connected apps from the sidebar (Tools → Connected apps), choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use."
   },
   {
     "id": "connected-apps#official-packaged-app",
@@ -191,6 +191,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Connected apps",
     "url": "https://murage.app/docs/connected-apps#self-hosted-or-source-builds",
     "text": "The managed service is a convenience for official packaged builds. A source build can use your own Composio project and COMPOSIOAPIKEY; see Self-hosted Composio."
+  },
+  {
+    "id": "connected-apps#letting-a-bot-use-connected-apps",
+    "title": "Connected apps",
+    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "heading": "Letting a bot use connected apps",
+    "breadcrumb": "Murage docs → Connected apps",
+    "where": "Bot settings → Access → Allow this bot to use connected apps",
+    "url": "https://murage.app/docs/connected-apps#letting-a-bot-use-connected-apps",
+    "text": "Each bot has a switch for connected apps: Bot settings → Access → Allow this bot to use connected apps. What shapes (bot name) shows whether connected apps are part of what the bot can use."
+  },
+  {
+    "id": "connected-apps#bots-stay-connected",
+    "title": "Connected apps",
+    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "heading": "Bots stay connected",
+    "breadcrumb": "Murage docs → Connected apps",
+    "where": "Troubleshooting → Connected apps",
+    "url": "https://murage.app/docs/connected-apps#bots-stay-connected",
+    "text": "Each bot's turn checks the connected-apps service again before it starts, so a short network blip no longer leaves your bots without their apps until Murage restarts. This was fixed in 0.1.60. If a bot still says it has no connected apps, see Troubleshooting → Connected apps."
   },
   {
     "id": "connected-apps#multiple-accounts",
@@ -1630,6 +1650,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Source and advanced deployments can change documented ports with the relevant environment settings. When the default harness port is occupied, packaged builds may fall back to another local port and communicate the selected address internally."
   },
   {
+    "id": "troubleshooting/connected-apps#connected-apps-not-working-a-bot-says-it-has-no-connected-apps",
+    "title": "Connected apps",
+    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "heading": "Connected apps not working: a bot says it has no connected apps",
+    "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
+    "where": "Tools → Connected apps",
+    "url": "https://murage.app/docs/troubleshooting/connected-apps#connected-apps-not-working-a-bot-says-it-has-no-connected-apps",
+    "text": "If a bot says it has no connected apps, or cannot see an app you know is connected:\n\n1. Open Connected apps from the sidebar (Tools → Connected apps).\n2. Press the refresh button at the top of the panel (Refresh connection status).\n3. Check the Connected tab: the account should be listed there.\n4. Send the bot your request again. Each new message checks the connection again, so it does not need a restart.\n5. Check that the bot is allowed to use connected apps: Bot settings → Access → Allow this bot to use connected apps.\n\nBefore 0.1.60, one failed check of the connected-apps service could leave every bot without its apps until Murage restarted.…"
+  },
+  {
     "id": "troubleshooting/connected-apps#connection-completes-but-the-app-still-shows-disconnected",
     "title": "Connected apps",
     "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
@@ -1637,7 +1667,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
     "url": "https://murage.app/docs/troubleshooting/connected-apps#connection-completes-but-the-app-still-shows-disconnected",
-    "text": "1. Return to Murage after the browser confirms success.\n2. Open Connected apps and use Refresh connection status.\n3. Check the Connected tab for the account, including its alias.\n4. Retry from the original bot after the account appears active."
+    "text": "1. Return to Murage after the browser confirms success.\n2. Open Connected apps and press the refresh button (Refresh connection status).\n3. Check the Connected tab for the account, including its alias.\n4. Retry from the original bot after the account appears active."
   },
   {
     "id": "troubleshooting/connected-apps#the-account-is-connected-but-the-agent-cannot-use-it",
