@@ -217,7 +217,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(shown!.botId).toBe(bot.id);
       expect(shown!.tool).toBe("shell");
 
-      const answered = await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" });
+      const answered = await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "allow" });
       expect(answered.status).toBe(200);
       expect(answered.body.outcome).not.toBe("unavailable");
 
@@ -240,7 +240,7 @@ posixOnly("authorization decisions are logged", () => {
       const card = await waitForBotCard(bot.id);
       expect(card).not.toBeNull();
       const requestId = card.card.requestId as string;
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
 
       const user = await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId);
       expect(user, "the denial never reached the decision log").not.toBeNull();
@@ -325,7 +325,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(grant.status).toBe(400);
       expect(grant.body.error).toMatch(/questions cannot be always allowed/);
 
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
       expect(await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId)).not.toBeNull();
 
       const rows = (await api("GET", "/api/decisions")).body.decisions as DecisionRow[];

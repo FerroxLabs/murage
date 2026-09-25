@@ -63,6 +63,28 @@ export function isCloudDesktopJoin(method: string, path: string): boolean {
   return method === CLOUD_DESKTOP_JOIN_ROUTE.method && CLOUD_DESKTOP_JOIN_ROUTE.path.test(path);
 }
 
+/** Answering a card. The harness takes a yes (allow, allow for this task, or
+ * an answer to a question) only from the desktop or from a request carrying
+ * the launch credential, because any process on the computer can reach its
+ * loopback port and the companion marker alone proves nothing. A paired
+ * device's answer is the owner's, so the door vouches for it here. */
+export const APPROVAL_ANSWER_ROUTE = {
+  method: "POST",
+  path: /^\/api\/threads\/[\w-]+\/respond$/,
+} as const;
+
+/** The private launch proof to add when forwarding this request, if any. It
+ * is only ever the value this door was started with, never the client's. A
+ * cloud-desktop join has already been refused without a usable credential;
+ * an answer without one is still forwarded, and the harness then takes only
+ * a decline. */
+export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
+  const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+  if (usable && method === APPROVAL_ANSWER_ROUTE.method && APPROVAL_ANSWER_ROUTE.path.test(path)) return { "x-murage-companion-token": token };
+  return {};
+}
+
 /** The two routine routes that can carry a `runOn` field.
  *
  * Creating or amending a routine is an ordinary thing to do from a phone, but

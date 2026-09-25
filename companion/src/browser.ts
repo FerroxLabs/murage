@@ -31,7 +31,7 @@ import { request as httpRequest, type IncomingMessage, type Server, type ServerR
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
+import { BROWSER_STATIC, denyReason, isCloudDesktopJoin, isRoutineWrite, launchProofHeaders } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** The identity this door actually answers to.
@@ -1356,7 +1356,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           method,
           headers: {
             ...forwardedHeaders(req, body),
-            ...(isCloudDesktopJoin(method, path) ? { "x-murage-companion-token": options.companionToken! } : {}),
+            ...launchProofHeaders(method, path, options.companionToken),
           },
         },
         (harness) => {

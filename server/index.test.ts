@@ -1846,11 +1846,11 @@ describe("harness HTTP API", () => {
       expect(buzz.notification).toMatchObject({kind:"approval",botId:bot.id,threadId:bot.threadId,messageId:card.id});
       expect(buzz.notification.body).toContain("gpt-image-2");
       await expect.poll(async()=>(await api("GET","/api/bots?messages=0")).body.bots.find((b:any)=>b.id===bot.id).activity).toBe("waiting-on-you");
-      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
+      expect((await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
       expect((await denied.result).isError).toBe(true);expect(existsSync(receipt)).toBe(false);
       // A second answer to a card the owner already settled (double click, or
       // the Inbox copy) is not a failure: no "Couldn't deliver" chip.
-      const repeated=await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"});
+      const repeated=await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"});
       expect(repeated.status).toBe(200);expect(repeated.body.outcome).toBe("rejected");
       expect((await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.some((m:any)=>String(m.tool?.name??"").startsWith("Couldn't deliver"))).toBe(false);
       const deniedCard=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id).messages.find((m:any)=>m.id===card.id);
@@ -1861,7 +1861,7 @@ describe("harness HTTP API", () => {
       const args={request_id:"generate",prompt:"Synthetic image fixture",connection_id:"openai",model:"gpt-image-2"};
       const generated=imageCall(turn.env,args);proxies.push(generated.proxy);card=await pendingCard();
       expect(card.card.subtitle).toContain("gpt-image-2");expect(existsSync(receipt)).toBe(false);
-      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
+      expect((await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
       const result=await generated.result;expect(result.isError).not.toBe(true);
       const payload=JSON.parse(result.content[0].text);expect(payload.metadata.model).toBe("gpt-image-2");expect(existsSync(payload.artifact.path)).toBe(true);
       expect(payload.artifact.path).toContain(join("workspaces",bot.id,"generated-images"));
@@ -1873,7 +1873,7 @@ describe("harness HTTP API", () => {
       turn=await startInternalFixtureTurn(bot.id);
       const edit=imageCall(turn.env,{request_id:"edit",prompt:"Edit the synthetic fixture",operation:"edit",reference_ids:[payload.artifact.referenceId]});proxies.push(edit.proxy);
       card=await pendingCard();expect(card.card.title).toBe("Approve image edit");
-      await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"});
+      await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"});
       expect((await edit.result).isError).not.toBe(true);expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:2,references:1});
     } finally {
       stream?.close();
@@ -1904,7 +1904,7 @@ describe("harness HTTP API", () => {
     const approved = async (pending: Promise<any>) => {
       let card:any;
       await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);
-      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
+      expect((await desktopApi("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
       const result=await pending;expect(result.isError).not.toBe(true);
       return { card, payload: JSON.parse(result.content[0].text) };
     };
@@ -1987,7 +1987,7 @@ describe("harness HTTP API", () => {
       let turn = await startInternalFixtureTurn(bot.id);
       const source = mcp(turn.env, "generate_image", { request_id: "seed-source", prompt: "Synthetic source", connection_id: "openai", model: "gpt-image-2" });
       let card = await pendingCard();
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       const generated = JSON.parse((await source).content[0].text).artifact;
       await stopFixtureTurn(bot.id, turn);
       // An owner-authorized workspace image in this task's own workspace, as
@@ -2027,7 +2027,7 @@ describe("harness HTTP API", () => {
       card = await pendingCard();
       expect(card.card.title).toBe("Approve image edit"); expect(card.card.subtitle).toContain("One image from 3 reference images");
       expect(calls()).toBe(before.calls);
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       const edited = await edit; expect(edited.isError).not.toBe(true);
       const payload = JSON.parse(edited.content[0].text);
       expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({ calls: before.calls + 1, url: "https://api.openai.com/v1/images/edits", references: 3,
@@ -2158,7 +2158,7 @@ describe("harness HTTP API", () => {
       const first = imageCall(turn.env, args);
       let card: any;
       await expect.poll(async () => { card = (await messages()).find((message: any) => message.card?.tool === "generate_image" && !message.card.answered); return Boolean(card); }).toBe(true);
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       const result = await first;
       expect(result.isError).not.toBe(true);
       const payload = JSON.parse(result.content[0].text);
@@ -4998,13 +4998,13 @@ describe("harness HTTP API", () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];
 
-    const invalid = await api("POST", `/api/bots/${bot.id}/respond`, {
+    const invalid = await desktopApi("POST", `/api/bots/${bot.id}/respond`, {
       requestId: "gone",
       behavior: "approve-everything",
     });
     expect(invalid.status).toBe(400);
 
-    const unavailable = await api("POST", `/api/bots/${bot.id}/respond`, {
+    const unavailable = await desktopApi("POST", `/api/bots/${bot.id}/respond`, {
       requestId: "gone",
       behavior: "allow",
     });
@@ -5020,7 +5020,7 @@ describe("harness HTTP API", () => {
     // busyBotId lives in memory only, so a card that outlives its turn (or the
     // process) has no speaker. The room must still be answerable: a pending
     // approval takes over the composer, so a dead end locks the room for good.
-    const answered = await api("POST", "/api/threads/test-stranded-room-thread/respond", {
+    const answered = await desktopApi("POST", "/api/threads/test-stranded-room-thread/respond", {
       requestId: "stranded-request",
       behavior: "allow",
     });
@@ -5035,7 +5035,7 @@ describe("harness HTTP API", () => {
     expect(card.answered).toBe("unavailable");
 
     // a room with nothing pending still reports that plainly
-    const nothing = await api("POST", "/api/threads/test-pinned-room-thread/respond", {
+    const nothing = await desktopApi("POST", "/api/threads/test-pinned-room-thread/respond", {
       requestId: "never-existed",
       behavior: "allow",
     });
@@ -6746,7 +6746,7 @@ describe("harness HTTP API", () => {
       // payload and is desktop-only, this approves one specific proposal the
       // person is looking at — single-use, owner-bound and fingerprint-bound
       // (routine-card-integrity.test.ts pins all three).
-      const confirmed = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const confirmed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: proposal.requestId,
         behavior: "allow",
       });
@@ -6766,7 +6766,7 @@ describe("harness HTTP API", () => {
         botId: bot.id,
         sourceThreadId: bot.threadId,
       });
-      const duplicate = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const duplicate = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: proposal.requestId,
         behavior: "allow",
       });
@@ -6820,7 +6820,7 @@ describe("harness HTTP API", () => {
         .find((candidate: { id: string }) => candidate.id === bot.id)
         ?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === crossProposal.requestId);
       expect(crossCard?.card.title).toContain(`for @${teammate.name}`);
-      const crossConfirmed = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const crossConfirmed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: crossProposal.requestId,
         behavior: "allow",
       });
@@ -6962,7 +6962,7 @@ describe("harness HTTP API", () => {
       });
       expect(orphanProposalResponse.status).toBe(201);
       const orphanProposal = z.object({ requestId: z.string() }).parse(await orphanProposalResponse.json());
-      const orphanConfirmed = await api("POST", `/api/threads/${orphanThreadId}/respond`, {
+      const orphanConfirmed = await desktopApi("POST", `/api/threads/${orphanThreadId}/respond`, {
         requestId: orphanProposal.requestId,
         behavior: "allow",
       });
@@ -7114,14 +7114,14 @@ describe("harness HTTP API", () => {
       expect((await api("PATCH", `/api/bots/${bot.id}/cards/${stagedMessage.id}`, {
         answered: "allow",
       })).status).toBe(409);
-      const missingHash = await api("POST", `/api/bots/${bot.id}/respond`, {
+      const missingHash = await desktopApi("POST", `/api/bots/${bot.id}/respond`, {
         requestId: first.requestId,
         behavior: "allow",
       });
       expect(missingHash.status).toBe(409);
       expect(missingHash.body.error).toMatch(/reviewedSha256/);
 
-      const wrongHash = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const wrongHash = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: first.requestId,
         behavior: "allow",
         reviewedSha256: "0".repeat(64),
@@ -7129,7 +7129,7 @@ describe("harness HTTP API", () => {
       expect(wrongHash.status).toBe(409);
       expect(wrongHash.body.error).toMatch(/reviewedSha256/);
 
-      const approvedByBotRoute = await api("POST", `/api/bots/${bot.id}/respond`, {
+      const approvedByBotRoute = await desktopApi("POST", `/api/bots/${bot.id}/respond`, {
         requestId: first.requestId,
         behavior: "allow",
         reviewedSha256: first.skillRequest.sha256,
@@ -7158,7 +7158,7 @@ describe("harness HTTP API", () => {
       expect(JSON.stringify(stagedInventory)).not.toContain("baseSha256");
       expect(JSON.stringify(stagedInventory)).not.toContain("baseAppliedStageId");
 
-      const approvedUpdate = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const approvedUpdate = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: updated.requestId,
         behavior: "allow",
         reviewedSha256: updated.skillRequest.sha256,
@@ -7173,7 +7173,7 @@ describe("harness HTTP API", () => {
         "update",
         "A denied replacement.",
       );
-      expect(await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      expect(await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: deniedUpdate.requestId,
         behavior: "deny",
       })).toMatchObject({ status: 200, body: { outcome: "rejected" } });
@@ -7197,7 +7197,7 @@ describe("harness HTTP API", () => {
       expect(selectedRevisions).toHaveLength(1);
       const skillPath = selectedRevisions[0]!;
       writeFileSync(skillPath, updated.skillRequest.preview.replace("newly reviewed", "changed after staging"));
-      const staleResponse = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const staleResponse = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: staleUpdate.requestId,
         behavior: "allow",
         reviewedSha256: staleUpdate.skillRequest.sha256,
@@ -7211,7 +7211,7 @@ describe("harness HTTP API", () => {
         )?.card;
       expect(staleCard?.held).toMatch(/changed after this update was proposed/);
       writeFileSync(skillPath, updated.skillRequest.preview);
-      expect(await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      expect(await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: staleUpdate.requestId,
         behavior: "allow",
         reviewedSha256: staleUpdate.skillRequest.sha256,
@@ -7225,7 +7225,7 @@ describe("harness HTTP API", () => {
       expect(recoveredCard?.held).toBeUndefined();
 
       const second = await stage("reviewed-skill-two");
-      const approvedByThreadRoute = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const approvedByThreadRoute = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: second.requestId,
         behavior: "allow",
         reviewedSha256: second.skillRequest.sha256,
@@ -7233,7 +7233,7 @@ describe("harness HTTP API", () => {
       expect(approvedByThreadRoute).toMatchObject({ status: 200, body: { outcome: "allowed-once" } });
 
       const denied = await stage("reviewed-skill-denied");
-      const deniedWithoutHash = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const deniedWithoutHash = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: denied.requestId,
         behavior: "deny",
       });
@@ -7247,7 +7247,7 @@ describe("harness HTTP API", () => {
         join(home, ".murage", "skill-state", bot.id, "staged.json"),
         `${JSON.stringify({ writes: {} }, null, 2)}\n`,
       );
-      expect(await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      expect(await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: missingStage.requestId,
         behavior: "deny",
       })).toMatchObject({ status: 200, body: { outcome: "rejected" } });
@@ -9070,7 +9070,7 @@ describe("internal capability authority", () => {
           .toMatchObject({ requestId, tool: "Read", title: "Approval needed" });
         expect(received).toBe("");
         stage("recipient card held with no answer; send owner deny");
-        expect((await api("POST", `/api/threads/${recipient.threadId}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+        expect((await desktopApi("POST", `/api/threads/${recipient.threadId}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
         stage("owner deny accepted; await broker reply");
         await expect.poll(() => received).toContain("\n");
         expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "deny" });
@@ -9123,7 +9123,7 @@ describe("internal capability authority", () => {
       writeFileSync(join(home, "finish-fake", String(turn.dump.pid)), "finish");
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((bot: { id: string }) => bot.id === source.id)?.busy).toBe(false);
-      await api("POST", `/api/threads/${source.threadId}/respond`, { requestId, behavior: "allow" });
+      await desktopApi("POST", `/api/threads/${source.threadId}/respond`, { requestId, behavior: "allow" });
       expect((await pending).status).toBe(401);
       const state = (await desktopApi("GET", "/api/bots?messages=0")).body;
       expect(state.groups.filter((group: { memberIds: string[] }) => group.memberIds.includes(source.id) && group.memberIds.includes(target.id))).toHaveLength(0);

@@ -10242,6 +10242,20 @@ function mayReadThread(req: IncomingMessage, url: URL, threadId: string): boolea
   return visibleToCompanion(store, { scope: "thread", threadId });
 }
 
+/** May this request say yes to a card on the owner's behalf?
+ *
+ * Only the owner's own surfaces: the desktop app with this launch's secret,
+ * or the paired phone's companion carrying the launch credential it shares
+ * with this harness. The Telegram, Slack and Discord buttons answer inside
+ * this process and never come through HTTP. Anything else on loopback (a
+ * script, or a bot's own shell under Full access) may decline or skip a card
+ * but never allow it, allow it for the task, or answer a question: otherwise
+ * the stop line is a card the bot can click itself. */
+function mayApprove(req: IncomingMessage, url: URL): boolean {
+  return requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
+}
+const APPROVAL_NEEDS_OWNER = "Approving or answering happens in the Murage app or on your paired phone. From here you can only decline.";
+
 const server = createServer(async (req, res) => {
   let url: URL;
   try {
@@ -15043,6 +15057,7 @@ const server = createServer(async (req, res) => {
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+      if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const question = questionReply(bot.threadId, String(body.requestId), body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
       if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
@@ -15089,6 +15104,7 @@ const server = createServer(async (req, res) => {
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+      if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const requestId = String(body.requestId);
       const question = questionReply(threadId, requestId, body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
