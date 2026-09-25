@@ -13,7 +13,7 @@ const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf
 describe("retryableLazy", () => {
   it("keeps one component identity, and a retry imports the chunk again", () => {
     const load = vi.fn(() => Promise.reject(new Error("Failed to fetch dynamically imported module")));
-    const panel = retryableLazy<{ a: number }>(load as never);
+    const panel = retryableLazy(load as unknown as () => Promise<{ default: (props: { a: number }) => null }>);
     const first = panel.Component({ a: 1 }) as ReactElement;
     expect(isValidElement(first)).toBe(true);
     panel.retry();

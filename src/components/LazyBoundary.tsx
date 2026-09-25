@@ -11,17 +11,18 @@
 // React.lazy remembers a rejected import for good, so a retry needs a fresh
 // lazy component. `retryableLazy` hands out one stable component that renders
 // whichever lazy is current, and `retry` swaps in a new one.
-import { Component, lazy, type ComponentType, type ReactNode } from "react";
+import { Component, lazy, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
 export interface RetryableLazy<P extends object> {
-  Component: ComponentType<P>;
+  Component: (props: P) => ReactNode;
   retry: () => void;
 }
 
-export function retryableLazy<P extends object>(load: () => Promise<{ default: ComponentType<P> }>): RetryableLazy<P> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the same bound React.lazy uses
+export function retryableLazy<T extends ComponentType<any>>(load: () => Promise<{ default: T }>): RetryableLazy<ComponentProps<T>> {
   let current = lazy(load);
-  const Component = (props: P) => {
-    const Current = current;
+  const Component = (props: ComponentProps<T>) => {
+    const Current = current as ComponentType<ComponentProps<T>>;
     return <Current {...props} />;
   };
   return {

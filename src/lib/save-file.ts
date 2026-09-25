@@ -124,7 +124,7 @@ export function saveSource(url: string, pageOrigin: string = currentOrigin()): S
 }
 
 /** `%XX` as the byte it names; everything else as its own UTF-8. */
-function percentDecodedBytes(text: string): Uint8Array {
+function percentDecodedBytes(text: string): Uint8Array<ArrayBuffer> {
   const encoder = new TextEncoder();
   const out: number[] = [];
   for (let at = 0; at < text.length; ) {
