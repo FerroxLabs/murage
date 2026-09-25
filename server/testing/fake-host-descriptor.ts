@@ -3,8 +3,8 @@
 // readCuaConnection (server/local-computer.ts) mounts it through the real
 // path rather than a test-only one.
 //
-//   darwin: the legacy descriptor (mcpCommand/mcpArgs/mcpEnv), as Electron's
-//           macOS cua-driver connection writes it.
+//   darwin: the legacy descriptor (mode/status/socketPath/mcpCommand/mcpArgs/
+//           mcpEnv), as Electron's macOS cua-driver connection writes it.
 //   linux:  the supervised descriptor Electron's electron/cua-linux.cjs
 //           publishes, passing the full runtime validation: a private
 //           descriptor, an executable driver with its recorded file identity,
@@ -61,9 +61,12 @@ export function fakeHostDescriptorSource({ driverSource, driverEnv }: {
       toolNames: ['click', 'get_window_state', 'list_apps', 'type_text'], doctorWarnings: [],
     }), { mode: 0o600 });
   } else {
+    // A ready descriptor names the driver itself and its MCP subcommand, so the
+    // fake driver is an executable script rather than an argument to node.
     const driver = path.join(dataDir, 'fake-host-driver.mjs');
-    fs.writeFileSync(driver, driverSource);
-    fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({ mcpCommand: process.execPath, mcpArgs: [driver], mcpEnv: driverEnv }));
+    fs.writeFileSync(driver, '#!' + process.execPath + String.fromCharCode(10) + driverSource);
+    fs.chmodSync(driver, 0o755);
+    fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({ mode: 'embedded', status: 'ready', socketPath: path.join(dataDir, 'cua.sock'), mcpCommand: driver, mcpArgs: ['mcp'], mcpEnv: driverEnv }));
   }
 }
 `;

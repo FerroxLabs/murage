@@ -76,8 +76,8 @@ beforeAll(async () => {
         mcp:{command:driver,args:['mcp','--embedded','--socket',socketPath],env:{CUA_DRIVER_EMBEDDED:'1',CUA_DRIVER_HOST_BUNDLE_ID:'com.murage.app',CUA_DRIVER_RS_UPDATE_CHECK:'false',CUA_DRIVER_RS_TELEMETRY_ENABLED:'false'}},
         toolNames:['click','get_window_state','list_apps','type_text','fixture_ping'],doctorWarnings:[]}),{mode:0o600});
     }else{
-      const driver=path.join(dataDir,'fake-host-driver.mjs');fs.writeFileSync(driver,hostSource);
-      fs.writeFileSync(path.join(dataDir,'cua-connection.json'),JSON.stringify({mcpCommand:process.execPath,mcpArgs:[driver],mcpEnv:{FIXTURE_HOST_SECRET:'synthetic-host-only'}}));
+      const driver=path.join(dataDir,'fake-host-driver.mjs');fs.writeFileSync(driver,'#!'+process.execPath+String.fromCharCode(10)+hostSource);fs.chmodSync(driver,0o755);
+      fs.writeFileSync(path.join(dataDir,'cua-connection.json'),JSON.stringify({mode:'embedded',status:'ready',socketPath:path.join(dataDir,'cua.sock'),mcpCommand:driver,mcpArgs:['mcp'],mcpEnv:{FIXTURE_HOST_SECRET:'synthetic-host-only'}}));
     }
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     cfg.instances.second={...cfg.instances.verification,displayName:'Second isolated engine',environment:{FAKE_CLAUDE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'second-dump.json')}};

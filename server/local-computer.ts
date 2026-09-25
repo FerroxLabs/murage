@@ -28,6 +28,8 @@ export type LocalComputerConnection = {
 
 type LegacyConnectionDescriptor = {
   mode?: string;
+  status?: unknown;
+  socketPath?: unknown;
   mcpCommand?: unknown;
   mcpArgs?: unknown;
   mcpEnv?: unknown;
@@ -83,19 +85,23 @@ function decodeLegacyDescriptor(
   platform: NodeJS.Platform,
 ): LocalComputerConnection | null {
   const supportedPlatform = legacyPlatform(platform);
-  if (!supportedPlatform || !value || value.mode === "unavailable" || typeof value.mcpCommand !== "string") {
-    return null;
-  }
-  if (value.mcpArgs !== undefined && !Array.isArray(value.mcpArgs)) return null;
+  // Only a complete connection the app says is ready: a known mode, a ready
+  // status, the driver's socket, and the driver's own MCP subcommand. Anything
+  // less (unavailable, stale, half written, hand edited) mounts nothing.
   if (
-    value.mcpEnv !== undefined &&
-    (!value.mcpEnv || typeof value.mcpEnv !== "object" || Array.isArray(value.mcpEnv))
+    !supportedPlatform || !value || typeof value !== "object" ||
+    !(value.mode === "embedded" || (supportedPlatform === "darwin" && value.mode === "standalone")) ||
+    value.status !== "ready" ||
+    typeof value.socketPath !== "string" || !value.socketPath ||
+    typeof value.mcpCommand !== "string" || !value.mcpCommand.trim()
   ) {
     return null;
   }
-  const args = value.mcpArgs ?? ["mcp"];
+  if (!Array.isArray(value.mcpArgs) || value.mcpArgs[0] !== "mcp") return null;
+  if (!value.mcpEnv || typeof value.mcpEnv !== "object" || Array.isArray(value.mcpEnv)) return null;
+  const args: unknown[] = value.mcpArgs;
   if (!args.every((arg) => typeof arg === "string")) return null;
-  const env = value.mcpEnv ?? {};
+  const env = value.mcpEnv;
   if (!Object.values(env).every((entry) => typeof entry === "string")) return null;
   return {
     command: value.mcpCommand,
@@ -353,25 +359,40 @@ export function readCuaConnection({
   validateLegacyRuntime?: (file: string, platform: NodeJS.Platform) => boolean;
 } = {}): LocalComputerConnection | null {
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
-  if (platform === "darwin") {
-    // Legacy/dev fallback. Packaged Electron passes its exact userData path.
+  if (platform === "darwin" && !userData) {
+    // Legacy/dev fallback, only when Electron did not name its exact folder.
     for (const directory of ["Murage", "murage", "OpenGrokBot", "opengrokbot"]) {
       candidates.push(join(home, "Library", "Application Support", directory, "cua-connection.json"));
     }
   }
 
-  for (const file of [...new Set(candidates)]) {
+  const file = firstPresentCuaDescriptor(candidates);
+  if (!file) return null;
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    if (platform === "linux") {
+      const decoded = decodeLinuxDescriptor(raw);
+      if (decoded && validateLinuxRuntime(file, raw)) return decoded;
+    } else {
+      const decoded = decodeLegacyDescriptor(raw, platform);
+      if (decoded && validateLegacyRuntime(file, platform)) return decoded;
+    }
+  } catch {
+    // Invalid, tampered, or stale descriptors are unavailable.
+  }
+  return null;
+}
+
+/** The first candidate that exists decides. An older folder can never stand
+ * in for a present but unavailable, malformed or unreadable descriptor at a
+ * more specific place (upstream #1730). */
+function firstPresentCuaDescriptor(candidates: string[]): string | null {
+  for (const file of new Set(candidates)) {
     try {
-      const raw = JSON.parse(readFileSync(file, "utf8"));
-      if (platform === "linux") {
-        const decoded = decodeLinuxDescriptor(raw);
-        if (decoded && validateLinuxRuntime(file, raw)) return decoded;
-      } else {
-        const decoded = decodeLegacyDescriptor(raw, platform);
-        if (decoded && validateLegacyRuntime(file, platform)) return decoded;
-      }
-    } catch {
-      // Missing, invalid, tampered, or stale descriptors are unavailable.
+      lstatSync(file);
+      return file;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return file;
     }
   }
   return null;

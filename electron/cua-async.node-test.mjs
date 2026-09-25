@@ -88,7 +88,7 @@ test("async launch/status preserve outputs and exact command bounds", async(t)=>
   assert.equal(launch.command,"/usr/bin/open"); assert.deepEqual(launch.args,["-a","CuaDriver"]);
   assert.deepEqual(launch.options,{timeout:8000,maxBuffer:8192,killSignal:"SIGKILL"});
   fixture.socketReady=true; launch.close(new Error("launcher exit may precede socket readiness"));
-  assert.equal((await started).mode,"standalone");
+  const connected=await started;assert.equal(connected.mode,"standalone");assert.equal(connected.status,"ready");
   const status=cua.cuaPermissionsStatus();await until(()=>fixture.children.length===2);
   const child=fixture.children[1];assert.deepEqual(child.args,["permissions","status","--json"]);
   assert.equal(child.options.timeout,5000);assert.equal(child.options.maxBuffer,65536);
@@ -132,7 +132,7 @@ test("SDK late startup and cleanup bar replacement; concurrent starts share host
   assert.equal(fixture.hosts.length,1);host.stopGate.resolve();await stopped;
   assert.equal((await first).name,"AbortError");assert.equal((await duplicate).name,"AbortError");
   await until(()=>fixture.hosts.length===2);const fresh=fixture.hosts[1];fresh.startGate.resolve({socketPath:"/fixture/new"});
-  assert.equal((await replacement).socketPath,"/fixture/new");assert.equal(host.destroys,1);
+  const replaced=await replacement;assert.equal(replaced.socketPath,"/fixture/new");assert.equal(replaced.status,"ready");assert.equal(host.destroys,1);
   fresh.stopGate.resolve();await cua.stopCua();assert.equal(fresh.stops,1);
 });
 
