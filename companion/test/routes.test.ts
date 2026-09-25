@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, denyReason, type Surface } from "../src/routes.ts";
+import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -264,6 +264,7 @@ describe("surfaces do not converge", () => {
     for (const entry of BROWSER_STATIC) {
       const path =
         entry.path.source === "^\\/$" ? "/"
+        : entry.path === MERMAID_FRAME_FILE ? "/mermaid-frame-0123456789abcdef.html"
         : entry.path.source.includes("assets") ? "/assets/index-B7zzSDok.js"
         : entry.path.source.includes("chat|rooms") ? "/chat/bot_123"
         : entry.path.source.includes("icons") ? "/icons/murage-192.png"

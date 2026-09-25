@@ -31,7 +31,7 @@ import { request as httpRequest, type IncomingMessage, type Server, type ServerR
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
+import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** The identity this door actually answers to.
@@ -521,9 +521,31 @@ export function staticContentType(path: string): string | null {
  * cellular stops paying for it per call, and short enough that a model
  * shipped in an update is in use by tomorrow. */
 export function staticCacheControl(path: string): string {
-  if (path.startsWith("/assets/")) return "private, max-age=31536000, immutable";
+  if (path.startsWith("/assets/") || MERMAID_FRAME_FILE.test(path)) return "private, max-age=31536000, immutable";
   if (path === "/vad/silero_vad.onnx") return "private, max-age=86400";
   return "private, no-store";
+}
+
+/** The diagram frame's response policy, written by this door because it
+ * writes every static response's headers from its own table rather than
+ * relaying the harness's — which is how the harness's `sandbox allow-scripts`
+ * (`server/index.ts:16869`) was being dropped, and the one line that keeps
+ * the page an opaque origin even when it is opened directly went with it.
+ *
+ * No `frame-ancestors`, and no `X-Frame-Options` either: DENY refuses even the
+ * app's own iframe, which is the only way the page is ever shown, and what
+ * someone else framing it would get is an opaque page with no secrets that
+ * the session cookie does not reach cross-site anyway. */
+const FRAME_CSP = "sandbox allow-scripts";
+
+/** The headers every static response is written with. */
+function staticHeaders(path: string, expected: string): Record<string, string> {
+  const headers: Record<string, string> = { ...BASE_HEADERS, "cache-control": staticCacheControl(path), "content-type": expected };
+  if (MERMAID_FRAME_FILE.test(path)) {
+    delete headers["x-frame-options"];
+    headers["content-security-policy"] = FRAME_CSP;
+  }
+  return headers;
 }
 
 /** The harness routes whose `cache-control` this door passes on instead of
@@ -1614,14 +1636,23 @@ function relayStatic(
     return sendJson(res, 404, { error: `no route: GET ${path}` });
   }
 
-  const cache = staticCacheControl(path);
+  // The diagram frame is HTML and is not the shell. It is recognised by the
+  // one header only the real file carries: a stale name — a page still
+  // running last release's bundle — gets the SPA fallback, which is 200 and
+  // HTML and would otherwise be cached for a year under a frame's name.
+  const frame = MERMAID_FRAME_FILE.test(path);
+  if (frame && !/\bsandbox\b/.test(String(harness.headers["content-security-policy"] ?? ""))) {
+    harness.destroy();
+    return sendJson(res, 404, { error: `no route: GET ${path}` });
+  }
 
   // The shell is the one response this door rewrites, and this is the line
   // that makes renewal actually happen rather than merely exist. Every other
-  // static file goes through untouched.
-  if (expected.startsWith("text/html")) return relayShell(harness, res, expected, cache);
+  // static file goes through untouched — the frame included, whose own policy
+  // names its one script by hash.
+  if (expected.startsWith("text/html") && !frame) return relayShell(harness, res, expected, staticCacheControl(path));
 
-  res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
+  res.writeHead(200, staticHeaders(path, expected));
   harness.on("error", () => res.destroy());
   harness.pipe(res);
 }

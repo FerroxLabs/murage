@@ -176,6 +176,12 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // belongs at the keyboard, not on a credential that lives in a pocket.
 ];
 
+/** The diagram frame's built name (`scripts/vite-render-plugin.ts`
+ * `frameFileName`): sixteen lowercase hex digits of its content hash, exactly.
+ * Exported because the door serves this one static page differently from the
+ * shell — framed, sandboxed, never rewritten (`browser.ts` `relayStatic`). */
+export const MERMAID_FRAME_FILE = /^\/mermaid-frame-[0-9a-f]{16}\.html$/;
+
 /** The UI shell itself, served only at the browser door.
  *
  * Anchored and exact, and enumerated rather than wildcarded, for one reason
@@ -208,9 +214,11 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   // first wildcard on this list, and there is nothing else in there.
   { method: "GET", path: /^\/vad\/silero_vad\.onnx$/ },
   // The diagram frame (src/mermaid-frame): chat renders Mermaid inside a
-  // sandboxed, opaque-origin iframe loaded from this one static page. The
-  // harness serves it with its own `sandbox allow-scripts` CSP header.
-  { method: "GET", path: /^\/mermaid-frame\.html$/ },
+  // sandboxed, opaque-origin iframe loaded from this one static page. A build
+  // names it by its content, so it is 5 MB a phone downloads once per release
+  // rather than once per diagram. The plain `/mermaid-frame.html` is the dev
+  // server's name and is deliberately not here.
+  { method: "GET", path: MERMAID_FRAME_FILE },
   // Not in `dist/` today — the vite build emits neither, measured. Listed so
   // the door does not have to change the day the PWA files land, and harmless
   // until then because a miss is a 404 here rather than the SPA fallback.

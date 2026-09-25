@@ -367,3 +367,56 @@ describe("images a chat has already downloaded", () => {
     expect(keptCacheControl("GET", "/api/bots", 200, FOREVER)).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("the diagram frame", () => {
+  const FRAME = "/mermaid-frame-0123456789abcdef.html";
+  const FRAME_HTML =
+    '<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'sha256-x\'">' +
+    '<body><div id="diagram"></div><script>draw()</script></body>\n';
+  const served = () =>
+    replies.set(FRAME, reply(200, { "content-type": "text/html", "content-security-policy": "sandbox allow-scripts" }, FRAME_HTML));
+
+  it("can be framed by the app, stays an opaque origin, and is kept for good", async () => {
+    served();
+    const answer = await knock("GET", FRAME, { ...(await signedIn()), "sec-fetch-dest": "iframe" });
+    expect(answer.status).toBe(200);
+    expect(answer.headers["content-type"]).toBe("text/html; charset=utf-8");
+    // The harness's header, which this door used to drop.
+    expect(answer.headers["content-security-policy"]).toBe("sandbox allow-scripts");
+    // DENY forbade the app's own iframe — the only way this page is shown.
+    expect(answer.headers["x-frame-options"]).toBeUndefined();
+    expect(answer.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+  });
+
+  it("is not the shell: no renewal script, no rewriting at all", async () => {
+    served();
+    const answer = await knock("GET", FRAME, await signedIn());
+    // Its own meta policy would refuse an injected script anyway; a byte
+    // changed here is a hash that no longer matches.
+    expect(answer.body).toBe(FRAME_HTML);
+    expect(answer.body).not.toContain("/session/renew");
+  });
+
+  it("refuses a stale frame name rather than cache the shell under it for a year", async () => {
+    // After an update, a page still running the old bundle asks for the old
+    // hash. The harness answers with the SPA fallback — index.html, 200 — and
+    // without the sandbox header only the real file gets.
+    const answer = await knock("GET", "/mermaid-frame-fedcba9876543210.html", await signedIn());
+    expect(answer.status).toBe(404);
+    expect(answer.body).not.toContain("<!doctype html>");
+  });
+
+  it("refuses a frame the harness did not sandbox", async () => {
+    replies.set(FRAME, reply(200, { "content-type": "text/html", "content-security-policy": "default-src 'none'" }, FRAME_HTML));
+    expect((await knock("GET", FRAME, await signedIn())).status).toBe(404);
+  });
+
+  it("serves no other spelling of the name", async () => {
+    const cookie = await signedIn();
+    for (const path of ["/mermaid-frame.html", "/mermaid-frame-0123.html", "/mermaid-frame-0123456789ABCDEF.html"]) {
+      expect((await knock("GET", path, cookie)).status, path).toBe(404);
+    }
+    expect(asked).toEqual([]);
+  });
+});
