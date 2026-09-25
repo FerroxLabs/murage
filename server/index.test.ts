@@ -400,6 +400,7 @@ beforeAll(async () => {
   mkdirSync(join(staticDir, "assets"), { recursive: true });
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged Murage</title>");
   writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
+  writeFileSync(join(staticDir, "mermaid-frame-0123456789abcdef.html"), "<!doctype html><title>Diagram frame</title>");
   writeFileSync(
     join(home, ".murage", "config.json"),
     JSON.stringify({
@@ -826,6 +827,20 @@ describe("harness HTTP API", () => {
     const unknownApi = await api("GET", "/api/not-a-real-route");
     expect(unknownApi.status).toBe(404);
     expect(unknownApi.body.error).toContain("/api/not-a-real-route");
+  });
+
+  it("serves the content-hashed diagram frame only as a sandboxed, opaque page", async () => {
+    const frame = await fetch(`${BASE}/mermaid-frame-0123456789abcdef.html`);
+    expect(frame.status).toBe(200);
+    expect(frame.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
+    expect(await frame.text()).toContain("Diagram frame");
+    // A stale hash is the SPA fallback, and carries no sandbox header. That
+    // absence is what the browser door reads to refuse it rather than cache
+    // the shell under a frame's name for a year.
+    const stale = await fetch(`${BASE}/mermaid-frame-fedcba9876543210.html`);
+    expect(await stale.text()).toContain("Packaged Murage");
+    expect(stale.headers.get("content-security-policy")).toBeNull();
+    expect((await fetch(`${BASE}/`)).headers.get("content-security-policy")).toBeNull();
   });
 
   it("rejects malformed and oversized JSON bodies without hanging", async () => {

@@ -5,8 +5,16 @@
 // drop anything else, so a diagram that somehow ran code in the frame could
 // still only report a height.
 
-/** Where the frame page is served, on the app's own origin. */
-export const MERMAID_FRAME_PATH = "/mermaid-frame.html";
+/** Set by a build (scripts/vite-render-plugin.ts) to the frame page's
+ * content-hashed address. Absent in dev, in tests and inside the frame's own
+ * bundle, where `typeof` keeps an undeclared global from throwing. */
+declare const __MURAGE_MERMAID_FRAME_PATH__: string | undefined;
+
+/** Where the frame page is served, on the app's own origin. A build names it
+ * by its content (`/mermaid-frame-<hash>.html`) so the browser door can let
+ * it be cached for good; the dev server serves the plain name. */
+export const MERMAID_FRAME_PATH: string =
+  typeof __MURAGE_MERMAID_FRAME_PATH__ === "string" ? __MURAGE_MERMAID_FRAME_PATH__ : "/mermaid-frame.html";
 /** Longest diagram source the app sends. Longer ones show as source. */
 export const MAX_DIAGRAM_SOURCE = 20_000;
 /** How long the frame gives mermaid before giving up. */

@@ -16866,7 +16866,11 @@ const server = createServer(async (req, res) => {
         // loads it in <iframe sandbox="allow-scripts">; this header makes it
         // an opaque origin even when something opens it directly, so it can
         // never run with the app's origin. Its own meta CSP blocks all network.
-        if (safe === "/mermaid-frame.html") headers["content-security-policy"] = "sandbox allow-scripts";
+        // A build names the frame by its content hash (mermaid-frame-<16 hex>);
+        // the plain name is the dev server's. Only the real file gets this
+        // header, never the SPA fallback below, and the browser door relies on
+        // that to tell a stale frame name from the frame.
+        if (/^\/mermaid-frame(?:-[0-9a-f]{16})?\.html$/.test(safe)) headers["content-security-policy"] = "sandbox allow-scripts";
         res.writeHead(200, headers);
         return res.end(data);
       } catch {
