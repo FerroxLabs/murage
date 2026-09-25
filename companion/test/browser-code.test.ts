@@ -28,7 +28,7 @@ import { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearedCookie,
@@ -769,9 +769,11 @@ describe("signing this device out, from the device", () => {
     const answer = await knock("DELETE", "/session/device", { ...origin(), cookie: `${cookieName("http")}=${cookie}` });
     expect(answer.status).toBe(200);
     // Cleared with exactly the attributes the door sets it with, or the
-    // browser keeps the live cookie beside the empty one.
-    expect(String(answer.headers["set-cookie"]?.[0] ?? "")).toBe(clearedCookie(identity));
-    expect(String(answer.headers["set-cookie"]?.[0] ?? "")).toContain("Max-Age=0");
+    // browser keeps the live cookie beside the empty one. Spelled out, not
+    // only compared with `clearedCookie`, so a change to both at once fails.
+    const cleared = String(answer.headers["set-cookie"]?.[0] ?? "");
+    expect(cleared).toBe("murage_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    expect(cleared).toBe(clearedCookie(identity));
     expect(registry.count()).toBe(0);
     expect(disconnected).toEqual([device.id]);
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${cookie}` })).status).toBe(401);
@@ -793,5 +795,52 @@ describe("signing this device out, from the device", () => {
     expect(bodyOf(answer)).toEqual({ error: "sign in", signIn: "/enter" });
     expect(registry.count()).toBe(1);
     expect(disconnected).toEqual([]);
+  });
+
+  /** Sign out with the registry unable to write, then again once it can. */
+  const failThenRetry = async (cookie: string): Promise<void> => {
+    const [device] = registry.list();
+    const header = { ...origin(), cookie: `${cookieName("http")}=${cookie}` };
+    // SAFETY: private `persist` shadowed on this registry only.
+    const writable = registry as unknown as { persist?: () => void };
+    writable.persist = () => {
+      throw new Error("EROFS: read-only file system, open '/Users/someone/.murage-companion/devices.json'");
+    };
+    try {
+      const failed = await knock("DELETE", "/session/device", header);
+      expect(failed.status).toBe(500);
+      expect(bodyOf(failed)).toEqual({ error: "could not sign this device out on the computer — try again" });
+      // The cookie is kept: the device is still paired, and this is the one
+      // credential able to ask again.
+      expect(failed.headers["set-cookie"]).toBeUndefined();
+      expect(disconnected).toEqual([]);
+      expect(registry.list().map((d) => d.id)).toEqual([device.id]);
+    } finally {
+      delete writable.persist;
+    }
+    // Still paired on disk, and the same cookie still signs in.
+    expect(new DeviceRegistry().list().map((d) => d.id)).toEqual([device.id]);
+    expect((await knock("GET", "/session", { cookie: header.cookie })).status).toBe(200);
+
+    const retried = await knock("DELETE", "/session/device", header);
+    expect(retried.status).toBe(200);
+    expect(registry.count()).toBe(0);
+    expect(disconnected).toEqual([device.id]);
+  };
+
+  it("keeps the device and the cookie when the removal cannot be written", async () => {
+    await failThenRetry(await signedIn());
+  });
+
+  it("keeps them too when the cookie is a successor nobody has used yet", async () => {
+    try {
+      const cookie = await signedIn();
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 60_000);
+      const successor = registry.renewSession(cookie);
+      expect(successor).not.toBeNull();
+      await failThenRetry(successor!.value);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
