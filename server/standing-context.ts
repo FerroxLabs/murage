@@ -28,13 +28,16 @@ import { loadMemory, memorySystemPrompt } from "./workspace.ts";
 // (`aboutMe: false`). It is its own layer near House Rules, not part of the
 // joined standing block below.
 type StandingBot = { id: string; section?: string; teamBrief?: boolean; aboutMe?: boolean };
-type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean };
+type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean;
+  /** A webhook turn: its payload came from outside and its reply may go
+   *  back out, so the owner's private profile stays home. */
+  webhook?: boolean };
 
 /** The two blocks apart, for the labelled prompt (bot-shapes.ts). */
 export function standingContextParts(bot: StandingBot, opts: StandingOptions): { aboutMe: string; teamBrief: string; memory: string } {
   if (!opts.ownerAudience) return { aboutMe: "", teamBrief: "", memory: "" };
   return {
-    aboutMe: bot.aboutMe === false ? "" : aboutMePrompt(),
+    aboutMe: bot.aboutMe === false || opts.webhook ? "" : aboutMePrompt(),
     teamBrief: bot.teamBrief === false ? "" : sectionContextSystemPrompt(bot.section),
     memory: memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended }),
   };

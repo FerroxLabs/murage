@@ -62,6 +62,8 @@ it("gives About me to an owner-audience turn only, attended or not", () => {
   expect(standingContextParts(bot, { ownerAudience: true, fileTools: true }).aboutMe).toContain("ABOUT_ME_CANARY");
   expect(standingContextParts(bot, { ownerAudience: true, fileTools: false, unattended: true }).aboutMe).toContain("ABOUT_ME_CANARY");
   expect(standingContextParts(bot, { ownerAudience: false, fileTools: true })).toEqual({ aboutMe: "", teamBrief: "", memory: "" });
+  // a webhook's payload came from outside and its reply may go back out
+  expect(standingContextParts(bot, { ownerAudience: true, fileTools: true, unattended: true, webhook: true }).aboutMe).toBe("");
   // the joined standing block is unchanged: About me is its own layer
   expect(standingContextPrompt(bot, { ownerAudience: true, fileTools: true })).not.toContain("ABOUT_ME_CANARY");
 });

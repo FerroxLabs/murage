@@ -6109,7 +6109,7 @@ async function startTurn(
       // inline concatenation sent (bot-shapes.test.ts), and kept as this
       // bot's last turn for "What shapes <bot>". Built in the same tick as
       // the dispatch, so every value is the one the engine receives.
-      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" });
+      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other", webhook: opts?.automationSource === "webhook" });
       const systemLayers = directTurnLayers({
         // The owner's House Rules open every bot's prompt (house-rules.ts).
         houseRules: houseRulesPrompt(),
