@@ -30,6 +30,7 @@ import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
 export {
@@ -321,6 +322,14 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
         >
           {c.state?.devices.length ? "Add another device" : "Show me the code"}
         </button>
+      )}
+      {pairing && (
+        <ReplaceOldDevice
+          candidates={c.state?.replaceCandidates ?? []}
+          max={c.state?.maxDevices}
+          busy={c.busy}
+          onReplace={(id) => void c.act((companion) => companion.revoke(id))}
+        />
       )}
     </div>
   );

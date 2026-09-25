@@ -59,6 +59,7 @@ import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
 export interface PhoneDevice {
@@ -74,6 +75,12 @@ export interface CompanionState {
   keepAwake: boolean;
   port: number;
   devices: PhoneDevice[];
+  /** The companion's device cap. Optional: an older sidecar does not say. */
+  maxDevices?: number;
+  /** Every paired device, least recently seen first — sent only once the
+   * fleet is full, and rendered as "Replace an old device" while a pairing
+   * window is open. Empty or absent means there is room. */
+  replaceCandidates?: PhoneDevice[];
   connectedDeviceIds?: string[];
   pairing: { code: string; token: string; expiresAt: number } | null;
   addresses?: string[];
@@ -1608,6 +1615,14 @@ export function PhoneSetupFlowView({
           </div>
           <div className="mt-1.5">Signs in one device, then it is spent. Expires in {c.secondsLeft}s.</div>
         </div>
+      )}
+      {!c.pairingExpired && c.state?.pairing && (
+        <ReplaceOldDevice
+          candidates={c.state?.replaceCandidates ?? []}
+          max={c.state?.maxDevices}
+          busy={c.busy}
+          onReplace={(id) => void c.act((companion) => companion.revoke(id))}
+        />
       )}
       {c.pairingExpired && (
         <button onClick={c.refreshCode} className="mt-5 rounded-lg bg-accent px-5 py-2.5 text-[14px] font-medium text-white">
