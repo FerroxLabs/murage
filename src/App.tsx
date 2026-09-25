@@ -30,9 +30,12 @@ import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
+import { useDeepLinks } from "@/components/useDeepLinks";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // #open=<thread>&msg=<message> and the phone app's notificationOpened.
+  useDeepLinks();
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
