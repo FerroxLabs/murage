@@ -5101,7 +5101,11 @@ function drainQueuedSends() {
     // Drain just appended the held lines; userMessage keeps startTurn
     // from duplicating the last one, and excludeIds drops every drained
     // line from the transcript-replay so they are not also in `prompt`.
-    startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds }).then(() => undefined).catch((err) => {
+    // ...unless a drained line came from an unproven caller: then the whole
+    // turn runs unattended, like a webhook turn.
+    startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds,
+      ...(store.messagesFor(threadId).some((message) => excludeIds.includes(message.id) && message.origin === "unproven") ? { unattended: true } : {}),
+    }).then(() => undefined).catch((err) => {
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
@@ -8536,6 +8540,8 @@ function drainQueuedChannelSends(): void {
         : Boolean(group && store.groupTaskByThread(group.id, threadId));
       if (!group || !ownsThread) return;
       try {
+        if (origin === "unproven") markUnattended(threadId);
+        else if (origin) clearUnattended(threadId);
         startGroupTurn(groupId, text, resolveReplyTarget(threadId, replyToId), sendId, mode, id, origin ? { origin } : {});
       } catch (error) {
         store.appendMessage(threadId, {
@@ -10269,6 +10275,13 @@ const APPROVAL_NEEDS_OWNER = "Approving or answering happens in the Murage app o
 function requestOrigin(req: IncomingMessage, url: URL): MessageOrigin {
   if (requestSurface(req.headers, url.searchParams) === "desktop") return "desktop";
   return companionAuthorized(req.headers) ? "companion" : "unproven";
+}
+const ENGINE_COMMAND_NEEDS_OWNER = "Engine commands run only from the Murage app or your paired phone.";
+/** Would this text run as an engine "/" command for this bot? Asked before an
+ * unproven caller's send is taken: such a caller never runs one. */
+function wouldRunEngineCommand(bot: { id: string; modelSelection: { instanceId: string } }, text: string, replyTo?: Message): boolean {
+  const instance = registry.get(bot.modelSelection.instanceId);
+  return Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
 }
 
 const server = createServer(async (req, res) => {
@@ -13465,7 +13478,12 @@ const server = createServer(async (req, res) => {
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode, undefined, { origin: requestOrigin(req, url) });
+          const origin = requestOrigin(req, url);
+          // An unproven send runs the room unattended, like a webhook turn;
+          // the owner's own next send ends that window (as it does in a chat).
+          if (origin === "unproven") markUnattended(threadId);
+          else clearUnattended(threadId);
+          const message = startGroupTurn(current.id, text, replyTo, sendId, channelMode, undefined, { origin });
           return { ok: true as const, threadId, message };
         },
       );
@@ -14909,6 +14927,13 @@ const server = createServer(async (req, res) => {
       }
       const sendId = parseSendId(body.sendId);
       const replyTo = resolveReplyTarget(threadId, body.replyToId);
+      // A send with no desktop or phone proof is not the owner at the
+      // keyboard: its turn runs like a webhook turn (unattended, so Full
+      // access and Auto's grants do not apply) and it never runs an engine
+      // command.
+      const origin = requestOrigin(req, url);
+      const unprovenSend = origin === "unproven";
+      if (unprovenSend && wouldRunEngineCommand(bot, text, replyTo)) return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
       const receipt = await sendSequencer.run(
         sendId ? `bot:${bot.id}:${threadId}:${sendId}` : undefined,
         sendFingerprint(text, replyTo?.id),
@@ -14957,7 +14982,9 @@ const server = createServer(async (req, res) => {
             // An engine command waits for its own turn: folded into the
             // running one it would reach the engine as chat.
             const isEngineCommand = Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
-            if (!isEngineCommand && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+            // An unproven line never steers the owner's running turn; it
+            // waits in the queue and runs as its own unattended turn.
+            if (!isEngineCommand && !unprovenSend && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
                 .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
                 .catch(() => false);
@@ -14993,23 +15020,23 @@ const server = createServer(async (req, res) => {
                 replyToId: replyTo?.id,
                 sendId,
                 steered: true,
-                origin: requestOrigin(req, url),
+                origin,
               });
               return { ok: true as const, steered: true as const, threadId, message };
             }
             if (!current.busy) {
-              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin: requestOrigin(req, url) });
+              const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin, ...(unprovenSend ? { unattended: true } : {}) });
               return { ok: true as const, threadId, message };
             }
             const queued = queueSteeredMessage(current.id, threadId, text, {
               replyToId: replyTo?.id,
               sendId,
-              origin: requestOrigin(req, url),
+              origin,
               prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
-          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin: requestOrigin(req, url) });
+          const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, origin, ...(unprovenSend ? { unattended: true } : {}) });
           return { ok: true as const, threadId, message };
         },
       );
@@ -15054,11 +15081,15 @@ const server = createServer(async (req, res) => {
           error: unavailableModelMessage(bot.modelSelection.instanceId),
         });
       }
-      const message = store.branchMessage(bot.threadId, messageId, text, requestOrigin(req, url));
+      const editOrigin = requestOrigin(req, url);
+      if (editOrigin === "unproven" && wouldRunEngineCommand(bot, text, source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined)) {
+        return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
+      }
+      const message = store.branchMessage(bot.threadId, messageId, text, editOrigin);
       if (!message) return json(res, 404, { error: "no such message" });
       store.patchTask(bot.id,bot.threadId, { rewound: true });
       const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;
-      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo });
+      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo, ...(editOrigin === "unproven" ? { unattended: true } : {}) });
       return json(res, 202, { ok: true });
     }
 

@@ -247,7 +247,7 @@ const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000)
 
 /** Obtain authority from an actual active fake-provider mount, never a test
  * mint endpoint or a bearer retained after stopping/changing its source. */
-const startInternalFixtureTurn = async (botId: string, groupId?: string, text = "hold this fixture turn", send: typeof api = api) => {
+const startInternalFixtureTurn = async (botId: string, groupId?: string, text = "hold this fixture turn", send: typeof api = desktopApi) => {
   // Windows taskkill completes asynchronously after interrupt acknowledges.
   // A fresh authority fixture must not steer into that retiring provider turn.
   await expect.poll(async () => {
@@ -1045,7 +1045,7 @@ describe("harness HTTP API", () => {
     const group = created.body.group;
     try {
       expect(group).toMatchObject({ setupCompletedAt: null, setupSkippedAt: null, messages: [] });
-      const blocked = await api("POST", `/api/groups/${group.id}/messages`, { text: "before setup" });
+      const blocked = await desktopApi("POST", `/api/groups/${group.id}/messages`, { text: "before setup" });
       expect(blocked.status).toBe(409);
       expect((await api("GET", "/api/bots")).body.groups.find((candidate: { id: string }) => candidate.id === group.id).messages).toHaveLength(0);
 
@@ -1097,7 +1097,7 @@ describe("harness HTTP API", () => {
         setupSkippedAt: null,
       });
       expect(group.setupCompletedAt).toEqual(expect.any(Number));
-      expect((await api("POST", `/api/groups/${group.id}/messages`, { text: "A quiet update" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${group.id}/messages`, { text: "A quiet update" })).status).toBe(202);
     } finally {
       await api("POST", `/api/groups/${group.id}/interrupt`, {});
       await desktopApi("DELETE", `/api/groups/${group.id}`);
@@ -1113,7 +1113,7 @@ describe("harness HTTP API", () => {
     const bot = created.body.bot;
     let room: any;
     try {
-      const direct = await api("POST", `/api/bots/${bot.id}/messages`, { text: "canonical direct" });
+      const direct = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "canonical direct" });
       expect(direct.status).toBe(202);
       expect(direct.body).toMatchObject({
         ok: true,
@@ -1143,7 +1143,7 @@ describe("harness HTTP API", () => {
         memberIds: [bot.id],
         setup: { bulletin: "", defaultResponder: { kind: "mentions" } },
       })).body.group;
-      const channel = await api("POST", `/api/groups/${room.id}/messages`, { text: "canonical channel" });
+      const channel = await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "canonical channel" });
       expect(channel.status).toBe(202);
       expect(channel.body).toMatchObject({
         ok: true,
@@ -1179,7 +1179,7 @@ describe("harness HTTP API", () => {
     const sendId = "direct_retry_1234567890";
     const request = { text: "retry this direct message once", threadId: originalThreadId, sendId };
     try {
-      const first = await api("POST", `/api/bots/${bot.id}/messages`, request);
+      const first = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(first.status).toBe(202);
       expect(first.body).toMatchObject({
         ok: true,
@@ -1187,18 +1187,18 @@ describe("harness HTTP API", () => {
         message: { role: "user", kind: "text", text: request.text, sendId },
       });
 
-      const duplicate = await api("POST", `/api/bots/${bot.id}/messages`, request);
+      const duplicate = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(duplicate.status).toBe(202);
       expect(duplicate.body).toEqual(first.body);
 
-      const conflict = await api("POST", `/api/bots/${bot.id}/messages`, {
+      const conflict = await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         ...request,
         text: "a different message cannot reuse that identity",
       });
       expect(conflict.status).toBe(409);
       expect(conflict.body.error).toMatch(/sendId already belongs/i);
 
-      const invalid = await api("POST", `/api/bots/${bot.id}/messages`, {
+      const invalid = await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         text: "invalid identity must not land",
         threadId: originalThreadId,
         sendId: "short",
@@ -1226,7 +1226,7 @@ describe("harness HTTP API", () => {
       expect(nextTask.status).toBe(201);
       expect(nextTask.body.task.threadId).not.toBe(originalThreadId);
 
-      const inactiveRetry = await api("POST", `/api/bots/${bot.id}/messages`, request);
+      const inactiveRetry = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(inactiveRetry.status).toBe(202);
       expect(inactiveRetry.body).toEqual(first.body);
       const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
@@ -1249,7 +1249,7 @@ describe("harness HTTP API", () => {
     const sendId = "channel_retry_123456789";
     const request = { text: "one canonical channel message", threadId: room.threadId, sendId };
     try {
-      const first = await api("POST", `/api/groups/${room.id}/messages`, request);
+      const first = await desktopApi("POST", `/api/groups/${room.id}/messages`, request);
       expect(first.status).toBe(202);
       expect(first.body).toMatchObject({
         ok: true,
@@ -1257,7 +1257,7 @@ describe("harness HTTP API", () => {
         message: { role: "user", kind: "text", text: request.text, sendId },
       });
 
-      const duplicate = await api("POST", `/api/groups/${room.id}/messages`, request);
+      const duplicate = await desktopApi("POST", `/api/groups/${room.id}/messages`, request);
       expect(duplicate.status).toBe(202);
       expect(duplicate.body).toEqual(first.body);
 
@@ -2392,12 +2392,12 @@ describe("harness HTTP API", () => {
     try {
       await desktopApi("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" });
       await desktopApi("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "First thought" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "First thought" })).status).toBe(202);
       let current = (await api("GET", "/api/bots?messages=20")).body.groups.find(
         (candidate: { id: string }) => candidate.id === room.id,
       );
       const original = current.messages.at(-1);
-      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "Following up",
         replyToId: original.id,
       })).status).toBe(202);
@@ -2405,7 +2405,7 @@ describe("harness HTTP API", () => {
         (candidate: { id: string }) => candidate.id === room.id,
       );
       expect(current.messages.at(-1)).toMatchObject({ text: "Following up", replyToId: original.id });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "Wrong conversation",
         replyToId: foreign.messages[0].id,
       })).status).toBe(404);
@@ -2699,7 +2699,7 @@ describe("harness HTTP API", () => {
       });
       await desktopApi("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
 
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "@Quill take this" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "@Quill take this" })).status).toBe(202);
       let state = (await api("GET", "/api/bots?messages=20")).body;
       let messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
       expect(messages.at(-1)).toMatchObject({
@@ -2714,7 +2714,7 @@ describe("harness HTTP API", () => {
       const beforeMixedMention = messages.filter((message: { tool?: { name?: string } }) =>
         message.tool?.name === archivedError
       ).length;
-      await api("POST", `/api/groups/${room.id}/messages`, { text: "@Quill and @Atlas take this" });
+      await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "@Quill and @Atlas take this" });
       await expect.poll(async () => {
         state = (await api("GET", "/api/bots?messages=20")).body;
         messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
@@ -2731,7 +2731,7 @@ describe("harness HTTP API", () => {
       await desktopApi("PATCH", `/api/groups/${room.id}`, {
         defaultResponder: { kind: "member", botId: archived.id },
       });
-      await api("POST", `/api/groups/${room.id}/messages`, { text: "use the default responder" });
+      await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "use the default responder" });
       state = (await api("GET", "/api/bots?messages=20")).body;
       messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
       expect(messages.at(-1)?.tool).toEqual({ name: archivedError, ok: false });
@@ -2739,14 +2739,14 @@ describe("harness HTTP API", () => {
       await desktopApi("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
 
       const beforeUnmentioned = messages.length;
-      await api("POST", `/api/groups/${room.id}/messages`, { text: "no mention" });
+      await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "no mention" });
       state = (await api("GET", "/api/bots?messages=20")).body;
       messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
       expect(messages).toHaveLength(beforeUnmentioned + 1);
       expect(messages.at(-1)).toMatchObject({ kind: "text", role: "user", text: "no mention" });
 
       await desktopApi("PATCH", `/api/bots/${active.id}`, { hidden: true });
-      await api("POST", `/api/groups/${room.id}/messages`, { text: "hello everyone" });
+      await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "hello everyone" });
       state = (await api("GET", "/api/bots?messages=20")).body;
       messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
       expect(messages.at(-1)).toMatchObject({
@@ -3646,7 +3646,7 @@ describe("harness HTTP API", () => {
 
     const systemFor = async (botId: string, text: string): Promise<string> => {
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${botId}/messages`, { text })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${botId}/messages`, { text })).status).toBe(202);
       // 20 s like roomSystemFor below: every call after the first sends into
       // a bot this helper just stopped, so its turn launches only once the
       // driver's resetSession has closed the previous child. On Windows that
@@ -3755,7 +3755,7 @@ describe("harness HTTP API", () => {
 
     const roomSystemFor = async (roomId: string, text: string): Promise<string> => {
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${roomId}/messages`, { text })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${roomId}/messages`, { text })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 20_000);
       return seen.systemPrompt ?? "";
     };
@@ -4029,7 +4029,7 @@ describe("harness HTTP API", () => {
   const buzzBarrier = async (stream: Awaited<ReturnType<typeof openSse>>): Promise<string> => {
     const canary = (await api("POST", "/api/bots")).body.bot;
     expect((await desktopApi("PATCH", `/api/bots/${canary.id}`, { computer: "cloud" })).status).toBe(200);
-    expect((await api("POST", `/api/bots/${canary.id}/messages`, { text: "barrier" })).status).toBe(202);
+    expect((await desktopApi("POST", `/api/bots/${canary.id}/messages`, { text: "barrier" })).status).toBe(202);
     const buzz = await stream.until(
       (frame) =>
         frame.kind === "notify" &&
@@ -4060,7 +4060,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
       stream = await openSse(`${BASE}/api/events`);
       await stream.until((frame) => frame.kind === "hello");
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "go" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "go" })).status).toBe(202);
       const buzz = await stream.until(
         (frame) => frame.kind === "notify" && frame.notification?.kind === "turn-failed",
         10_000,
@@ -4156,7 +4156,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", `/api/bots/${target.id}`, { computer: "cloud" })).status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "delegate this" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${asker.id}/messages`, { text: "delegate this" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
@@ -4215,7 +4215,7 @@ describe("harness HTTP API", () => {
       })).status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
@@ -4390,10 +4390,10 @@ describe("harness HTTP API", () => {
       const created = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Running task" });
       expect(created.status).toBe(201);
       const runningTask = created.body.task.threadId;
-      const ambiguous = await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" });
+      const ambiguous = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" });
       expect(ambiguous.status).toBe(409);
       expect(ambiguous.body.error).toMatch(/choose a thread explicitly/i);
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: runningTask, text: "keep running" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: runningTask, text: "keep running" })).status).toBe(202);
 
       const taskState = async (threadId: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
@@ -4435,7 +4435,7 @@ describe("harness HTTP API", () => {
     );
     const held = await delayedJsonBody("POST", `/api/bots/${bot.id}/active-branch`, { messageId: before.messages[0].id });
     try {
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       )?.busy).toBe(true);
@@ -4473,7 +4473,7 @@ describe("harness HTTP API", () => {
     );
     const held = await delayedJsonBody("POST", `/api/bots/${bot.id}/tasks`, { title: "Delayed task" });
     try {
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       )?.busy).toBe(true);
@@ -4529,7 +4529,7 @@ describe("harness HTTP API", () => {
       `/api/groups/${room.id}/tasks${method === "PATCH" ? `/${room.threadId}` : ""}`,
       { title: "Delayed task" });
     try {
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "keep running" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "keep running" })).status).toBe(202);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.groups.find(
         (candidate: { id: string }) => candidate.id === room.id,
       )?.working).toBe(true);
@@ -4673,14 +4673,14 @@ describe("harness HTTP API", () => {
     try {
       // N7 (05cce991): an explicit unknown bot thread is refused as missing;
       // it never falls through to another run.
-      const wrongBot = await api("POST", `/api/bots/${bot.id}/messages`, {
+      const wrongBot = await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         text: "Do not reroute me",
         threadId: "old-task",
       });
       expect(wrongBot.status).toBe(404);
       expect(wrongBot.body.error).toMatch(/no such thread/i);
 
-      const wrongRoom = await api("POST", `/api/groups/${room.id}/messages`, {
+      const wrongRoom = await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "Do not reroute me",
         threadId: "old-task",
       });
@@ -5061,7 +5061,7 @@ describe("harness HTTP API", () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];
 
-    const empty = await api("POST", `/api/bots/${bot.id}/messages`, { text: "   " });
+    const empty = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "   " });
     expect(empty.status).toBe(400);
 
     // Point this bot at the ghost engine (an unknown driver the registry
@@ -5073,7 +5073,7 @@ describe("harness HTTP API", () => {
     // subject, not an accident of boot timing.
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: STATE_ONLY_SELECTION })).status).toBe(200);
     // sending a real message must fail loudly, not 202-and-hang
-    const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
+    const send = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");
     // a failed send never landed a user message, so the first-run quiz stays
@@ -5088,15 +5088,15 @@ describe("harness HTTP API", () => {
 
     // greeting is a bot message — not editable
     const greeting = bot.messages.find((m: { role: string }) => m.role === "bot");
-    const notUser = await api("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "x" });
+    const notUser = await desktopApi("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "x" });
     expect(notUser.status).toBe(404);
 
     // no user message exists yet, so fabricate the check via the card id
     const card = bot.messages.find((m: { kind: string }) => m.kind === "options");
-    const res = await api("POST", `/api/bots/${bot.id}/messages/${card.id}/edit`, { text: "x" });
+    const res = await desktopApi("POST", `/api/bots/${bot.id}/messages/${card.id}/edit`, { text: "x" });
     expect(res.status).toBe(404); // options card, not a user text message
 
-    const empty = await api("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "  " });
+    const empty = await desktopApi("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "  " });
     expect(empty.status).toBe(400);
 
     const after = await api("GET", "/api/bots");
@@ -5163,7 +5163,7 @@ describe("harness HTTP API", () => {
     })).body.bot;
     try {
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
 
       const saved = await desktopApi("PATCH", "/api/config", { language: "de" });
@@ -5222,7 +5222,7 @@ describe("harness HTTP API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, {
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         text: "/create-verification-skill for my notes app",
       })).status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
@@ -5255,7 +5255,7 @@ describe("harness HTTP API", () => {
       })).body.group;
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "/create-verification-skill for my mobile app",
       })).status).toBe(202);
       let seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
@@ -5269,7 +5269,7 @@ describe("harness HTTP API", () => {
       }, { timeout: 5_000 }).toBe(false);
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "now give me a short status update",
       })).status).toBe(202);
       seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
@@ -5329,7 +5329,7 @@ describe("harness HTTP API", () => {
     })).body.group;
     try {
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "keep working" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "keep working" })).status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
 
       const deletion = await desktopApi("DELETE", `/api/bots/${bot.id}`);
@@ -5526,7 +5526,7 @@ describe("harness HTTP API", () => {
     let runId = "";
     try {
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "work in this channel" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "work in this channel" })).status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(200);
       expect((await desktopApi("POST", "/api/local-computer/interrupt", {})).status).toBe(200);
@@ -5582,7 +5582,7 @@ describe("harness HTTP API", () => {
       room = (await api("POST", "/api/groups", { name: "Browser safety", memberIds: [bot.id] })).body.group;
       expect((await desktopApi("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the website" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "Check the website" })).status).toBe(202);
       const mounted = await browserMount();
       expect(mounted.env).toMatchObject({ MURAGE_BOT_ID: bot.id, MURAGE_THREAD_ID: room.threadId });
       const dump = await readJsonFileWhenReady<{ env: Record<string, string>; systemPrompt: string }>(fakeClaudeDump);
@@ -5619,7 +5619,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 250;
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "do not outlive deletion" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not outlive deletion" })).status).toBe(202);
       await expect.poll(() => browserNativeEvents.slice(callOffset).some(
         (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
@@ -5663,7 +5663,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 1_000;
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "first setup" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "first setup" })).status).toBe(202);
       await expect.poll(() => browserNativeEvents.slice(callOffset).some(
         (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
@@ -5679,7 +5679,7 @@ describe("harness HTTP API", () => {
       await new Promise((resolve) => setTimeout(resolve, browserRegisterDelayMs + 250));
       expect(existsSync(fakeClaudeDump)).toBe(false);
 
-      const replacement = await api("POST", `/api/bots/${bot.id}/messages`, { text: "replacement" });
+      const replacement = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "replacement" });
       expect(replacement.status).toBe(202);
       expect(replacement.body.queued).not.toBe(true);
       expect(replacement.body.steered).not.toBe(true);
@@ -5720,7 +5720,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 250;
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "stop before launch" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "stop before launch" })).status).toBe(202);
       await expect.poll(() => browserNativeEvents.slice(callOffset).some(
         (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
@@ -5761,7 +5761,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
       const callOffset = browserNativeEvents.length;
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "browse until disabled" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "browse until disabled" })).status).toBe(202);
       const mounted = await browserMount();
 
       const perBot = await desktopApi("PATCH", `/api/bots/${bot.id}`, { browser: false });
@@ -6268,7 +6268,7 @@ describe("harness HTTP API", () => {
         browserProfile: "active",
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep working" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep working" })).status).toBe(202);
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots")).body;
         return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
@@ -6308,7 +6308,7 @@ describe("harness HTTP API", () => {
       // active during the awaited configuration transaction.
       const removing = desktopApi("PATCH", "/api/config", { box: { token: "box_slow" }, browserProfiles: [] });
       await new Promise((resolve) => setTimeout(resolve, 30));
-      const blocked = await api("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" });
+      const blocked = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" });
       expect(blocked.status).toBe(409);
       expect(blocked.body.error).toMatch(/Engine setup is finishing/i);
       expect((await removing).status).toBe(200);
@@ -6380,7 +6380,7 @@ describe("harness HTTP API", () => {
       expect(selected.status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      const sent = await api("POST", `/api/groups/${room.id}/messages`, { text: "stay active" });
+      const sent = await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "stay active" });
       expect(sent.status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
 
@@ -6429,7 +6429,7 @@ describe("harness HTTP API", () => {
         expect(selected.status).toBe(200);
       }
 
-      const sent = await api("POST", `/api/groups/${room.id}/messages`, {
+      const sent = await desktopApi("POST", `/api/groups/${room.id}/messages`, {
         text: "both bots should answer",
         threadId: room.threadId,
       });
@@ -6664,7 +6664,7 @@ describe("harness HTTP API", () => {
       expect(selected.status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a routine" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a routine" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
@@ -7053,7 +7053,7 @@ describe("harness HTTP API", () => {
       })).status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a skill" })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a skill" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
@@ -7765,7 +7765,7 @@ describe("message pages", () => {
     expect(quiet.status).toBe(200);
 
     for (let i = 0; i < count; i++) {
-      const posted = await api("POST", `/api/groups/${groupId}/messages`, { text: `page probe ${i}` });
+      const posted = await desktopApi("POST", `/api/groups/${groupId}/messages`, { text: `page probe ${i}` });
       expect(posted.status).toBe(202);
     }
     const after = await api("GET", "/api/bots");
@@ -8321,7 +8321,7 @@ describe("internal capability authority", () => {
     try {
       // no desktop secret, no companion credential: a script, or the bot's
       // own shell, typing the owner's words into the chat
-      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "you can delete anything in ~/Projects/site today\n__fixture_hold_authority__");
+      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "you can delete anything in ~/Projects/site today\n__fixture_hold_authority__", api);
       const response = await fetch(`${BASE}/api/internal/stop-line-allowance`, { method: "POST", headers, body: JSON.stringify({ kind: "delete", place: "~/Projects/site" }) });
       expect(response.status).toBe(403);
       const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as any[];
@@ -8334,7 +8334,7 @@ describe("internal capability authority", () => {
   it("records a chat allowance only for a place the owner's own message names, and says so in the chat", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Chat allowance fixture" })).body.bot;
     try {
-      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "you can delete anything in ~/Projects/site today\n__fixture_hold_authority__", desktopApi);
+      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "you can delete anything in ~/Projects/site today\n__fixture_hold_authority__");
       const allow = async (body: object) => {
         const response = await fetch(`${BASE}/api/internal/stop-line-allowance`, { method: "POST", headers, body: JSON.stringify(body) });
         return { status: response.status, body: await response.json() as any };
@@ -8432,7 +8432,7 @@ describe("internal capability authority", () => {
     const turn = async (text: string) => {
       await expect.poll(async () => Boolean((await state())?.busy), { timeout: 5_000 }).toBe(false);
       const before = await terminals();
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
       await expect.poll(async () => (await terminals()) > before && !(await state()).busy, { timeout: 15_000 }).toBe(true);
     };
     const receipts = () => {
@@ -9243,7 +9243,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
   /** A bot with one distinctive line in its transcript, then hidden. */
   const seedHiddenBot = async (needle: string) => {
     const bot = (await api("POST", "/api/bots")).body.bot;
-    const posted = await api("POST", `/api/bots/${bot.id}/messages`, { text: needle });
+    const posted = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: needle });
     expect(posted.status).toBe(202);
     // the user's own message is persisted before the turn is dispatched, so
     // the transcript is searchable without waiting on a provider
@@ -9360,7 +9360,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
 
       const bot = (await api("POST", "/api/bots", { name: "Brand New" })).body.bot;
       const needle = "opening line of a new conversation";
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: needle })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: needle })).status).toBe(202);
 
       // the very first frame on a thread created moments ago
       const first = await scoped.until(

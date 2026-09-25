@@ -26,6 +26,8 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 /** Outside its folder: the stop line holds under Full access. */
 const DELETE_OUTSIDE = "rm -rf ~/Documents/old";
+/** Inside its own folder: Full access takes it for the owner, Auto stops. */
+const CLEAN_BUILD = "rm -rf build";
 /** The launch credential shared by the harness and its companion. */
 const COMPANION_TOKEN = "d".repeat(64);
 const pairedPhone = { "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN };
@@ -108,6 +110,11 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
             environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
+          cleaner: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
+            config: { cli: FAKE_CLI, fullAuto: false },
+          },
           asker: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "elicitation-form" },
@@ -170,6 +177,76 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       expect((await cardById(bot.threadId, requestId))?.answered).toBe("deny");
     },
     90_000,
+  );
+
+  it(
+    "a turn an unproven caller starts is judged like a webhook turn: Full access does not apply and the card holds",
+    async () => {
+      const made = async (name: string) => {
+        const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
+        expect(created.status).toBe(201);
+        const bot = created.body.bot as { id: string; threadId: string };
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+        return bot;
+      };
+      // the owner, from the desktop: Full access takes its own folder's clean-up
+      const owned = await made("Owner cleaner");
+      expect((await desktopApi("POST", `/api/bots/${owned.id}/messages`, { threadId: owned.threadId, text: "clean the build" })).status).toBe(202);
+      expect(await waitIdle(owned.id, owned.threadId), `stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      expect((await threadMessages(owned.threadId)).filter((m) => m.card?.requestId)).toHaveLength(0);
+
+      // the same words from a caller with no proof: a card that waits, raised
+      // in a turn nobody is watching
+      for (const [label, headers] of unproven) {
+        const bot = await made(`Unproven cleaner (${label})`);
+        expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean the build" }, headers())).status).toBe(202);
+        const card = await poll(() => liveCard(bot.threadId), 20_000);
+        expect(card, `${label}: Full access ran it unasked. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+        // the decision log records the card as raised in an unattended turn
+        const shown = await poll(async () => ((await desktopApi("GET", "/api/decisions")).body.decisions as any[])
+          .find((row) => row.requestId === card.card.requestId && row.decision === "card-shown") ?? null, 5_000);
+        expect(shown, label).toMatchObject({ unattended: true });
+        expect(await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" })).toMatchObject({ status: 200 });
+        expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+      }
+    },
+    180_000,
+  );
+
+  it(
+    "a room send from an unproven caller runs unattended too",
+    async () => {
+      const room = async (name: string) => {
+        const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
+        expect(created.status).toBe(201);
+        const bot = created.body.bot as { id: string; threadId: string };
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false, fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+        const other = (await desktopApi("POST", "/api/bots", { name: `${name} peer`, modelSelection: { instanceId: "cleaner", model: "fake-model" } })).body.bot;
+        const group = await desktopApi("POST", "/api/groups", { name: `${name} room`, memberIds: [bot.id, other.id], setup: { bulletin: "Fixture only", defaultResponder: { kind: "member", botId: bot.id } } });
+        expect(group.status, JSON.stringify(group.body)).toBe(201);
+        return group.body.group as { id: string; threadId: string };
+      };
+      const roomIdle = (groupId: string) => poll(async () => {
+        const group = (await desktopApi("GET", "/api/bots?messages=0")).body.groups.find((g: any) => g.id === groupId);
+        return group && !group.working ? group : null;
+      }, 30_000);
+      const owned = await room("Owner room");
+      expect((await desktopApi("POST", `/api/groups/${owned.id}/messages`, { text: "clean the build" })).status).toBe(202);
+      expect(await roomIdle(owned.id)).not.toBeNull();
+      expect((await threadMessages(owned.threadId)).filter((m) => m.card?.requestId)).toHaveLength(0);
+
+      const forged = await room("Unproven room");
+      expect((await request("POST", `/api/groups/${forged.id}/messages`, { text: "clean the build" })).status).toBe(202);
+      const card = await poll(() => liveCard(forged.threadId), 20_000);
+      expect(card, `Full access ran an unproven room send unasked. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      const shown = await poll(async () => ((await desktopApi("GET", "/api/decisions")).body.decisions as any[])
+        .find((row) => row.requestId === card.card.requestId && row.decision === "card-shown") ?? null, 5_000);
+      expect(shown).toMatchObject({ unattended: true });
+      await request("POST", `/api/threads/${forged.threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" });
+      expect(await roomIdle(forged.id)).not.toBeNull();
+    },
+    180_000,
   );
 
   it(
