@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
+import { nativeHello } from "./lib/native-shell";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import "./styles.css";
@@ -21,6 +22,11 @@ watchSystemSkin(applySkin);
 // install Murage, so the phone gets a link it has to find again rather than an
 // app on its home screen. No-ops in Electron and in development.
 registerServiceWorker();
+
+// The phone app's feature list. Asked now so that the synchronous checks a
+// tap makes (save, open a link) already have the answer; a plain browser
+// answers null at once and costs nothing.
+void nativeHello();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
