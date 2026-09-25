@@ -973,6 +973,9 @@ ${CODE_ENTRY_STYLE}
         // new code, so offer the field rather than making them go back and
         // relay a second link by hand.
         document.getElementById("cf").hidden = false;
+        // A retry after "full" can fail for another reason, and "Try again"
+        // would promise a second tap that no longer does anything.
+        go.textContent = "Sign in on this device";
       });
     }).catch(function () {
       say("Could not reach Murage", "The app may have stopped on your computer.");

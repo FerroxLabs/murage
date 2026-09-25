@@ -969,6 +969,26 @@ describe("a full fleet", () => {
     }
   });
 
+  it("breaks a last-seen tie by pairing order, whatever order the file holds", () => {
+    try {
+      const start = Date.now();
+      fill(new DeviceRegistry(), start);
+      // Every device seen at the same moment, stored newest pairing first, so
+      // only the createdAt tie-break can put Phone 0 back at the top.
+      const file = join(DATA_DIR, "devices.json");
+      const stored = JSON.parse(readFileSync(file, "utf8"));
+      for (const d of stored.devices) d.lastSeenAt = start + 60 * 60_000;
+      stored.devices.reverse();
+      writeFileSync(file, JSON.stringify(stored));
+
+      expect(new DeviceRegistry().replaceCandidates().map((d) => d.name)).toEqual(
+        Array.from({ length: MAX_DEVICES }, (_, i) => `Phone ${i}`),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("counts a browser-only phone as seen when its session is used", () => {
     try {
       const start = Date.now();

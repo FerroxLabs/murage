@@ -705,10 +705,20 @@ describe("pairing into a full fleet", () => {
     expect((await submitCode(token)).status).toBe(201);
   });
 
+  it("answers a wrong code as wrong, and names no devices to a guesser", async () => {
+    fillFleet();
+    const { code } = registry.openPairing();
+    const refused = await submitCode(code === "000000" ? "111111" : "000000");
+    expect(refused.status).toBe(401);
+    const body = bodyOf(refused);
+    expect(body.reason).toBe("wrong");
+    expect(body.devices).toBeUndefined();
+  });
+
   it("puts a Try again button on /enter instead of spending the link", async () => {
     const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
     const { node, posted } = runEnter(page.body, "#murage_pair_abc", [
-      { ok: false, body: { error: "too many paired devices — remove one first", reason: "full", devices: [] } },
+      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
       { ok: true, body: {} },
     ]);
     node("go").listeners.click();
@@ -719,5 +729,20 @@ describe("pairing into a full fleet", () => {
     node("go").listeners.click();
     await settle();
     expect(posted).toHaveLength(2);
+  });
+
+  it("drops the Try again label once a retry fails for another reason", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node } = runEnter(page.body, "#murage_pair_abc", [
+      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
+      { ok: false, body: { error: "that pairing code has expired — start pairing again", reason: "expired" } },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").textContent).toBe("Try again");
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").textContent).toBe("Sign in on this device");
+    expect(node("t").textContent).toBe("Could not sign in");
   });
 });
