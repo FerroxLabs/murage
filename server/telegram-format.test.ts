@@ -42,4 +42,8 @@ describe("Telegram Markdown formatting", () => {
   it("bounds the configured decoded length", () => {
     for (const limit of [0, -1, 4097, 1.5, NaN]) expect(() => formatTelegramHtml("text", limit)).toThrow(RangeError);
   });
+  it("keeps a numbered answer and list numbers exactly as written", () => {
+    expect(formatTelegramHtml("391.")).toBe("391.");
+    expect(formatTelegramHtml("3. third\n4. fourth")).toBe("3. third\n4. fourth");
+  });
 });

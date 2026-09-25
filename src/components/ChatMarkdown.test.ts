@@ -160,3 +160,19 @@ it("keeps every separator of a Windows path written in prose, and ordinary escap
   // a path in inline code was never touched by escaping
   expect(renderToStaticMarkup(createElement(ChatMarkdown, { text: "`C:\\a\\.b`" }))).toContain("C:\\a\\.b");
 });
+// Linux customer pass D5: a reply of just "391." parsed as an ordered list
+// with one empty item and no start, so the bubble showed "1.".
+it("shows a lone numbered answer as the number the bot wrote", () => {
+  for (const [text, shown] of [["391.", "391."], ["391)", "391)"], ["The answer:\n\n42.", "42."]] as const) {
+    const html = renderToStaticMarkup(createElement(ChatMarkdown, { text }));
+    expect(html).not.toContain("<ol");
+    expect(html).not.toContain("<li></li>");
+    expect(html).toContain(`<p>${shown}</p>`);
+  }
+});
+it("keeps an ordered list's start number", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: "3. third\n4. fourth" }));
+  expect(html).toMatch(/<ol start="3"[^>]*>/);
+  const one = renderToStaticMarkup(createElement(ChatMarkdown, { text: "1. first\n2. second" }));
+  expect(one).not.toContain("start=");
+});
