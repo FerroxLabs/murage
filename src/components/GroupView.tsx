@@ -74,6 +74,7 @@ import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
+  asLiveTail,
   capRevealedWindow,
   expandEarlier,
   expandLater,
@@ -1339,7 +1340,7 @@ export function GroupView({ group }: { group: Group }) {
     appliedFocus.current = focus.nonce;
     const range = focusWindowRange(group.messages.length, targetIndex);
     setBottomFollow(false);
-    setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
+    setTranscriptWindow({ key: transcriptKey, ...asLiveTail(range, group.messages.length) });
   }, [group.messages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey]);
   useFocusMessage(group.threadId, group.messages.length > 0);
   // A followed live tail stays within MAX_MOUNTED_ROWS (transcript-window.ts).
@@ -1430,9 +1431,10 @@ export function GroupView({ group }: { group: Group }) {
 
   // The end of a window that stops short of the newest row is not the end of
   // the conversation (see ChatView).
+  const atLiveTail = transcriptWindow.end === null && laterCount === 0;
   const atEnd = () => {
     const el = scrollRef.current;
-    if (laterCount > 0) return false;
+    if (!atLiveTail) return false;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
 
@@ -1743,7 +1745,7 @@ export function GroupView({ group }: { group: Group }) {
             distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
           });
           previousScrollTop.current = scrollTop;
-          if (resume && laterCount === 0) setBottomFollow(true);
+          if (resume && atLiveTail) setBottomFollow(true);
           else reachedTop();
         }}
       >

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_MOUNTED_ROWS,
   TRANSCRIPT_WINDOW_SIZE,
+  asLiveTail,
   capRevealedWindow,
   expandEarlier,
   expandLater,
@@ -235,5 +236,19 @@ describe("a capped window (spec §6)", () => {
     expect(capRevealedWindow(topUp, 101)).toBe(topUp);
     const finite = { start: 0, end: MAX_MOUNTED_ROWS };
     expect(capRevealedWindow(finite, 1000)).toBe(finite);
+  });
+
+  it("treats a search window near the tail as the live tail", () => {
+    // a hit five rows from the end: the focus window reaches the newest row
+    const range = focusWindowRange(130, 125);
+    expect(range).toEqual({ start: 10, end: 130 });
+    expect(asLiveTail(range, 130)).toEqual({ start: 10, end: null });
+    const early = focusWindowRange(1000, 100);
+    expect(asLiveTail(early, 1000)).toBe(early);
+  });
+
+  it("never leaves a finite end at the newest row after a step", () => {
+    expect(expandEarlier({ start: 130, end: 250 }, 250)).toEqual({ start: 10, end: null });
+    expect(capRevealedWindow({ start: 0, end: 250 }, 250)).toEqual({ start: 0, end: null });
   });
 });

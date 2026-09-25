@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 const views: Array<[string, string]> = [["ChatView", read("./ChatView.tsx")], ["GroupView", read("./GroupView.tsx")]];
 const styles = read("../styles.css");
+const focusMessage = read("../lib/focus-message.ts");
 
 describe("transcript rows", () => {
   it.each(views)("%s gives every top-level item a real, anchorable box", (_name, source) => {
@@ -45,8 +46,15 @@ describe("transcript rows", () => {
   // that ends early, the reader is not at the end of the conversation: follow
   // re-arms only once the tail is mounted again ("Show later" or Jump).
   it.each(views)("%s only follows a window that holds the newest row", (_name, source) => {
-    expect(source).toMatch(/const atEnd = \(\) => \{\s*const el = scrollRef\.current;\s*if \(laterCount > 0\) return false;/);
-    expect(source).toContain("if (resume && laterCount === 0) setBottomFollow(true);");
+    // a finite end that happens to reach the last row still does not grow
+    // with appends, so it is not the live tail either
+    expect(source).toContain("const atLiveTail = transcriptWindow.end === null && laterCount === 0;");
+    expect(source).toMatch(/const atEnd = \(\) => \{\s*const el = scrollRef\.current;\s*if \(!atLiveTail\) return false;/);
+    expect(source).toContain("if (resume && atLiveTail) setBottomFollow(true);");
+  });
+
+  it.each(views)("%s treats a search window that reaches the newest row as the live tail", (_name, source) => {
+    expect(source).toMatch(/setTranscriptWindow\(\{ key: transcriptKey, \.\.\.asLiveTail\(range, (?:group\.)?messages\.length\) \}\)/);
   });
 
   it("skips only rows that have been seen, and keeps them measured", () => {
@@ -57,8 +65,30 @@ describe("transcript rows", () => {
   it("never clips an open menu inside a row", () => {
     // content-visibility implies paint containment: a dropdown (the voice
     // note's <details>, a card's menu) would be cut off at the row's edge.
-    expect(styles).toMatch(/\.transcript-row:focus-within,\s*\.transcript-row:has\(details\[open\], \[aria-expanded="true"\]\) \{\s*content-visibility: visible;\s*\}/);
+    // Separate rules: a WebView without :has() drops only its own rule.
+    expect(styles).toMatch(/\.transcript-row:focus-within \{\s*content-visibility: visible;\s*\}/);
+    // an expanded run's toggle is not a menu; the run stays skippable
+    expect(styles).toMatch(/\.transcript-row:has\(details\[open\], \[aria-expanded="true"\]:not\(\[data-run-toggle\]\), \[data-row-lift\]\) \{\s*content-visibility: visible;\s*\}/);
     // and the lift comes after the skip, so it wins at equal specificity
     expect(styles.indexOf("content-visibility: visible")).toBeGreaterThan(styles.indexOf("content-visibility: auto"));
+  });
+
+  it("keeps a search flash visible on a seen row", () => {
+    // the flash ring is painted outside the bubble; paint containment would
+    // clip it at the row's edge
+    expect(focusMessage).toContain('.closest<HTMLElement>(".transcript-row")');
+    expect(focusMessage).toContain('row?.setAttribute("data-flash", "")');
+    expect(focusMessage.match(/row\?\.removeAttribute\("data-flash"\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(styles).toMatch(/\.transcript-row\[data-flash\] \{\s*content-visibility: visible;\s*\}/);
+    expect(styles.indexOf(".transcript-row[data-flash]")).toBeGreaterThan(styles.indexOf("content-visibility: auto"));
+  });
+
+  it("lifts a bubble whose shadow reaches past its row", () => {
+    expect(read("./ChatView.tsx")).toContain("data-row-lift={user && webhookView ? \"\" : undefined}");
+  });
+
+  it("marks the run toggles the lift ignores", () => {
+    expect(read("./ActivityRun.tsx")).toMatch(/aria-expanded\s+data-run-toggle/);
+    expect(read("./TurnNarrationRun.tsx")).toMatch(/aria-expanded=\{open\}\s+data-run-toggle/);
   });
 });

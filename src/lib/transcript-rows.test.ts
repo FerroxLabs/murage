@@ -77,4 +77,36 @@ describe("seen rows", () => {
     expect(() => observeSeenRows(root as never, {} as never, undefined)()).not.toThrow();
     expect(root.querySelectorAll).not.toHaveBeenCalled();
   });
+
+  it("forgets seen rows when the scroller's width changes, so they are measured again", () => {
+    const observed: unknown[] = [];
+    class FakeObserver {
+      constructor(_cb: unknown, readonly options: unknown) {}
+      observe(target: unknown) { observed.push(target); }
+      unobserve() {}
+      disconnect = vi.fn();
+    }
+    let resized!: (entries: Array<{ contentRect: { width: number } }>) => void;
+    const resizeDisconnect = vi.fn();
+    const watched: unknown[] = [];
+    class FakeResize {
+      constructor(cb: typeof resized) { resized = cb; }
+      observe(target: unknown) { watched.push(target); }
+      disconnect = resizeDisconnect;
+    }
+    const seen = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
+    const root = { querySelectorAll: vi.fn((selector: string) => (selector.endsWith("[data-seen]") ? [seen] : [])) };
+    const scrollerEl = {};
+    const stop = observeSeenRows(root as never, scrollerEl as never, FakeObserver as never, FakeResize as never);
+    expect(watched).toEqual([scrollerEl]);
+    resized([{ contentRect: { width: 400 } }]); // the first report only records
+    resized([{ contentRect: { width: 400 } }]); // a height change: same width
+    expect(seen.removeAttribute).not.toHaveBeenCalled();
+    resized([{ contentRect: { width: 800 } }]); // rotated
+    expect(root.querySelectorAll).toHaveBeenCalledWith("[data-row][data-seen]");
+    expect(seen.removeAttribute).toHaveBeenCalledWith("data-seen");
+    expect(observed).toEqual([seen]); // watched again, marked on its next appearance
+    stop();
+    expect(resizeDisconnect).toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,9 @@
 // Landing on a message: after a search hit, scroll the row into view and
-// flash it. Rows are wrapped in `display: contents` (no box of their own),
-// so the wrapper carries data-mid and its last child — the bubble/chip,
-// after any day separator — is what gets scrolled and highlighted.
+// flash it. The wrapper carrying data-mid is the transcript row itself, or a
+// `display: contents` step inside a run; its last child — the bubble/chip,
+// after any day separator — is what gets scrolled and highlighted. The
+// enclosing `.transcript-row` is marked `data-flash` for the flash, so a seen
+// row's paint containment does not clip the ring (styles.css).
 import { useEffect } from "react";
 import { api, useStore, type Action, type AppState } from "@/state/store";
 import type { SearchHit } from "@/lib/search-hit";
@@ -53,6 +55,7 @@ export function useFocusMessage(threadId: string, ready: boolean) {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let flashTimer: ReturnType<typeof setTimeout> | null = null;
     let target: HTMLElement | null = null;
+    let row: HTMLElement | null = null;
     const attempt = () => {
       if (cancelled) return;
       const wrapper = document.querySelector<HTMLElement>(`[data-mid="${CSS.escape(focus.messageId)}"]`);
@@ -61,6 +64,8 @@ export function useFocusMessage(threadId: string, ready: boolean) {
         if (tries++ < 20) retryTimer = setTimeout(attempt, 100);
         return;
       }
+      row = wrapper?.closest<HTMLElement>(".transcript-row") ?? null;
+      row?.setAttribute("data-flash", "");
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       target.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
       target.classList.add(...FLASH_CLASSES);
@@ -68,7 +73,10 @@ export function useFocusMessage(threadId: string, ready: boolean) {
       // `consumed` is intentionally not an effect dependency, so this active
       // flash survives the bookkeeping update while future remounts ignore it.
       dispatch({ type: "focusMessageConsumed", nonce: focus.nonce });
-      flashTimer = setTimeout(() => target?.classList.remove(...FLASH_CLASSES), 1800);
+      flashTimer = setTimeout(() => {
+        target?.classList.remove(...FLASH_CLASSES);
+        row?.removeAttribute("data-flash");
+      }, 1800);
     };
     attempt();
     return () => {
@@ -76,6 +84,7 @@ export function useFocusMessage(threadId: string, ready: boolean) {
       if (retryTimer) clearTimeout(retryTimer);
       if (flashTimer) clearTimeout(flashTimer);
       target?.classList.remove(...FLASH_CLASSES);
+      row?.removeAttribute("data-flash");
     };
   }, [dispatch, focus?.nonce, focus?.threadId, focus?.messageId, threadId, ready]);
 }

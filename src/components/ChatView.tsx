@@ -109,6 +109,7 @@ import { needsNewestPage } from "@/lib/scrollback";
 import {
   SCROLLBACK_TRIGGER_PX,
   TRANSCRIPT_WINDOW_SIZE,
+  asLiveTail,
   capRevealedWindow,
   expandEarlier,
   expandLater,
@@ -608,6 +609,8 @@ function Bubble({
           }}
           tabIndex={narrow ? 0 : undefined}
           aria-haspopup={narrow ? "dialog" : undefined}
+          // its drop shadow reaches past the row (styles.css .transcript-row)
+          data-row-lift={user && webhookView ? "" : undefined}
           className={cn(
             "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
             BUBBLE_TAPPABLE,
@@ -1359,7 +1362,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     appliedFocus.current = focus.nonce;
     const range = focusWindowRange(messages.length, targetIndex);
     setBottomFollow(false);
-    setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
+    setTranscriptWindow({ key: transcriptKey, ...asLiveTail(range, messages.length) });
   }, [bot.threadId, messages, setBottomFollow, state.focusMessage, transcriptKey]);
   useFocusMessage(bot.threadId, messages.length > 0);
   // A followed live tail stays within MAX_MOUNTED_ROWS (transcript-window.ts).
@@ -1494,10 +1497,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   }, [setBottomFollow]);
 
   // The end of a window that stops short of the newest row is not the end of
-  // the conversation: follow re-arms only once the tail is mounted again.
+  // the conversation: follow re-arms only at the live tail, a window that
+  // grows with appends (end null) and has nothing after it.
+  const atLiveTail = transcriptWindow.end === null && laterCount === 0;
   const atEnd = () => {
     const el = scrollRef.current;
-    if (laterCount > 0) return false;
+    if (!atLiveTail) return false;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
   const jumpToLatest = () => {
@@ -1596,7 +1601,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           });
           previousScrollTop.current = scrollTop;
           distanceFromBottom.current = fromBottom;
-          if (resume && laterCount === 0) setBottomFollow(true);
+          if (resume && atLiveTail) setBottomFollow(true);
           else reachedTop();
         }}
       >

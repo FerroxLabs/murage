@@ -361,11 +361,19 @@ body {
 .transcript-row[data-seen] {
   content-visibility: auto;
 }
-/* content-visibility implies paint containment, which would clip a menu
-   opened inside a row at the row's edge. A row with focus or an open menu
-   renders normally. After the rule above, so it wins at equal specificity. */
-.transcript-row:focus-within,
-.transcript-row:has(details[open], [aria-expanded="true"]) {
+/* content-visibility implies paint containment, which clips anything painted
+   past the row's edge: a menu opened inside it, the search flash's ring, a
+   bubble's drop shadow. Those rows render normally. Separate rules, because
+   a WebView without :has() drops the whole rule it appears in; an expanded
+   run's toggle is not a menu, so the run stays skippable. After the rule
+   above, so these win at equal specificity. */
+.transcript-row:focus-within {
+  content-visibility: visible;
+}
+.transcript-row[data-flash] {
+  content-visibility: visible;
+}
+.transcript-row:has(details[open], [aria-expanded="true"]:not([data-run-toggle]), [data-row-lift]) {
   content-visibility: visible;
 }
 

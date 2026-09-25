@@ -56,17 +56,24 @@ export function restoreRowAnchor(scroller: AnchorScroller, anchor: ScrollAnchor)
 
 interface SeenRow {
   setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
 }
 export interface SeenRoot {
   querySelectorAll(selector: string): ArrayLike<SeenRow>;
 }
 
 /** Watch the rows not yet seen; mark each on its first appearance. Returns
- * the disconnect. Call again after rows mount; seen rows are skipped. */
+ * the disconnect. Call again after rows mount; seen rows are skipped.
+ *
+ * A remembered size is right only at the width it was measured at. When the
+ * scroller's width changes (rotation, a pane opening), seen rows are
+ * forgotten and watched again, so each is measured afresh before it skips.
+ * A height change (the keyboard) leaves them alone. */
 export function observeSeenRows(
   root: SeenRoot,
   scroller: Element,
   Observer: typeof IntersectionObserver | undefined = globalThis.IntersectionObserver,
+  Resize: typeof ResizeObserver | undefined = globalThis.ResizeObserver,
 ): () => void {
   if (!Observer) return () => {};
   const observer = new Observer((entries) => {
@@ -77,5 +84,23 @@ export function observeSeenRows(
     }
   }, { root: scroller });
   for (const row of Array.from(root.querySelectorAll(`${ROW_SELECTOR}:not([${SEEN_ATTRIBUTE}])`))) observer.observe(row as unknown as Element);
-  return () => observer.disconnect();
+  let width: number | null = null;
+  const resize = Resize
+    ? new Resize((entries) => {
+        const next = entries[entries.length - 1]?.contentRect.width;
+        if (next === undefined) return;
+        if (width !== null && next !== width) {
+          for (const row of Array.from(root.querySelectorAll(`${ROW_SELECTOR}[${SEEN_ATTRIBUTE}]`))) {
+            row.removeAttribute(SEEN_ATTRIBUTE);
+            observer.observe(row as unknown as Element);
+          }
+        }
+        width = next;
+      })
+    : null;
+  resize?.observe(scroller);
+  return () => {
+    observer.disconnect();
+    resize?.disconnect();
+  };
 }

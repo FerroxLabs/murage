@@ -118,7 +118,7 @@ export function expandEarlier(
 ): WindowBounds {
   const start = expandWindowStart(Math.min(bounds.start, total), size);
   const end = bounds.end === null ? total : Math.min(bounds.end, total);
-  if (end - start <= cap) return { start, end: bounds.end === null ? null : end };
+  if (end - start <= cap) return { start, end: end >= total ? null : end };
   return { start, end: start + cap };
 }
 
@@ -162,6 +162,13 @@ export function capRevealedWindow<W extends WindowBounds>(
   cap: number = MAX_MOUNTED_ROWS,
 ): W {
   const end = bounds.end === null ? total : Math.min(bounds.end, total);
-  if (end - bounds.start <= cap) return bounds;
+  if (end - bounds.start <= cap) return asLiveTail(bounds, total);
   return { ...bounds, end: bounds.start + cap };
+}
+
+/** A window that reaches the newest row is the live tail: `end: null`, so it
+ * grows with appends and the reader can follow it. A finite end at the last
+ * row would hold new messages back while the view looked like the bottom. */
+export function asLiveTail<W extends { end: number | null }>(window: W, total: number): W {
+  return window.end !== null && window.end >= total ? { ...window, end: null } : window;
 }
