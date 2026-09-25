@@ -5,8 +5,8 @@
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Check, ChevronDown, ChevronRight, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
-import { useStore, type Bot, type Group, type Task } from "@/state/store";
+import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
+import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
 import type { RoutineRun } from "@/lib/routines";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
@@ -31,6 +31,10 @@ import {
   type TaskSort,
 } from "@/lib/task-list";
 import { sidebarMarkLabel, taskWaitsOnYou } from "@/lib/sidebar-attention";
+import { formatSnoozedUntil, threadIsQuiet } from "@/lib/thread-snooze";
+import { changeThreadSnooze, useThreadAttention } from "@/lib/thread-attention";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -178,6 +182,9 @@ export function ConversationTaskPicker({
   now,
   timeZone,
   locale,
+  snoozes,
+  questions,
+  canSnooze = false,
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -196,8 +203,15 @@ export function ConversationTaskPicker({
   now?: number;
   timeZone?: string;
   locale?: string;
+  /** Snoozed conversations: threadId to when each wakes. */
+  snoozes?: ReadonlyMap<string, number>;
+  /** Questions waiting on the owner, by threadId (Inbox questionThreads). */
+  questions?: Readonly<Record<string, number>>;
+  /** Snooze is a desktop action; elsewhere the marker shows and nothing more. */
+  canSnooze?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  const [snoozing, setSnoozing] = useState<string | null>(null);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [sort, setSort] = useState<TaskSort>(readTaskSort);
   // The fold holding the open task starts expanded, so the check mark is
@@ -325,12 +339,21 @@ export function ConversationTaskPicker({
   const looking = query.trim();
   const clock = { timeZone, locale };
   const nowAt = now ?? Date.now();
+  // A snoozed conversation's unread is held back here exactly as in the
+  // sidebar: no Unread label, not under the Unread filter, not counted in a
+  // routine fold. A question or an approval in it ends that at once.
+  const quiet = (task: PickerTask) =>
+    threadIsQuiet(task.threadId, { snoozes: snoozes ?? new Map(), questions: questions ?? {}, now: nowAt, waiting: taskWaitsOnYou(task) });
+  const listed = useMemo(
+    () => tasks.map((task) => (task.unread && quiet(task) ? { ...task, unread: false } : task)),
+    [tasks, snoozes, questions, nowAt],
+  );
   const view = useMemo(
     () => hoistWaitingTasks(
-      buildTaskListView(tasks, { query, filter, sort, now: nowAt, activeId: threadId, routineOf, expanded, timeZone, locale }),
+      buildTaskListView(listed, { query, filter, sort, now: nowAt, activeId: threadId, routineOf, expanded, timeZone, locale }),
       taskWaitsOnYou,
     ),
-    [tasks, query, filter, sort, nowAt, threadId, routineOf, expanded, timeZone, locale],
+    [listed, query, filter, sort, nowAt, threadId, routineOf, expanded, timeZone, locale],
   );
 
   const chooseSort = (next: TaskSort) => {
@@ -400,9 +423,14 @@ export function ConversationTaskPicker({
       task.unread ? "Unread" : null,
     ].filter(Boolean).map((part) => ` · ${part}`).join("");
     const tokens = formatTaskTokenLabel(task.usage, locale);
+    const questionCount = questions?.[task.threadId] ?? 0;
+    const snoozedUntil = quiet(task) ? snoozes?.get(task.threadId) : undefined;
+    const snoozedText = snoozedUntil !== undefined ? formatSnoozedUntil(snoozedUntil, nowAt, clock) : null;
+    // Something owed in it: it cannot be snoozed, the server refuses too.
+    const owed = waiting || questionCount > 0;
     return (
+      <div key={task.threadId}>
       <div
-        key={task.threadId}
         className={cn(
           "group flex items-center gap-2 py-2 pr-2.5",
           inFold ? "pl-6" : "pl-2.5",
@@ -464,6 +492,7 @@ export function ConversationTaskPicker({
               {/* decoration: the row's accessible name carries the words */}
               {waiting && <span data-task-mark="waiting" aria-hidden="true" className="size-2 shrink-0 rounded-full bg-warning" />}
               <div className="truncate text-[13px] text-ink">{name}</div>
+              <QuestionBadge count={questionCount} />
             </div>
             <div className="flex min-w-0 items-center gap-1 text-[11px] text-ink-secondary">
               {badge && (
@@ -473,6 +502,7 @@ export function ConversationTaskPicker({
                 <time dateTime={new Date(at).toISOString()} title={moment}>{formatTaskWhen(at, nowAt, clock)}</time>
                 {waiting && <span className="font-medium text-warning">{` · ${TASK_WAITING_LABEL}`}</span>}
                 {status}
+                {snoozedText && <span data-task-snoozed="" title={snoozedText}>{` · ${snoozedText}`}</span>}
                 {tokens && <span title={tokens.detail}>{` · ${tokens.label}`}</span>}
               </span>
             </div>
@@ -507,6 +537,28 @@ export function ConversationTaskPicker({
             <Pin size={13} className={task.pinned ? "fill-current" : undefined} />
           </button>
         )}
+        {canSnooze && renaming !== task.threadId && (snoozedUntil !== undefined ? (
+          <button
+            type="button"
+            onClick={() => { clearDismiss(); void changeThreadSnooze(api, task.threadId, null).catch(() => setSnoozing(task.threadId)); }}
+            aria-label={`Unsnooze ${name}`}
+            title={`${snoozedText}. Unsnooze`}
+            className="rounded p-1 text-accent hover:bg-raised hover:text-ink focus-visible:opacity-100"
+          >
+            <BellOff size={13} />
+          </button>
+        ) : !owed && (
+          <button
+            type="button"
+            onClick={() => { clearDismiss(); setSnoozing((before) => (before === task.threadId ? null : task.threadId)); }}
+            aria-label={`Snooze ${name}`}
+            aria-expanded={snoozing === task.threadId}
+            title="Snooze this conversation"
+            className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
+          >
+            <Clock size={13} />
+          </button>
+        ))}
         <button
           type="button"
           onClick={() => onDelete(task.threadId)}
@@ -517,6 +569,13 @@ export function ConversationTaskPicker({
         >
           <Trash2 size={13} />
         </button>
+      </div>
+      {canSnooze && snoozing === task.threadId && (
+        <div className="border-y border-hairline/40 bg-inset/40 px-1 py-1">
+          <SnoozeChoices threadId={task.threadId} name={name} until={snoozedUntil} blocked={owed} now={nowAt} clock={clock}
+            onDone={() => setSnoozing(null)} />
+        </div>
+      )}
       </div>
     );
   };
@@ -736,9 +795,14 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     [state.routineRuns, bot.id],
   );
   const routineOf = useMemo(() => (threadId: string) => routines.get(threadId), [routines]);
+  const attention = useThreadAttention();
+  const desktop = useDesktopSurface() === true;
   return (
     <ConversationTaskPicker
       routineOf={routineOf}
+      snoozes={attention.snoozes}
+      questions={attention.questions}
+      canSnooze={desktop}
       threadId={bot.threadId}
       tasks={bot.tasks ?? []}
       busy={false}
@@ -764,9 +828,14 @@ export function GroupTaskPicker({ group }: { group: Group }) {
     [state.routineRuns, group.id],
   );
   const routineOf = useMemo(() => (threadId: string) => routines.get(threadId), [routines]);
+  const attention = useThreadAttention();
+  const desktop = useDesktopSurface() === true;
   return (
     <ConversationTaskPicker
       routineOf={routineOf}
+      snoozes={attention.snoozes}
+      questions={attention.questions}
+      canSnooze={desktop}
       threadId={group.threadId}
       tasks={group.tasks ?? []}
       busy={Boolean(group.working || group.busyBotId)}

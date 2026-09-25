@@ -8,6 +8,7 @@ import {
   Archive,
   ArrowDownToLine,
   BellDot,
+  BellOff,
   BookOpen,
   Bot as BotIcon,
   CalendarDays,
@@ -124,6 +125,9 @@ import { useTrayIntents } from "./useTrayIntents";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { QuestionBadge, SnoozedMarker, SnoozePopover } from "./ConversationSnooze";
+import { useThreadAttention } from "@/lib/thread-attention";
+import { formatSnoozedUntil, questionBadgeLabel, sidebarBotAttention, sidebarGroupAttention } from "@/lib/thread-snooze";
 import { NewFromTemplateDialog, type TemplateKind } from "./NewFromTemplateDialog";
 import { NewTeamDialog } from "./NewTeamDialog";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
@@ -486,8 +490,13 @@ function GroupListItem({
     .filter((b): b is Bot => Boolean(b));
   const last = group.messages.at(-1);
   const RowIcon = conversationNoun(group) === "project" ? Target : Users;
-  const mark = sidebarGroupMark(group);
-  const markLabel = sidebarMarkLabel(mark);
+  // A snoozed open conversation holds back the channel's unread; questions
+  // waiting in any of its conversations get their own badge.
+  const now = Date.now();
+  const row = sidebarGroupAttention(group, useThreadAttention(), now);
+  const mark = sidebarGroupMark(row.group);
+  const markLabel = [sidebarMarkLabel(mark), questionBadgeLabel(row.questions),
+    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now) : ""].filter(Boolean).join(", ");
   return (
     <div className="group relative">
     <button
@@ -532,7 +541,11 @@ function GroupListItem({
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-[13px] text-ink-secondary">{sidebarGroupPreview(group, state.bots)}</span>
-          <SidebarRowMark mark={mark} />
+          <span className="flex shrink-0 items-center gap-1">
+            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} iconOnly />}
+            <QuestionBadge count={row.questions} labelled={false} />
+            <SidebarRowMark mark={mark} />
+          </span>
         </div>
       </div>
       {density === "icons" && mark.kind === "waiting" && (
@@ -570,12 +583,18 @@ function RoomContextMenu({
   onRequestDelete,
   onMoveToSection,
   onArchive,
+  onSnooze,
+  snoozable = false,
 }: {
   menu: { groupId: string; x: number; y: number };
   onClose: () => void;
   onRequestDelete: (group: { id: string; name: string }) => void;
   onMoveToSection: (groupId: string) => void;
   onArchive: (group: Group) => void;
+  /** Snooze or wake the channel's open conversation. */
+  onSnooze?: (group: Group) => void;
+  /** Snooze is a desktop action; elsewhere the entry is not rendered. */
+  snoozable?: boolean;
 }) {
   const { state, dispatch } = useStore();
   const group = state.groups.find((g) => g.id === menu.groupId);
@@ -675,6 +694,18 @@ function RoomContextMenu({
         >
           <FolderPlus size={16} className="text-ink-secondary" />
           Move to team…
+        </button>
+      )}
+      {snoozable && onSnooze && (
+        <button
+          onClick={() => {
+            onClose();
+            onSnooze(group);
+          }}
+          className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+        >
+          <BellOff size={16} className="text-ink-secondary" />
+          Snooze…
         </button>
       )}
       <button
@@ -1044,6 +1075,21 @@ export function sectionLabel(id: string): string {
   return id === PROJECTS_SECTION_ID ? "Projects" : sidebarSectionLabel(id);
 }
 
+/** When a sidebar row's open conversation wakes, if it is snoozed now. */
+export function sidebarSnoozedUntil(threadId: string, snoozes: ReadonlyMap<string, number>, now = Date.now()): number | undefined {
+  const until = snoozes.get(threadId);
+  return until !== undefined && until > now ? until : undefined;
+}
+
+/** Something is waiting on the owner in this conversation, so it cannot be
+ *  snoozed: a question card, or an approval that has the bot waiting. */
+export function sidebarThreadOwed(threadId: string, bots: readonly Bot[], questions: Readonly<Record<string, number>>): boolean {
+  if ((questions[threadId] ?? 0) > 0) return true;
+  const bot = bots.find((candidate) => candidate.threadId === threadId || candidate.tasks?.some((task) => task.threadId === threadId));
+  const task = bot?.tasks?.find((entry) => entry.threadId === threadId);
+  return (task ? task.activity : bot?.threadId === threadId ? bot.activity : undefined) === "waiting-on-you";
+}
+
 export function BotContextMenu({
   menu,
   onClose,
@@ -1051,6 +1097,8 @@ export function BotContextMenu({
   onToggleHidden,
   onRequestDelete,
   onMoveToSection,
+  onSnooze,
+  snoozable = false,
 }: {
   menu: MenuState;
   onClose: () => void;
@@ -1058,6 +1106,10 @@ export function BotContextMenu({
   onToggleHidden: (bot: Bot) => void;
   onRequestDelete: (bot: Bot) => void;
   onMoveToSection: (botId: string) => void;
+  /** Snooze or wake the bot's open conversation. */
+  onSnooze?: (bot: Bot) => void;
+  /** Snooze is a desktop action; elsewhere the entry is not rendered. */
+  snoozable?: boolean;
 }) {
   const { state, dispatch } = useStore();
   const bot = state.bots.find((b) => b.id === menu.botId);
@@ -1194,6 +1246,7 @@ export function BotContextMenu({
         item(<BellDot size={16} className="text-ink-secondary" />, "Mark as Unread", () =>
           dispatch({ type: "markUnread", botId: bot.id }),
         ),
+        ...(snoozable && onSnooze ? [item(<BellOff size={16} className="text-ink-secondary" />, "Snooze…", () => onSnooze(bot))] : []),
         divider("d1"),
         // Straight to this bot's window, picker open: finding a skill never
         // means leaving the bot you are adding it to.
@@ -1265,11 +1318,17 @@ function BotListItem({
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
-  const rowPreview = botRole(bot) === "member" || selected || bot.unread || bot.busy || bot.activity === "waiting-on-you"
+  // A snoozed conversation's unread is held back from this row until it
+  // wakes; anything owed in it wakes it at once (src/lib/thread-snooze.ts).
+  const now = Date.now();
+  const row = sidebarBotAttention(bot, useThreadAttention(), now);
+  const weighed = row.bot;
+  const rowPreview = botRole(bot) === "member" || selected || weighed.unread || bot.busy || bot.activity === "waiting-on-you"
     ? sidebarBotPreview(bot)
     : "";
-  const mark = sidebarBotMark(bot);
-  const markLabel = sidebarMarkLabel(mark);
+  const mark = sidebarBotMark(weighed);
+  const markLabel = [sidebarMarkLabel(mark), questionBadgeLabel(row.questions),
+    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now) : ""].filter(Boolean).join(", ");
   const rowClass = cn(
     "relative flex w-full items-center rounded-xl border text-left",
     iconOnly
@@ -1298,7 +1357,7 @@ function BotListItem({
         // pose — N idle rows bobbing at display rate was most of the app's
         // visible-idle CPU (states are keyword-derived, so "working" can be
         // decorative; busy/unread/motion are the real signals).
-        animated={Boolean(bot.busy) || Boolean(bot.unread) || (mascotMotion?.kind ?? "none") !== "none"}
+        animated={Boolean(bot.busy) || Boolean(weighed.unread) || (mascotMotion?.kind ?? "none") !== "none"}
       />
       </span>
       <div className={cn("pointer-events-none relative z-10 min-w-0 flex-1", iconOnly && "hidden")}>
@@ -1347,7 +1406,11 @@ function BotListItem({
             {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
             <span className="truncate">{rowPreview}</span>
           </span>
-          <SidebarRowMark mark={mark} />
+          <span className="flex shrink-0 items-center gap-1">
+            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} iconOnly />}
+            <QuestionBadge count={row.questions} labelled={false} />
+            <SidebarRowMark mark={mark} />
+          </span>
         </div>
       </div>
     </>
@@ -1929,6 +1992,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const approvals = usePendingApprovals(desktop === true, state.connected);
+  const threadAttention = useThreadAttention();
+  const [snoozeTarget, setSnoozeTarget] = useState<{ threadId: string; name: string; x: number; y: number } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
   // What's new: opens by itself once after an update (desktop only), and
@@ -2613,8 +2678,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             const collapsed = sectionCollapsed(id);
             const attention = collapsed
               ? sidebarSectionAttention(
-                  [...sectionChiefItems, ...sectionBotItems],
-                  sectionGroupItems,
+                  [...sectionChiefItems, ...sectionBotItems].map((bot) => sidebarBotAttention(bot, threadAttention, Date.now()).bot),
+                  sectionGroupItems.map((group) => sidebarGroupAttention(group, threadAttention, Date.now()).group),
                 )
               : undefined;
             return (
@@ -2873,6 +2938,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onToggleHidden={(bot) => void toggleSidebarHidden(bot)}
           onRequestDelete={(bot) => setPendingDelete({ kind: "bot", id: bot.id, name: bot.name })}
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
+          snoozable={desktop === true}
+          onSnooze={(bot) => setSnoozeTarget({ threadId: bot.threadId, name: bot.name, x: menu.x, y: menu.y })}
+        />
+      )}
+      {snoozeTarget && (
+        <SnoozePopover
+          key={snoozeTarget.threadId}
+          {...snoozeTarget}
+          until={sidebarSnoozedUntil(snoozeTarget.threadId, threadAttention.snoozes)}
+          blocked={sidebarThreadOwed(snoozeTarget.threadId, state.bots, threadAttention.questions)}
+          onDone={() => undefined}
+          onClose={() => setSnoozeTarget(null)}
         />
       )}
       {exportTeamOpen && <TeamExportDialog initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={() => setExportTeamOpen(false)} onExported={exported => {
@@ -2905,6 +2982,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onRequestDelete={(group) => setPendingDelete({ kind: "room", id: group.id, name: group.name })}
           onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y })}
           onArchive={(group) => void archiveGroup(group)}
+          snoozable={desktop === true}
+          onSnooze={(group) => setSnoozeTarget({ threadId: group.threadId, name: group.name, x: roomMenu.x, y: roomMenu.y })}
         />
       )}
       {roomSectionPicker && (

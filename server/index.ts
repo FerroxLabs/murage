@@ -62,7 +62,8 @@ import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PE
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
-import { inboxRequest } from "./inbox.ts";
+import { inboxRequest, owedThreads } from "./inbox.ts";
+import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
@@ -3063,6 +3064,43 @@ function broadcast(payload: Record<string, unknown>) {
 // item/request ids are only unique within a thread, so two bots acting at
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
+/** Every conversation the owner has, labelled the way the Inbox names it:
+ *  the scope the Inbox, its counts and conversation snooze all work over. */
+function inboxAccessThreads() {
+  return [
+    ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
+    ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
+  ];
+}
+// A SNOOZED CONVERSATION WAKES MARKED UNREAD, whether its time came or
+// something owed to the owner arrived in it (shared/thread-snooze.ts). A
+// channel keeps one unread mark for all its conversations, so waking one of
+// them lights the channel.
+const threadSnoozeDeps: ThreadSnoozeDeps = {
+  now: () => Date.now(),
+  threads: () => new Set(inboxAccessThreads().map(thread => thread.threadId)),
+  owed: () => owedThreads(database(), { owner: true, threads: inboxAccessThreads() }),
+  wake: (threadId) => {
+    const bot = store.botByThread(threadId);
+    if (bot) { store.patchTask(bot.id, threadId, { unread: true }); return; }
+    const group = store.groupByThread(threadId);
+    if (group) store.patchGroup(group.id, { unread: true });
+  },
+};
+// Owed things never wait behind a snooze: a request card landing in a
+// snoozed conversation wakes it now, not at the next read. The sweep asks
+// the Inbox's own query whether anything is owed, so this only has to notice
+// that a card-shaped message arrived.
+store.onChange((change) => {
+  try {
+    if (change.type === "thread.deleted") { unsnoozeThread(database(), change.threadId); return; }
+    if ((change.type !== "message" && change.type !== "message.patch") || change.message.role !== "bot") return;
+    if (!["options", "secret", "connector", "routine.run", "goal.run"].includes(change.message.kind)) return;
+    if (!hasThreadSnooze(database(), change.threadId)) return;
+    setImmediate(() => { try { sweepThreadSnoozes(database(), threadSnoozeDeps); } catch (error) { console.error("Could not wake a snoozed conversation:", error); } });
+  } catch (error) { console.error("Could not check a snoozed conversation:", error); }
+});
+
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
 const imageOperations = new ImageOperations({ store, speaker: (threadId, botId) => {
   // A channel card carries its sender like every other member message; a
@@ -10368,16 +10406,20 @@ const server = createServer(async (req, res) => {
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
-      const threads = [
-        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
-        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
-      ];
+      const threads = inboxAccessThreads();
       const result = inboxRequest(database(), { method, path,
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
       }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
       return json(res, result.status, result.body);
+    }
+    // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
+    // module answers 404 to anything else, reads included.
+    if (path === "/api/thread-snoozes" || path.startsWith("/api/thread-snoozes/")) {
+      const result = threadSnoozeRequest(database(), { method, path, desktop: requestSurface(req.headers, url.searchParams) === "desktop",
+        body: method === "PUT" ? await readBody(req) : undefined }, threadSnoozeDeps);
+      if (result) return json(res, result.status, result.body);
     }
     // The menu bar / system tray menu (electron/background-lifecycle.mjs).
     // Desktop only: it lists the Inbox. Read-only; the menu answers an

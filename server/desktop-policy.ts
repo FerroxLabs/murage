@@ -64,6 +64,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/connectors\/[\w-]+\/authorize$/, purpose: "authorize a connected account" },
   { methods: ["DELETE"], path: /^\/api\/connectors\/[\w-]+(?:\/accounts\/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?$/, purpose: "revoke connected accounts" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/connector-cards\/[\w-]+\/authorize$/, purpose: "authorize an account through an inline card" },
+  { methods: ["PUT", "DELETE"], path: /^\/api\/thread-snoozes\/[^/]+$/, purpose: "snooze or wake a conversation" },
 ];
 
 export function requiresDesktopAuthority(method: string, path: string): boolean {
