@@ -340,7 +340,8 @@ import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
 import { type EngineChoice, pickDefaultEngine } from "./default-engine.ts";
-import { type SetupCardData, readSetupCard } from "../shared/setup-card.ts";
+import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
+import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { chiefConfirmation, chiefConfirmationsFor } from "../shared/first-run-chief.ts";
 import {
   type SetupLiveState,
@@ -2001,6 +2002,17 @@ function setupRoutinesReading(): SetupRoutineReading {
  */
 /** What the Chief's first thread is called while setup is happening in it.
  *  Plain words: nobody is being walked through "onboarding". */
+/** A message with its card and activity text free of connected-app tool ids. */
+function plainConnectedAppMessage<T extends Omit<Message, "id" | "at">>(message: T): T {
+  const card = message.card
+    ? { ...message.card, title: plainConnectedAppText(message.card.title), ...(typeof message.card.subtitle === "string" ? { subtitle: plainConnectedAppText(message.card.subtitle) } : {}) }
+    : undefined;
+  const tool = message.tool
+    ? { ...message.tool, name: plainConnectedAppText(message.tool.name), ...(typeof message.tool.summary === "string" ? { summary: plainConnectedAppText(message.tool.summary) } : {}) }
+    : undefined;
+  return { ...message, ...(card ? { card } : {}), ...(tool ? { tool } : {}) };
+}
+
 const SETUP_TASK_TITLE = "Getting you set up";
 
 /**
@@ -4195,7 +4207,10 @@ bus.subscribe((event: RuntimeEvent) => {
   if (!bot && !group) return;
   const speaker = group ? groupSpeakers.get(event.threadId) : undefined;
 
-  const pushMessage = (m: Omit<Message, "id" | "at">) => {
+  const pushMessage = (raw: Omit<Message, "id" | "at">) => {
+    // What a person reads names connected-app tools in words, never by the
+    // connection service's ids (shared/connected-app-tools.ts).
+    const m = plainConnectedAppMessage(raw);
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
     const receipt=memoryDispatches.get(event.threadId);
     if(m.role==="bot" && receipt && (!receipt.turnId || !event.turnId || receipt.turnId===event.turnId))receipt.output(message.id);
