@@ -169,6 +169,7 @@ describe("renewing a browser session, in the registry", () => {
       }
       value = renewed.value;
       expect(renewed.session.expiresAt).toBeLessThanOrEqual(createdAt + SESSION_MAX_LIFETIME_MS);
+      expect(renewed.expiresAt).toBeLessThanOrEqual(createdAt + SESSION_MAX_LIFETIME_MS);
     }
     expect(alive).toBe(false);
     expect(registry.resolveSession(value)).toBeNull();
@@ -632,31 +633,42 @@ describe("the door's renewal route", () => {
     expect((await knock("GET", "/session", header)).status).toBe(200);
   });
 
-  /** Make the next write to devices.json fail, as a full disk would. */
-  const failWrites = () => {
-    (registry as unknown as { persist: () => void }).persist = () => {
+  /** Make every write to devices.json fail, as a full disk would. */
+  const failWrites = (target: DeviceRegistry = registry) => {
+    (target as unknown as { persist: () => void }).persist = () => {
       throw new Error("disk full");
     };
-    return () => delete (registry as unknown as { persist?: unknown }).persist;
+    return () => delete (target as unknown as { persist?: unknown }).persist;
   };
   const inMemory = () => JSON.stringify((registry as unknown as { devices: unknown }).devices);
-  const onDisk = () => readFileSync(join(DATA_DIR, "devices.json"), "utf8");
+  /** What a restart would read. The stubbed `persist` means the file cannot
+   * have changed, so this checks what it holds instead: the successor still
+   * pending and the old value still current. The reloaded registry cannot
+   * write either, or presenting the successor would commit it here. */
+  const expectDiskUncommitted = (first: string, next: string) => {
+    const restarted = new DeviceRegistry();
+    failWrites(restarted);
+    expect(restarted.resolveSession(first)).not.toBeNull();
+    expect(restarted.resolveSession(next)?.session.pending).toBeDefined();
+  };
 
   it("still serves a successor it could not commit, and commits it on the next request", async () => {
     const first = await signIn();
     dayLater();
     const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
     const memory = inMemory();
-    const disk = onDisk();
 
     const restore = failWrites();
-    // Pending on disk is an authorisation, so the request is served...
-    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
-    // ...and nothing moved: not the hash, not the pending, not the cap.
-    expect(inMemory()).toBe(memory);
-    expect(onDisk()).toBe(disk);
-    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
-    restore();
+    try {
+      // Pending on disk is an authorisation, so the request is served...
+      expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+      // ...and nothing moved: not the hash, not the pending, not the cap.
+      expect(inMemory()).toBe(memory);
+      expectDiskUncommitted(first, next);
+      expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    } finally {
+      restore();
+    }
 
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
@@ -667,15 +679,17 @@ describe("the door's renewal route", () => {
     dayLater();
     const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
     const memory = inMemory();
-    const disk = onDisk();
 
     const restore = failWrites();
-    const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
-    expect(answer.status).toBe(204);
-    expect(answer.headers["set-cookie"]).toBeUndefined();
-    expect(inMemory()).toBe(memory);
-    expect(onDisk()).toBe(disk);
-    restore();
+    try {
+      const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
+      expect(answer.status).toBe(204);
+      expect(answer.headers["set-cookie"]).toBeUndefined();
+      expect(inMemory()).toBe(memory);
+      expectDiskUncommitted(first, next);
+    } finally {
+      restore();
+    }
 
     // Both values still sign in until the successor is committed.
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);

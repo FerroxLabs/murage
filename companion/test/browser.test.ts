@@ -80,14 +80,15 @@ const devices: BrowserDeviceStore = {
   renewSession: (value) => {
     const session = value ? sessions.get(value) : undefined;
     if (!session) return null;
-    // Rotate in place, exactly as the registry does: the old value stops
-    // working the moment the new one exists.
+    // Simpler than the registry, which keeps the old value valid until the
+    // new one is first presented: here it stops working at once. Nothing in
+    // this file depends on the difference.
     sessions.delete(value!);
     const next = `murage_browser_renewed_${sessions.size}_${Math.random().toString(36).slice(2)}`;
     // Same record identity, as the registry keeps it.
     const renewed = { id: session.id, expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
     sessions.set(next, renewed);
-    return { value: next, session: renewed, expiresAt: renewed.expiresAt };
+    return { value: next, expiresAt: renewed.expiresAt };
   },
 };
 
