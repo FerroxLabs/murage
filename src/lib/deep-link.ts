@@ -6,6 +6,7 @@
 // `open=` is ours: `/enter#murage_pair_…` belongs to the door and is left
 // exactly as it is.
 import { openNotificationTarget, type Action } from "@/state/store";
+import { DEEP_LINK_MAX_PAGES } from "@/lib/scrollback";
 
 export interface DeepLinkTarget {
   threadId: string;
@@ -58,7 +59,11 @@ export function createDeepLinkQueue(open: (target: DeepLinkTarget) => void) {
 export function openDeepLink(target: DeepLinkTarget, state: RoutingState, dispatch: (action: Action) => void): boolean {
   const placed = openNotificationTarget(dispatch, { threadId: target.threadId }, state);
   // focusMessage pages back through scrollback until the message is held
-  // (store.tsx, the wrapped "focusMessage" case).
-  if (placed && target.messageId) dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId });
+  // (store.tsx, the wrapped "focusMessage" case). A link walks at most
+  // DEEP_LINK_MAX_PAGES, and stops sooner once the thread has nothing older;
+  // either way the reader is already on the thread.
+  if (placed && target.messageId) {
+    dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId, maxPages: DEEP_LINK_MAX_PAGES });
+  }
   return placed;
 }

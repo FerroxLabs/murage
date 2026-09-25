@@ -44,6 +44,11 @@ export const MESSAGE_PAGE_MAX = 200;
  * walking an enormous thread down one request at a time forever. */
 export const MAX_JUMP_PAGES = 200;
 
+/** A link someone tapped walks back only this far (1,000 messages) and then
+ * leaves the reader on the thread: a crafted `msg=` must not page a phone
+ * through a whole transcript over cellular (final review M5). */
+export const DEEP_LINK_MAX_PAGES = 5;
+
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean };
@@ -131,8 +136,9 @@ export function createScrollback(deps: ScrollbackDeps) {
    * it. The walk is contiguous — pages always continue from the oldest held
    * row — so the transcript never has a hole the reader could scroll across
    * without noticing. "missing" means the message is not in this thread, the
-   * thread moved on while pages were in flight, or the walk hit its cap. */
-  const loadThrough = async (threadId: string, messageId: string): Promise<JumpOutcome> => {
+   * thread moved on while pages were in flight, or the walk hit its cap
+ * (`maxPages`, which a deep link lowers to DEEP_LINK_MAX_PAGES). */
+  const loadThrough = async (threadId: string, messageId: string, maxPages = MAX_JUMP_PAGES): Promise<JumpOutcome> => {
     // The switch that precedes most jumps has been dispatched, not rendered.
     let owner = ownerOf(deps.getState(), threadId);
     for (let tries = 0; !owner && tries < 20; tries++) {
@@ -155,7 +161,7 @@ export function createScrollback(deps: ScrollbackDeps) {
       }
       const generation = generationOf(threadId);
       let before = start;
-      for (let pages = 0; pages < MAX_JUMP_PAGES; pages++) {
+      for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;

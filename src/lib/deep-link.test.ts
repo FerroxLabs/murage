@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { createDeepLinkQueue, openDeepLink, openHashHref, parseOpenHash } from "./deep-link";
+import { DEEP_LINK_MAX_PAGES } from "./scrollback";
 
 describe("reading the fragment", () => {
   it("reads a thread and a message", () => {
@@ -69,8 +70,9 @@ describe("opening", () => {
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
       { type: "select", id: "bot-1" },
       { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
-      { type: "focusMessage", threadId: "detached-thread", messageId: "m1" },
+      { type: "focusMessage", threadId: "detached-thread", messageId: "m1", maxPages: DEEP_LINK_MAX_PAGES },
     ]);
+    expect(DEEP_LINK_MAX_PAGES).toBe(5);
   });
 
   it("focuses nothing when the thread cannot be placed", () => {
@@ -78,6 +80,11 @@ describe("opening", () => {
     expect(openDeepLink({ threadId: "gone", messageId: "m1" }, { bots, groups: [] }, dispatch)).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
   });
+});
+
+it("hands the page cap through the store to the walk", () => {
+  const store = readFileSync(fileURLToPath(new URL("../state/store.tsx", import.meta.url)), "utf8");
+  expect(store).toContain("scrollback.loadThrough(threadId, messageId, maxPages)");
 });
 
 it("is mounted once, in the shell", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { initialState, reducer, type AppState, type Bot, type Message } from "@/state/store";
-import { createScrollback, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, unheardMessages } from "./scrollback";
+import { createScrollback, DEEP_LINK_MAX_PAGES, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, unheardMessages } from "./scrollback";
 
 // A thread of `total` messages m0..m{total-1}; the client holds the newest
 // `held`. The fake server answers `before=` and `around=` like the harness.
@@ -108,6 +108,21 @@ describe("loadThrough", () => {
     // the page answered under the old generation was dropped, not prepended
     expect(r.state.bots[0].messages).toHaveLength(100);
     expect(r.state.loadingOlder).toEqual({});
+  });
+
+  it("gives up after the pages a deep link allows, and lands on the thread", async () => {
+    const r = rig(3000, 100);
+    await expect(r.scrollback.loadThrough("t", "m12", DEEP_LINK_MAX_PAGES)).resolves.toBe("missing");
+    // the one-row probe, then at most DEEP_LINK_MAX_PAGES pages
+    expect(r.requests.filter((path) => path.includes("before="))).toHaveLength(DEEP_LINK_MAX_PAGES);
+    expect(r.state.loadingOlder).toEqual({});
+  });
+
+  it("still finds a linked message inside that reach, stopping where the thread begins", async () => {
+    const r = rig(800, 100);
+    await expect(r.scrollback.loadThrough("t", "m12", DEEP_LINK_MAX_PAGES)).resolves.toBe("fetched");
+    // 700 older messages: four pages, the last of which says hasMore false
+    expect(r.requests.filter((path) => path.includes("before="))).toHaveLength(4);
   });
 
   it("waits for the thread a jump switched to", async () => {

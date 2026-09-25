@@ -949,7 +949,8 @@ export type Action =
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
-  | { type: "focusMessage"; threadId: string; messageId: string }
+  // maxPages: how far back to walk for it (a deep link walks less far)
+  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number }
   // scrollback: ask the server for the page before the oldest message held
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
@@ -2735,8 +2736,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // held, then focus again, so the views that ignored a target they
         // could not find open a window around it now.
         case "focusMessage": {
-          const { threadId, messageId } = action;
-          void scrollback.loadThrough(threadId, messageId).then((outcome) => {
+          const { threadId, messageId, maxPages } = action;
+          void scrollback.loadThrough(threadId, messageId, maxPages).then((outcome) => {
             if (outcome === "fetched") rawDispatch({ type: "focusMessage", threadId, messageId });
           });
           break;
