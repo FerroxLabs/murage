@@ -1,6 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { nativeHello, resetNativeShellForTest } from "./native-shell";
+import { PAIR_AGAIN_PATH } from "./session-check";
 import { afterSignOut, signOutThisDevice } from "./remote-sign-out";
+
+afterEach(() => {
+  resetNativeShellForTest();
+  vi.unstubAllGlobals();
+});
 
 const reply = (status: number, body: unknown = {}) =>
   vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
@@ -33,17 +40,41 @@ describe("signing this device out", () => {
 });
 
 describe("after signing out", () => {
-  it("hands over to the app's re-pair screen when running inside the app", () => {
-    const signOut = vi.fn();
+  it("hands over to the app's re-pair screen through the hello()-negotiated bridge", async () => {
+    const signOut = vi.fn(async () => undefined);
     const replace = vi.fn();
-    afterSignOut({ murageNative: { signOut }, location: { replace } } as unknown as Window);
+    vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: ["signOut"] }), signOut });
+    await nativeHello();
+    await afterSignOut({ location: { replace } } as unknown as Window);
     expect(signOut).toHaveBeenCalledOnce();
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it("goes back to the door's sign-in page in a plain browser", () => {
+  it("goes to the door's sign-in page when the bridge does not list signOut", async () => {
+    const signOut = vi.fn();
     const replace = vi.fn();
-    afterSignOut({ location: { replace } } as unknown as Window);
-    expect(replace).toHaveBeenCalledWith("/");
+    vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: [] }), signOut });
+    await nativeHello();
+    await afterSignOut({ location: { replace } } as unknown as Window);
+    expect(signOut).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith(PAIR_AGAIN_PATH);
+  });
+
+  it("falls back to the door's sign-in page when the native call rejects", async () => {
+    const signOut = vi.fn(async () => {
+      throw new Error("bridge torn down");
+    });
+    const replace = vi.fn();
+    vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: ["signOut"] }), signOut });
+    await nativeHello();
+    await afterSignOut({ location: { replace } } as unknown as Window);
+    expect(signOut).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith(PAIR_AGAIN_PATH);
+  });
+
+  it("goes back to the door's sign-in page in a plain browser", async () => {
+    const replace = vi.fn();
+    await afterSignOut({ location: { replace } } as unknown as Window);
+    expect(replace).toHaveBeenCalledWith(PAIR_AGAIN_PATH);
   });
 });

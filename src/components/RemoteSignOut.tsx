@@ -18,7 +18,7 @@ export function RemoteSignOut() {
     setError(null);
     const result = await signOutThisDevice();
     if (result.ok) {
-      afterSignOut();
+      await afterSignOut();
       return;
     }
     setBusy(false);

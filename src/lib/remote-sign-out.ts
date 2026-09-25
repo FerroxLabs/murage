@@ -1,3 +1,6 @@
+import { callNative, nativeHas } from "./native-shell";
+import { PAIR_AGAIN_PATH } from "./session-check";
+
 /** "Sign out this device", from the device.
  *
  * Revokes the device on the computer (`DELETE /session/device`, answered by
@@ -21,12 +24,19 @@ export async function signOutThisDevice(fetchImpl: typeof fetch = fetch): Promis
 }
 
 /** Where a signed-out device goes: the app's own re-pair screen when this
- * page is running inside the Murage app, the door's sign-in page otherwise. */
-export function afterSignOut(win: Window = window): void {
-  const native = (win as Window & { murageNative?: { signOut?: () => unknown } }).murageNative;
-  if (typeof native?.signOut === "function") {
-    native.signOut();
-    return;
+ * page is running inside the Murage app AND the hello()-negotiated bridge
+ * actually lists `signOut` (an older app build may not), the door's own
+ * sign-in page otherwise — also the fallback if the native call itself
+ * rejects, since the device is signed out on the computer either way and the
+ * person still needs somewhere to land. */
+export async function afterSignOut(win: Window = window): Promise<void> {
+  if (nativeHas("signOut")) {
+    try {
+      await callNative("signOut");
+      return;
+    } catch {
+      // fall through to the browser's own sign-in page
+    }
   }
-  win.location.replace("/");
+  win.location.replace(PAIR_AGAIN_PATH);
 }
