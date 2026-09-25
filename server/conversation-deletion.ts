@@ -327,16 +327,18 @@ const NO_LOCAL_HISTORY = new Set(["grok", "minimax", "openai-compat", "boxAgent"
 
 // ── the deletion service ────────────────────────────────────────────────
 
+export interface DeletionServiceOptions {
+  dataDir: string;
+  database: () => DatabaseSync;
+  /** attachments go through the quota-aware remover when one is given */
+  deleteAttachment?: (path: string) => void;
+}
+
 export class ConversationDeletions {
   readonly journal: string;
-  constructor(
-    private readonly options: {
-      dataDir: string;
-      database: () => DatabaseSync;
-      /** attachments go through the quota-aware remover when one is given */
-      deleteAttachment?: (path: string) => void;
-    },
-  ) {
+  private readonly options: DeletionServiceOptions;
+  constructor(options: DeletionServiceOptions) {
+    this.options = options;
     this.journal = nodePath.join(options.dataDir, "pending-deletions.json");
   }
 
@@ -462,6 +464,9 @@ export class ConversationDeletions {
       record(removeConfined(dirs.artifacts, path), path, removed, failed);
     }
     if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], removed, failed, leftovers);
+    // The rows are gone and overwritten (secure_delete); the write-ahead log
+    // still holds the old pages until it is checkpointed and truncated.
+    try { this.options.database().exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* the next checkpoint takes it */ }
     if (!failed.length) this.abandon(entry);
     return { leftovers: dedupeLeftovers(leftovers), failed };
   }

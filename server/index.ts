@@ -57,7 +57,7 @@ import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
 import { isIP } from "node:net";
-import { dirname as pathDirname, extname, isAbsolute, join, sep } from "node:path";
+import { dirname as pathDirname, extname, isAbsolute, join, relative, sep } from "node:path";
 
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
@@ -73,7 +73,8 @@ import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } fr
 import type { InboxPage, InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
-import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema } from "./claude-accounts.ts";
+import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
+import { ConversationDeletions, ENGINE_FOR_DRIVER, engineHomeFor, runConversationDeletion, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import { listClaudeAccounts } from "./claude-account-list.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
@@ -257,7 +258,7 @@ import { channelProjectSystemLine, nextChannelProject } from "./project-channel.
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { closeMessageDb, openQuestionCardMessages, searchMessages } from "./message-db.ts";
+import { closeMessageDb, deleteThread as deleteThreadRows, openQuestionCardMessages, searchMessages } from "./message-db.ts";
 import {
   QUESTION_NOTES,
   answersFromMessage,
@@ -1676,6 +1677,74 @@ const turnImages = new TurnImages(store, DATA_DIR);
 // root next to bots.json. Read before every turn on an engine that gates
 // folders (Fuigo 1.0.13) and written by the trust card and the folder picker.
 const folderTrust = new FolderTrustStore(join(DATA_DIR, "folder-trust.json"));
+// Deleting a conversation removes its files and the engine's own transcript
+// of it, not only its rows (server/conversation-deletion.ts). A pending record
+// is written first; the boot pass below finishes one a crash interrupted.
+const conversationDeletions = new ConversationDeletions({ dataDir: DATA_DIR, database, deleteAttachment });
+/** Where each configured local engine keeps its own history. */
+function deletionEngineHomes(): DeletionEngineHome[] {
+  const homes: DeletionEngineHome[] = [];
+  for (const instance of registry.instances()) {
+    const engine = ENGINE_FOR_DRIVER[instance.driverKind];
+    if (!engine) continue;
+    const entry = instanceConfigs(cfg)[instance.instanceId];
+    const env = { ...process.env, ...entry?.environment };
+    let claudeDir: string | undefined;
+    if (engine === "claude") {
+      const configDir = entry?.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? (entry.config as { configDir?: unknown }).configDir : undefined;
+      try { claudeDir = resolveClaudeConfigDir(typeof configDir === "string" ? configDir : undefined, env); } catch { claudeDir = undefined; }
+    }
+    for (const home of engineHomeFor(engine, env, claudeDir)) homes.push({ engine, home });
+  }
+  return homes;
+}
+function engineKindOf(instanceId: string | undefined): string | undefined {
+  return instanceId ? registry.get(instanceId)?.driverKind : undefined;
+}
+/** A folder a conversation ran in that is not one of Murage's own
+ * per-conversation folders: the person's picked folder or the bot's own. */
+function sharedDeletionFolder(folder: string | null | undefined): string[] {
+  if (!folder) return [];
+  const own = join(DATA_DIR, "workspaces");
+  const rel = relative(own, folder);
+  return /^[\w-]+[\\/]threads[\\/][\w-]+$/.test(rel) ? [] : [folder];
+}
+function botDeletionInput(bot: BotRecord, threadIds: string[]): DeletionInput {
+  const tasks = (bot.tasks ?? []).filter((task) => threadIds.includes(task.threadId));
+  return {
+    threadIds,
+    engineHomes: deletionEngineHomes(),
+    engineKinds: [bot.modelSelection.instanceId, ...tasks.flatMap((task) => [task.modelSelection?.instanceId, ...Object.keys(task.resumeCursors ?? {})])].map(engineKindOf).filter((kind): kind is string => Boolean(kind)),
+    sharedFolders: tasks.flatMap((task) => task.cwd === null && Object.keys(task.resumeCursors ?? {}).length ? [homedir()] : sharedDeletionFolder(task.cwd)),
+  };
+}
+function groupDeletionInput(group: GroupRecord, threadIds: string[]): DeletionInput {
+  const tasks = (group.tasks ?? []).filter((task) => threadIds.includes(task.threadId));
+  return {
+    threadIds,
+    engineHomes: deletionEngineHomes(),
+    engineKinds: group.memberIds.map((id) => engineKindOf(store.bot(id)?.modelSelection.instanceId)).filter((kind): kind is string => Boolean(kind)),
+    sharedFolders: [...tasks.flatMap((task) => sharedDeletionFolder(task.pinnedCwd)), ...(threadIds.includes(group.threadId) ? sharedDeletionFolder(group.pinnedCwd) : [])],
+  };
+}
+/** An engine may keep an idle session for a thread (a pooled Fuigo child,
+ * Claude's retained session) that would write to its transcript after the
+ * files are removed. Retire it first. */
+async function retireEngineSessions(threadIds: string[]): Promise<void> {
+  for (const instance of registry.instances()) {
+    if (!instance.adapter.resetSession) continue;
+    for (const threadId of threadIds) {
+      try { await instance.adapter.resetSession(threadId); } catch { /* nothing retained */ }
+    }
+  }
+}
+function threadIsLive(threadId: string): boolean {
+  return store.bots.some((bot) => bot.threadId === threadId || bot.tasks?.some((task) => task.threadId === threadId))
+    || store.groups.some((group) => group.threadId === threadId || group.tasks?.some((task) => task.threadId === threadId));
+}
+function deletionLeftovers(report: DeletionReport): Pick<DeletionReport, "leftovers"> & { failed?: string[] } {
+  return { leftovers: report.leftovers, ...(report.failed.length ? { failed: report.failed } : {}) };
+}
 /** The Fuigo home a NATIVE-LOGIN turn on `instanceId` reads its own
  * `trusted_folders.toml` from (FUIGOTRUST2): the engine's env is the
  * server's plus the instance's configured environment, `FUIGO_HOME` else
@@ -3811,6 +3880,13 @@ restoreSteerQueues([]);
 try { unlinkSync(STEER_QUEUE_MIRROR); } catch { /* already gone */ }
 setSteerQueueMirror(entries => writeSteerQueueMirror(STEER_QUEUE_MIRROR, entries));
 reconcileInterruptedMemoryTurns();
+// A conversation delete that a crash interrupted finishes now: its rows go if
+// they are still there, then its files and engine transcripts.
+try {
+  conversationDeletions.reconcile(threadIsLive, deleteThreadRows);
+} catch (error) {
+  console.error("conversation deletion: boot reconcile failed", error);
+}
 // F7: the same boot pass for ordinary 1:1 turns. Routines, memory turns and
 // team goals were already reconciled here; a direct turn was the one kind that
 // came back with no reply and no explanation.
@@ -13605,13 +13681,14 @@ const server = createServer(async (req, res) => {
       if (!store.groupTaskByThread(group.id, m[2])) return json(res, 404, { error: "no such channel task" });
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       lastReply.delete(m[2]);
-      const updated = store.deleteGroupTask(group.id, m[2]);
+      await retireEngineSessions([m[2]]);
+      const { result: updated, report } = runConversationDeletion(conversationDeletions, groupDeletionInput(group, [m[2]]), () => store.deleteGroupTask(group.id, m![2]!));
       if (!updated) return json(res, 404, { error: "no such channel task" });
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       // Deleting the open task moves the channel to another one: bounded
       // like a switch frame.
       broadcast({ kind: "group", group: pagedGroupWithThread(updated, SWITCH_FRAME_PAGE) });
-      return json(res, 200, { group: groupWithThread(updated) });
+      return json(res, 200, { group: groupWithThread(updated), ...deletionLeftovers(report) });
     }
 
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
@@ -13775,16 +13852,10 @@ const server = createServer(async (req, res) => {
       const stagedSkillCleanups = [...threadIds].flatMap(stagedSkillCleanupsForThread);
       for (const threadId of threadIds) lastReply.delete(threadId);
       routines!.disableForGroup(group.id);
-      store.deleteGroup(group.id);
+      await retireEngineSessions([...threadIds]);
+      const { report } = runConversationDeletion(conversationDeletions, groupDeletionInput(group, [...threadIds]), () => store.deleteGroup(group.id));
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
-      for (const threadId of threadIds) {
-        for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
-          try {
-            unlinkSync(join(dir, `${threadId}.ndjson`));
-          } catch {}
-        }
-      }
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, ...deletionLeftovers(report) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
@@ -14715,6 +14786,7 @@ const server = createServer(async (req, res) => {
       // all of its live work untouched. The intent is aborted if a later
       // pre-delete side effect fails, and committed only after Store deletion.
       const browserCleanupRequest = utilityParentPort ? browserCleanup.prepare("bot", bot.id) : null;
+      let deletionReport: DeletionReport = { leftovers: [], failed: [] };
       try {
         // a running turn dies with its bot
         const directClaim = cancelDirectTurnDispatch(bot.id);
@@ -14742,7 +14814,9 @@ const server = createServer(async (req, res) => {
         const target = perBotLocalVmTarget(bot.id);
         localVmIdles.get(target.key)?.cancel();
         localVmIdles.delete(target.key);
-        store.deleteBot(bot.id);
+        const botThreads = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])];
+        await retireEngineSessions(botThreads);
+        deletionReport = runConversationDeletion(conversationDeletions, botDeletionInput(bot, botThreads), () => store.deleteBot(bot.id)).report;
         engineCommandCache.forget(bot.id);
       } catch (error) {
         if (browserCleanupRequest) browserCleanup.abort(browserCleanupRequest);
@@ -14753,19 +14827,9 @@ const server = createServer(async (req, res) => {
         const acknowledged = await browserCleanup.ensure(committedCleanup);
         requireBrowserCleanupAcknowledged(acknowledged, `Browser data for ${bot.name}`);
       }
-      // every task's event/native log, not only the open thread's, and the
-      // rotated copy beside each
-      const loggedThreads = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
-      for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
-        for (const threadId of loggedThreads) {
-          for (const file of [`${threadId}.ndjson`, `${threadId}.previous.ndjson`]) {
-            try {
-              unlinkSync(join(dir, file));
-            } catch {}
-          }
-        }
-      }
-      return json(res, 200, { ok: true });
+      // every task's logs, folders and engine transcripts went with the
+      // deletion above (conversation-deletion.ts)
+      return json(res, 200, { ok: true, ...deletionLeftovers(deletionReport) });
     }
 
     // ── bot skills: imported Agent Skills (SKILL.md) ────────────────────
@@ -15848,15 +15912,18 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
-      const updated = store.deleteTask(m[1], m[2]);
-      if (!updated) return json(res, 400, { error: "a bot keeps at least one task" });
+      if (bot) await retireEngineSessions([m[2]]);
+      const { result: updated, report } = bot
+        ? runConversationDeletion(conversationDeletions, botDeletionInput(bot, [m[2]]), () => store.deleteTask(m![1]!, m![2]!))
+        : { result: null, report: null };
+      if (!updated || !report) return json(res, 400, { error: "a bot keeps at least one task" });
       revokeInternalThread(m[2]);
       taskAllowances.clearThread(m[2]);
       turnCwdByThread.delete(m[2]);
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       // Deleting the open task moves the bot to another one: a switch frame.
       broadcast({ kind: "bot", bot: pagedPublicBot(updated, SWITCH_FRAME_PAGE) });
-      return json(res, 200, { bot: botWithThread(updated) });
+      return json(res, 200, { bot: botWithThread(updated), ...deletionLeftovers(report) });
     }
 
     // what the user's machine can host: which runtime is installed, whether
