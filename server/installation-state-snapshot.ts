@@ -342,8 +342,11 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
           for (let attempt = 2; taken.has(spelled.toLowerCase()); attempt++) spelled = portableSpelling(name) + "%23" + attempt;
           taken.add(spelled.toLowerCase());
           const childStored = stored + "/" + spelled;
-          if (spelled !== name) names.push({ path: childStored, name });
+          const before = manifest.files.length + links.length + copies.length;
           walk(join(source, name), childStored, depth + 1);
+          // Only an entry the archive holds (or a folder above one) keeps its
+          // real name here; an empty folder is not stored at all.
+          if (spelled !== name && manifest.files.length + links.length + copies.length > before) names.push({ path: childStored, name });
         }
         return;
       }

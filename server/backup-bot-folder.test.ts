@@ -23,6 +23,7 @@ import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { reviewInstallation } from "./installation-activation.ts";
+import { validateInstallationArchiveManifest } from "./installation-archive.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
@@ -32,7 +33,12 @@ const deskOf = (data: string) => join(data, "workspaces", "bot", "threads", "thr
 async function stageAndInventory(data: string, parent: string, options: { maxFiles?: number } = {}) {
   return withOfflineInstallation(data, async installation => {
     const stage = await stageInstallationStateWhileOwned(installation, parent, options);
-    try { await inventoryFidelity(installation, stage, selection, options); return stage.manifest; }
+    try {
+      await inventoryFidelity(installation, stage, selection, options);
+      // The same check every archive's contents list gets when it is written.
+      validateInstallationArchiveManifest({ ...stage.manifest, format: "murage.installation" }, options);
+      return stage.manifest;
+    }
     finally { rmSync(stage.directory, { recursive: true, force: true }); }
   });
 }
@@ -55,6 +61,8 @@ const artefacts: Record<string, (desk: string) => void> = {
   "report with a time in its name (colon)": desk => { writeFileSync(join(desk, "report 2026-09-26 10:30.md"), "# Report\n"); },
   "shortcut to a file outside the data folder": desk => { symlinkSync("/etc/hosts", join(desk, "hosts-link")); },
   "Windows device name and trailing dot": desk => { writeFileSync(join(desk, "aux.txt"), "a"); writeFileSync(join(desk, "notes."), "n"); },
+  "an empty folder with a colon in its name": desk => { mkdirSync(join(desk, "run 10:30")); mkdirSync(join(desk, "run 11:00", "empty"), { recursive: true }); },
+  "a socket or pipe left by a tool": desk => { execFileSync("mkfifo", [join(desk, "tool.pipe")]); },
 };
 
 for (const [name, make] of Object.entries(artefacts)) {
