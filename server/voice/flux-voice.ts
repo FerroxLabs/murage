@@ -148,7 +148,7 @@ function failureFor(status: number, body: any): TranscriptionUnavailable {
   if (status === 402) {
     return new TranscriptionUnavailable(
       "premium",
-      "Voice typing needs a paid Flux plan. The key is fine; the plan does not cover it yet.",
+      "Voice typing is not included in your Flux Router plan yet. The key is fine.",
     );
   }
   if (status === 413) {

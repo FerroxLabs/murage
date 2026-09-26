@@ -329,10 +329,14 @@ describe("parseFuigoModels", () => {
 
 describe("ACP version diagnostics", () => {
   it("distinguishes a timeout, errno, exit, and empty successful response", () => {
-    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { killed: true, signal: "SIGTERM" }))).toContain("timed out after 8 seconds");
-    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: "EACCES" }))).toContain("not executable (EACCES)");
-    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: 7 }))).toContain("exit 7");
-    expect(acpVersionFailureDetail(null)).toContain("returned no version");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { killed: true, signal: "SIGTERM" }))).toContain("within 8 seconds");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: "EACCES" }))).toBe("is not executable; check its file permissions");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: 7 }))).toBe("did not start when Murage checked its version; check the engine installation");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: "ENOENT" }))).toBe("is not installed, or Murage cannot find it on this computer");
+    expect(acpVersionFailureDetail(null)).toContain("gave no version");
+    // 0.1.60 Linux D13: no raw code reaches Settings > Engines
+    for (const error of [null, { code: "ENOENT" }, { code: "EACCES" }, { code: "EPERM" }, { code: 7 }, { code: "ENOSPC" }, { killed: true, signal: "SIGTERM" }])
+      expect(acpVersionFailureDetail(error && Object.assign(new Error("private"), error))).not.toMatch(/\(E[A-Z]+\)|\bexit \d|--version|private/);
   });
 });
 
@@ -619,14 +623,14 @@ describe("fuigo binary resolution — the bundled engine", () => {
   it.skipIf(process.platform === "win32")("reports a bundled version exit without copying stderr", async () => {
     writeFileSync(join(bundleDir, "fuigo"), '#!/bin/sh\nprintf "secret-fixture-output" >&2\nexit 7\n');
     const snapshot = await snapshotDefault();
-    expect(snapshot).toMatchObject({ state: "unavailable", setupAction: "repair", reason: expect.stringContaining("--version failed (exit 7)") });
+    expect(snapshot).toMatchObject({ state: "unavailable", setupAction: "repair", reason: expect.stringContaining("did not start when Murage checked its version") });
     expect(snapshot.reason).not.toContain("secret-fixture-output");
     expect(snapshot.reason).toContain("Repair or reinstall Murage");
   });
 
   it("does not prescribe bundle repair for a missing custom CLI", async () => {
     const snapshot = await snapshotDefault(join(root, "missing-custom-cli"));
-    expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("CLI not found (ENOENT)") });
+    expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("is not installed, or Murage cannot find it on this computer") });
     expect(snapshot.reason).not.toContain("Repair or reinstall");
     expect(snapshot).not.toHaveProperty("setupAction");
   });

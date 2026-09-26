@@ -19,7 +19,8 @@ export type NativeConfigProblem = "unreadable" | "comments" | "invalid-json" | "
 function refusalMessage(path: string, problem: NativeConfigProblem, detail: string | undefined): string {
   switch (problem) {
     case "unreadable":
-      return `Murage could not read ${path} (${detail ?? "read failed"}) and left it unchanged. Check its permissions, then try again.`;
+      // `detail` is an error code (EACCES, EISDIR...): kept out of the sentence.
+      return `Murage could not read ${path} and left it unchanged. Check that it is a file you can read, then try again.`;
     case "comments":
       return `${path} has comments or trailing commas Murage can't keep, so it was left unchanged. Remove them or add the entry by hand, then try again.`;
     case "invalid-json":

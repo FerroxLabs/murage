@@ -77,7 +77,7 @@ describe("readNativeJsonConfig", () => {
     const home = scratch();
     mkdirSync(join(home, ".tool", "settings.json"), { recursive: true });
     expect(() => readNativeJsonConfig(join(home, ".tool", "settings.json"), home)).toThrow(
-      `Murage could not read ${join("~", ".tool", "settings.json")} (EISDIR) and left it unchanged. Check its permissions, then try again.`,
+      `Murage could not read ${join("~", ".tool", "settings.json")} and left it unchanged. Check that it is a file you can read, then try again.`,
     );
   });
 });

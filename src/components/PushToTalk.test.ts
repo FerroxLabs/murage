@@ -158,7 +158,7 @@ describe("a refusal a person can act on", () => {
     // The live state of this workspace: Flux answers 402 premium_locked for
     // transcription. "Check your key" would be a loop with no exit.
     const paid = noteForReason("premium", "Transcribing failed (402)");
-    expect(paid).toContain("paid Flux plan");
+    expect(paid).toContain("not included in your Flux Router plan");
     expect(paid).toContain("The key is fine");
     expect(paid).not.toMatch(/paste|check your key/i);
 
@@ -282,7 +282,7 @@ describe("a recorded clip is never silently discarded", () => {
       mounted: () => false,
       setPhase: vi.fn(),
     });
-    expect(onNote).toHaveBeenCalledWith(expect.stringContaining("paid Flux plan"));
+    expect(onNote).toHaveBeenCalledWith(expect.stringContaining("not included in your Flux Router plan"));
   });
 
   /** POSITIVE control: the same rig still drives the spinner while the button
