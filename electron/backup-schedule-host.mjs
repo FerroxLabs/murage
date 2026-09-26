@@ -60,6 +60,14 @@ export function captureFailureDiagnostic(stage,error){
 export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
   let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null;
+  // Who the last refused backup was waiting on, when it was a person's
+  // answer (electron/backup-waiting.mjs). A due daily backup keeps trying
+  // every minute, so `since` is when it first had to wait.
+  let heldBy=null;
+  const holdFor=(error,occasion)=>{
+    if(error?.message!=="BACKUP_WAITING_ON_YOU"||!Array.isArray(error.waitingOnYou)||!error.waitingOnYou.length)return false;
+    heldBy={occasion,since:heldBy?.occasion===occasion?heldBy.since:now(),bots:error.waitingOnYou};return true;
+  };
   const now=()=>host.now?.()??Date.now();
   const verifyIdentityAccess=async()=>{
     const installation=host.installation();
@@ -86,7 +94,7 @@ export function createBackupScheduleHost(host) {
     // Said before setup starts, so daily backups are never switched on on a
     // computer where no backup could ever run.
     let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
-    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
+    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -148,13 +156,13 @@ export function createBackupScheduleHost(host) {
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase)||!host.supported())return;
       const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
       const b=await checked();
-      release=await host.prepare();
+      release=await host.prepare("daily");heldBy=null;
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
       stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
       await host.relaunch("backup");lastError=null;
-    }catch{
-      lastError="BACKUP_HANDOFF_DEFERRED";
+    }catch(error){
+      lastError=holdFor(error,"daily")?"BACKUP_WAITING_ON_YOU":"BACKUP_HANDOFF_DEFERRED";
       if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve unreadable state. */}
       if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
     }finally{running=false;}
@@ -183,7 +191,8 @@ export function createBackupScheduleHost(host) {
       await checked();
       const s=coordinator.requestManual(expectedRevision,randomUUID());
       if(s.job.occurrence.startsWith(s.revision+":manual:"))manual=s.job.id;
-      release=await host.prepare();
+      try{release=await host.prepare("manual");}catch(error){holdFor(error,"manual");throw error;}
+      if(heldBy?.occasion==="manual")heldBy=null;
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);

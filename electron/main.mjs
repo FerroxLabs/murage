@@ -14,6 +14,7 @@ import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readC
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
+import { backupRefusal } from "./backup-waiting.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
@@ -306,10 +307,17 @@ async function readBackupActivity(){
   const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
   if(!response.ok)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");return response.json();
 }
-async function prepareDesktopBackup(){
+// `occasion` tells the server whether a scheduled backup is being held up
+// (it then says so in the Inbox and a notification) or one the person asked for.
+async function prepareDesktopBackup(occasion="manual"){
   return prepareBackupRestart(async(action,token)=>{
-    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify({action,token}),signal:AbortSignal.timeout(5000)});
-    if(!response.ok)throw new Error(action==="prepare"?"BACKUP_WORK_ACTIVE":"BACKUP_RELEASE_UNCONFIRMED");return response.json();
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify(action==="prepare"?{action,token,occasion}:{action,token}),signal:AbortSignal.timeout(5000)});
+    if(!response.ok){
+      if(action!=="prepare")throw new Error("BACKUP_RELEASE_UNCONFIRMED");
+      let body=null;try{body=await response.json();}catch{/* An unreadable refusal is still a refusal. */}
+      throw backupRefusal(body);
+    }
+    return response.json();
   },()=>cuaCleanedUp);
 }
 const desktopBackupTool = createBackupToolCapability({
@@ -3515,7 +3523,7 @@ async function initializeBackupScheduleHost(){
         message:`Back up to ${summary?.destination} every day?`,detail});
       return answer.response===1;
     },
-    prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
+    prepare:async occasion=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup(occasion==="daily"?"daily":"manual");},
     cleanupIdle:cleanupDesktopForExit,
     // Closed main has no harness logger and exits immediately after cleanup.
     // The host supplies only its finite stage/code record; synchronously retain

@@ -12,6 +12,7 @@ import { Worker } from "node:worker_threads";
 import { BackupCoordinator } from "../server/backup-coordinator.ts";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
 import { createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
+import { backupRefusal } from "./backup-waiting.mjs";
 import { backupFixture,testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
@@ -409,6 +410,41 @@ test("an older host that answers relaunchBlocked with true still refuses with th
     const f=fixture({relaunchBlocked:()=>answer});
     try{assert.equal((await f.controller.status()).relaunchBlocked,code);await assert.rejects(f.controller.setUpBackups({}),new RegExp(code));}finally{f.cleanup();}
   }
+});
+// 0.1.60 Linux re-test 2 D6: a card left waiting blocked every backup and the
+// page said only that Murage was busy. The refusal now names who.
+test("a daily backup held up by a bot waiting on the person says who, keeps trying, and clears once it starts",async()=>{
+  const ember={botId:"ember",name:"Ember",threadId:"t1",messageId:"m1"};
+  let waiting=true;const occasions=[];
+  const f=fixture(()=>({prepare:async occasion=>{occasions.push(occasion);if(waiting)throw backupRefusal({error:"BACKUP_WORK_ACTIVE",waitingOnYou:[ember,{name:"no id"}]});return async()=>{};}}));
+  try{
+    await f.enable();occasions.length=0;
+    f.setNow(Date.parse("2026-09-13T09:01:00Z"));await f.controller.tick();
+    let status=await f.controller.status();
+    assert.equal(status.error,"BACKUP_WAITING_ON_YOU");
+    assert.deepEqual(status.heldBy,{occasion:"daily",since:Date.parse("2026-09-13T09:01:00Z"),bots:[ember]});
+    assert.equal(["due","waiting-idle","waiting-backup-mode"].includes(f.coordinator().status().phase),true,"still due, tried again next minute");
+    // a minute later it tries again, and `since` stays when it first waited
+    f.setNow(Date.parse("2026-09-13T09:02:00Z"));await f.controller.tick();
+    status=await f.controller.status();assert.equal(status.heldBy.since,Date.parse("2026-09-13T09:01:00Z"));
+    assert.deepEqual(occasions,["daily","daily"]);
+    // answered: the next try starts the backup and the note goes
+    waiting=false;f.setNow(Date.parse("2026-09-13T09:03:00Z"));await f.controller.tick();
+    status=await f.controller.status();assert.equal(status.heldBy,undefined);assert.equal(f.coordinator().status().phase,"handoff-armed");
+  }finally{f.cleanup();}
+});
+test("back up now held up by a waiting bot refuses naming who, as a Back up now",async()=>{
+  const ember={botId:"ember",name:"Ember",threadId:"t1"};
+  const f=fixture(()=>({prepare:async occasion=>{assert.equal(occasion,"manual");throw backupRefusal({waitingOnYou:[ember]});}}));
+  try{
+    await f.enable();const before=await f.controller.status();
+    await assert.rejects(f.controller.runNow(before.revision),/BACKUP_WAITING_ON_YOU/);
+    const status=await f.controller.status();
+    assert.equal(status.heldBy.occasion,"manual");assert.deepEqual(status.heldBy.bots,[ember]);
+    // other work only: the old refusal, and nobody named
+    const g=fixture(()=>({prepare:async()=>{throw backupRefusal({error:"BACKUP_WORK_ACTIVE"});}}));
+    try{await g.enable();await assert.rejects(g.controller.runNow((await g.controller.status()).revision),/BACKUP_WORK_ACTIVE/);assert.equal((await g.controller.status()).heldBy,undefined);}finally{g.cleanup();}
+  }finally{f.cleanup();}
 });
 test("back up now and a due daily run refuse before closing anything while Murage runs as administrator",async()=>{
   const f=fixture();try{

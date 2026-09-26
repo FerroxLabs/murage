@@ -4,6 +4,7 @@ import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
 import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
+import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 
 /** Display-only size: decimal units, one decimal below ten ("1.2 GB"). */
 export function formatBackupSize(bytes: number): string {
@@ -124,6 +125,10 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   const attention: string[] = [];
   if (input.scheduleStale) attention.push("Schedule status couldn't be refreshed.");
   if (input.scheduleFailure) attention.push(input.scheduleFailure);
+  // A daily backup held up by a waiting card names who it waits for, and
+  // after its catch-up time passes, why it was skipped (0.1.60 Linux D6).
+  const held = s?.enabled && s.heldBy?.occasion === "daily" && s.heldBy.bots.length ? s.heldBy : null;
+  if (held) attention.push(backupWaitingSentence(held.bots, s?.phase === "skipped" ? "skipped" : "daily"));
   else if (s?.error) attention.push(scheduleError(s.error));
   // Said before anything is set up: where Murage can't reopen itself, no
   // backup can ever run, so the page says so instead of offering setup.
@@ -135,7 +140,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     // finished, which left the person with nothing to act on.
     if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure));
   }
-  else if (s?.phase === "skipped") attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
+  else if (s?.phase === "skipped" && !held) attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   // The owner finished setup and the page still read "No verified backup on
   // this computer yet", with nothing saying what to do about it. A schedule
   // with no backup behind it is the state that makes someone think they are
@@ -209,9 +214,11 @@ export const SETUP_NO_FIRST_BACKUP = "Daily backups are on, but this desktop app
 /** A first backup that could not start. Never phrased so it reads as though a
  * backup exists: the whole point of taking one during setup is that "backups
  * are on" and "I have a backup" stop being different things. */
-export function firstBackupError(cause: unknown): string {
+export function firstBackupError(cause: unknown, waiting?: readonly BackupWaitingBot[]): string {
+  if (waiting?.length) return `Daily backups are on, but nothing has been backed up yet. ${backupWaitingSentence(waiting, "manual")}`;
   return `Daily backups are on, but the first backup couldn't start. ${runNowError(cause)} Nothing has been backed up yet. Use Back up now when you can.`;
 }
+const waitingOnYou = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause ?? "")).includes("BACKUP_WAITING_ON_YOU");
 
 /** What one act of setup did, for the page to react to. */
 export type BackupSetupOutcome =
@@ -270,7 +277,12 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
   try { steps.applyStatus(await bridge.runNow(enabled.revision)); }
   // The schedule stays on — it is correctly configured — but nothing here may
   // claim a backup exists.
-  catch (cause) { return { state: "first-backup-failed", message: firstBackupError(cause) }; }
+  catch (cause) {
+    // Name who the first backup is waiting for; the status carries it.
+    let waiting: readonly BackupWaitingBot[] | undefined;
+    if (waitingOnYou(cause)) try { const now = await bridge.status(); steps.applyStatus(now); waiting = now.heldBy?.bots; } catch { /* the plain sentence below still says what to do */ }
+    return { state: "first-backup-failed", message: firstBackupError(cause, waiting) };
+  }
   return { state: "capturing" };
 }
 
@@ -279,6 +291,7 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
 export function runNowError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   if (code.includes("BACKUP_WORK_ACTIVE")) return "Finish or stop current work first.";
+  if (code.includes("BACKUP_WAITING_ON_YOU")) return "A bot is waiting for your answer. Answer it, or end that run, then back up again.";
   if (code.includes("BACKUP_BUSY")) return "A backup is already running.";
   // Never phrase this as something the person does. The old wording — "Turn on
   // daily backups once to allow Murage to close and reopen the window" — was

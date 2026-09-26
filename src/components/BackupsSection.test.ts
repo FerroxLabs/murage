@@ -514,6 +514,29 @@ describe("setup ends with a verified backup, not a to-do", () => {
     }
   });
 
+  // 0.1.60 Linux D6: a routine card waiting on the owner stopped the first
+  // backup with only "Finish or stop current work first".
+  it("a first backup held up by a waiting bot names it, and the page keeps saying so until it is answered", async () => {
+    const host = hostBridge();
+    const ember = { botId: "ember", name: "Log writer", threadId: "t1", messageId: "m1" };
+    const bridge = host.bridge as unknown as { runNow: () => Promise<never>; status: () => Promise<BackupScheduleStatus> };
+    bridge.runNow = async () => { throw Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_WAITING_ON_YOU"); };
+    bridge.status = async () => ({ ...host.latest(), heldBy: { occasion: "manual", since: 1, bots: [ember] } });
+    const { outcome, shown } = await drive(host);
+    expect(outcome).toEqual({ state: "first-backup-failed",
+      message: "Daily backups are on, but nothing has been backed up yet. The backup can't start because Log writer is waiting for your answer. Answer it, or end that run, then back up again." });
+    expect(shown!.enabled).toBe(true);
+    // A due daily backup that waits says so, and says so again when it is skipped.
+    const daily = { ...shown!, heldBy: { occasion: "daily" as const, since: 1, bots: [ember] }, error: "BACKUP_WAITING_ON_YOU" };
+    expect(summaryFor(daily).attention).toContain("Today's backup is waiting because Log writer is waiting for your answer. Answer it, or end that run, and the backup starts by itself.");
+    expect(summaryFor(daily).attention.join(" ")).not.toContain("Murage was busy");
+    const skipped = summaryFor({ ...daily, phase: "skipped" }).attention;
+    expect(skipped).toContain("The last daily backup was skipped because Log writer was waiting for your answer. Answer it, or end that run, so the next backup can run.");
+    expect(skipped.join(" ")).not.toContain("Murage was busy");
+    // Without a name (an older desktop app), still never "Murage was busy".
+    expect(runNowError(Error("BACKUP_WAITING_ON_YOU"))).toBe("A bot is waiting for your answer. Answer it, or end that run, then back up again.");
+  });
+
   it("an older desktop app with no Back up now is told to take one, not left thinking it is done", async () => {
     const host = hostBridge({ firstBackup: false });
     const { outcome, notices } = await drive(host);

@@ -70,6 +70,7 @@ export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "mi
 // a runtime import.
 import type { ConnectionToRestore, RoutineRollup } from "../server/inbox-rollup.ts";
 export type { ConnectionToRestore, RoutineRollup };
+import type { BackupWaiting } from "./backup-waiting.ts";
 
 export interface InboxLink { threadId: string; messageId: string; runId?: string; artifactId?: string }
 export interface InboxItem {
@@ -129,6 +130,10 @@ export interface InboxPage {
    *  and in `decisions`, and it clears itself, because the verdict is the
    *  last run: one successful run and it is gone. */
   restore?: ConnectionToRestore[];
+  /** A daily backup held up because these bots are waiting for the owner's
+   *  answer (shared/backup-waiting.ts). Desktop only, and never counted: the
+   *  waiting card itself is. Gone the moment the card is answered. */
+  backupWaiting?: BackupWaiting;
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of

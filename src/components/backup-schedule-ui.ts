@@ -60,6 +60,7 @@ export function scheduleError(cause: unknown): string {
     BACKUP_REVIEW_REQUIRED: "The last backup didn't finish, so daily backups are paused. Choose Clear and try again. Your existing backups are kept.",
     BACKUP_SCHEDULE_REVIEW_REQUIRED: "The last backup didn't finish, so daily backups are paused. Choose Clear and try again. Your existing backups are kept.",
     BACKUP_HANDOFF_DEFERRED: "The backup didn't start because Murage was busy. Finish what is running, then try again.",
+    BACKUP_WAITING_ON_YOU: "The backup can't start because a bot is waiting for your answer. Answer it, or end that run, then back up again.",
     BACKUP_RELEASE_UNCONFIRMED: "Murage couldn't close everything it needed to for the backup. Your workspace is unchanged. Wait a moment, then try again.",
     BACKUP_RELAUNCH_BLOCKED: "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.",
     BACKUP_RELAUNCH_APPIMAGE_MISSING: "Murage can't reopen itself because its AppImage file was moved or deleted while Murage was open, so backups can't run. Close Murage, then open it again from the AppImage file.",

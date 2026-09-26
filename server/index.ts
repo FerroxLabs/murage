@@ -234,6 +234,7 @@ import {
 import { probeMcpServer } from "./mcp-probe.ts";
 import { buildNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
+import { backupWaitingBotsFrom, createBackupWaitTracker } from "./backup-waiting.ts";
 import {
   isEffortLevel,
   type InstanceConfigMap,
@@ -702,6 +703,24 @@ let providerFleetReady = true;
 const backupRestartAdmission=createBackupRestartAdmission({
   isBusy:()=>dataWritersStopped||providerConfigBusy||providerConnectionsBusy||!providerFleetReady||providerBankDispatchFenced()||engineWorkActive()||directTurnDispatchClaims.size>0||internalTurnOwners.size>0||groupTurnOperations.size>0||coordinationSlots.size>0||pendingRoomStops.size>0||activeProviderSelections.size>0||fluxMediaRequests>0||slackOperationBusy||discordOperationBusy||(slack?.status().pending??0)>0||(discord?.status().pending??0)>0,
   onRelease:()=>{replayDeferredDelegationRetries();scheduleCoordinationDrain();},
+});
+// Who a held-up backup is waiting for (server/backup-waiting.ts).
+function backupWaitingNow() {
+  return backupWaitingBotsFrom(askMessageByRequest, {
+    messagesFor: threadId => store.messagesFor(threadId),
+    // The bot that asked; a channel thread belongs to no single bot.
+    botFor: (threadId, askingBotId) => {
+      const id = askingBotId ?? internalTurnOwners.get(threadId)?.botId;
+      return (id ? store.bot(id) : undefined) ?? store.botByThread(threadId) ?? undefined;
+    },
+  });
+}
+const backupWaits = createBackupWaitTracker({
+  now: () => Date.now(),
+  notify: (waiting, text) => {
+    const bot = store.bot(waiting.botId);
+    if (bot) notify(buildNotification("backup-waiting", bot, waiting.threadId, text, { ...(waiting.messageId ? { messageId: waiting.messageId } : {}), avatarUrl: bot.avatarUrl }));
+  },
 });
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
@@ -10984,9 +11003,19 @@ const server = createServer(async (req, res) => {
     }
     if(path==="/api/backup-restart"&&method==="POST"){
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
-      const input=z.object({action:z.enum(["prepare","cancel"]),token:z.string().uuid()}).strict().safeParse(await readBody(req));
+      const input=z.object({action:z.enum(["prepare","cancel"]),token:z.string().uuid(),occasion:z.enum(["daily","manual"]).optional()}).strict().safeParse(await readBody(req));
       if(!input.success)return json(res,400,{error:"INVALID_BACKUP_RESTART_REQUEST"});
-      return json(res,200,input.data.action==="prepare"?backupRestartAdmission.prepare(input.data.token):backupRestartAdmission.cancel(input.data.token));
+      if(input.data.action==="cancel")return json(res,200,backupRestartAdmission.cancel(input.data.token));
+      try{const prepared=backupRestartAdmission.prepare(input.data.token);backupWaits.proceeded();return json(res,200,prepared);}
+      catch(error){
+        // Say WHO the backup is waiting for when it is a person's answer:
+        // one forgotten card used to stop every backup with only "Murage was
+        // busy" to show for it (0.1.60 Linux D6).
+        if((error as {code?:string})?.code!=="BACKUP_WORK_ACTIVE")throw error;
+        const waitingOnYou=backupWaitingNow();
+        backupWaits.refused(waitingOnYou,input.data.occasion??"daily");
+        return json(res,409,{error:"BACKUP_WORK_ACTIVE",waitingOnYou});
+      }
     }
     if (path === "/api/automation-admission" && (method === "GET" || method === "POST")) {
       if (method === "POST") {
@@ -11041,7 +11070,10 @@ const server = createServer(async (req, res) => {
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
       }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
-      return json(res, result.status, result.body);
+      // A backup held up by a waiting card is said here too, on the desktop,
+      // beside the card itself (0.1.60 Linux D6). Not counted: the card is.
+      const backupWaiting = method === "GET" && result.status === 200 && inboxDoor(req.headers, url.searchParams) === "desktop" ? backupWaits.current(backupWaitingNow()) : null;
+      return json(res, result.status, backupWaiting ? { ...(result.body as object), backupWaiting } : result.body);
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
     // module answers 404 to anything else, reads included.
