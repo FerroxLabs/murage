@@ -20,7 +20,7 @@
 // disk, owner-only, only until then.
 import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 
@@ -70,6 +70,9 @@ export function createBackupWork(dataDir: string): string {
 
 /** Remove one run folder, then the empty folders above it. */
 export function removeBackupWork(run: string): void {
+  // Only ever a run folder this module made: run-<pid>-XXXXXX two levels
+  // under a .murage-backup-work folder. Anything else is refused.
+  if (!RUN.test(basename(run)) || basename(dirname(dirname(run))) !== ".murage-backup-work") throw new InstallationSnapshotError("BACKUP_FOLDER_NOT_WRITABLE");
   rmSync(run, { recursive: true, force: true });
   for (const folder of [dirname(run), dirname(dirname(run))]) { try { rmdirSync(folder); } catch { return; } }
 }

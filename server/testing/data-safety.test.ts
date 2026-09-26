@@ -63,6 +63,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
+  "server/backup-local-work.ts": "removes only run-<pid>-XXXXXX folders it made under its own .murage-backup-work/<hash> root (sweep matches the run-name pattern; removeBackupWork refuses any other path); never the data folder",
   "server/installation-encrypted-backup.ts": "removes its own mkdtemp .murage-encrypted-write-*/.murage-encrypted-inspection-* scratch, stage and .recovery-* directories (retained when a tool close is unconfirmed); never the installation root",
   "server/installation-recovery-command.ts": "removes the mkdtemp scratch of backup inspect / restore plan commands",
   "server/installation-restore-preparation.ts": "removes the inspected archive directory it extracted when preparation fails",
