@@ -573,6 +573,7 @@ export function engineHomeFor(engine: DeletionEngine, env: Record<string, string
     case "qwen": return one(env.QWEN_RUNTIME_DIR || nodePath.join(home, ".qwen"), { secondary: nodePath.join(home, ".qwen") });
     case "opencode": return one(nodePath.join(env.XDG_DATA_HOME || nodePath.join(home, ".local", "share"), "opencode"), env.OPENCODE_DB ? { db: env.OPENCODE_DB } : {});
     case "kimi": return one(env.KIMI_CODE_HOME || nodePath.join(home, ".kimi-code"));
+    case "droid": return one(nodePath.join(env.FACTORY_HOME_OVERRIDE || home, ".factory"));
     case "cursor": return one(env.CURSOR_DATA_DIR || nodePath.join(home, ".cursor"), { secondary: env.CURSOR_CONFIG_DIR || (env.XDG_CONFIG_HOME ? nodePath.join(env.XDG_CONFIG_HOME, "cursor") : nodePath.join(home, ".cursor")) });
   }
 }
@@ -587,6 +588,7 @@ export const ENGINE_FOR_DRIVER: Readonly<Record<string, DeletionEngine>> = {
   opencodeGo: "opencode",
   kimiAgent: "kimi",
   cursorAgent: "cursor",
+  droidAgent: "droid",
 };
 /** Engines that run remotely and keep nothing on this computer. */
 const NO_LOCAL_HISTORY = new Set(["grok", "minimax", "openai-compat", "boxAgent",

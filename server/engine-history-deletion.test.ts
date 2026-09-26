@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
-import { cursorChatsKey, cursorProjectSlug, geminiNormalizedPath, geminiSlug, kimiWorkDirKey, qwenProjectHash, qwenProjectKey } from "./engine-history-deletion.ts";
+import { cursorChatsKey, cursorProjectSlug, droidCwdKey, geminiNormalizedPath, geminiSlug, kimiWorkDirKey, qwenProjectHash, qwenProjectKey } from "./engine-history-deletion.ts";
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-engines-")));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -36,6 +36,9 @@ describe("engine folder keys, as each engine computes them", () => {
   it("Kimi Code: wd_<slug>_<sha256 prefix> of the forward-slash folder", () => {
     expect(kimiWorkDirKey(WIN)).toBe(`wd_${THREAD}_${sha(WIN.replace(/\\/g, "/")).slice(0, 12)}`);
     expect(kimiWorkDirKey("/x/My Repo/")).toBe(`wd_my-repo_${sha("/x/My Repo").slice(0, 12)}`);
+  });
+  it("Droid: dash-joined realpath", () => {
+    expect(droidCwdKey("/Users/a/.m/workspaces/b/")).toBe("-Users-a-.m-workspaces-b");
   });
   it("Cursor: collapsed-dash slug and md5 chats key", () => {
     expect(cursorProjectSlug("/Users/a/.m/workspaces/b")).toBe("Users-a-m-workspaces-b");
@@ -152,5 +155,33 @@ describe("removing one conversation's engine history", () => {
     for (const gone of [join(cursor, "projects", cursorProjectSlug(desk)), join(cursor, "chats", cursorChatsKey(desk)), join(cursor, "acp-sessions", "old-session"), join(cursor, "acp-sessions", "current-session")]) expect(existsSync(gone), gone).toBe(false);
     expect(existsSync(join(cursor, "acp-sessions", "someone-else"))).toBe(true);
     expect(existsSync(join(cursor, "cli-config.json"))).toBe(true);
+  });
+
+  it("Droid: the folder's sessions, flat copies by session id, and its index rows", async () => {
+    const { home, desk, deletions } = setup();
+    const factory = join(home, ".factory");
+    const sid = "7d7c0000-1111-4222-8333-444455556666";
+    const bucket = join(factory, "sessions", droidCwdKey(realpathSync(desk)));
+    touch(join(bucket, `${sid}.jsonl`), SECRET);
+    touch(join(bucket, `${sid}.settings.json`), "{}");
+    touch(join(factory, "sessions", `${sid}.jsonl`), SECRET);
+    touch(join(factory, "sessions", "-other", "o.jsonl"), "kept");
+    mkdirSync(join(factory, "cache", "session-index"), { recursive: true });
+    const index = new DatabaseSync(join(factory, "cache", "session-index", "index.db"));
+    index.exec("CREATE TABLE sessions(session_id TEXT, summary TEXT); CREATE TABLE files(transcript_path TEXT, fingerprint TEXT);");
+    index.prepare("INSERT INTO sessions VALUES(?,?)").run(sid, SECRET);
+    index.prepare("INSERT INTO sessions VALUES(?,?)").run("other", "kept");
+    index.prepare("INSERT INTO files VALUES(?,?)").run(`/x/${sid}.jsonl`, SECRET);
+    index.close();
+    touch(join(factory, "auth.v2.file"), "sign-in");
+    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "droid", home: factory }] }, () => true);
+    expect(existsSync(bucket)).toBe(false);
+    expect(existsSync(join(factory, "sessions", `${sid}.jsonl`))).toBe(false);
+    expect(existsSync(join(factory, "sessions", "-other"))).toBe(true);
+    expect(existsSync(join(factory, "auth.v2.file"))).toBe(true);
+    const after = new DatabaseSync(join(factory, "cache", "session-index", "index.db"));
+    expect(after.prepare("SELECT session_id FROM sessions").all().map((row) => row.session_id)).toEqual(["other"]);
+    expect(after.prepare("SELECT count(*) AS n FROM files").get()?.n).toBe(0);
+    after.close();
   });
 });

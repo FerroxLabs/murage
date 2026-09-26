@@ -24,7 +24,7 @@ import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import nodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export type AcpHistoryEngine = "gemini" | "qwen" | "opencode" | "kimi" | "cursor";
+export type AcpHistoryEngine = "gemini" | "qwen" | "opencode" | "kimi" | "cursor" | "droid";
 
 export interface EngineRemoval {
   remove: (root: string, target: string) => void;
@@ -81,6 +81,11 @@ export function kimiWorkDirKey(workDir: string): string {
   if (slug === "" || slug === "." || slug === "..") slug = "workspace";
   return `wd_${slug}_${sha256(normalized).slice(0, 12)}`;
 }
+/** Factory Droid (shipped bundle, function `bo`): "-" + the realpath with
+ * trailing separators cut, leading slashes cut and slashes turned to "-". */
+export function droidCwdKey(realFolder: string): string {
+  return `-${realFolder.replace(/[\\/]+$/, "").replace(/^\/+/, "").replace(/\/+/g, "-")}`;
+}
 /** Cursor agent utils workspace-paths.js project slug, and the chats key. */
 export function cursorProjectSlug(folder: string): string {
   return folder.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
@@ -109,6 +114,7 @@ export function removeAcpEngineHistory(target: AcpEngineHome, folders: string[],
     case "opencode": return removeOpenCode(target.home, target.db, folders, out);
     case "kimi": return removeKimi(target.home, folders, out);
     case "cursor": return removeCursor(target.home, target.secondary, folders, ids, out);
+    case "droid": return removeDroid(target.home, folders, ids, out);
   }
 }
 
@@ -237,4 +243,46 @@ function removeCursor(dataDir: string, configDir: string | undefined, folders: s
     if (configDir) out.remove(p.join(configDir, "chats"), p.join(configDir, "chats", cursorChatsKey(folder)));
   }
   if (configDir) for (const id of ids) out.remove(p.join(configDir, "acp-sessions"), p.join(configDir, "acp-sessions", id));
+}
+
+function removeDroid(root: string, folders: string[], ids: string[], out: EngineRemoval): void {
+  const p = api(root);
+  const sessions = p.join(root, "sessions");
+  const found = new Set(ids);
+  for (const folder of folders) {
+    const bucket = p.join(sessions, droidCwdKey(folder));
+    for (const name of list(bucket)) if (name.endsWith(".jsonl")) found.add(name.slice(0, -".jsonl".length));
+    out.remove(sessions, bucket);
+  }
+  for (const id of found) {
+    if (!/^[\w-]{1,200}$/.test(id)) continue;
+    for (const name of [`${id}.jsonl`, `${id}.settings.json`]) out.remove(sessions, p.join(sessions, name));
+    out.remove(p.join(sessions, "btw"), p.join(sessions, "btw", `${id}.jsonl`));
+  }
+  // Droid's derived session index (cache/session-index/index.db) holds
+  // summaries. Its schema is not published: drop rows whose session-id
+  // column names one of these sessions, or whose path column names one.
+  const index = p.join(root, "cache", "session-index", "index.db");
+  const known = [...found].filter((id) => /^[\w-]{8,200}$/.test(id));
+  if (!known.length) return;
+  try { if (!lstatSync(index).isFile()) return; } catch { return; }
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(index);
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+    let changed = 0;
+    for (const { name: table } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>) {
+      if (!/^\w+$/.test(table)) continue;
+      for (const { name: column } of db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>) {
+        if (!/^\w+$/.test(column)) continue;
+        if (/^session_?id$/i.test(column)) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE "${column}" IN (${known.map(() => "?").join(",")})`).run(...known).changes);
+        else if (/path|file/i.test(column)) for (const id of known) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE instr("${column}", ?) > 0`).run(`${id}.jsonl`).changes);
+      }
+    }
+    if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(index); }
+  } catch {
+    out.failed(index);
+  } finally {
+    db?.close();
+  }
 }
