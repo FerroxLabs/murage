@@ -818,7 +818,7 @@ test("`murage start` runs the harness anyway when the sidecar is missing, and sa
   });
   writeFileSync(env.MURAGE_SERVER_ENTRY, "setInterval(() => {}, 1 << 30);");
   const { out } = await runCli(["start"], env, { killAfterMs: 2_500 });
-  assert.match(out, /companion sidecar is not in this install — starting the harness alone/, out);
+  assert.match(out, /companion sidecar is not in this install; starting the harness alone/, out);
 });
 
 test("`murage start` takes the harness down when the sidecar dies", async () => {

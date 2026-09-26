@@ -331,7 +331,7 @@ export function createProxyHandler(options: ProxyOptions) {
     // The computer owner enables this capability per device, off by default.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "cloud desktop access is off for this phone — enable it in Murage → Settings → Phone",
+        error: "Cloud desktop access is off for this phone. Turn it on in Murage → Settings → Phone.",
       });
     }
     if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
@@ -364,7 +364,7 @@ export function createProxyHandler(options: ProxyOptions) {
         const seconds = Math.max(1, Math.ceil(waiting.retryAfterMs / 1000));
         res.setHeader("retry-after", String(seconds));
         return sendJson(res, 429, {
-          error: `too many pairing attempts from this device — try again in ${seconds} seconds`,
+          error: `Too many pairing attempts from this device. Try again in ${seconds} seconds.`,
           retryAfter: seconds,
         });
       }
@@ -737,7 +737,7 @@ export function createProxyHandler(options: ProxyOptions) {
           if (declaresCloudRun(raw)) {
             return sendJson(res, 403, {
               error:
-                "cloud routines are set up on your computer — this phone is not allowed cloud access",
+                "Cloud routines are set up on your computer. This phone is not allowed cloud access.",
             });
           }
           forward(raw);

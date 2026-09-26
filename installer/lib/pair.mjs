@@ -142,6 +142,38 @@ const pause = (ms, signal) => new Promise((resolve) => {
 });
 
 /**
+ * The paired devices the companion offers to replace, least recently seen
+ * first, when (and only when) it is at its limit: the control page's
+ * `replaceCandidates`, the same list the desktop's pairing screen shows.
+ * @param {any} state the control page's `/state`
+ * @returns {{ id: string, name: string, lastSeenAt: number }[]}
+ */
+export function fullFleet(state) {
+  const list = Array.isArray(state?.replaceCandidates) ? state.replaceCandidates : [];
+  return list.filter((d) => typeof d?.id === "string" && /^[\w-]+$/.test(d.id))
+    .map((d) => ({ id: d.id, name: typeof d.name === "string" && d.name ? d.name : "a device", lastSeenAt: Number(d.lastSeenAt) || 0 }));
+}
+
+/**
+ * Remove one paired device, the way the desktop's "Replace" does: the
+ * control page's ordinary revoke. Its sign-ins end at once.
+ * @param {{ port: number, id: string, send?: typeof controlRequest }} opts
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ */
+export async function removeDevice({ port, id, send = controlRequest }) {
+  if (typeof id !== "string" || !/^[\w-]+$/.test(id)) return { ok: false, reason: "that is not a device id. Run `murage devices` to list them." };
+  let answer;
+  try {
+    answer = await send(port, "DELETE", `/devices/${id}`, 5_000);
+  } catch {
+    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?` };
+  }
+  if (answer.status === 200) return { ok: true };
+  if (answer.status === 404) return { ok: false, reason: "no paired device has that id. Run `murage devices` to list them." };
+  return { ok: false, reason: "the companion could not remove that device. Nothing was changed; try again." };
+}
+
+/**
  * Wait for the window to end, and say how.
  *
  * "Paired" is a device created after this window opened, rather than a count
@@ -151,9 +183,15 @@ const pause = (ms, signal) => new Promise((resolve) => {
  *   onTick?: (text: string) => void, now?: () => number, sleep?: (ms: number, signal?: AbortSignal) => Promise<unknown>,
  *   send?: typeof controlRequest, intervalMs?: number }} opts
  */
-export async function watchPairing({ port, token, expiresAt, openedAt, signal, onTick = () => {}, now = Date.now,
+export async function watchPairing({ port, token, expiresAt, openedAt, signal, onTick = () => {}, onFull = () => {}, now = Date.now,
   sleep = pause, send = controlRequest, intervalMs = 2_000 }) {
   let misses = 0;
+  // A full fleet refuses every new phone ("replace an old one on your
+  // computer"), so say so the moment it is seen, not only when the code
+  // expires; and keep waiting, because removing a device (`murage devices
+  // remove`) lets the same code work. A reinstalled phone takes back its own
+  // slot, so a full fleet can still pair it.
+  let full = null;
   for (;;) {
     if (signal?.aborted) return { outcome: "cancelled" };
     onTick(expiryText(expiresAt, now()));
@@ -165,16 +203,20 @@ export async function watchPairing({ port, token, expiresAt, openedAt, signal, o
       if (++misses >= 3) return { outcome: "unreachable" };
     }
     if (state) {
+      const candidates = fullFleet(state);
+      if (candidates.length && !full) onFull(candidates);
+      full = candidates.length ? candidates : null;
       if (state.pairing?.token !== token) {
         const devices = Array.isArray(state.devices) ? state.devices : [];
         const fresh = devices.filter((device) => Number(device?.createdAt) >= openedAt)
           .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))[0];
         if (fresh) return { outcome: "paired", device: typeof fresh.name === "string" && fresh.name ? fresh.name : "a new device" };
         if (state.pairing) return { outcome: "replaced" };
-        return { outcome: now() >= expiresAt ? "expired" : "closed" };
+        if (now() >= expiresAt) return full ? { outcome: "full", devices: full } : { outcome: "expired" };
+        return { outcome: "closed" };
       }
     }
-    if (now() >= expiresAt) return { outcome: "expired" };
+    if (now() >= expiresAt) return full ? { outcome: "full", devices: full } : { outcome: "expired" };
     await sleep(intervalMs, signal);
   }
 }

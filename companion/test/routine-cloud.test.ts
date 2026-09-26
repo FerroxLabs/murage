@@ -98,7 +98,7 @@ describe("a routine that asks for the cloud", () => {
       JSON.stringify({ name: "nightly", runOn: "cloud", botId: "b1" }),
     );
     expect(status).toBe(403);
-    expect(text).toContain("cloud routines are set up on your computer");
+    expect(text).toContain("Cloud routines are set up on your computer");
     // The refusal has to happen before forwarding, not after: the harness
     // creating the routine and the phone being told "no" is the worst outcome.
     expect(received).toEqual([]);

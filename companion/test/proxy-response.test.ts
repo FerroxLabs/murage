@@ -95,7 +95,7 @@ describe("preparing a harness response for a device", () => {
     try {
       const { status, text } = await device("/api/bots/b1/computer/join", "POST");
       expect(status).toBe(403);
-      expect(text).toContain("enable it in Murage");
+      expect(text).toContain("Turn it on in Murage");
       expect(text).toContain("Settings → Phone");
     } finally {
       cloudDesktopAccess = true;

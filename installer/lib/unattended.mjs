@@ -228,7 +228,7 @@ export function readSecretFile(path, read = readRegularFile) {
   // A secret's first line, so a trailing newline from `echo` or a heredoc is
   // not part of the key, and a file with a comment under it still works.
   const value = String(file.bytes.toString("utf8")).split(/\r?\n/, 1)[0].trim();
-  if (!value) return { error: `${path} is empty — it should hold the secret on its first line` };
+  if (!value) return { error: `${path} is empty; it should hold the secret on its first line` };
   const warning =
     (file.mode & 0o077) !== 0
       ? `${path} is mode 0${file.mode.toString(8)}: other accounts on this box can read the secret in it. chmod 600 it.`

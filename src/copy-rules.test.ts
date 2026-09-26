@@ -42,15 +42,17 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const QUIET_ATTRIBUTES = new Set(["className", "class", "style", "key", "id", "href", "src", "rel", "target", "type", "role", "name", "value", "autoComplete", "inputMode", "pattern", "d", "viewBox", "fill", "stroke"]);
 
-/** Where a literal sits decides whether anyone reads it. */
-function isQuiet(node: ts.Node): boolean {
+/** Where a literal sits decides whether anyone reads it. `terminal`: the
+ * file is a command-line tool, whose console output IS what a person reads. */
+function isQuiet(node: ts.Node, terminal = false): boolean {
   let child: ts.Node = node;
   for (let at: ts.Node | undefined = node.parent; at; child = at, at = at.parent) {
     if (ts.isTypeNode(at) || ts.isImportDeclaration(at) || ts.isExportDeclaration(at) || ts.isImportTypeNode(at)) return true;
     if (ts.isJsxAttribute(at)) return QUIET_ATTRIBUTES.has(at.name.getText()) || at.name.getText().startsWith("data-");
     if (ts.isCallExpression(at)) {
       const callee = at.expression.getText();
-      if (/^console\.|^(?:log|debug|logError|logWarn|slog)$|\.(?:log|debug|warn|error|info)$|^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
+      if (!terminal && /^console\.|^(?:log|debug|logError|logWarn|slog)$|\.(?:log|debug|warn|error|info)$/.test(callee)) return true;
+      if (/^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
       // text being searched for or split on is read, not shown
       if (/\.(?:indexOf|lastIndexOf|includes|split|startsWith|endsWith|replace|replaceAll)$/.test(callee) && at.arguments[0] === child) return true;
       // a catalogue key: the catalogue's own values are checked below
@@ -70,7 +72,7 @@ function isQuiet(node: ts.Node): boolean {
 }
 
 /** Every piece of text in a file a person could read, with its line. */
-export function copyStrings(file: string, source: string): Array<{ line: number; end: number; text: string }> {
+export function copyStrings(file: string, source: string, { terminal = false }: { terminal?: boolean } = {}): Array<{ line: number; end: number; text: string }> {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(?:mjs|cjs|js)$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const out: Array<{ line: number; end: number; text: string }> = [];
@@ -78,9 +80,9 @@ export function copyStrings(file: string, source: string): Array<{ line: number;
   const push = (node: ts.Node, text: string) => out.push({ line: lineOf(node.getStart(sf)), end: lineOf(node.getEnd()), text });
   const visit = (node: ts.Node) => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      if (!isQuiet(node)) push(node, node.text);
+      if (!isQuiet(node, terminal)) push(node, node.text);
     } else if (ts.isTemplateExpression(node)) {
-      if (!isQuiet(node)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "));
+      if (!isQuiet(node, terminal)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "));
     } else if (ts.isJsxText(node)) {
       if (node.text.trim()) push(node, node.text);
     }
@@ -90,12 +92,15 @@ export function copyStrings(file: string, source: string): Array<{ line: number;
   return out;
 }
 
-function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}): string[] {
+function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}, options: { terminal?: boolean } = {}): string[] {
   const found: string[] = [];
   for (const file of files) {
     const label = file.slice(ROOT.length);
     if (allow[label]) continue;
-    for (const { line, text } of copyStrings(file, readFileSync(file, "utf8"))) {
+    for (const { line, text: raw } of copyStrings(file, readFileSync(file, "utf8"), options)) {
+      // A whole page kept in a template: only its visible text is read, not
+      // its inline script or style.
+      const text = /^\s*<!doctype html>/i.test(raw) ? htmlText(raw).join(" ") : raw;
       if (PENDING.some(entry => entry.file === label && text === entry.text)) continue;
       if (MODEL_FACING_TEXT.some(entry => entry.file === label && text.startsWith(entry.starts))) continue;
       for (const rule of rules) if (rule.pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
@@ -155,6 +160,9 @@ const DESKTOP_NOT_COPY: Record<string, string> = {
   "electron/managed-composio.mjs": "credential storage key names and broker wiring",
   "electron/capabilities.cjs": "capability reason codes; the window words them",
 };
+
+// Companion files whose strings never reach a person. Each needs its reason.
+const COMPANION_NOT_COPY: Record<string, string> = {};
 
 /** Text in a static HTML page: markup, comments and scripts stripped. */
 export function htmlText(source: string): string[] {
@@ -245,6 +253,15 @@ describe("product copy rules", () => {
     const found = readdirSync(dir).filter(name => name.endsWith(".json"))
       .flatMap(name => catalogueHits(join(dir, name), RULES, OWN_KEY_COPY));
     expect(found).toEqual([]);
+  });
+
+  // 0.1.60 audit M1: every pairing refusal reached the phone's sign-in page
+  // with an em dash, and neither the phone's door nor the headless installer
+  // was scanned. The companion's console output is its log (not scanned);
+  // the installer is a command-line tool, so its console output is copy.
+  it("the phone's door and the headless installer show no em dash and no safe", () => {
+    expect(hits(walk(join(ROOT, "companion/src")), [EM_DASH, SAFE], COMPANION_NOT_COPY)).toEqual([]);
+    expect(hits(walk(join(ROOT, "installer")).filter(file => !file.includes("/test/")), [EM_DASH, SAFE], {}, { terminal: true })).toEqual([]);
   });
 
   it("the server hands the window no em dash and no safe", () => {

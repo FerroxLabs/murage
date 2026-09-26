@@ -197,7 +197,7 @@ async function refreshTailnetNameOnce(
   for (const cli of tailscaleCandidates()) {
     const left = deadline - Date.now();
     if (left <= 0) {
-      onAttempt?.(cli, "skipped — out of time looking for the Tailscale CLI");
+      onAttempt?.(cli, "skipped: out of time looking for the Tailscale CLI");
       continue;
     }
     const name = await new Promise<string | null>((resolve) => {
