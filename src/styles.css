@@ -1138,21 +1138,10 @@ button:disabled.bg-danger {
   --wn-chip-edge: rgba(255, 130, 85, 0.35);
   --wn-close-ground: rgba(10, 10, 10, 0.6);
   --wn-ring: rgba(255, 107, 53, 0.18);
-  --wn-paper: #f6f1e7;
-  --wn-paper-art: #eadfcb;
-  --wn-paper-ink: #1c1a17;
-  --wn-paper-ink-body: #4a443b;
-  --wn-paper-ink-list: #2b2721;
-  --wn-paper-ink-muted: #6b6255;
-  --wn-paper-close: #5a5146;
-  --wn-paper-accent: #a83c14;
-  --wn-paper-chip: rgba(168, 60, 20, 0.1);
-  --wn-paper-edge: #cfc3ae;
-  --wn-paper-on-ink: #fffdf8;
-  --wn-dot-search: #7cc4ff;
-  --wn-dot-rules: #e0b15a;
-  --wn-dot-access: #b69cff;
-  --wn-dot-commands: #5fd4a4;
+  --wn-dot-blue: #7cc4ff;
+  --wn-dot-gold: #e0b15a;
+  --wn-dot-violet: #b69cff;
+  --wn-dot-mint: #5fd4a4;
 }
 /* The global :focus-visible ring (above) in the panels' own accent. A card's
    title takes focus only so a screen reader announces the new card; it is
@@ -1160,9 +1149,6 @@ button:disabled.bg-danger {
 .whats-new :focus-visible,
 .announce :focus-visible {
   outline-color: var(--wn-accent);
-}
-.whats-new [data-whats-new-card="projects"] :focus-visible {
-  outline-color: var(--wn-paper-accent);
 }
 .whats-new h2[tabindex="-1"]:focus-visible,
 .announce h2[tabindex="-1"]:focus-visible {

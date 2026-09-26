@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where each What's new shortcut goes. Mounted by Sidebar.tsx, which owns the
-// New Project panel and the Tools menu entry that reopens the page.
-import { useStore, type AppState, type Action } from "@/state/store";
-import { requestCall } from "@/lib/call";
-import { whatsNewPage, whatsNewTargetBot } from "@/lib/whats-new";
-import { FOCUS_COMPOSER_EVENT } from "@/lib/composer-focus";
+// Tools menu entry that reopens the page.
+import { useStore, type Action } from "@/state/store";
+import { whatsNewPage } from "@/lib/whats-new";
 import { WhatsNewDialog, type WhatsNewAction } from "./WhatsNewDialog";
 
 /** Wait for an element that the next render puts on screen, then run. */
@@ -16,65 +14,50 @@ function whenRendered(find: () => Element | null, then: (element: Element) => vo
   else if (frames > 0) requestAnimationFrame(() => whenRendered(find, then, frames - 1));
 }
 
-/** The shortcuts, apart from the React tree so they can be tested. */
-export function runWhatsNewAction(
-  action: WhatsNewAction,
-  state: Pick<AppState, "bots" | "groups" | "selectedId">,
-  dispatch: (action: Action) => void,
-  openNewProject: () => void,
-): void {
-  const target = whatsNewTargetBot(state.bots, state.selectedId);
-  const showBot = () => {
-    if (!target) return false;
-    if (state.selectedId !== target.id) dispatch({ type: "select", id: target.id });
-    return true;
-  };
+/** The off-site section of Settings > Backups: opened, in view and focused. */
+function showOffsite(toggle: Element): void {
+  if (!(toggle instanceof HTMLElement)) return;
+  if (toggle.getAttribute("aria-expanded") === "false") toggle.click();
+  toggle.scrollIntoView({ block: "start" });
+  toggle.focus();
+}
+
+/** The shortcuts, apart from the React tree so they can be tested. Returns
+ *  false when the shortcut goes nowhere, so the host keeps the view as it is. */
+export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Action) => void): boolean {
   switch (action) {
-    case "call":
-      // The bot's own call button answers, so missing voice setup gets the
-      // same help a click would give.
-      if (showBot()) requestCall(target!.id);
-      return;
-    case "project":
-      openNewProject();
-      return;
-    case "search":
-      dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
-      whenRendered(() => document.getElementById("web-search-settings-title"), (heading) => heading.scrollIntoView({ block: "start" }));
-      return;
-    case "skills":
-      dispatch({ type: "toggleAppSettings", open: true, section: "skills" });
-      return;
-    case "houseRules":
-      dispatch({ type: "toggleAppSettings", open: true, section: "houseRules" });
-      return;
-    case "fullAccess":
-      if (showBot()) dispatch({ type: "toggleSettings", open: true, intent: { section: "permissions" } });
-      return;
-    case "shapes":
-      if (showBot()) dispatch({ type: "toggleSettings", open: true, intent: { section: "shapes" } });
-      return;
-    case "commands": {
-      // Any open chat has a composer; with none open, the target bot's.
-      const chatOpen = state.bots.some((bot) => bot.id === state.selectedId) || state.groups.some((group) => group.id === state.selectedId);
-      if (!chatOpen && !showBot()) return;
-      requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT, { detail: { slash: true } }))));
-      return;
-    }
+    case "backups":
+      dispatch({ type: "toggleAppSettings", open: true, section: "backups" });
+      return true;
+    case "offsite":
+      dispatch({ type: "toggleAppSettings", open: true, section: "backups" });
+      whenRendered(() => document.getElementById("backup-offsite-toggle"), showOffsite);
+      return true;
+    case "routines":
+      dispatch({ type: "showRoutines" });
+      return true;
+    case "phone":
+      dispatch({ type: "toggleAppSettings", open: true, section: "companion" });
+      return true;
+    case "aboutMe":
+      dispatch({ type: "toggleAppSettings", open: true, section: "aboutMe" });
+      return true;
+    case "delete":
+      // Nothing in the app explains deleting, and the docs section on it
+      // does not cover engine history, so this one only closes the page.
+      return false;
   }
 }
 
 export function WhatsNewHost({
   whatsNew,
-  onNewProject,
   onNavigate,
 }: {
   whatsNew: { open: boolean; close: () => void };
-  onNewProject: () => void;
   /** Closes the sidebar drawer on a narrow window, so the destination shows. */
   onNavigate: () => void;
 }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const page = whatsNewPage();
   if (!page) return null;
   return (
@@ -84,8 +67,7 @@ export function WhatsNewHost({
       onClose={whatsNew.close}
       onAction={(action) => {
         whatsNew.close();
-        if (action !== "project") onNavigate();
-        runWhatsNewAction(action, state, dispatch, onNewProject);
+        if (runWhatsNewAction(action, dispatch)) onNavigate();
       }}
     />
   );

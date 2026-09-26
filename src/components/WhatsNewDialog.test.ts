@@ -6,69 +6,100 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 const frames: FrameRequestCallback[] = [];
+const elements = new Map<string, unknown>();
 Object.assign(globalThis, {
   window: Object.assign((globalThis as { window?: object }).window ?? {}, { dispatchEvent: vi.fn(), addEventListener: () => {}, removeEventListener: () => {} }),
   requestAnimationFrame: (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; },
-  document: { getElementById: () => null },
+  document: { getElementById: (id: string) => elements.get(id) ?? null },
 });
+// Only an HTMLElement toggle is opened and focused.
+class FakeElement {
+  expanded = "false"; clicks = 0; focused = false; scrolled: unknown = null;
+  getAttribute(name: string) { return name === "aria-expanded" ? this.expanded : null; }
+  click() { this.clicks += 1; this.expanded = "true"; }
+  scrollIntoView(options: unknown) { this.scrolled = options; }
+  focus() { this.focused = true; }
+}
+Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WHATS_NEW_CARD_COUNT } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE } = await import("./WhatsNewDialog");
 const { runWhatsNewAction } = await import("./WhatsNewHost");
-const { takeCallRequest } = await import("@/lib/call");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
 const render = (index: number) => renderToStaticMarkup(createElement(WhatsNewCard, {
-  index, releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.59",
+  index, releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.60",
   onNext: () => {}, onClose: () => {}, onAction: () => {},
 }));
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ");
 
 describe("what's new cards", () => {
-  // Flux Router's web search returns no source links yet, so nothing here
-  // may promise them until it does.
-  it("does not promise sources for web search", async () => {
-    const { WHATS_NEW_TILES, WHATS_NEW_MORE } = await import("./WhatsNewDialog");
-    const search = WHATS_NEW_TILES.find((tile) => tile.action === "search")!;
-    expect(search.body).toBe("Bots search the live web for current answers, in chat and while you talk on a call.");
-    for (const line of [...WHATS_NEW_TILES.map((tile) => tile.body), ...WHATS_NEW_MORE.map((pair) => pair.join(""))]) {
-      expect.soft(line).not.toMatch(/\b(sources?|citations?|cites?|links)\b/i);
-    }
+  it("renders the three approved cards in order", () => {
+    expect(WHATS_NEW_CARD_COUNT).toBe(3);
+    const hero = text(render(0));
+    expect(hero).toContain("Your work, kept.");
+    expect(hero).toContain("Backups that run themselves, a copy somewhere else, and routines that don't stop to ask.");
+    expect(text(render(1))).toContain("Built to be relied on");
+    expect(text(render(2))).toContain("Plus a long list of small wins");
   });
 
-  it("renders the four approved cards in order", () => {
-    expect(WHATS_NEW_CARD_COUNT).toBe(4);
-    expect(text(render(0))).toContain("Just talk to your bots");
-    expect(text(render(1))).toContain("One goal. The right bots. Their own space.");
-    expect(text(render(2))).toContain("Smarter, sharper, more yours");
-    expect(text(render(3))).toContain("Plus a long list of small wins");
+  it("carries the six approved tiles, in order", () => {
+    expect(WHATS_NEW_TILES.map((tile) => [tile.action, tile.title])).toEqual([
+      ["backups", "Backups, start to finish"],
+      ["offsite", "Off-site, your way"],
+      ["routines", "Routines that keep going"],
+      ["delete", "Delete means gone"],
+      ["phone", "Murage on your phone"],
+      ["aboutMe", "About me"],
+    ]);
+    const html = text(render(1));
+    for (const tile of WHATS_NEW_TILES) expect(html).toContain(tile.body);
+  });
+
+  it("lists the small wins", () => {
+    expect(WHATS_NEW_MORE).toEqual([
+      "Snooze conversations",
+      "Manage teams (rename, members, lead, delete)",
+      "Always allow this exact command",
+      "Every voice has a play button",
+      "Plain names for connected-app tools",
+      "Connected apps stay connected",
+      "Ask any bot how Murage works",
+    ]);
+    const html = text(render(2));
+    for (const line of WHATS_NEW_MORE) expect(html).toContain(line);
+  });
+
+  // Reading keys, and spending on images, still ask on No limits, so the
+  // routines tile may not promise it never asks.
+  it("does not promise a routine never asks", () => {
+    const routines = WHATS_NEW_TILES.find((tile) => tile.action === "routines")!;
+    expect(routines.body).not.toMatch(/\bnever\b/i);
   });
 
   it("carries each card's buttons, as in the mockups", () => {
     const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map(([, inner]) => text(inner).trim());
-    expect(buttons(render(0))).toEqual(["", "Call a bot", "Next"]);
-    expect(buttons(render(1))).toEqual(["", "Start a project", "Next"]);
-    const highlights = buttons(render(2));
+    expect(buttons(render(0))).toEqual(["", "Open Backups", "Next"]);
+    const highlights = buttons(render(1));
     expect(highlights.slice(-2)).toEqual(["Next", "Got it"]);
     expect(highlights.length).toBe(8);
-    expect(buttons(render(3))).toEqual(["Let's go"]);
-    expect(render(3)).toMatch(/<a href="https:\/\/github.com\/FerroxLabs\/murage-releases\/releases\/tag\/v0.1.59" target="_blank" rel="noopener noreferrer"[^>]*>Read the full release notes<\/a>/);
+    expect(buttons(render(2))).toEqual(["Let's go"]);
+    expect(render(2)).toMatch(/<a href="https:\/\/github.com\/FerroxLabs\/murage-releases\/releases\/tag\/v0.1.60" target="_blank" rel="noopener noreferrer"[^>]*>Read the full release notes<\/a>/);
   });
 
   it("names every card, labels the close and the pager, and gives every image text", () => {
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       const html = render(index);
       expect(html).toContain(`aria-labelledby="whats-new-title-${index + 1}"`);
       expect(html).toContain(`id="whats-new-title-${index + 1}"`);
-      expect(html).toContain(`aria-label="Card ${index + 1} of 4"`);
+      expect(html).toContain(`aria-label="Card ${index + 1} of 3"`);
       for (const [, alt] of html.matchAll(/<img[^>]*?alt="([^"]*)"/g)) expect(alt.length).toBeGreaterThan(10);
-      expect(html.match(/<img/g)?.length ?? 0).toBe(index === 2 ? 6 : index === 3 ? 0 : 1);
+      expect(html.match(/<img/g)?.length ?? 0).toBe(index === 1 ? 6 : index === 2 ? 0 : 1);
     }
     expect(render(0)).toContain('aria-label="Close"');
-    expect(render(1)).toContain('aria-label="Close"');
   });
 
   it("keeps every target at least 44px", () => {
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       const html = render(index);
       for (const [tag] of html.matchAll(/<(button|a)\b[^>]*>/g)) {
         const tile = tag.includes("data-whats-new-tile");
@@ -77,16 +108,17 @@ describe("what's new cards", () => {
     }
   });
 
-  it("shows the six highlights as buttons that go somewhere", () => {
-    const html = render(2);
-    for (const action of ["search", "skills", "houseRules", "fullAccess", "commands", "shapes"]) expect(html).toContain(`data-whats-new-tile="${action}"`);
+  it("shows the six highlights as buttons", () => {
+    const html = render(1);
+    for (const action of ["backups", "offsite", "routines", "delete", "phone", "aboutMe"]) expect(html).toContain(`data-whats-new-tile="${action}"`);
     expect(text(html)).toContain("Click any card to try it");
   });
 
   it("follows the house copy rules and loads no fonts from the network", () => {
-    const copy = [0, 1, 2, 3].map((index) => text(render(index))).join(" ");
+    const copy = [0, 1, 2].map((index) => text(render(index))).join(" ");
     expect(copy).not.toMatch(/[—–]/);
-    expect(copy).not.toMatch(/composio|price|\$\d/i);
+    expect(copy).not.toMatch(/\bsaf(e|ely|ety)\b/i);
+    expect(copy).not.toMatch(/composio|price|pricing|cost|cheap|free\b|\$\d/i);
     expect(source).not.toMatch(/fonts\.googleapis|fonts\.gstatic/);
     expect(readFileSync(new URL("../styles.css", import.meta.url), "utf8")).not.toMatch(/fonts\.googleapis|fonts\.gstatic/);
   });
@@ -100,49 +132,47 @@ describe("what's new cards", () => {
 });
 
 describe("where the shortcuts go", () => {
-  const state = {
-    bots: [{ id: "chief", name: "Chief", chiefOfStaff: true, chiefScope: "workspace" }, { id: "ada", name: "Ada" }],
-    groups: [{ id: "room", name: "Room" }],
-    selectedId: "room",
-  } as never;
-  const run = (action: Parameters<typeof runWhatsNewAction>[0], current = state) => {
-    const dispatch = vi.fn(), project = vi.fn();
-    runWhatsNewAction(action, current, dispatch, project);
-    return { dispatch, project };
+  const run = (action: Parameters<typeof runWhatsNewAction>[0]) => {
+    const dispatch = vi.fn();
+    const went = runWhatsNewAction(action, dispatch);
+    return { dispatch, went };
   };
 
-  it("opens Settings at Search, Skills and House rules", () => {
-    expect(run("search").dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "connections" });
-    expect(run("skills").dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "skills" });
-    expect(run("houseRules").dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "houseRules" });
+  it("opens Settings at Backups, Phone and About me", () => {
+    expect(run("backups").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "backups" }]]);
+    expect(run("phone").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "companion" }]]);
+    expect(run("aboutMe").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "aboutMe" }]]);
   });
 
-  it("opens the Chief's Permissions and What shapes when no bot chat is open", () => {
-    for (const [action, section] of [["fullAccess", "permissions"], ["shapes", "shapes"]] as const) {
-      const { dispatch } = run(action);
-      expect(dispatch.mock.calls).toEqual([[{ type: "select", id: "chief" }], [{ type: "toggleSettings", open: true, intent: { section } }]]);
-    }
-    const onAda = { ...(state as object), selectedId: "ada" } as never;
-    expect(run("shapes", onAda).dispatch.mock.calls).toEqual([[{ type: "toggleSettings", open: true, intent: { section: "shapes" } }]]);
-  });
-
-  it("calls the Chief through its own call button, and opens the New Project panel", () => {
-    const { dispatch } = run("call");
-    expect(dispatch).toHaveBeenCalledWith({ type: "select", id: "chief" });
-    expect(takeCallRequest("chief")).toBe(true);
-    expect(takeCallRequest("chief")).toBe(false);
-    const { dispatch: none, project } = run("project");
-    expect(project).toHaveBeenCalledTimes(1);
-    expect(none).not.toHaveBeenCalled();
-  });
-
-  it("focuses the open chat's composer with the / menu", () => {
+  it("opens Backups at the off-site copy, expanded, in view and focused", () => {
     frames.length = 0;
-    const { dispatch } = run("commands");
-    expect(dispatch).not.toHaveBeenCalled();
+    elements.clear();
+    const { dispatch, went } = run("offsite");
+    expect(went).toBe(true);
+    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "backups" }]]);
+    // not rendered yet: it waits a frame
+    const toggle = new FakeElement();
+    elements.set("backup-offsite-toggle", toggle);
     while (frames.length) frames.shift()!(0);
-    const event = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CustomEvent;
-    expect(event.type).toBe("murage:focus-composer");
-    expect(event.detail).toEqual({ slash: true });
+    expect(toggle.clicks).toBe(1);
+    expect(toggle.scrolled).toEqual({ block: "start" });
+    expect(toggle.focused).toBe(true);
+    // already open: not closed again
+    const open = new FakeElement();
+    open.expanded = "true";
+    elements.set("backup-offsite-toggle", open);
+    run("offsite");
+    expect(open.clicks).toBe(0);
+    expect(open.focused).toBe(true);
+  });
+
+  it("opens Routines", () => {
+    expect(run("routines").dispatch.mock.calls).toEqual([[{ type: "showRoutines" }]]);
+  });
+
+  it("only closes the page for Delete means gone", () => {
+    const { dispatch, went } = run("delete");
+    expect(went).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

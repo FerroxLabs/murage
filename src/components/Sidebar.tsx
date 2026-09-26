@@ -3028,7 +3028,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {newRoom && <NewRoomPanel kind={newRoom} onClose={() => setNewRoom(null)} />}
-      <WhatsNewHost whatsNew={whatsNew} onNewProject={() => setNewRoom("project")} onNavigate={onNavigate} />
+      <WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />
       {archivedChannelsOpen && (
         <ArchivedChannelsPanel
           groups={archivedChannels}
