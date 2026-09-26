@@ -85,7 +85,7 @@ describe("backup summary", () => {
     const cases: [Partial<BackupSummaryInput>, RegExp][] = [
       [{ scheduleStale: true }, /Schedule status couldn't be refreshed/],
       [{ scheduleFailure: "Settings changed." }, /Settings changed/],
-      [{ schedule: { ...s, error: "BACKUP_REVIEW_REQUIRED PRIVATE" } }, /Automatic retry is paused/],
+      [{ schedule: { ...s, error: "BACKUP_REVIEW_REQUIRED PRIVATE" } }, /daily backups are paused/],
       [{ schedule: { ...s, pending: true } }, /backup is running/],
       [{ schedule: { ...s, phase: "needs-review" } }, /didn't finish; backups are paused until you clear it/],
       [{ schedule: { ...s, schedule: { ...enabledSchedule, preUpgrade: true } } }, /Pre-upgrade backups are unavailable/],
@@ -203,9 +203,9 @@ describe("optional recovery-key and back-up-now bridges", () => {
     const blocked = "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.";
     expect(runNowError(Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_RELAUNCH_BLOCKED"))).toBe(blocked);
     expect(backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
-    expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("destination or recovery key changed");
-    expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("Automatic retry is paused");
-    expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("unavailable in this app");
+    expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("backup folder or recovery key has moved or changed");
+    expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("daily backups are paused");
+    expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("aren't available in this copy");
     expect(runNowError(Error("BACKUP_SCHEDULE_CHANGED"))).toContain("Settings changed");
     expect(runNowError(Error("PRIVATE_CANARY fixture-path"))).toBe("Backup settings could not be updated. Your data is preserved. Refresh status before trying again.");
   });

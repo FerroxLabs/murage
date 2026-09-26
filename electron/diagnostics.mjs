@@ -323,7 +323,7 @@ export function buildDiagnosticsReport({
   }
   lines.push("");
   lines.push("## Configuration");
-  lines.push("# presence/count/mode only — credentials stay OS-encrypted and are never read");
+  lines.push("# presence/count/mode only: credentials stay OS-encrypted and are never read");
   const summary = flattenSummary(configSummary);
   let shown = 0;
   for (const key of Object.keys(summary).sort()) {
@@ -333,7 +333,7 @@ export function buildDiagnosticsReport({
   }
   if (!shown) lines.push("(no configuration summary available)");
   lines.push("");
-  lines.push("## Channels — status only, no accounts or message content");
+  lines.push("## Channels: status only, no accounts or message content");
   for (const channel of CHANNELS) {
     const input = channelSummary[channel];
     const summary = input?.available === true ? summarizeChannelStatus(input) : { available: false };
@@ -345,14 +345,14 @@ export function buildDiagnosticsReport({
     for (const [key, value] of Object.entries(summary)) lines.push(`${channel}.${key}=${value}`);
   }
   lines.push("");
-  lines.push("## Desktop crash events — privacy-safe metadata only");
+  lines.push("## Desktop crash events: no private details, event metadata only");
   if (desktopLogTail && desktopLogTail.trim()) {
     for (const line of redactSecretsInLine(desktopLogTail).split(/\r?\n/)) lines.push(line);
   } else {
     lines.push("(no desktop crash events available)");
   }
   lines.push("");
-  lines.push(logTail && logTail.trim() ? "## Server log tail — known credential patterns auto-masked" : "## Server log tail");
+  lines.push(logTail && logTail.trim() ? "## Server log tail: known credential patterns auto-masked" : "## Server log tail");
   if (logTail && logTail.trim()) {
     for (const line of redactSecretsInLine(logTail).split(/\r?\n/)) lines.push(line);
   } else {

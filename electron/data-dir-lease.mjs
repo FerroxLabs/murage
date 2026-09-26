@@ -177,7 +177,7 @@ const MESSAGES = {
   INVALID_DATA_DIR: "Murage cannot lease an invalid installation directory.",
   MIGRATION_REQUIRED: "Migrate legacy data explicitly before acquiring the installation lease.",
   LEASE_PATH_CHANGED: "The installation path changed while preparing its lease; retry after checking the path.",
-  LEASE_IO: "Murage could not safely prepare or update its installation lease.",
+  LEASE_IO: "Murage could not prepare or update the lock on its data folder. Your data is unchanged; quit and reopen Murage.",
   LEASE_UNREADABLE: "Murage cannot read the installation lease; state has been preserved.",
   LEASE_INVALID: "The installation lease is invalid; state has been preserved.",
   LEASE_BUSY: "Murage is already using this installation. Close the other instance first.",

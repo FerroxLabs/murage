@@ -68,7 +68,7 @@ function hostFromUrl(value) {
 }
 
 function eventSummary(event) {
-  const where = [cleanText(event.app, 80), cleanText(event.windowTitle, 120)].filter(Boolean).join(" — ");
+  const where = [cleanText(event.app, 80), cleanText(event.windowTitle, 120)].filter(Boolean).join(": ");
   switch (event.type) {
     case "app":
       return `Open or focus ${where || "the demonstrated app"}.`;

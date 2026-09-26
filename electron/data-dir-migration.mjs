@@ -6,7 +6,7 @@ export class DataDirMigrationError extends Error {
   code = "PERSISTED_STATE_RECOVERY_REQUIRED";
 
   constructor(filePath, reason, error) {
-    super("Legacy Murage migration could not finish safely. Saved data was preserved; stop other instances and check paths or permissions before retrying.");
+    super("Murage could not finish moving your data from an older version. Your saved data was kept. Quit any other copy of Murage and check folder permissions, then try again.");
     this.filePath = filePath;
     this.reason = reason;
     if (typeof error?.code === "string") this.readErrorCode = error.code;

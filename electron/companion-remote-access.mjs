@@ -160,7 +160,7 @@ export function readServeStatus(raw, { proxyTarget, port = SERVE_PORT } = {}) {
         host: null,
         conflict:
           `Tailscale already has a listener without our Web handler on port ${port} on this machine. ` +
-          "Murage will not replace it — turn that off first, or leave browser access on plain HTTP.",
+          "Murage will not replace it. Turn that off first, or leave browser access on plain HTTP.",
       };
     }
     return { owner: "none" };
@@ -185,7 +185,7 @@ export function readServeStatus(raw, { proxyTarget, port = SERVE_PORT } = {}) {
         host,
         conflict:
           `Tailscale Funnel is switched on for ${key}, which publishes it to the public internet. ` +
-          "Murage only ever serves to your own tailnet and will not touch a Funnel you set up — " +
+          "Murage only ever serves to your own tailnet and will not touch a Funnel you set up: " +
           "turn Funnel off for that port first.",
       };
     }
@@ -206,7 +206,7 @@ export function readServeStatus(raw, { proxyTarget, port = SERVE_PORT } = {}) {
       host,
       conflict:
         `Tailscale is already serving ${key} (${described}) on this machine. ` +
-        "Murage will not overwrite a serve configuration it did not create — " +
+        "Murage will not overwrite a serve configuration it did not create: " +
         `run \`tailscale serve --https=${port} off\` yourself if you want Murage to take it over.`,
     };
   }

@@ -6,76 +6,77 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Murage recovery</title>
   <link rel="stylesheet" href="recovery.css">
+  <script src="messages.js" defer></script>
   <script src="renderer.js" defer></script>
 </head>
 <body>
   <main>
-    <p class="eyebrow">MURAGE / RECOVERY</p>
-    <h1 id="page-heading">Recover this installation</h1>
-    <p id="reason">Checking installation ownership...</p>
-    <p class="location"><span>Installation</span><br><code id="location">Checking...</code></p>
+    <p class="eyebrow">MURAGE</p>
+    <h1 id="page-heading">Restore or recover Murage</h1>
+    <p id="reason">Checking Murage's data folder...</p>
+    <p class="location"><span>Murage data folder</span><br><code id="location">Checking...</code></p>
     <div id="error" role="alert" hidden></div>
     <p id="status" role="status" aria-live="polite"></p>
     <section id="encrypted-backup" aria-labelledby="encrypted-heading" hidden>
-      <h2 id="encrypted-heading">Encrypted application-data backup</h2>
-      <p>Preserves original settings, conversations, files and channel history. Native sessions, VM homes and external folders are not included. A restore uses a safe paused recovery copy; credentials and channel bindings are not reactivated.</p>
-      <p>Choose an independent age recovery key file. To create a backup, use its original age-keygen file with the public-key header. Keep a separate key copy: losing it prevents recovery.</p>
-      <div class="actions"><button data-action="backup-encrypted" class="primary">Create encrypted backup</button><button data-action="choose-encrypted-backup">Inspect encrypted backup</button></div>
+      <h2 id="encrypted-heading">Restore from a backup</h2>
+      <p>A backup holds your settings, bots, conversations, files and channel history. It does not hold sign-ins to AI engines or messaging apps, the local VM, or folders outside Murage. A restore goes into a new folder and stays paused until you review it; you connect engines and messaging apps again afterwards.</p>
+      <p>You need the backup file (it ends in .age) and your recovery key (murage-recovery-key.txt, or your copy of it). Without the recovery key a backup can't be opened.</p>
+      <div class="actions"><button data-action="choose-encrypted-backup" class="primary">Choose backup to restore</button><button data-action="backup-encrypted">Make a backup now</button></div>
     </section>
     <section id="ownership" aria-labelledby="ownership-heading" hidden>
-      <h2 id="ownership-heading">Computer ownership needs review</h2>
+      <h2 id="ownership-heading">This data folder was last used on another computer</h2>
       <p id="ownership-summary"></p>
-      <p>Keep the original installation and its ownership records. Do not delete lock files. A computer-name change and an installation used on another computer need different recovery steps.</p>
-      <p>Open the diagnostics folder and contact support with the computer names and claim type shown here. Do not attach your conversations, credentials or full installation folder. A transfer must use a consistent backup or a stopped source and retain the original installation.</p>
+      <p>Leave the folder and its files as they are, including any lock files. Renaming a computer and moving Murage to a new computer are fixed in different ways.</p>
+      <p>Open the diagnostics folder and contact support with the two computer names shown here. Don't send your conversations, keys or the whole data folder. To move Murage to a new computer, make a backup on the old one and restore it here.</p>
     </section>
     <section id="capture-recovery" aria-labelledby="capture-heading" hidden>
-      <h2 id="capture-heading">Recover without an existing backup</h2>
-      <p>Create a separate recovery copy from data available on this computer. Windows will ask for one-time administrator approval. The original and its ownership records remain unchanged.</p>
-      <p>The snapshot captures one point in time. Work in progress may be incomplete, and later changes are not included. The validated copy opens for paused review with fresh connections.</p>
-      <button data-action="capture-separate" class="primary">Create separate recovery copy</button>
+      <h2 id="capture-heading">Recover without a backup</h2>
+      <p>Make a recovery copy from the data on this computer. Windows asks once for administrator approval. Your current data stays as it is.</p>
+      <p>The copy is taken at one moment, so unfinished work may be missing. It opens paused for your review, and you connect engines and apps again.</p>
+      <button data-action="capture-separate" class="primary">Make a recovery copy</button>
     </section>
     <section id="separate-recovery" aria-labelledby="separate-heading" hidden>
-      <h2 id="separate-heading">Recover from an existing backup</h2>
-      <p>Restore a valid Murage backup into a new installation on this computer. The original installation and its ownership records remain unchanged.</p>
-      <p>Only the selected backup snapshot is restored. Newer conversations and deletion records in the original are not copied. Keep the original; do not copy live files or delete locks.</p>
-      <button data-action="choose-separate-backup" class="primary">Choose backup for separate installation</button>
+      <h2 id="separate-heading">Restore a backup into a new folder</h2>
+      <p>Restore a Murage backup into a new folder on this computer. Your current data stays as it is.</p>
+      <p>Only what is in the backup comes back. Anything newer in your current data is not copied. Leave your current data and its lock files as they are.</p>
+      <button data-action="choose-separate-backup" class="primary">Choose backup</button>
     </section>
     <p class="location"><code id="retained-destination" hidden></code></p>
     <section aria-labelledby="backup-heading">
-      <h2 id="backup-heading">Projected recovery ZIP</h2>
-      <p>This existing format contains a reduced recovery copy and is not encrypted. Inspect before making changes. Your current installation is retained, and restored agents stay paused.</p>
-      <button data-action="choose-backup" class="primary">Choose backup</button>
+      <h2 id="backup-heading">Older recovery files (.zip)</h2>
+      <p>Murage used to make unencrypted .zip recovery files that hold less than a backup. You can still restore one. Your current data is kept, and restored bots stay paused.</p>
+      <button data-action="choose-backup" class="primary">Choose .zip file</button>
       <div id="preview" hidden>
         <h3 id="backup-name"></h3>
         <p id="backup-summary"></p>
-        <details><summary>Snapshot identity</summary><p id="snapshot"></p><code id="hash"></code></details>
-        <p class="notice">After restoring, review this installation before opening it. Engines and schedules stay off until you enable them.</p>
+        <details><summary>Backup details for support</summary><p id="snapshot"></p><code id="hash"></code></details>
+        <p class="notice">After the restore, review the restored copy before opening it. AI engines and schedules stay off until you turn them on.</p>
         <p class="location"><code id="separate-destination" hidden></code></p>
-        <button data-action="restore" id="restore">Restore and keep paused</button>
-        <button data-action="restore-separate" id="restore-separate" hidden>Restore separately and restart for review</button>
-        <button data-action="restore-encrypted-new" id="restore-encrypted-new" hidden>Restore encrypted backup separately for review</button>
+        <button data-action="restore" id="restore">Restore</button>
+        <button data-action="restore-separate" id="restore-separate" hidden>Restore into a new folder</button>
+        <button data-action="restore-encrypted-new" id="restore-encrypted-new" hidden>Restore this backup</button>
       </div>
     </section>
     <section aria-labelledby="activation-heading">
-      <h2 id="activation-heading">Open restored data safely</h2>
-      <p>Validate the installed data and fresh connection profile. Approval applies only to the exact reviewed state.</p>
+      <h2 id="activation-heading">Review the restored copy</h2>
+      <p>Murage checks the restored copy and shows what comes back switched off. If anything changes after you review it, you review it again.</p>
       <button data-action="review-installation">Review restored installation</button>
       <div id="activation-review" hidden>
         <p id="activation-summary"></p>
-        <button data-action="activate" class="primary">Approve and open installation</button>
+        <button data-action="activate" class="primary">Approve and open</button>
       </div>
     </section>
     <section aria-labelledby="other-heading">
       <h2 id="other-heading">Other recovery options</h2>
-      <p>A new backup requires readable installation data. If data is damaged, keep the original files and inspect diagnostics.</p>
+      <p>If your data is damaged, leave the files as they are and open the diagnostics folder.</p>
       <div class="actions">
-        <button data-action="backup">Save a new backup</button>
+        <button data-action="backup">Save an older-style .zip recovery file</button>
         <button data-action="rollback">Undo a restore</button>
         <button data-action="retry">Retry startup</button>
         <button data-action="diagnostics">Open diagnostics folder</button>
       </div>
     </section>
-    <p class="privacy">Backups contain private conversations and files. Keep them private; do not attach them to public bug reports.</p>
+    <p class="privacy">Backups hold your private conversations and files. Keep them private, and never attach them to a public bug report.</p>
   </main>
 </body>
 </html>
