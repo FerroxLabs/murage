@@ -36,7 +36,7 @@ function withoutImageBytes(event: RuntimeEvent): RuntimeEvent {
 
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
-  private unsubscribes: Array<() => void> = [];
+  private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
   private readonly appendLog: typeof appendFileSync;
 
@@ -55,7 +55,7 @@ export class EventBus {
         }
         this.publish({ ...event, providerInstanceId: instance.instanceId });
       });
-      this.unsubscribes.push(unsub);
+      this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
     }
   }
 
@@ -112,6 +112,17 @@ export class EventBus {
   }
 
   detachAll() {
-    for (const unsub of this.unsubscribes.splice(0)) unsub();
+    for (const { unsubscribe } of this.unsubscribes.splice(0)) unsubscribe();
+  }
+
+  /** Stop delivering only these instances' events; every other engine stays
+   * attached (a scoped provider reload, server/index.ts reloadProviders). */
+  detach(instanceIds: ReadonlySet<string>) {
+    const kept: Array<{ instanceId: string; unsubscribe: () => void }> = [];
+    for (const entry of this.unsubscribes) {
+      if (instanceIds.has(entry.instanceId)) entry.unsubscribe();
+      else kept.push(entry);
+    }
+    this.unsubscribes = kept;
   }
 }

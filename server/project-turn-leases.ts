@@ -178,6 +178,11 @@ export class ProjectTurnLeases {
   /** Capture BEFORE awaiting registry.disposeAll; later generations must not
    * be released by completion of disposal of an older provider fleet. */
   generations(): string[] { return [...this.owners.keys()]; }
+  /** The generations of these threads only, for a reload that disposes some
+   * engines and leaves the turns on every other engine running. */
+  generationsForThreads(threadIds: ReadonlySet<string>): string[] {
+    return [...this.owners].filter(([, owner]) => threadIds.has(owner.threadId)).map(([generation]) => generation);
+  }
   disposed(generations: string[]): void {
     for (const generation of generations) this.release(generation);
   }

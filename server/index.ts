@@ -236,6 +236,7 @@ import { buildNotification, turnFailureBuzzes, type Notification } from "./notif
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import {
   isEffortLevel,
+  type InstanceConfigMap,
   type ModelSelection,
   type ProviderInstance,
   type RequestOutcome,
@@ -9806,9 +9807,48 @@ function persistMcpServers(next: Record<string, unknown>): void {
   cfg.mcpServers = next;
 }
 
+/** Why a turn the host ended for an engine change stopped. Plain sentences
+ * behind "Stopped:" (shared/host-stop.ts), never the red error card with its
+ * "choose another configured model in Provider settings" advice (D3). */
+/** "Stopped: Murage closed while this was running" (beginAppClose). */
+const APP_CLOSED_STOP_REASON = "Murage closed while this was running";
+const ENGINE_TURNED_OFF_STOP_REASON = "the engine it was using was turned off or changed in Settings";
+const ENGINE_SETTINGS_STOP_REASON = "engine settings changed while it was running, so Murage restarted its engines";
+
+/** The instance ids whose resolved configuration differs between two
+ * snapshots of instanceConfigs(cfg): changed, added or removed. */
+function changedInstanceIds(before: InstanceConfigMap, after: InstanceConfigMap): Set<string> {
+  const changed = new Set<string>();
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (JSON.stringify(before[id] ?? null) !== JSON.stringify(after[id] ?? null)) changed.add(id);
+  }
+  return changed;
+}
+
+/** A turn the host ended because its engine went away: the conversation says
+ * so in a plain sentence, its approvals leave the Inbox (D7), and the routine
+ * run it belonged to ends with the same truth. The routine is failed BEFORE
+ * the cards close, so a harness card held for the run cannot start a
+ * continuation turn on the engine being retired. */
+function retireTurnForEngineChange(threadId: string, botId: string, reason: string): void {
+  routines?.failThread(threadId, `The run stopped because ${reason}.`);
+  closeOpenApprovals(threadId);
+  noteHostStoppedTurn(threadId, botId, reason);
+}
+
 /** Rebuild the provider fleet after a config change so new keys take
- * effect without a server restart (kills any in-flight turns). */
-async function reloadProviders() {
+ * effect without a server restart.
+ *
+ * With `scope`, only those engines are rebuilt, and only the turns running on
+ * them end (D3): turning off an engine nobody is using must not kill a routine
+ * on another engine that is waiting for the person. Work on a scoped engine
+ * that cannot be attributed to a single direct run (a room turn) falls back
+ * to the whole-fleet rebuild, which ends every in-flight turn. */
+async function reloadProviders(scope?: ReadonlySet<string>) {
+  if (scope) {
+    if (scope.size === 0) return;
+    if (!scopedReloadUnsafe(scope)) return reloadScopedProviders(scope);
+  }
   providerFleetReady = false;
   const retiringDirect=store.bots.flatMap(bot=>directRuns.forBot(bot.id));
   const retiringProjects = projectTurnLeases.generations();
@@ -9831,7 +9871,7 @@ async function reloadProviders() {
     finalizeDelegationWatch(run.threadId,false,"","Delegated turn did not finish: provider settings changed");
     coordinationSlots.get(run.threadId)?.();
     store.setTaskActivity(run.botId,run.threadId,"idle");
-    store.appendMessage(run.threadId,{role:"bot",kind:"activity",tool:{name:"error: turn interrupted because provider settings changed",ok:false}});
+    retireTurnForEngineChange(run.threadId,run.botId,ENGINE_SETTINGS_STOP_REASON);
     retryDelegationsWaitingOn(run.botId);
   }
   await registry.load(instanceConfigs(cfg));
@@ -9854,16 +9894,77 @@ async function reloadProviders() {
       "",
       "Delegated turn did not finish: provider settings changed",
     );
-    store.appendMessage(b.threadId, {
-      role: "bot",
-      kind: "activity",
-      tool: { name: "error: turn interrupted: provider settings changed", ok: false },
-    });
+    retireTurnForEngineChange(b.threadId, b.id, ENGINE_SETTINGS_STOP_REASON);
     store.setActivity(b.id, "idle");
     retryDelegationsWaitingOn(b.id);
   }
   // killed turns settle here without a turn.completed event, so anything
   // queued behind them drains now — onto the freshly loaded fleet
+  drainQueuedSends();
+  drainConnectorResumes();
+  drainSecretResumes();
+  drainTeamIncidents();
+}
+
+/** The instance a direct run dispatched on (its detached routing snapshot). */
+function directRunInstanceId(run: DirectThreadRun<BotRecord>): string {
+  return run.snapshot.modelSelection.instanceId;
+}
+
+/** True when engine work on a scoped instance is not a direct run the scoped
+ * reload can end on its own: a room turn, or a bot marked busy with no direct
+ * run to explain it. Those keep the whole-fleet rebuild. */
+function scopedReloadUnsafe(scope: ReadonlySet<string>): boolean {
+  for (const bot of store.bots) {
+    const selections = new Set([bot.modelSelection.instanceId, ...(bot.tasks ?? []).flatMap(task => {
+      const selected = (task as { modelSelection?: ModelSelection }).modelSelection?.instanceId;
+      return selected ? [selected] : [];
+    })]);
+    if (![...selections].some(id => scope.has(id))) continue;
+    if (activeGroupTurnForBot(bot.id)) return true;
+    const runs = directRuns.forBot(bot.id);
+    const busyTasks = (bot.tasks ?? []).filter(task => task.busy);
+    if (bot.busy && busyTasks.length === 0) return true;
+    if (busyTasks.some(task => !runs.some(run => run.threadId === task.threadId))) return true;
+  }
+  return false;
+}
+
+/** reloadProviders(scope): rebuild only the scoped engines. Every turn on
+ * another engine keeps running, its browser, internal capabilities, folder
+ * leases and approval cards untouched. */
+async function reloadScopedProviders(scope: ReadonlySet<string>) {
+  providerFleetReady = false;
+  try {
+    const retiringDirect = store.bots.flatMap(bot => directRuns.forBot(bot.id)).filter(run => scope.has(directRunInstanceId(run)));
+    const retiringThreads = new Set(retiringDirect.map(run => run.threadId));
+    const retiringProjects = projectTurnLeases.generationsForThreads(retiringThreads);
+    for (const threadId of retiringThreads) {
+      revokeInternalThread(threadId);
+      await releaseBrowserCapabilityForThread(threadId);
+    }
+    bus.detach(scope);
+    try {
+      await registry.reload(scope, instanceConfigs(cfg));
+    } finally {
+      projectTurnLeases.disposed(retiringProjects);
+      bus.attach(registry.instances().filter(instance => scope.has(instance.instanceId)));
+    }
+    for (const run of retiringDirect) if (directRuns.current(run)) {
+      directRuns.release(run); clearDirectTurnDispatch(run.threadId, run.generation);
+      if (screenPollers.get(run.botId)?.threadId === run.threadId) stopScreenPoller(run.botId);
+      releaseLocalVmThread(run.threadId);
+      if (activeVpsThreads.get(run.botId) === run.threadId) activeVpsThreads.delete(run.botId);
+      recordMemorySettlement(run.threadId, run.generation, "interrupted");
+      finalizeDelegationWatch(run.threadId, false, "", "Delegated turn did not finish: its engine was turned off or changed");
+      coordinationSlots.get(run.threadId)?.();
+      store.setTaskActivity(run.botId, run.threadId, "idle");
+      retireTurnForEngineChange(run.threadId, run.botId, ENGINE_TURNED_OFF_STOP_REASON);
+      retryDelegationsWaitingOn(run.botId);
+    }
+  } finally {
+    providerFleetReady = true;
+  }
   drainQueuedSends();
   drainConnectorResumes();
   drainSecretResumes();
@@ -16680,12 +16781,16 @@ const server = createServer(async (req, res) => {
       try {
         const result = enablement ? withInstanceEnabled(cfg, instancePatch[1], body.enabled) : withInstanceCli(cfg, instancePatch[1], body.cli);
         if (!result.ok) return json(res, 404, { error: `unknown instance "${instancePatch[1]}"` });
+        const previousInstances = instanceConfigs(cfg);
         // persist the whole instances map this rebuild produced — a fresh
         // saveConfig({instances}) merge would re-derive defaults identically,
         // but writing the resolved map keeps disk and runtime in lockstep
         saveConfig({ instances: result.config.instances });
         Object.assign(cfg, loadConfig());
-        await reloadProviders();
+        // Only the engines this change touched are rebuilt: "I don't use
+        // Droid" must not end a routine on Fuigo that is waiting for an
+        // answer (D3).
+        await reloadProviders(changedInstanceIds(previousInstances, instanceConfigs(cfg)));
         // rescan BEFORE describe(): the response's cliCandidates are computed
         // from the memoized PATH, so resetting after would answer this request
         // with the pre-reset cache
