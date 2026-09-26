@@ -15,6 +15,7 @@ import { createClosedBackupController,closedControlDirectory } from "./backup-cl
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
+import { announceBackupFailure } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
@@ -393,7 +394,7 @@ ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
   return settleRecoveryKeyRequest(()=>backupScheduleHost.setUpBackups(request));
 });
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
-ipcMain.handle("backup-schedule:clear-review",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.clearReview(args[0]);});
+ipcMain.handle("backup-schedule:clear-review",async(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");const cleared=await backupScheduleHost.clearReview(args[0]);void announceLastBackupFailure().catch(()=>{});return cleared;});
 ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
@@ -3384,6 +3385,13 @@ setCuaStateListener((connection) => {
 
 let desktopResticTool = null;
 const remoteBackupAttestation = new AbortController();
+/** Tells the harness about a backup that stopped (Inbox row, one notification)
+ * or that none is pending review. Waits for the harness, briefly; never throws. */
+async function announceLastBackupFailure(){
+  for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
+  if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
+  await announceBackupFailure({status:backupScheduleHost.internalStatus(),userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body)});
+}
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
   const installation=ownedDesktopDataDir(),control=remoteControlDirectory({control:closedControlDirectory(installation),userData:app.getPath("userData")});
@@ -3585,6 +3593,8 @@ const desktopStartup = app.whenReady().then(async () => {
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
     return;
   }
+  // W-D7: say so when the last backup stopped, once the harness is up.
+  if(backupScheduleHost)void desktopStartup.then(announceLastBackupFailure).catch(()=>{});
   const upgrade=backupScheduleHost?.pendingUpgrade();
   if(upgrade){
     const updater=ensureDesktopUpdater(false);

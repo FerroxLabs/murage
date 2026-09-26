@@ -233,6 +233,7 @@ import {
 } from "./mcp-registry.ts";
 import { probeMcpServer } from "./mcp-probe.ts";
 import { buildNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
+import { captureFailureSentence, normalizeCaptureFailure } from "../shared/backup-capture-failure.mjs";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import { backupWaitingBotsFrom, createBackupWaitTracker } from "./backup-waiting.ts";
 import {
@@ -715,6 +716,8 @@ function backupWaitingNow() {
     },
   });
 }
+/** The last backup's failure as the desktop reported it (W-D7); see /api/backup-failure-notice. */
+let backupFailedNotice: { sentence: string; at: number } | null = null;
 const backupWaits = createBackupWaitTracker({
   now: () => Date.now(),
   notify: (waiting, text) => {
@@ -11005,6 +11008,26 @@ const server = createServer(async (req, res) => {
         return json(res, method === "POST" ? 201 : 200, { account });
       } finally { finishProviderConfigMutation(); }
     }
+    // W-D7: a backup that stopped used to be visible only in Settings > Backups.
+    // After the restart that follows it, the desktop reports the finite stage
+    // and code (never a path or message); the Inbox shows what failed and what
+    // to do until the review is cleared, and one notification goes out.
+    if(path==="/api/backup-failure-notice"&&method==="POST"){
+      if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
+      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
+      if(!input.success)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
+      if(input.data.action==="clear"){backupFailedNotice=null;return json(res,200,{cleared:true});}
+      const failure=normalizeCaptureFailure({stage:input.data.stage,code:input.data.code});
+      if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
+      const sentence=`${captureFailureSentence(failure)} Open Settings, then Backups, to clear it and back up again.`;
+      backupFailedNotice={sentence,at:Date.now()};
+      let notified=false;
+      if(input.data.notify){
+        const chief=store.workspaceChief();
+        if(chief){const notice=buildNotification("backup-failed",chief,chief.threadId,sentence,{avatarUrl:chief.avatarUrl});if(notice){notify(notice);notified=true;}}
+      }
+      return json(res,200,{reported:true,notified});
+    }
     if(path==="/api/backup-restart"&&method==="POST"){
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
       const input=z.object({action:z.enum(["prepare","cancel"]),token:z.string().uuid(),occasion:z.enum(["daily","manual"]).optional()}).strict().safeParse(await readBody(req));
@@ -11076,8 +11099,10 @@ const server = createServer(async (req, res) => {
       }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
       // A backup held up by a waiting card is said here too, on the desktop,
       // beside the card itself (0.1.60 Linux D6). Not counted: the card is.
-      const backupWaiting = method === "GET" && result.status === 200 && inboxDoor(req.headers, url.searchParams) === "desktop" ? backupWaits.current(backupWaitingNow()) : null;
-      return json(res, result.status, backupWaiting ? { ...(result.body as object), backupWaiting } : result.body);
+      const desktopInbox = method === "GET" && result.status === 200 && inboxDoor(req.headers, url.searchParams) === "desktop";
+      const backupWaiting = desktopInbox ? backupWaits.current(backupWaitingNow()) : null;
+      const backupFailed = desktopInbox ? backupFailedNotice : null;
+      return json(res, result.status, backupWaiting || backupFailed ? { ...(result.body as object), ...(backupWaiting ? { backupWaiting } : {}), ...(backupFailed ? { backupFailed } : {}) } : result.body);
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
     // module answers 404 to anything else, reads included.

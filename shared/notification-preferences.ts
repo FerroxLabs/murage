@@ -15,7 +15,7 @@ export function resolveNotificationPreferences(value?: unknown): NotificationPre
   return notificationPreferencesSchema.parse(value === undefined ? {} : value);
 }
 export interface PreferenceNotification {
-  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting";
+  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting" | "backup-failed";
   botId: string;
   threadId: string;
   title: string;
@@ -33,7 +33,7 @@ const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value
 export function applyNotificationPreferences<T extends PreferenceNotification>(notification: T, currentPrefs: unknown, now: Date): T | null {
   const prefs = resolveNotificationPreferences(currentPrefs);
   const category = notification.kind === "done" ? "completion"
-    : notification.kind === "routine-failed" || notification.kind === "turn-failed" ? "failures" : "attention";
+    : notification.kind === "routine-failed" || notification.kind === "turn-failed" || notification.kind === "backup-failed" ? "failures" : "attention";
   if (!prefs[category]) return null;
   const quiet = prefs.quietHours;
   if (quiet?.enabled) {

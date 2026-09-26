@@ -134,6 +134,11 @@ export interface InboxPage {
    *  answer (shared/backup-waiting.ts). Desktop only, and never counted: the
    *  waiting card itself is. Gone the moment the card is answered. */
   backupWaiting?: BackupWaiting;
+  /** The last backup stopped and backups are paused until the owner clears
+   *  it (0.1.60 Windows W-D7). The desktop reports it after the restart that
+   *  follows the failure; the sentence says what failed and what to do.
+   *  Desktop only, never counted, gone once the review is cleared. */
+  backupFailed?: { sentence: string; at: number };
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of
