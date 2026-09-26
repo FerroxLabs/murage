@@ -178,4 +178,19 @@ describe("an engine change or an app close around a run waiting for the person",
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   }, 90_000);
+
+  it("D6 + D7: Murage closing mid-wait says so, and the next start retires the approval it left open", async () => {
+    const bot = await makeBot("Closed mid wait");
+    const card = await waitingForApproval(bot);
+    await waitForExit(child!, { signal: "SIGTERM" });
+    await start();
+
+    const after = await messagesOf(bot.threadId);
+    expect(errorChips(after)).toEqual([]);
+    expect(after.map((message) => message.tool?.name)).toContain("stopped: Murage closed while this was running");
+    expect(JSON.stringify(after)).not.toMatch(/exited 143|provider settings/i);
+    expect(after.find((message) => message.id === card.id)?.card?.dismissed).toBe(true);
+    expect(await pendingApprovals()).toBe(0);
+    await desktopApi("DELETE", `/api/bots/${bot.id}`);
+  }, 90_000);
 });

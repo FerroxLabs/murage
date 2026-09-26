@@ -17785,8 +17785,56 @@ const gracefulShutdown = createGracefulShutdown({
   exit: (code) => process.exit(code),
 });
 
+/** Every conversation with engine work in flight, and the bot doing it: the
+ * direct runs, busy tasks, room turns, and a bot busy with no task to show
+ * for it. */
+function threadsWithWorkInFlight(): Map<string, string> {
+  const threads = new Map<string, string>();
+  for (const bot of store.bots) {
+    for (const run of directRuns.forBot(bot.id)) threads.set(run.threadId, bot.id);
+    const busyTasks = (bot.tasks ?? []).filter(task => task.busy);
+    for (const task of busyTasks) threads.set(task.threadId, bot.id);
+    const room = activeGroupTurnForBot(bot.id);
+    if (room) threads.set(room.threadId, bot.id);
+    else if (bot.busy && busyTasks.length === 0) threads.set(bot.threadId, bot.id);
+  }
+  return threads;
+}
+
+/** Murage is closing (the app quit, the OS logged out, a signal). Say so in
+ * every conversation whose work this ends, BEFORE the engines are stopped:
+ * their children then die with SIGTERM (exit 143) or a closed transport, and
+ * that is not an engine failure to show as "fuigoAgent exited 143 …" with
+ * "choose another configured model in Provider settings" (D6). Anything a
+ * dying turn still writes as an error is dropped where the closing note was
+ * already written, and becomes that note anywhere else. */
+let appClosing = false;
+function beginAppClose(): void {
+  if (appClosing) return;
+  appClosing = true;
+  const noted = new Set<string>();
+  const noteClosing = (threadId: string, botId: string) => {
+    noted.add(threadId);
+    noteHostStoppedTurn(threadId, botId, APP_CLOSED_STOP_REASON);
+  };
+  try {
+    for (const [threadId, botId] of threadsWithWorkInFlight()) noteClosing(threadId, botId);
+  } catch (error) {
+    console.warn("Could not note the conversations Murage closed:", error instanceof Error ? error.message : String(error));
+  }
+  store.setMessageRewrite((threadId, message) => {
+    if (message.role !== "bot" || message.kind !== "activity" || !message.tool?.name.startsWith("error:")) return message;
+    if (noted.has(threadId)) return null;
+    noted.add(threadId);
+    return { role: "bot", kind: "activity", ...(message.from ? { from: message.from } : {}), tool: { name: hostStoppedActivityName(APP_CLOSED_STOP_REASON), ok: false } };
+  });
+}
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, gracefulShutdown);
+  process.on(signal, () => {
+    beginAppClose();
+    gracefulShutdown();
+  });
 }
 
 /** The scheduler has already pinned instructions and assigned this thread. */
