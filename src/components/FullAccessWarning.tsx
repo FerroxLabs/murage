@@ -10,7 +10,7 @@ export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
 export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks still ask, as they do in Auto, and image generation still asks before it spends.";
+  "Turns started by webhooks still ask, as they do in Auto, and image generation still asks first.";
 
 /** Which level the dialog switches on: a conversation's (the composer chip),
  * the bot's own (Bot settings), or one routine's. A routine run is judged at

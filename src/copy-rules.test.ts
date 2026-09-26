@@ -200,7 +200,11 @@ const BACKUP_WORDS = BACKUP_RULES.map(sentence);
 // 0.1.60 Linux D13 added the phrasings the first rule let through: "Charges
 // go to that connection's account", "testing a model costs nothing" and
 // "may require a paid licence".
-const PRICE: Rule = { name: "price talk", pattern: /\b(?:prices?|priced|pricing|cheap(?:er|est|ly)?|discount(?:s|ed)?|paid|charges? go|costs? (?:nothing|money))\b|\bat no cost\b|\bfree\b(?! (?:slot|memory|disk|space|up\b|of\b|text\b|-text\b))/i };
+// 0.1.60 audit C2 added what that still let through: "may incur usage
+// charges", "bills the Flux key", "to keep the cost down", "what a turn
+// costs" and "asks before it spends". ("In charge" and a spending limit the
+// person sets are other words.)
+const PRICE: Rule = { name: "price talk", pattern: /\b(?:prices?|priced|pricing|cheap(?:er|est|ly)?|discount(?:s|ed)?|paid|charges? go|costs? (?:nothing|money))\b|\bat no cost\b|\bfree\b(?! (?:slot|memory|disk|space|up\b|of\b|text\b|-text\b))|\bincur\w*|\bcharges\b|\bbill(?:s|ed)\b|\bspends?\b(?!-)|\bcosts? down\b|\bwhat (?:a|an|each|the) \w+ costs\b/i };
 // An engine's raw error text: an HTTP status or a provider's error type.
 const RAW_ERROR: Rule = { name: "a raw error code", pattern: /\bstatus [45]\d\d\b|\bapi_error\b|\bHTTP [45]\d\d\b/ };
 
@@ -214,6 +218,8 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/lib/model-metadata.ts", text: "Price varies by route", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "Price unavailable", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "compatible chat model  · prices per million tokens", why: "model catalogue pricing column" },
+  { file: "src/lib/usage.ts", text: "equivalent: on your subscription, not billed", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
+  { file: "src/lib/usage.ts", text: "billed to your API key", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
 ];
 const PRICE_KNOWN_KEYS = new Set([
   "providerError.payment.summary", // names HTTP 402; ProviderErrorCard's tests pin it
@@ -280,9 +286,13 @@ describe("product copy rules", () => {
   it("the price and raw-error rules catch what the 0.1.60 Mac pass found, and not the other senses of free", () => {
     for (const text of ["in a container on this machine, free and separate from your own desktop.", "Only engines that report a price show one.", "Cheaper models", "error: API error (status 429 Too Many Requests): api_error: Available credit is low",
       // 0.1.60 Linux D13
-      "Images use Flux. Charges go to that connection’s account.", "Nothing here is sent to a cloud provider, and testing a model costs nothing.", "Docker Desktop may require a paid licence", "Free search: Parallel, then DuckDuckGo", "{count} free runs left today."])
+      "Images use Flux. Charges go to that connection’s account.", "Nothing here is sent to a cloud provider, and testing a model costs nothing.", "Docker Desktop may require a paid licence", "Free search: Parallel, then DuckDuckGo", "{count} free runs left today.",
+      // 0.1.60 audit C2
+      "Its model may incur usage charges; no skill is activated by this action.", "Uses your existing key and may incur model charges.", "It bills the Flux key saved in Settings.",
+      "One low quality square draft, to keep the cost down. OpenAI bills your own API account.", "Flux Router picks a model for each turn, so what a turn costs depends on which one runs.",
+      "API usage is billed to that provider account", "image generation still asks before it spends.", "Search queries are sent to the selected third-party provider and may incur separate charges."])
       expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(true);
-    for (const text of ["This page was paused to free memory.", "Check free disk space.", "Waiting for a free slot", "free up space", "free of secrets", "Waiting for a slot", "HTTP headers"])
+    for (const text of ["This page was paused to free memory.", "Check free disk space.", "Waiting for a free slot", "free up space", "free of secrets", "Waiting for a slot", "HTTP headers", "On email you stay in charge.", "Your spending limit requires reliable cost information before this check can run."])
       expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(false);
   });
 

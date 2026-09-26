@@ -291,7 +291,7 @@ export function commitImageReferences(loaded: readonly Loaded[], audience: Image
     if (options.disclose && created.length) {
       const count = created.length === 1 ? "a reference image" : `${created.length} reference images`;
       deps.store.appendMessage(audience.threadId, { role: "bot", kind: "text",
-        text: `Prepared ${count} for an image request from ${created.map(item => item.label).join(", ")}. Nothing is generated or billed until you approve the image request.`,
+        text: `Prepared ${count} for an image request from ${created.map(item => item.label).join(", ")}. Nothing is generated until you approve the image request.`,
         attachments: created.map(item => ({ kind: "image" as const, path: item.path, mime: item.mime })) });
     }
   } catch (error) {

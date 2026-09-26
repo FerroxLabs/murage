@@ -187,7 +187,7 @@ export function nextActionFor(server: LocalServerView, model: LocalModelView): L
     return {
       kind: "test",
       label: `Test ${model.model}`,
-      help: "Runs seven checks on this computer. No cloud provider is called and nothing is billed.",
+      help: "Runs seven checks on this computer. Nothing is sent to a cloud provider.",
     };
   }
   switch (test.outcome) {

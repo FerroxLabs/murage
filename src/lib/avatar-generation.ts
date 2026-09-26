@@ -44,9 +44,9 @@ export interface AvatarGeneratorPlan {
  */
 export const AVATAR_COPY = {
   fluxHeading: "Generate with Flux",
-  fluxBody: "Flux Router draws one square avatar from this bot's name, role and your direction. It bills the Flux key saved in Settings.",
+  fluxBody: "Flux Router draws one square avatar from this bot's name, role and your direction. It uses the Flux key saved in Settings.",
   openAiHeading: "Generate with your OpenAI key",
-  openAiBody: "One low quality square draft, to keep the cost down. OpenAI bills your own API account.",
+  openAiBody: "One quick square draft, made with your own OpenAI API account.",
   emptyHeading: "Generate an avatar",
   emptyBody: "Paste an OpenAI image key below and this panel draws one from the bot's name and role.",
   /** The easy path. Points at the one field, in the one place it lives. */
