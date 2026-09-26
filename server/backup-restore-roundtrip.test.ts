@@ -21,8 +21,6 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error -- plain JavaScript desktop module, as every other test imports it
 import { createBackupScheduleHost } from "../electron/backup-schedule-host.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { BackupCoordinator } from "./backup-coordinator.ts";
