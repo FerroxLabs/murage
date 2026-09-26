@@ -1990,3 +1990,44 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", scheduledFor: lateAt });
   });
 });
+
+// 0.1.60 Linux and Windows re-test 2, D4: instructions of 26,712 (Linux) and
+// 26,646 (Windows) characters were cut to 20,000 on save with no warning, so
+// the task in their last lines never reached the bot.
+describe("long routine instructions reach the bot whole", () => {
+  const brief = (length: number) => {
+    const task = "\nTASK: reply with exactly LONG-BRIEF-DONE and the number of notes above.";
+    let body = "";
+    for (let note = 1; body.length < length; note++) body += `Note ${String(note).padStart(4, "0")}: background the bot should read before the task below.\n`;
+    // The task is the last line, where a cut loses it.
+    return body.slice(0, length - task.length) + task;
+  };
+  for (const length of [26_712, 26_646, 100_000]) {
+    it(`keeps all ${length.toLocaleString("en-US")} characters, across a restart, and runs them`, async () => {
+      const h = harness(), prompt = brief(length);
+      expect(prompt).toHaveLength(length);
+      const routine = h.manager.create({ name: "Long brief", prompt, botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
+        schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() }, durationMinutes: 15 });
+      expect(routine.prompt).toBe(prompt);
+      const stored = JSON.parse(readFileSync(h.options.file, "utf8"));
+      expect((stored.routines ?? stored).find((item: { id: string }) => item.id === routine.id).prompt).toBe(prompt);
+      const reloaded = new RoutineManager({ ...h.options });
+      expect(reloaded.listRoutines().find(item => item.id === routine.id)?.prompt).toBe(prompt);
+      h.manager.runNow(routine.id);
+      await h.manager.tick();
+      expect(h.started[0].prompt).toContain(prompt);
+      expect(h.started[0].prompt).toContain("TASK: reply with exactly LONG-BRIEF-DONE");
+    });
+  }
+  it("refuses instructions over the limit with a plain sentence instead of cutting them, on create and on edit", () => {
+    const h = harness(), over = brief(100_001);
+    const make = () => h.manager.create({ name: "Too long", prompt: over, botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
+      schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() }, durationMinutes: 15 });
+    expect(make).toThrow("Routine instructions can be up to 100,000 characters, and these are 100,001. Shorten them, or attach the long part as a file for the bot to read.");
+    expect(h.manager.listRoutines()).toHaveLength(0);
+    const routine = h.manager.create({ name: "Short", prompt: "Do the thing", botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
+      schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() }, durationMinutes: 15 });
+    expect(() => h.manager.update(routine.id, { prompt: over })).toThrow("up to 100,000 characters");
+    expect(h.manager.listRoutines()[0].prompt).toBe("Do the thing");
+  });
+});
