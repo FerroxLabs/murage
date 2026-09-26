@@ -15,6 +15,8 @@
  * leave it for another address. */
 export type BrowserProtection = "owner-input" | "sensitive-page";
 
+import { USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
+
 const DO_NOT_ROUTE_AROUND = "Do not switch to another browser, a browser plugin, or run the browser program yourself.";
 
 export const BROWSER_REFUSALS = {
@@ -23,6 +25,10 @@ export const BROWSER_REFUSALS = {
   browser_held: `The owner has taken control of this browser, so it refuses your reads and actions until they hand it back. Wait, or ask the owner in chat. ${DO_NOT_ROUTE_AROUND}`,
   browser_control_changed: "Browser control changed while this action ran, so its result was discarded. Take a fresh snapshot before you continue.",
   browser_not_authorized: "This turn can no longer use the browser.",
+  // "Use my Chrome" (server/user-chrome.ts). Remote debugging off or Chrome
+  // closed: the designed setup sentence, so the owner learns how to turn it on.
+  browser_user_chrome_off: `${USER_CHROME_SETUP_MESSAGE} Tell the owner exactly this. ${DO_NOT_ROUTE_AROUND}`,
+  browser_user_chrome_allow: `The owner's Chrome did not let Murage connect: Chrome asks the owner to Allow each new connection, and it was not allowed in time or was denied. Ask the owner to click Allow when Chrome asks, then try again. ${DO_NOT_ROUTE_AROUND}`,
 } as const;
 export type BrowserRefusalCode = keyof typeof BROWSER_REFUSALS;
 

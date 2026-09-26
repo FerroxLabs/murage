@@ -176,9 +176,9 @@ import * as composio from "./composio.ts";
 import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
-import { isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
+import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
 import { unifiedBrowserSystemPrompt, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
-import { readUserChromeEndpoint, USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
+import { readUserChromeEndpoint, USER_CHROME_ALLOW_WAIT_MS, USER_CHROME_SETUP_MESSAGE, userChromeTrouble } from "./user-chrome.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
@@ -492,7 +492,7 @@ import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedDisplayName, hostStoppedReason } from "../shared/host-stop.ts";
-import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, browserUnavailableDisplayName, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
+import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, browserUnavailableDisplayName, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
@@ -1031,6 +1031,8 @@ async function userChromeBinding(botId: string, realmId: string) {
   unifiedBrowser.register(session, spec);
   const binding = { key: session, spec }; unifiedBrowserBindings.set(identity, binding); return binding;
 }
+// Profile keys of "Use my Chrome" bindings that have connected (Allowed).
+const userChromeConnected = new Set<string>();
 async function forgetUserChromeBrowser(botId: string) {
   const key = userChromeSessionId(botId, restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation");
   for (const [identity, binding] of unifiedBrowserBindings) if (binding.key === key) unifiedBrowserBindings.delete(identity);
@@ -1470,6 +1472,8 @@ async function browserIntegration(botId: string, profile: string | undefined, th
   unifiedBrowserThreads.set(threadId, { botId, ownerId, profileKey: binding.key, profile });
   return { profileKey: binding.key, integration: { command: process.execPath, args: [SPAWNED_PROXIES.unifiedBrowser], env: {
     ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
+    // The owner's Chrome waits on their Allow (up to USER_CHROME_ALLOW_WAIT_MS, twice).
+    ...(store.bot(botId)?.useMyChrome ? { MURAGE_BROWSER_CALL_TIMEOUT_MS: String(USER_CHROME_ALLOW_WAIT_MS * 2 + 30_000) } : {}),
     MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
   } } };
 }
@@ -11157,7 +11161,15 @@ const server = createServer(async (req, res) => {
       const authority = { owner: browserOwnerId(desktop ? "desktop" : "companion", realm), profileKey: binding.key, canReclaim: desktop,
         active: () => builtInBrowserEnabled(cfg) && !!store.bot(bot.id) && store.bot(bot.id)?.browser !== false && store.bot(bot.id)?.browserProfile === profile };
       const body = method === "POST" ? await readBody(req) : {};
-      const result = await browserOwnerRequest(unifiedBrowser, authority, method, body, m[2] ? Number(url.searchParams.get("generation")) : undefined);
+      let result: unknown;
+      try { result = await browserOwnerRequest(unifiedBrowser, authority, method, body, m[2] ? Number(url.searchParams.get("generation")) : undefined); }
+      catch (error) {
+        // The panel says the same as the bot: how to turn remote debugging
+        // back on, or that Chrome is waiting for Allow (0.1.60 Linux D11).
+        if (!bot.useMyChrome || (error as { status?: number })?.status) throw error;
+        const off = (await userChromeTrouble()) === "off";
+        return json(res, 409, { error: off ? USER_CHROME_SETUP_MESSAGE : "Chrome did not let Murage connect. When Chrome asks \"Allow remote debugging?\", click Allow, then try again." });
+      }
       res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
     }
 
@@ -11437,10 +11449,28 @@ const server = createServer(async (req, res) => {
         if (!authorized()) return json(res, 403, { error: "browser turn is no longer authorized" });
         const body = await readBody(req); requireActiveInternal();
         let result: unknown;
-        try { result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized); }
+        const ownChrome = store.bot(entry!.botId)?.useMyChrome === true;
+        // "Use my Chrome": until this binding has connected once, Chrome is
+        // asking the owner to Allow it. Say so in the conversation if that
+        // takes more than a moment, instead of the bot sitting silent (D12).
+        const waitingNote = ownChrome && !userChromeConnected.has(entry!.profileKey) && body.method === "tools/call"
+          ? setTimeout(() => { try { store.appendMessage(internalClaim.threadId, { role: "bot", kind: "activity", tool: { name: browserUnavailableActivityName(USER_CHROME_ALLOW_REASON), ok: true } }); } catch { /* a note is never worth the call */ } }, 3000)
+          : undefined;
+        try { result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized); if (ownChrome) userChromeConnected.add(entry!.profileKey); }
         // Murage's own refusal carries its code so the proxy can hand the
         // bot the reason; any other error keeps the generic path.
-        catch (error) { if (isBrowserRefusal(error)) return json(res, error.status, { error: error.message, code: error.code }); throw error; }
+        catch (error) {
+          if (isBrowserRefusal(error)) return json(res, error.status, { error: error.message, code: error.code });
+          // The owner's Chrome: say whether remote debugging is off (and how
+          // to turn it on) or Chrome refused / is still waiting for Allow,
+          // never "browser unavailable or control changed" (D11, D12).
+          if (ownChrome) {
+            userChromeConnected.delete(entry!.profileKey);
+            const refusal = browserRefusal((await userChromeTrouble()) === "off" ? "browser_user_chrome_off" : "browser_user_chrome_allow");
+            return json(res, refusal.status, { error: refusal.message, code: refusal.code });
+          }
+          throw error;
+        } finally { if (waitingNote) clearTimeout(waitingNote); }
         res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
       if (path === "/api/internal/headless-browser") {
