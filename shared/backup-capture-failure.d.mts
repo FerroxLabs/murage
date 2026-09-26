@@ -13,3 +13,4 @@ export interface BackupCaptureCause {
 export function redactCauseText(value: unknown, max?: number): string | undefined;
 export function normalizeCaptureCause(input: unknown): BackupCaptureCause | null;
 export function describeCaptureError(error: unknown, step?: string): BackupCaptureCause | null;
+export function skippedDisplayPath(value: unknown): string | undefined;

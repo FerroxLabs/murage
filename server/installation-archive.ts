@@ -13,6 +13,7 @@ import { InstallationSnapshotError, withOfflineInstallation } from "./installati
 import { BACKUP_SKIP_REASONS, MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_BACKUP_MANIFEST_BYTES, MAX_LISTED_SKIPS } from "../shared/backup-limits.ts";
 import { publishNoReplace } from "./publish-file.ts";
 import { botNames } from "./backup-skipped-summary.ts";
+import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 
 const MAX_MANIFEST_BYTES = MAX_BACKUP_MANIFEST_BYTES;
 const archivedPath = z.string().min(1).max(4096);
@@ -88,13 +89,17 @@ export function validateArchiveFileList(manifest: Pick<InstallationArchiveManife
     total += file.bytes;
     if (!Number.isSafeInteger(total) || total > budget.maxBytes) fail("ARCHIVE_LIMIT_EXCEEDED");
   }
-  const stored = new Set(manifest.files.map(file => file.path));
+  const stored = new Map(manifest.files.map(file => [file.path, file.bytes]));
   // Stored shortcuts and extra names live only inside folders of owner work,
   // never at the top of the data folder where Murage's own records are.
-  for (const entry of [...links, ...copies]) { claim(entry.path); if (!entry.path.includes("/")) fail("UNSAFE_ARCHIVE_PATH"); }
+  const ownerFolder = (path: string) => path.includes("/") && classifyDataDirEntry(path.split("/")[0])?.backup === "owner-folder";
+  for (const entry of [...links, ...copies]) { claim(entry.path); if (!ownerFolder(entry.path)) fail("UNSAFE_ARCHIVE_PATH"); }
   for (const copy of copies) {
-    if (!stored.has(copy.from)) fail("UNSAFE_ARCHIVE_PATH");
-    total += manifest.files.find(file => file.path === copy.from)!.bytes;
+    // A second name comes from the same owner folder (Kimi audit #2): never
+    // from Murage's own records (messages.db) or another kind of folder.
+    const bytes = stored.get(copy.from);
+    if (bytes === undefined || !ownerFolder(copy.from) || copy.from.split("/")[0] !== copy.path.split("/")[0]) fail("UNSAFE_ARCHIVE_PATH");
+    total += bytes;
     if (!Number.isSafeInteger(total) || total > budget.maxBytes) fail("ARCHIVE_LIMIT_EXCEEDED");
   }
   const ordered = [...names].sort();

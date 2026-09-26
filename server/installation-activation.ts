@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, readSync } from "node:fs";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, RESTORE_ADDED_FILES } from "../shared/backup-limits.ts";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -96,7 +96,10 @@ function fingerprint(root: string) {
     // folder, never one of Murage's own records at the top.
     if (stat.isSymbolicLink()) {
       if (!relative.includes("/") || ++items > maxItems) fail("INVALID_REVIEW_FILE");
-      digest.update(JSON.stringify([relative, "link", readlinkSync(file)]) + "\n");
+      // Only a shortcut that stays inside this folder (Kimi audit #2).
+      const target = readlinkSync(file), resolved = resolvePath(dirname(file), target);
+      if (isAbsolute(target) || /^[A-Za-z]:|^[\\/]/.test(target) || !resolved.startsWith(root + sep)) fail("INVALID_REVIEW_FILE");
+      digest.update(JSON.stringify([relative, "link", target]) + "\n");
       return;
     }
     digest.update(JSON.stringify([relative, stat.mode & 0o777]) + "\n");

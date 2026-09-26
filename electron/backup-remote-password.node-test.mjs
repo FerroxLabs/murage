@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,symlinkSync,chmodSync,realpathSync,statSync,readdirSync} from "node:fs";
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,symlinkSync,chmodSync,realpathSync,statSync,readdirSync,renameSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
@@ -149,4 +149,17 @@ test("Windows: the ACL steps are awaited, so a slow check never runs the read ah
  const pending=store.select();order.push("returned");
  await assert.rejects(pending,/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS$/);
  assert.deepEqual(order,["returned","check-start","check-end"]);assert.deepEqual(document,{});
+});
+
+// Kimi audit #3: the ACL check and the read must be about the same file. A
+// file swapped in while the ACL is being checked is refused.
+test("Windows: a password file swapped while its ACL is checked is refused",async t=>{
+ const {aclIsPrivateToOwner}=await import("./backup-windows-acl.mjs");
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-password-swap-")));t.after(()=>safeWipeSync(root));
+ const file=path.join(root,"p.txt"),other=path.join(root,"attacker.txt");writeFileSync(file,"victim password\n");writeFileSync(other,"attacker password\n");
+ asWindows(t);let document={};
+ const store=createRemotePasswordStore({chooseFile:async()=>file,excludedRoots:()=>[],readProtected:async()=>document,updateProtected:async derive=>{document=derive(document);},createId:()=>"ref1",
+  checkPrivate:async()=>{renameSync(other,file);if(!aclIsPrivateToOwner(DOCUMENTS_ACL,ME))throw Error("BACKUP_WINDOWS_ACL_SHARED");}});
+ await assert.rejects(store.select(),/BACKUP_REMOTE_PASSWORD/);
+ assert.deepEqual(document,{});
 });

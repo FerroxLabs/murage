@@ -5,7 +5,7 @@ import { z } from "zod";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { canonicalUpdateDescriptor, parseUpdateCandidate, type UpdateCandidate } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, skippedDisplayPath } from "../shared/backup-capture-failure.mjs";
 import { BACKUP_SKIP_REASONS } from "../shared/backup-limits.ts";
 import { backupScheduleSchema, backupReceiptSchema, backupReferenceSchema, backupHandoffSchema, backupClosedResultSchema, latestBackupOccurrence, type BackupClosedResult, type BackupHandoff, type BackupSchedule, type BackupReceipt } from "../shared/backup-schedule.ts";
 
@@ -25,7 +25,7 @@ const captureFailureSchema = z.object({
 const skippedSchema = z.object({
   jobId: z.string().regex(/^[a-f0-9]{64}$/),
   count: z.number().int().positive(),
-  items: z.array(z.object({ path: z.string().max(1024).refine(value => captureFailurePath(value) === value), reason: z.enum(BACKUP_SKIP_REASONS) }).strict()).max(50),
+  items: z.array(z.object({ path: z.string().min(1).max(1024).refine(value => skippedDisplayPath(value) === value), reason: z.enum(BACKUP_SKIP_REASONS) }).strict()).max(50),
   bots: z.record(z.string().max(160), z.string().max(80)),
 }).strict();
 export type BackupSkipped = z.infer<typeof skippedSchema>;

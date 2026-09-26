@@ -25,6 +25,8 @@ const profilePatchSchema = z.object({
     .string({ error: "name must be a string" })
     .max(BOT_PROFILE_LIMITS.name, { error: "name must be at most 100 characters" })
     .refine((value) => Boolean(value.trim()), { error: "name must not be empty" })
+    // A name is shown and written into backups' lists (Kimi audit #1).
+    .refine((value) => !/[\x00-\x1f\x7f]/.test(value), { error: "name must not contain control characters" })
     .optional(),
   title: z
     .string({ error: "title must be a string" })

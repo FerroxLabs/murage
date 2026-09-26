@@ -28,7 +28,7 @@ async function windowsPrivate(file,checkPrivate){
  let resolved;try{resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
  try{await checkPrivate(resolved);}catch(error){return refuse(error?.message==="BACKUP_WINDOWS_ACL_SHARED"?"BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS":"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",error);}
 }
-function readFile(file,excludedRoots,uid){
+function readFile(file,excludedRoots,uid,hold=false){
  if((posix()&&(!Number.isSafeInteger(uid)||uid<1))||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))refuse();
  let before,resolved;try{before=lstatSync(file,{bigint:true});resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
  if(before.isSymbolicLink())refuse("BACKUP_REMOTE_PASSWORD_FILE_KIND");
@@ -37,15 +37,20 @@ function readFile(file,excludedRoots,uid){
  const own=stat=>!posix()||(stat.uid===BigInt(uid)&&!(stat.mode&0o077n));
  const valid=stat=>plain(stat)&&own(stat);
  if(!plain(before))refuse("BACKUP_REMOTE_PASSWORD_FILE_KIND");if(!own(before))refuse("BACKUP_REMOTE_PASSWORD_FILE_SHARED");const fingerprint=identity(before),same=stat=>valid(stat)&&JSON.stringify(identity(stat))===JSON.stringify(fingerprint);
- const fd=openSync(resolved,constants.O_RDONLY|(posix()?constants.O_NOFOLLOW:0));let bytes;
+ let fd=openSync(resolved,constants.O_RDONLY|(posix()?constants.O_NOFOLLOW:0));let bytes;
  try{
   if(!same(fstatSync(fd,{bigint:true})))refuse();bytes=Buffer.alloc(Number(before.size));let offset=0;
   while(offset<bytes.length){const count=readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)refuse();offset+=count;}
   if(!same(fstatSync(fd,{bigint:true}))||!same(lstatSync(resolved,{bigint:true})))refuse();
   let length=bytes.length;if(bytes[length-1]===10){length--;if(bytes[length-1]===13)length--;}
   const password=bytes.subarray(0,length);if(!length||password.includes(0)||password.includes(10)||password.includes(13))refuse("BACKUP_REMOTE_PASSWORD_FILE_FORMAT");
-  return{path:resolved,fingerprint,password:Buffer.from(password)};
- }finally{bytes?.fill(0);closeSync(fd);}
+  const result={path:resolved,fingerprint,password:Buffer.from(password)};
+  if(!hold)return result;
+  // Kept open for a check that runs after the read (the Windows ACL): the
+  // path must still name this very file afterwards.
+  const kept=fd;fd=undefined;
+  return{result,confirm:()=>{if(!same(fstatSync(kept,{bigint:true}))||!same(lstatSync(resolved,{bigint:true}))){result.password.fill(0);refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}},close:()=>closeSync(kept)};
+ }finally{bytes?.fill(0);if(fd!==undefined)closeSync(fd);}
 }
 export const REMOTE_PASSWORD_FILE_NAME="murage-offsite-password";
 /** True when `directory` (resolved) is, or is inside, any existing root. */
@@ -116,7 +121,16 @@ function references(document){
 export function createRemotePasswordStore({chooseFile,excludedRoots,readProtected,updateProtected,uid=process.getuid?.(),createId=randomUUID,createFolders=()=>[],createExcludedRoots=()=>[],chooseCopyFile=null,
  restrict=async file=>{if(!posix())await restrictToOwnerAsync(file);},restrictDirectory=async directory=>{if(!posix())await restrictToOwnerAsync(directory,{directory:true});},checkPrivate=assertPrivateToOwnerAsync,stageId=randomUUID,keepsAcls=volumeKeepsAclsAsync}){
  const written={restrictFile:restrict,restrictDirectory,createId:stageId};
- const read=async(file,roots)=>{await windowsPrivate(file,checkPrivate);return readFile(file,roots,uid);};
+ // Kimi audit #3: read first with the file held open, then check the ACL of
+// the path, then prove the path still names the file that was read. A file
+// swapped in at any point between is refused.
+ const read=async(file,roots)=>{
+  await null; // never block the caller before the first await
+  const held=readFile(file,roots,uid,true);
+  try{await windowsPrivate(held.result.path,checkPrivate);held.confirm();return held.result;}
+  catch(error){held.result.password.fill(0);throw error;}
+  finally{held.close();}
+ };
  async function register(selected){
   const passwordRef=createId();if(!ref(passwordRef))refuse();
   await updateProtected(current=>{const saved=references(current);if(Object.keys(saved).length>=32||Object.hasOwn(saved,passwordRef))refuse();return{...current,[BACKUP_REMOTE_PASSWORDS_KEY]:JSON.stringify({...saved,[passwordRef]:{path:selected.path,fingerprint:selected.fingerprint}})};});

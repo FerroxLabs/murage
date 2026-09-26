@@ -9,7 +9,7 @@ import type { StateSnapshotManifest } from "./installation-state-snapshot.ts";
 export function botNames(file:string):Record<string,string>{
   try{
     const roster=JSON.parse(readFileSync(file,"utf8"));if(!Array.isArray(roster))return{};
-    return Object.fromEntries(roster.filter(bot=>bot&&typeof bot.id==="string"&&typeof bot.name==="string"&&bot.name.trim()).map(bot=>[bot.id,bot.name.trim().slice(0,80)]));
+    return Object.fromEntries(roster.filter(bot=>bot&&typeof bot.id==="string"&&typeof bot.name==="string"&&bot.name.trim()).map(bot=>[bot.id,bot.name.replace(/[\x00-\x1f\x7f]/g,"?").trim().slice(0,80)]));
   }catch{return{};}
 }
 /** What a backup left out, for the page that reports it: at most 50 items,

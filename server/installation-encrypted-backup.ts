@@ -57,6 +57,11 @@ const nativeBudget=(maxBytes:number)=>Math.min(maxBytes,20*1024**3);
 /** What one Windows backup can hold: the helper's 20 GiB, less the room the
  * archive's contents list and zip framing take. */
 export const WINDOWS_BACKUP_BYTES=20*1024**3-64*1024**2;
+/** Windows' helper can't decrypt a backup bigger than it holds, whatever
+ * computer made it: say so before it starts (Kimi audit #6). */
+export function windowsRestoreRefusal(platform:string,archiveBytes:number){return platform==="win32"&&archiveBytes>20*1024**3?"BACKUP_WINDOWS_SIZE_LIMIT":null;}
+/** Recovery copies and the raw copies kept beside them share the helper's cap. */
+export function windowsTotalRefusal(platform:string,stagedBytes:number,rawBytes:number){return platform==="win32"&&stagedBytes+rawBytes>WINDOWS_BACKUP_BYTES?"BACKUP_WINDOWS_SIZE_LIMIT":null;}
 /** The stage's own size cap on Windows when the owner's limit is larger. */
 export function windowsStageCap(platform:string,maxBytes:number){return platform==="win32"&&maxBytes>WINDOWS_BACKUP_BYTES?WINDOWS_BACKUP_BYTES:undefined;}
 const combineSignal=(native:AbortSignal,caller?:AbortSignal)=>caller?AbortSignal.any([native,caller]):native;
@@ -120,6 +125,7 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
   const limits=budget(options),source=lstatSync(archive);
   if(!source.isFile()||source.isSymbolicLink()||source.nlink!==1)fail("UNSAFE_ARCHIVE_FILE");
   if(source.size>limits.maxBytes+64*1024**2)fail("BACKUP_LIMIT_EXCEEDED");
+  {const refusal=windowsRestoreRefusal(process.platform,source.size);if(refusal)fail(refusal);}
   if(process.platform==="win32"){
     const runtime=await resolveWindowsBackupRuntime(options.ageExecutable);
     let privateDirectory:string|undefined;
@@ -197,6 +203,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         stage.assertSourceUnchanged();
         step="inventory";
         const fidelity=await inventoryFidelity(installation,stage,options.selection,options);
+        {const refusal=windowsTotalRefusal(process.platform,stage.manifest.files.reduce((total,file)=>total+file.bytes,0),fidelity.sources.reduce((total,file)=>total+file.bytes,0));if(refusal)fail(refusal);}
         step="manifest";
         const recovery=validateInstallationArchiveManifest({...stage.manifest,format:"murage.installation",files:stage.manifest.files.map(file=>({...file,path:file.path.replaceAll("\\","/")}))},options);
         const files=[...fidelity.sources.map(file=>({path:`raw/${file.path}`,bytes:file.bytes,sha256:file.sha256})),...recovery.files.map(file=>({...file,path:`recovery/${file.path}`}))];

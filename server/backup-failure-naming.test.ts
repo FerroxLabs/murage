@@ -55,7 +55,7 @@ it("what a verified backup left out is kept for that backup only", () => {
     coordinator.recordSkipped(job, undefined);
     expect(() => readFileSync(join(directory, "backup-last-skipped.json"))).toThrow();
     // A malformed list is not kept.
-    coordinator.recordSkipped(job, { count: 1, items: [{ path: "/etc/passwd", reason: "rebuildable" }], bots: {} });
+    coordinator.recordSkipped(job, { count: 1, items: [{ path: "workspaces/mira/x", reason: "because" }], bots: {} });
     expect(() => readFileSync(join(directory, "backup-last-skipped.json"))).toThrow();
     writeFileSync(join(directory, "unrelated"), "");
   } finally { rmSync(directory, { recursive: true, force: true }); }

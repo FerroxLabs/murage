@@ -2016,7 +2016,8 @@ export class Store {
       seedMessages?: boolean;
     } = {},
   ): BotRecord {
-    const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
+    // Control characters never reach a name (imports included; Kimi audit #1).
+    const name = profile.name?.replace(/[\x00-\x1f\x7f]/g, "").trim() || pickBotName(this.bots.map((b) => b.name));
     const section = sectionKey(profile.section);
     const bot: BotRecord = {
       id: newId(),

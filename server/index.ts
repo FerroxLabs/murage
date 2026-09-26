@@ -12188,6 +12188,7 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: "name, role, and instructions are required" });
         }
         if (name.length > 80) return json(res, 400, { error: "name must be at most 80 characters" });
+        if (/[\x00-\x1f\x7f]/.test(name)) return json(res, 400, { error: "name must not contain control characters" });
         if (role.length > 120) return json(res, 400, { error: "role must be at most 120 characters" });
         if (instructions.length > 8_000) {
           return json(res, 400, { error: "instructions must be at most 8000 characters" });

@@ -1,20 +1,20 @@
-import { captureFailurePath } from "../shared/backup-capture-failure.mjs";
+import { skippedDisplayPath } from "../shared/backup-capture-failure.mjs";
 const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long"]);
-/** A backup's list of left-out items, or null when malformed. */
+/** A backup's list of left-out items, cleaned for display: odd names are
+ * shown safely, unknown entries dropped, and only a broken count makes it
+ * null. It never makes a good result invalid (Kimi audit #1). */
 export function backupSkippedSummary(value) {
-  if (!value || typeof value !== "object" || !Number.isSafeInteger(value.count) || value.count < 1 || !Array.isArray(value.items) || value.items.length > 50) return null;
+  if (!value || typeof value !== "object" || !Number.isSafeInteger(value.count) || value.count < 1) return null;
   const items = [];
-  for (const item of value.items) {
-    const path = captureFailurePath(item?.path);
-    if (!path || !skipReasons.has(item.reason)) return null;
-    items.push({ path, reason: item.reason });
+  for (const item of Array.isArray(value.items) ? value.items.slice(0, 50) : []) {
+    const path = skippedDisplayPath(item?.path);
+    if (path && skipReasons.has(item.reason)) items.push({ path, reason: item.reason });
   }
   const bots = {};
-  if (value.bots !== undefined) {
-    if (!value.bots || typeof value.bots !== "object" || Array.isArray(value.bots)) return null;
-    for (const [id, name] of Object.entries(value.bots)) {
-      if (!/^[\w-]{1,160}$/.test(id) || typeof name !== "string" || !name.trim() || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) return null;
-      bots[id] = name;
+  if (value.bots && typeof value.bots === "object" && !Array.isArray(value.bots)) {
+    for (const [id, name] of Object.entries(value.bots).slice(0, 50)) {
+      const shown = typeof name === "string" ? name.replace(/[\x00-\x1f\x7f]/g, "?").trim().slice(0, 80) : "";
+      if (/^[\w-]{1,160}$/.test(id) && shown) bots[id] = shown;
     }
   }
   return { count: value.count, items, bots };
@@ -58,8 +58,7 @@ export function recoveryDesktopSummary(result) {
   // What a backup left out of a bot's folder (audit A-01): a bounded list of
   // paths inside the data folder, so the page can list them in plain words.
   if(result.skipped!==undefined&&["backup","backup-encrypted"].includes(result.operation)){
-    const skipped=backupSkippedSummary(result.skipped);if(!skipped)invalid();
-    summary.skipped=skipped;
+    const skipped=backupSkippedSummary(result.skipped);if(skipped)summary.skipped=skipped;
   }
   for (const key of fields) {
     const value = result[key];

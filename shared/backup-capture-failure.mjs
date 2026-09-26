@@ -251,6 +251,16 @@ export function captureFailurePath(value) {
   return path;
 }
 
+/** A path shown in a list of skipped items: display text only, never used to
+ * reach a file. Kept as written (a backslash stays a backslash), control
+ * characters shown as "?", bounded. Never refuses: an odd name must not turn
+ * a good backup into a failure (Kimi audit #1). */
+export function skippedDisplayPath(value) {
+  if (typeof value !== "string" || !value) return undefined;
+  const text = value.replace(/[\x00-\x1f\x7f]/g, "?");
+  return text.length > 1024 ? text.slice(0, 1023) + "…" : text;
+}
+
 /** Normalize whatever the failure path produced into the two closed sets,
  * plus the item inside the data folder when the refusal names one. */
 export function normalizeCaptureFailure(input) {

@@ -93,12 +93,23 @@ test("a refusal carries the item inside the data folder it was about, and only s
     assert.equal(error.path, expected, path);
   }
 });
-test("a backup's list of skipped items crosses bounded, and a malformed one is refused", async () => {
+test("a backup's list of skipped items crosses bounded; malformed entries are dropped, never a failed result", async () => {
   const skipped = { count: 2, items: [{ path: "workspaces/mira/site/node_modules", reason: "rebuildable" }, { path: "workspaces/mira/a.txt", reason: "unreadable" }], bots: { mira: "Mira" } };
   const f = fixture(); f.finish({ ...valid, skipped });
   assert.deepEqual((await f.result).skipped, skipped);
-  for (const bad of [{ ...skipped, items: [{ path: "/etc/passwd", reason: "rebuildable" }] }, { ...skipped, items: [{ path: "a", reason: "because" }] }, { count: 0, items: [] }]) {
-    const g = fixture(); g.finish({ ...valid, skipped: bad });
-    await assert.rejects(g.result, /INVALID_RECOVERY_RESULT/);
-  }
+  const g = fixture(); g.finish({ ...valid, skipped: { ...skipped, items: [{ path: "a", reason: "because" }, { path: "\u0007x", reason: "special" }] } });
+  assert.deepEqual((await g.result).skipped.items, [{ path: "?x", reason: "special" }]);
+  const h = fixture(); h.finish({ ...valid, skipped: { count: 0, items: [] } });
+  assert.equal((await h.result).skipped, undefined);
+});
+
+// Kimi audit #1: a bad display name in the skipped list must never turn a
+// published backup into a reported failure.
+test("a malformed skipped list is reduced, never a failed result", async () => {
+  const skipped = { count: 2, items: [{ path: "workspaces/b/..\\plug", reason: "special" }, { path: "a\\b", reason: "unreadable" }], bots: { b: "Be\u0007ll" } };
+  const f = fixture(); f.finish({ ...valid, skipped });
+  const result = await f.result;
+  assert.equal(result.skipped.count, 2);
+  assert.deepEqual(result.skipped.items.map(item => item.path), ["workspaces/b/..\\plug", "a\\b"]);
+  assert.equal(result.skipped.bots.b, "Be?ll");
 });

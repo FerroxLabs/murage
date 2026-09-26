@@ -67,7 +67,7 @@
     [LIMITS, ["INVALID_ARCHIVE_LIMITS", "INVALID_AGE_PROCESS_LIMITS", "INVALID_SNAPSHOT_LIMITS", "INVALID_BACKUP_LIMITS", "INVALID_BACKUP_BUDGET"]],
     [DEFAULT, ["BACKUP_CREDENTIAL_POLICY_REQUIRED", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_RESULT", "RECOVERY_OPERATION_FAILED"]],
     [TOO_BIG, ["BACKUP_LIMIT_EXCEEDED", "SNAPSHOT_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "REVIEW_LIMIT_EXCEEDED"]],
-    ["On Windows one backup can hold up to 20 GB, and your workspace is bigger than that, so no backup was made. Move large files out of your bots' folders, then try again.", ["BACKUP_WINDOWS_SIZE_LIMIT"]],
+    ["On Windows Murage can open a backup of up to 20 GB, and this one is bigger, so nothing was restored. Restore it on a Mac or a Linux computer instead.", ["BACKUP_WINDOWS_SIZE_LIMIT"]],
     [PLACE, ["DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION", "INVALID_DESTINATION", "RESTORE_PATH_ALREADY_EXISTS", "BROAD_RESTORE_TARGET_REFUSED", "RESTORE_SOURCE_TARGET_REFUSED",
       "UNSAFE_RESTORE_DIRECTORY", "UNSAFE_RESTORE_TARGET", "INVALID_PRIVATE_RESTORE_PARENT", "RESTORE_NEW_TARGET_REQUIRED", "INSTALLATION_SELECTION_INVALID"]],
     [PAUSED, ["RESTORE_REVIEW_REQUIRED", "RESTORE_ALREADY_REQUIRES_REVIEW"]],
@@ -112,6 +112,7 @@
       "INVALID_ARCHIVE_MANIFEST", "MANIFEST_MUST_BE_FIRST", "MISSING_ARCHIVE_ENTRY", "UNDECLARED_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_FILE",
       "FIDELITY_READBACK_MISMATCH", "FIDELITY_RECOVERY_MISMATCH", "INVALID_FIDELITY_MANIFEST", "INVALID_DATABASE_MANIFEST"]],
     [CAPTURE_KEY, ["AGE_PROCESS_FAILED"]],
+    ["On Windows one backup can hold up to 20 GB, and your workspace is bigger than that, so no backup was made. Move large files out of your bots' folders, then try again.", ["BACKUP_WINDOWS_SIZE_LIMIT"]],
   ];
   const captureMessages = {};
   for (const [sentence, codes] of captureGroups) for (const code of codes) captureMessages[code] = sentence;

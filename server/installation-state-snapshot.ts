@@ -95,7 +95,9 @@ function rebuildableFolder(absolute: string, name: string): boolean {
   }
   return false;
 }
-const deniedRead = (error: unknown) => ["EACCES", "EPERM"].includes(String((error as NodeJS.ErrnoException)?.code));
+// EBUSY: on Windows a file another program holds open (a sharing violation;
+// Kimi audit #5) is left out and listed like an unreadable one.
+const deniedRead = (error: unknown) => ["EACCES", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException)?.code));
 
 function projectConfig(value: unknown, omit: (path: string, reason: string) => void): JsonObject {
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");

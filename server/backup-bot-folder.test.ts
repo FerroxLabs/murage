@@ -185,7 +185,8 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
     expect(readlinkSync(join(back, "site", "main.js"))).toBe("lib/index.js");
     expect(readFileSync(join(back, "site", "main.js"), "utf8")).toBe("module.exports = 42;\n");
     expect(readlinkSync(join(back, "site", "lib-dir"))).toBe("lib");
-    expect(readlinkSync(join(back, "hosts-link"))).toBe("/etc/hosts");
+    // A shortcut leading out of the data folder is not re-created (Kimi audit #2).
+    expect(() => readlinkSync(join(back, "hosts-link"))).toThrow();
     expect(readFileSync(join(back, "store", "b.js"), "utf8")).toBe("shared contents\n");
     expect(lstatSync(join(back, "store", "b.js")).nlink).toBe(1);
     expect(readFileSync(join(back, "report 2026-09-26 10:30.md"), "utf8")).toBe("# Report\n");

@@ -1,7 +1,7 @@
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { constants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { inspectInstallationArchive, type ArchiveLimits, type InstallationArchiveManifest } from "./installation-archive.ts";
 import { InstallationSnapshotError, inspectInstallationDatabase } from "./installation-database-snapshot.ts";
@@ -44,6 +44,14 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
   }
   for (const link of manifest.links ?? []) {
     if (underLink(link.path)) fail("UNSAFE_ARCHIVE_PATH");
+    // Only a shortcut that stays inside the restored data folder comes back
+    // (Kimi audit #2): a relative target that resolves there. Anything else
+    // (an absolute target, one leading out) is left out and listed.
+    const resolved = resolve(dirname(inside(link.path)), link.target);
+    if (isAbsolute(link.target) || /^[A-Za-z]:|^[\\/]/.test(link.target) || !(resolved === state || resolved.startsWith(state + sep))) {
+      modifications.push({ component: link.path, action: `Shortcut to ${link.target} left out: it pointed outside Murage's data folder` });
+      continue;
+    }
     mkdirSync(dirname(inside(link.path)), { recursive: true, mode: 0o700 });
     try { symlinkSync(link.target, inside(link.path), process.platform === "win32" ? link.type : undefined); }
     catch (error) {
