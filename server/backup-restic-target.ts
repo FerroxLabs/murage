@@ -18,3 +18,28 @@ export function resticChildEnvironment(cwd:string,s3?:ResticS3Run):Record<string
     Object.assign(env,{RESTIC_REPOSITORY:s3.repository,AWS_DEFAULT_REGION:s3.region,AWS_ACCESS_KEY_ID:credentials.accessKeyId,AWS_SECRET_ACCESS_KEY:credentials.secretAccessKey});if(credentials.sessionToken)env.AWS_SESSION_TOKEN=credentials.sessionToken;return env;
   }catch{throw Error("RESTIC_S3_CREDENTIALS_INVALID");}
 }
+
+// SFTP destinations. Every field below reaches an ssh argument vector or a
+// restic repository string, so each one is a strict allow-list: no leading "-",
+// no whitespace, quotes or control characters, nothing ssh could read as an option.
+const hostname=/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const ipv6=/^[0-9A-Fa-f:.]{2,45}$/;
+export const sftpHostSchema=z.string().min(1).max(253).refine(value=>hostname.test(value)||(ipv6.test(value)&&(value.match(/:/g)?.length??0)>=2),"Invalid SFTP server");
+export const sftpUserSchema=z.string().min(1).max(64).regex(/^[A-Za-z0-9_][A-Za-z0-9._-]*$/);
+export const sftpPortSchema=z.number().int().min(1).max(65535);
+const folderSegment=/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}$/;
+/** An absolute folder, or one relative to the user's home folder on the server. */
+export const sftpFolderSchema=z.string().min(1).max(512).refine(value=>{const body=value.startsWith("/")?value.slice(1):value;return body.length>0&&body.split("/").every(part=>folderSegment.test(part)&&part!=="."&&part!=="..");},"Invalid SFTP folder");
+export const SFTP_HOST_KEY_TYPES=["ssh-ed25519","ecdsa-sha2-nistp256","ecdsa-sha2-nistp384","ecdsa-sha2-nistp521","ssh-rsa"] as const;
+export const sftpHostKeySchema=z.object({type:z.enum(SFTP_HOST_KEY_TYPES),key:z.string().min(16).max(4096).regex(/^[A-Za-z0-9+/]+={0,2}$/)}).strict();
+export const resticSftpTargetSchema=z.object({kind:z.literal("sftp"),remoteRef:reference,revision:z.number().int().nonnegative(),credentialRef:reference,host:sftpHostSchema,port:sftpPortSchema,user:sftpUserSchema,folder:sftpFolderSchema,hostKey:sftpHostKeySchema.optional()}).strict();
+export type ResticSftpTarget=z.infer<typeof resticSftpTargetSchema>;
+/** Murage's own per-destination key. The private half never leaves main. */
+export const resticSftpCredentialsSchema=z.object({
+  privateKey:z.string().max(8192).regex(/^-----BEGIN OPENSSH PRIVATE KEY-----\n[A-Za-z0-9+/=\n]+\n-----END OPENSSH PRIVATE KEY-----\n$/),
+  publicKey:z.string().max(1024).regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2} murage-backup$/),
+}).strict();
+export type ResticSftpCredentials=z.infer<typeof resticSftpCredentialsSchema>;
+export type ResticRemoteTarget=ResticS3Target|ResticSftpTarget;
+/** Fixed repository host label: ssh gets the real host from sftp.command. */
+export function resticSftpRepository(target:ResticSftpTarget){return `sftp:murage-backup-server:${resticSftpTargetSchema.parse(target).folder}`;}

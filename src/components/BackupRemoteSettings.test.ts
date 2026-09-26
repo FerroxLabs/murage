@@ -40,3 +40,32 @@ it("retention status, policy and preview projections are bounded and never inven
  for(const value of [null,{previewId:"x",remove:[],keep:1},{previewId:"1".repeat(64),remove:["../x"],keep:1},{previewId:"1".repeat(64),remove:[],keep:0}])expect(()=>remoteRetentionPreview(value)).toThrow();
  expect(remoteBackupError(Error("BACKUP_REMOTE_MAINTENANCE_REQUIRED"))).toContain("maintenance access key");expect(remoteBackupError(Error("BACKUP_REMOTE_RETENTION_CHANGED"))).toContain("Nothing was removed");
 });
+it("SFTP fields are validated in the window the same way main validates them",async()=>{
+ const {remoteSftpInput}=await import("./BackupRemoteSettings");
+ const sftp={label:"Home NAS",host:" nas.example.com ",port:"22",user:"backup",folder:"murage-backups/"};
+ expect(remoteSftpInput(sftp)).toEqual({kind:"sftp",label:"Home NAS",host:"nas.example.com",port:22,user:"backup",folder:"murage-backups"});
+ expect(remoteSftpInput({...sftp,host:"[::1]"})?.host).toBe("::1");
+ for(const patch of [{host:"-oProxyCommand=x"},{host:"nas example"},{user:"-l"},{folder:"../x"},{folder:"my backups"},{port:"0"},{port:"65536"},{port:"22a"},{label:""}])expect(remoteSftpInput({...sftp,...patch})).toBeNull();
+});
+it("SFTP status projects only public details and refusals",()=>{
+ const value={supported:true,pending:false,configured:true,state:"connected",revision:3,remoteRef:"remote-one",kind:"sftp",serverCheck:"host-key-changed",privateKey:"PRIVATE_CANARY",
+  sftp:{host:"nas.example.com",port:22,user:"backup",folder:"murage-backups",publicKey:"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc murage-backup",fingerprint:"SHA256:"+"A".repeat(43),privateKey:"PRIVATE_CANARY"}};
+ const status=remoteBackupStatus(value);expect(JSON.stringify(status)).not.toContain("PRIVATE_CANARY");
+ expect(status).toMatchObject({kind:"sftp",serverCheck:"host-key-changed",sftp:{host:"nas.example.com",fingerprint:"SHA256:"+"A".repeat(43)}});
+ for(const sftp of [{...value.sftp,host:"-x"},{...value.sftp,publicKey:"-----BEGIN OPENSSH PRIVATE KEY-----"},{...value.sftp,fingerprint:"MD5:aa"},undefined])expect(()=>remoteBackupStatus({...value,sftp})).toThrow();
+ expect(remoteBackupStatus({...value,serverCheck:"other"}).serverCheck).toBeUndefined();
+});
+it("SFTP refusals are explained in plain words, Windows says how to add OpenSSH",()=>{
+ expect(remoteBackupError(Error("BACKUP_REMOTE_HOST_KEY_CHANGED"))).toContain("identity is not the one you trusted");
+ expect(remoteBackupError(Error("BACKUP_REMOTE_KEY_REFUSED"))).toContain("did not accept Murage's key");
+ expect(remoteBackupError(Error("BACKUP_REMOTE_SSH_MISSING_WINDOWS"))).toContain("Optional features");
+ expect(remoteBackupError(Error("BACKUP_REMOTE_FOLDER_NOT_EMPTY"))).toContain("empty folder");
+ expect(remoteBackupError(Error("BACKUP_REMOTE_WRONG_PASSWORD"))).toContain("password file");
+});
+it("every create-or-open refusal has its own plain sentence, never a bare code",()=>{
+ const generic=remoteBackupError(Error("SOMETHING_ELSE"));
+ for(const code of ["BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_REPOSITORY_CHANGED"]){
+  const text=remoteBackupError(Error(`Error invoking remote method 'backup-remote:testConnection': Error: ${code}`));
+  expect(text,code).not.toBe(generic);expect(text).not.toMatch(/[A-Z]{3,}_[A-Z_]+|—|\bsafe/);
+ }
+});
