@@ -8,18 +8,19 @@ import { createNotificationAuthorization } from "./notification-authorization.mj
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
-import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
+import { captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
+import { announceBackupFailure } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,remoteSshDirectory,remoteControlDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -393,7 +394,7 @@ ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
   return settleRecoveryKeyRequest(()=>backupScheduleHost.setUpBackups(request));
 });
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
-ipcMain.handle("backup-schedule:clear-review",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.clearReview(args[0]);});
+ipcMain.handle("backup-schedule:clear-review",async(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");const cleared=await backupScheduleHost.clearReview(args[0]);void announceLastBackupFailure().catch(()=>{});return cleared;});
 ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
@@ -537,6 +538,11 @@ if (process.platform === "linux") {
   app.disableHardwareAcceleration();
   app.setDesktopName("com.murage.app.desktop");
 }
+// Windows shows an app's toast notifications only under the identity its
+// Start-menu shortcut carries, which the installer sets to the appId
+// (electron-builder.yml). Without it Windows had no app to put Murage's
+// banners under and dropped them (0.1.60 Windows VM, W-D7).
+if (process.platform === "win32" && app.isPackaged) app.setAppUserModelId("com.murage.app");
 
 // One instance per user: without this lock a second launch forks a second
 // harness server on a fallback port and splits data dirs in two. The loser
@@ -1871,7 +1877,7 @@ function buildErrorPage({ allPortsOccupied }) {
 const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
-const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
+const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath, ownershipFile: path.join(app.getPath("userData"), "adb-daemon-owned.json") });
 const displayMediaGuard = createDisplayMediaGuard();
 let displayMediaRequestCount = 0;
 
@@ -3384,9 +3390,23 @@ setCuaStateListener((connection) => {
 
 let desktopResticTool = null;
 const remoteBackupAttestation = new AbortController();
+/** Tells the harness about a backup that stopped (Inbox row, one notification)
+ * or that none is pending review. Waits for the harness, briefly; never throws. */
+async function announceLastBackupFailure(){
+  for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
+  if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
+  await announceBackupFailure({status:backupScheduleHost.internalStatus(),userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),
+    showNotice:sentence=>{
+      if(!Notification.isSupported())return;
+      const notice=new Notification({title:"The last backup didn't finish",body:sentence});
+      // Opens the Inbox, whose row carries the same words and Open Backups.
+      notice.on("click",()=>{const win=mainWindow;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}sendWhenLoaded("startup-background:open-inbox");});
+      notice.show();
+    }});
+}
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
-  const installation=ownedDesktopDataDir(),control=closedControlDirectory(installation);
+  const installation=ownedDesktopDataDir(),control=remoteControlDirectory({control:closedControlDirectory(installation),userData:app.getPath("userData")});
   const [{createBackupRemoteHost},{BackupRestic,resolveSshTools}]=await Promise.all([
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-remote-host.js")).href),
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-restic.js")).href),
@@ -3421,6 +3441,11 @@ async function initializeBackupRemoteHost(){
     supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&desktopResticTool.currentTool()),
     checking:()=>Boolean(desktopResticTool?.status().checking),
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
+    // Log-only, redacted (no path, key or password): what really refused an off-site step.
+    reportFailure:error=>{
+      let cause=null;try{cause=describeCaptureError(error);}catch{/* never changes the result */}
+      if(cause)try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup off-site step refused ${JSON.stringify(cause)}\n`,{mode:0o600});}catch{/* Logging never changes the result. */}
+    },
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     // Starts in the home folder, which only its owner can change on every
@@ -3444,7 +3469,7 @@ async function initializeBackupRemoteHost(){
     // Test connection is what authorizes creating an S3 repository.
     createAdapter:binding=>{
       let sshTools;if(binding.target.kind==="sftp")try{sshTools=resolveSshTools();}catch{sshTools=undefined;}
-      return new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,
+      return new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),...(process.platform==="win32"&&binding.target.kind==="sftp"?{sshDirectory:remoteSshDirectory(control)}:{}),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,
         ...(sshTools?{sshTools}:{}),...(binding.target.kind==="s3"?{authorizeInitialization:async()=>{}}:{}),...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})});
     },
     forgetLocalState:remoteRef=>forgetRemoteWorkDirectory(control,remoteRef),
@@ -3580,6 +3605,8 @@ const desktopStartup = app.whenReady().then(async () => {
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
     return;
   }
+  // W-D7: say so when the last backup stopped, once the harness is up.
+  if(backupScheduleHost)void desktopStartup.then(announceLastBackupFailure).catch(()=>{});
   const upgrade=backupScheduleHost?.pendingUpgrade();
   if(upgrade){
     const updater=ensureDesktopUpdater(false);
@@ -3710,6 +3737,9 @@ const desktopStartup = app.whenReady().then(async () => {
   // The owned-main gate above, not Electron's raw ipcMain (B6).
   registerCuaIpc(ipcMain);
   androidDevice.registerIpc(ipcMain);
+// W-D5: an adb daemon a crashed or force-closed run left behind still holds
+// that run's sockets (the old debugging port on Windows). Stop it now.
+void androidDevice.reclaimOrphan().catch(() => {});
   registerUpdaterIpc(ipcMain);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on

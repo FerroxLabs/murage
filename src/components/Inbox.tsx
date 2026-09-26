@@ -210,7 +210,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -328,7 +328,10 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   // A daily backup held up by a waiting card (0.1.60 Linux D6). Shown where
   // decisions are, beside the card it waits for; never counted.
   const backupWaiting = view === "decisions" || view === "approvals" || view === "questions" ? result?.backupWaiting ?? null : null;
-  const ownRows = [...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : [])];
+  // The last backup stopped (0.1.60 Windows W-D7): news that needs a hand,
+  // shown with the decisions and the things to read; never counted.
+  const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
+  const ownRows = [...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : [])];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -356,7 +359,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -398,6 +401,15 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         owner cannot survive that, so the backup waits. Ask cards wait
         indefinitely, so this says so here instead of backups quietly
         stopping. It clears itself the moment the card is answered. */}
+    {backupFailed && (
+      <InboxSection label="Backups">
+        <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
+          <p className="font-medium text-ink">The last backup didn't finish</p>
+          <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
+          {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
+        </div>
+      </InboxSection>
+    )}
     {backupWaiting && (
       <InboxSection label="Backups">
         <div className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">

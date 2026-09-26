@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -116,6 +118,58 @@ describe("Android USB device bridge", () => {
     expect(spawned).toEqual([]);
     await expect(controller.stop()).resolves.toEqual({ stopped: false });
     expect(calls).toEqual([["devices", "-l"]]);
+  });
+
+  // W-D5 (0.1.60 Windows): a daemon this app started outlived a crash or a
+  // forced quit, holding the dead run's sockets (its debugging port), and
+  // the next start took it for somebody else's and never stopped it.
+  it("stops, at the next start, a daemon the last run started and never stopped (W-D5)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-adb-owned-")), ownershipFile = join(dir, "adb-daemon-owned.json");
+    try {
+      const child = { once: (event, handler) => { if (event === "exit") setImmediate(handler); }, unref: () => {} };
+      const first = createAndroidDeviceController({
+        run: async () => ({ stdout: devicesOutput, stderr: "" }), resolveBinary: () => "/trusted/adb", platform: "linux",
+        probeServer: async () => false, spawn: () => child, ownershipFile, env: {},
+      });
+      await first.status({ fresh: true });
+      expect(JSON.parse(readFileSync(ownershipFile, "utf8"))).toMatchObject({ version: 1, port: 5037 });
+      // The run ends without its quit cleanup. The next one finds its daemon.
+      const calls = [];
+      const next = () => createAndroidDeviceController({
+        run: async (_binary, args) => { calls.push(args); return { stdout: "", stderr: "" }; }, resolveBinary: () => "/trusted/adb", platform: "linux",
+        probeServer: async () => true, spawn: () => child, ownershipFile, env: {}, processAlive: () => false,
+      });
+      await expect(next().reclaimOrphan()).resolves.toEqual({ reclaimed: true });
+      expect(calls).toEqual([["kill-server"]]);
+      expect(existsSync(ownershipFile)).toBe(false);
+      // Without a record, a running daemon is somebody else's and is left alone.
+      await expect(next().reclaimOrphan()).resolves.toEqual({ reclaimed: false });
+      expect(calls).toEqual([["kill-server"]]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("leaves a recorded daemon alone while the app that started it still runs, and forgets it on a clean quit (W-D5)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-adb-owned-")), ownershipFile = join(dir, "adb-daemon-owned.json");
+    try {
+      writeFileSync(ownershipFile, JSON.stringify({ version: 1, port: 5037, appPid: 424242, startedAt: 1 }));
+      const calls = [];
+      const other = createAndroidDeviceController({
+        run: async (_binary, args) => { calls.push(args); return { stdout: devicesOutput, stderr: "" }; }, resolveBinary: () => "/trusted/adb", platform: "linux",
+        probeServer: async () => true, spawn: () => ({ once: () => {}, unref: () => {} }), ownershipFile, env: {}, processAlive: pid => pid === 424242,
+      });
+      await expect(other.reclaimOrphan()).resolves.toEqual({ reclaimed: false });
+      expect(calls).toEqual([]);
+      rmSync(ownershipFile);
+      const child = { once: (event, handler) => { if (event === "exit") setImmediate(handler); }, unref: () => {} };
+      const own = createAndroidDeviceController({
+        run: async () => ({ stdout: devicesOutput, stderr: "" }), resolveBinary: () => "/trusted/adb", platform: "linux",
+        probeServer: async () => false, spawn: () => child, ownershipFile, env: {},
+      });
+      await own.status({ fresh: true });
+      expect(existsSync(ownershipFile)).toBe(true);
+      await expect(own.stop()).resolves.toEqual({ stopped: true });
+      expect(existsSync(ownershipFile)).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("runs the daemon behind a launcher that closes inherited descriptors", async () => {

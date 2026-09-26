@@ -67,6 +67,8 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
   let rejectFailure!: (failure: Error) => void;
   const failed = new Promise<never>((_resolve, reject) => { rejectFailure = reject; }); void failed.catch(() => {});
   let failure: Error | undefined, child: WindowsBackupChild | undefined, didClose = false, fd: number | undefined;
+  // Log-only: which protocol step the helper was on, and how it exited.
+  let toolStep = "verify-helper", exitCode: number | null = null, inValidate = false;
   const fail = (code = "AGE_PROCESS_FAILED") => {
     if (failure) return;
     failure = error(code); validationAbort.abort(); rejectFailure(failure);
@@ -75,7 +77,7 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
   const onAbort = () => fail("SNAPSHOT_CANCELLED");
   const onError = () => fail();
   const onClose = (code: number | null) => {
-    didClose = true; closed.resolve(code);
+    didClose = true; exitCode = code; closed.resolve(code);
     if (protocol.state !== "released" || code !== 0) fail();
   };
   const onData = (chunk: Buffer) => {
@@ -110,17 +112,21 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
     const resource = await step(dependencies.verifyHelper());
     if (!wire.safePath(resource.executable) || !/\\backup-tools\\x64\\murage-backup-age\.exe$/i.test(resource.executable)) throw error("AGE_TOOL_UNVERIFIED");
     if (failure) throw failure;
+    toolStep = "spawn";
     child = dependencies.spawn(resource.executable, ["--parent", String(process.pid)], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "" }, windowsHide: true });
     if (!child.stdin || !child.stdout || !child.stderr) throw error("AGE_PROCESS_FAILED");
     child.on("error", onError); child.on("close", onClose);
     child.stdin.on("error", onError); child.stdout.on("error", onError); child.stderr.on("error", onError);
     child.stdout.on("data", onData); child.stderr.on("data", onControl);
+    toolStep = "request";
     await step(send(child.stdin, encoded.header));
     try { if (encoded.key.length) await step(send(child.stdin, encoded.key)); } finally { encoded.key.fill(0); }
+    toolStep = "prepare";
     const context = await step(prepared.promise);
     if (failure) throw failure;
     clearTimeout(timer); timer = setTimeout(() => fail("AGE_TOOL_TIMEOUT"), timeoutMs);
     if (plaintext) {
+      toolStep = "decrypt";
       fd = (dependencies.openExclusiveOutput ?? (path => openSync(path, "wx", 0o600)))(plaintext);
       await step(send(child.stdin, protocol.command("START")));
       // Status can arrive before stdout; the exact native byte count is the barrier.
@@ -128,9 +134,12 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
       await step(outputReady.promise);
       fsyncSync(fd); closeSync(fd); fd = undefined;
     }
+    toolStep = "validate"; inValidate = true;
     const validated = await step(Promise.resolve().then(() => request.validate(context)));
+    inValidate = false;
     if (request.operation === "decrypt" && !/^[a-f0-9]{64}$/.test(validated.ciphertextSha256 ?? "")) throw error("ARCHIVE_HASH_REQUIRED");
     if (failure) throw failure;
+    toolStep = "release";
     const release = protocol.command("RELEASE");
     child.stdin.end(release); // Native requires actual EOF immediately after RELEASE.
     const digest = await step(released.promise);
@@ -147,7 +156,15 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
       if (!confirmed) child.unref();
     }
     const caught = cause instanceof InstallationSnapshotError ? cause : error("AGE_PROCESS_FAILED");
-    throw Object.assign(confirmed ? caught : error("AGE_PROCESS_CLOSE_UNCONFIRMED"), { retainedDirectory: directory, helperClosed: confirmed });
+    const reported = confirmed ? caught : error("AGE_PROCESS_CLOSE_UNCONFIRMED");
+    // The work's own failure keeps its own record; a helper failure gets the helper's.
+    if (!(reported as { toolDiagnostic?: unknown }).toolDiagnostic && !(inValidate && cause !== failure)) {
+      const raw = cause as NodeJS.ErrnoException | undefined;
+      Object.assign(reported, { toolDiagnostic: { tool: "murage-backup-age", toolStep, ...(exitCode === null ? {} : { exitCode }),
+        ...(raw && typeof raw.code === "string" && /^E[A-Z]/.test(raw.code) ? { errno: raw.code, ...(typeof raw.syscall === "string" ? { syscall: raw.syscall } : {}) } : {}),
+        ...(failure && failure !== cause ? { code: (failure as InstallationSnapshotError).code } : {}) } });
+    }
+    throw Object.assign(reported, { retainedDirectory: directory, helperClosed: confirmed });
   } finally {
     clearTimeout(timer); request.signal?.removeEventListener("abort", onAbort); encoded.key.fill(0);
     if (fd !== undefined) closeSync(fd);

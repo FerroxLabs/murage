@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -440,6 +440,44 @@ describe("ConversationDeletions", () => {
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(false);
     expect(existsSync(join(data, "events", `${OTHER}.ndjson`))).toBe(true);
     expect(restarted.pending()).toEqual([]);
+  });
+
+  // W-D8 (0.1.60 Windows): a workspace keeps read-only skill files in
+  // .murage-procedures. The Node inside Electron could not remove them on
+  // Windows (EPERM), so Delete left the folder and the boot retry failed the
+  // same way. A read-only folder does the same to rmSync on macOS and Linux.
+  it("removes a workspace holding read-only skill files, at delete and on the boot retry (W-D8)", async () => {
+    const readOnlyDesk = (data: string, threadId: string) => {
+      const desk = join(data, "workspaces", BOT, "threads", threadId), skill = join(desk, ".murage-procedures", "skills", "research");
+      touch(join(skill, "SKILL.md"), "procedure");
+      chmodSync(join(skill, "SKILL.md"), 0o444); chmodSync(skill, 0o555); chmodSync(join(desk, ".murage-procedures"), 0o555);
+      return desk;
+    };
+    const data = fresh("data");
+    const db = messagesDb(data);
+    const desk = readOnlyDesk(data, THREAD);
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+    const report = deletions.finish(deletions.begin({ threadIds: [THREAD] }));
+    expect(report.failed).toEqual([]);
+    expect(existsSync(desk)).toBe(false);
+    expect(deletions.pending()).toEqual([]);
+    // Interrupted before the files went: the next start finishes it.
+    const other = readOnlyDesk(data, OTHER);
+    deletions.begin({ threadIds: [OTHER] });
+    const restarted = new ConversationDeletions({ dataDir: data, database: () => db });
+    expect(await restarted.reconcile(() => false, () => {})).toBe(1);
+    expect(existsSync(other)).toBe(false);
+    expect(restarted.pending()).toEqual([]);
+  });
+
+  it("gives write permission back without following a link out of the folder (W-D8)", () => {
+    const root = fresh("ro"), outside = fresh("ro-outside");
+    touch(join(outside, "keep.txt")); chmodSync(join(outside, "keep.txt"), 0o444);
+    touch(join(root, "target", "inner", "f.txt")); chmodSync(join(root, "target", "inner", "f.txt"), 0o444); chmodSync(join(root, "target", "inner"), 0o555);
+    symlinkSync(outside, join(root, "target", "link"));
+    expect(removeConfined(root, join(root, "target"))).toBe("removed");
+    expect(lstatSync(join(outside, "keep.txt")).mode & 0o777).toBe(0o444);
+    expect(existsSync(join(outside, "keep.txt"))).toBe(true);
   });
 
   it("ignores ids that are not plain ids", () => {

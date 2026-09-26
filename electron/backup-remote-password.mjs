@@ -5,23 +5,33 @@ import {restrictToOwner} from "./backup-windows-acl.mjs";
 // Windows has no uid or mode bits: its files are made owner-only by ACL instead.
 const posix=()=>process.platform!=="win32";
 export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
-const refuse=()=>{throw Error("BACKUP_REMOTE_PASSWORD_UNAVAILABLE");};
+// The underlying error rides along as `cause` for the redacted log only.
+const refuse=(code="BACKUP_REMOTE_PASSWORD_UNAVAILABLE",cause)=>{throw cause===undefined||cause?.message===code?Error(code):Error(code,{cause});};
+// Refusals a person can act on keep their own name all the way to the window,
+// instead of the bare "could not be confirmed" every one of them used to become.
+const NAMED=new Set(["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"]);
+const named=error=>error instanceof Error&&NAMED.has(error.message)?error.message:"BACKUP_REMOTE_PASSWORD_UNAVAILABLE";
+/** Murage's own private folders, checked first: when they can't be prepared
+ * the refusal says so, not that the chosen or created file was wrong. */
+const roots=excludedRoots=>{try{return excludedRoots();}catch(error){return refuse("BACKUP_REMOTE_CONTROL_UNAVAILABLE",error);}};
 const ref=value=>typeof value==="string"&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(value);
 const identity=stat=>["dev","ino","size","uid","mode","mtimeNs","ctimeNs"].map(key=>String(stat[key]));
 function readFile(file,excludedRoots,uid){
  if((posix()&&(!Number.isSafeInteger(uid)||uid<1))||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))refuse();
- const before=lstatSync(file,{bigint:true}),resolved=realpathSync.native(file);
- if(before.isSymbolicLink())refuse();
- for(const directory of excludedRoots){const root=realpathSync.native(directory);if(resolved===root||resolved.startsWith(root+path.sep))refuse();}
- const valid=stat=>stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1n&&(!posix()||(stat.uid===BigInt(uid)&&!(stat.mode&0o077n)))&&stat.size>0n&&stat.size<=4096n;
- if(!valid(before))refuse();const fingerprint=identity(before),same=stat=>valid(stat)&&JSON.stringify(identity(stat))===JSON.stringify(fingerprint);
+ let before,resolved;try{before=lstatSync(file,{bigint:true});resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
+ if(before.isSymbolicLink())refuse("BACKUP_REMOTE_PASSWORD_FILE_KIND");
+ for(const directory of excludedRoots){const root=realpathSync.native(directory);if(resolved===root||resolved.startsWith(root+path.sep))refuse("BACKUP_REMOTE_PASSWORD_FILE_PLACE");}
+ const plain=stat=>stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1n&&stat.size>0n&&stat.size<=4096n;
+ const own=stat=>!posix()||(stat.uid===BigInt(uid)&&!(stat.mode&0o077n));
+ const valid=stat=>plain(stat)&&own(stat);
+ if(!plain(before))refuse("BACKUP_REMOTE_PASSWORD_FILE_KIND");if(!own(before))refuse("BACKUP_REMOTE_PASSWORD_FILE_SHARED");const fingerprint=identity(before),same=stat=>valid(stat)&&JSON.stringify(identity(stat))===JSON.stringify(fingerprint);
  const fd=openSync(resolved,constants.O_RDONLY|(posix()?constants.O_NOFOLLOW:0));let bytes;
  try{
   if(!same(fstatSync(fd,{bigint:true})))refuse();bytes=Buffer.alloc(Number(before.size));let offset=0;
   while(offset<bytes.length){const count=readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)refuse();offset+=count;}
   if(!same(fstatSync(fd,{bigint:true}))||!same(lstatSync(resolved,{bigint:true})))refuse();
   let length=bytes.length;if(bytes[length-1]===10){length--;if(bytes[length-1]===13)length--;}
-  const password=bytes.subarray(0,length);if(!length||password.includes(0)||password.includes(10)||password.includes(13))refuse();
+  const password=bytes.subarray(0,length);if(!length||password.includes(0)||password.includes(10)||password.includes(13))refuse("BACKUP_REMOTE_PASSWORD_FILE_FORMAT");
   return{path:resolved,fingerprint,password:Buffer.from(password)};
  }finally{bytes?.fill(0);closeSync(fd);}
 }
@@ -73,11 +83,11 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
    try{
     if(posix()&&(!Number.isSafeInteger(uid)||uid<1))refuse();
     bytes=Buffer.from(randomBytes(32).toString("base64url")+"\n");
-    const excluded=[...excludedRoots(),...(await createExcludedRoots())];
+    const excluded=[...roots(excludedRoots),...(await createExcludedRoots())];
     file=writeNewFile(createFolders(),excluded,uid,bytes,restrict);
     try{selected=readFile(file,excluded,uid);}catch(error){try{unlinkSync(file);}catch{/* reported below */}throw error;}
     return{passwordRef:await register(selected),path:selected.path};
-   }catch{return refuse();}finally{bytes?.fill(0);selected?.password.fill(0);}
+   }catch(error){return refuse(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE"?error.message:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}
   },
   /** A second copy where the person chooses, never inside Murage's folders or the backup folder. */
   async saveCopy(passwordRef){
@@ -97,11 +107,12 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
   async select(){
    let selected;
    try{
+    const excluded=roots(excludedRoots);
     const file=await chooseFile();if(!file)return null;
-    selected=readFile(file,excludedRoots(),uid);const passwordRef=createId();if(!ref(passwordRef))refuse();
+    selected=readFile(file,[...excluded,...(await createExcludedRoots())],uid);const passwordRef=createId();if(!ref(passwordRef))refuse();
     await updateProtected(current=>{const saved=references(current);if(Object.keys(saved).length>=32||Object.hasOwn(saved,passwordRef))refuse();return{...current,[BACKUP_REMOTE_PASSWORDS_KEY]:JSON.stringify({...saved,[passwordRef]:{path:selected.path,fingerprint:selected.fingerprint}})};});
     return{passwordRef};
-   }catch{return refuse();}finally{selected?.password.fill(0);}
+   }catch(error){return refuse(named(error),error);}finally{selected?.password.fill(0);}
   },
   async read(passwordRef){
    let selected;

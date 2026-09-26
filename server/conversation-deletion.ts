@@ -25,7 +25,7 @@
 //    and cleared only after the files are gone; boot finishes any record a
 //    crash left behind.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, ftruncateSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, ftruncateSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import nodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -263,10 +263,40 @@ export function removeConfined(root: string, target: string): RemoveOutcome {
     const stat = lstatOrNull(full);
     if (!stat) return "absent";
     if (stat.isSymbolicLink() || !stat.isDirectory()) unlinkSync(full);
-    else rmSync(full, { recursive: true, force: true });
-    return "removed";
+    else {
+      try { rmSync(full, { recursive: true, force: true }); }
+      catch {
+        // W-D8: a conversation's workspace keeps read-only skill files
+        // (.murage-procedures). The Node inside Electron refuses those on
+        // Windows (EPERM), so the folder stayed after Delete and the retry
+        // at the next start failed the same way. Give the owner write
+        // permission back, never through a link, and try once more.
+        allowOwnerWrites(full);
+        rmSync(full, { recursive: true, force: true });
+      }
+    }
+    return lstatOrNull(full) ? "failed" : "removed";
   } catch {
     return "failed";
+  }
+}
+
+/** Adds the owner's write permission to `directory` and everything in it,
+ * without following a link or junction. On Windows this clears the
+ * read-only attribute. Best effort: whatever still refuses is reported by
+ * the removal that follows. */
+export function allowOwnerWrites(directory: string): void {
+  const pending = [directory];
+  while (pending.length) {
+    const at = pending.pop()!;
+    let stat: ReturnType<typeof lstatSync>;
+    try { stat = lstatSync(at); } catch { continue; }
+    if (stat.isSymbolicLink()) continue;
+    try { chmodSync(at, (stat.mode & 0o7777) | (stat.isDirectory() ? 0o700 : 0o600)); } catch { /* reported by the removal */ }
+    if (!stat.isDirectory()) continue;
+    let names: string[] = [];
+    try { names = readdirSync(at); } catch { continue; }
+    for (const name of names) pending.push(nodePath.join(at, name));
   }
 }
 

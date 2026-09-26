@@ -5,7 +5,7 @@ import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
 const hash=value=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -230,7 +230,10 @@ export function createBackupScheduleHost(host) {
       return {verified:true};
     }catch(error){
       const diagnostic=captureFailureDiagnostic(captureStage,error);
-      try{host.reportCaptureFailure?.(diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
+      // The log alone also gets the redacted cause behind the code; the
+      // durable record below (and so the window) keeps only stage and code.
+      let cause=null;try{cause=normalizeCaptureCause(error?.captureCause);}catch{/* Diagnostic properties are not trusted. */}
+      try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
       // Durable, so the reason survives the return to the workspace and the
       // Backups page can say what happened instead of only that it failed.
       try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}

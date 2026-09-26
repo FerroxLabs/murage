@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync,readFileSync,readdirSync,realpathSync,statSync } from "node:fs";
+import { mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,describe,expect,it } from "vitest";
@@ -16,23 +16,24 @@ const key=createSshKeyPair();
 const target:ResticSftpTarget={kind:"sftp",remoteRef:"remote-one",revision:2,credentialRef:"key-one",host:"nas.example.com",port:22,user:"backup",folder:"murage-backups",hostKey:{type:"ssh-ed25519",key:blob("ssh-ed25519")}};
 const operation=(args:string[])=>["init","cat","backup","snapshots","restore","forget"].find(op=>args.includes(op));
 
-function fixture(options:{folder?:SftpFolderState|Error;exists?:boolean;runner?:(run:ResticRun)=>ResticResult|undefined}={}){
+function fixture(options:{folder?:SftpFolderState|Error;exists?:boolean;runner?:(run:ResticRun)=>ResticResult|undefined;sshDirectory?:boolean}={}){
   const root=realpathSync.native(mkdtempSync(join(tmpdir(),"murage-restic-sftp-unit-")));roots.push(root);const workDirectory=join(root,"work");
-  const calls:ResticRun[]=[],seen:{key:string;knownHosts:string;keyMode:number}[]=[],probes:{args:string[];folder:string}[]=[];let exists=options.exists??false;
+  const sshDirectory=options.sshDirectory?join(root,"s"):undefined;if(sshDirectory)mkdirSync(sshDirectory,{mode:0o700});
+  const calls:ResticRun[]=[],seen:{key:string;knownHosts:string;keyMode:number;identity:string}[]=[],probes:{args:string[];folder:string;cwd?:string}[]=[];let exists=options.exists??false;
   const runner=async(run:ResticRun):Promise<ResticResult>=>{
     calls.push(run);
     // While restic runs, the key and pinned identity exist as private files named in sftp.command.
     const option=run.args[run.args.indexOf("-o")+1],identity=/IdentityFile='([^']+)'/.exec(option)![1],known=/UserKnownHostsFile='([^']+)'/.exec(option)![1];
-    seen.push({key:readFileSync(identity,"utf8"),knownHosts:readFileSync(known,"utf8"),keyMode:statSync(identity).mode&0o777});
+    seen.push({key:readFileSync(identity,"utf8"),knownHosts:readFileSync(known,"utf8"),keyMode:statSync(identity).mode&0o777,identity});
     const custom=options.runner?.(run);if(custom)return custom;
     const op=operation(run.args);
     if(op==="cat")return exists?{code:0,stdout:JSON.stringify({version:2,id:repositoryId})}:{code:10,stdout:""};
     if(op==="init"){exists=true;return{code:0,stdout:"{}"};}
     return{code:1,stdout:""};
   };
-  const probeFolder=async(input:{args:string[];folder:string})=>{probes.push({args:input.args,folder:input.folder});if(options.folder instanceof Error)throw options.folder;return options.folder??"empty";};
-  const adapter=(t:ResticSftpTarget=target)=>new BackupRestic({executable:"/fixture/restic",repository:t,workDirectory,password:async()=>Buffer.from("FAKE_REPOSITORY_PASSWORD"),credentials:async()=>key,sshTools:{ssh:"/usr/bin/ssh",keyscan:"/usr/bin/ssh-keyscan"},runner,probeFolder});
-  return{root,workDirectory,calls,seen,probes,adapter};
+  const probeFolder=async(input:{args:string[];folder:string;cwd?:string})=>{probes.push({args:input.args,folder:input.folder,cwd:input.cwd});if(options.folder instanceof Error)throw options.folder;return options.folder??"empty";};
+  const adapter=(t:ResticSftpTarget=target)=>new BackupRestic({executable:"/fixture/restic",repository:t,workDirectory,password:async()=>Buffer.from("FAKE_REPOSITORY_PASSWORD"),credentials:async()=>key,sshTools:{ssh:"/usr/bin/ssh",keyscan:"/usr/bin/ssh-keyscan"},runner,probeFolder,...(sshDirectory?{sshDirectory}:{})});
+  return{root,workDirectory,sshDirectory,calls,seen,probes,adapter};
 }
 const noKeyLeft=(directory:string)=>readdirSync(directory,{recursive:true,withFileTypes:true}).filter(entry=>entry.isFile()).every(entry=>!readFileSync(join(entry.parentPath,entry.name),"utf8").includes("PRIVATE KEY"));
 
@@ -88,5 +89,20 @@ describe("S3 repository: Test connection creates a missing one through the guard
     await expect(make(false,"unguarded").prepareRepository()).rejects.toThrow("GUARD_REQUIRED");expect(ops).toEqual(["cat"]);ops.length=0;
     expect(await make().prepareRepository()).toMatchObject({created:true,repositoryId});expect(ops).toEqual(["cat","init","cat"]);expect(guarded).toBe(1);ops.length=0;
     expect(await make(true,"second").prepareRepository()).toMatchObject({created:false,repositoryId});expect(ops).toEqual(["cat"]);
+  });
+});
+
+describe("SFTP material in a shorter folder (Windows MAX_PATH)",()=>{
+  // A restored install's work folder is about 235 characters on Windows, and
+  // OpenSSH for Windows can't open past 260: the key and known_hosts go in
+  // main's shorter owner-only folder instead (W-D2, 0.1.60 Windows VM).
+  it("writes the per-run key and known_hosts only under sshDirectory, and runs ssh there",async()=>{
+    const f=fixture({folder:"empty",sshDirectory:true});
+    await f.adapter().prepareRepository();
+    expect(f.seen.length).toBeGreaterThan(0);
+    for(const item of f.seen)expect(item.identity.startsWith(f.sshDirectory+"/ssh-")).toBe(true);
+    expect(f.probes[0].cwd).toBe(f.sshDirectory);
+    expect(readdirSync(f.sshDirectory!).filter(name=>name.startsWith("ssh-"))).toEqual([]);
+    expect(noKeyLeft(f.workDirectory)).toBe(true);expect(noKeyLeft(f.sshDirectory!)).toBe(true);
   });
 });

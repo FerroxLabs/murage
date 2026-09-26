@@ -79,3 +79,12 @@ it("a shared data folder is shown with its path and fix, never a bare code",()=>
  expect(()=>remoteBackupStatus({supported:true,pending:false,configured:false,state:"blocked",blocked:{reason:"other",folder:"/x"}})).toThrow();
  expect(remoteBackupError(Error("Error invoking remote method 'backup-remote:save': Error: BACKUP_REMOTE_DATA_FOLDER_SHARED"))).toContain("Remove their write access");
 });
+it("names why an off-site password step was refused instead of a bare 'could not be confirmed' (W-D2)",()=>{
+ const sentences=new Set<string>();
+ for(const code of ["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED"]){
+  const sentence=remoteBackupError(Error(code));sentences.add(sentence);
+  expect(sentence,code).not.toMatch(/could not be confirmed|BACKUP_|—/);
+ }
+ expect(sentences.size).toBe(7);
+ expect(remoteBackupError(Error("SOMETHING_ELSE"))).not.toMatch(/could not be confirmed/);
+});

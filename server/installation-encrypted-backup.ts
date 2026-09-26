@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { ZipFile } from "yazl";
 import { fidelityManifestSchema, type BackupSelection, type FidelityManifest } from "../shared/installation-backup.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationStateWhileOwned, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { inspectArchiveEntries, portableArchivePath, validateArchiveFileList, validateInstallationArchiveManifest, writeInstallationStageArchive, type ArchiveLimits } from "./installation-archive.ts";
 import { inventoryFidelity, openFidelitySource } from "./installation-fidelity-snapshot.ts";
@@ -15,6 +15,9 @@ import { runWindowsBackupTransport } from "./installation-windows-backup-transpo
 import { restoreInstallation } from "./installation-restore.ts";
 
 function fail(code:string):never{throw new InstallationSnapshotError(code);}
+/** Where inside the capture a failure happened; read only by the redacted log record. */
+type CaptureStep="private-stage"|"offline-open"|"stage"|"inventory"|"manifest"|"encrypt"|"readback"|"flush"|"publish";
+function withCaptureStep<T>(error:T,step:CaptureStep):T{if(error&&typeof error==="object"&&!Object.hasOwn(error,"captureStep"))Object.defineProperty(error,"captureStep",{value:step,enumerable:false,configurable:true});return error;}
 export interface EncryptedBackupOptions extends ArchiveLimits { ageExecutable:string; identity:string; timeoutMs?:number; closeTimeoutMs?:number }
 function unconfirmedClose(error:unknown){return error instanceof InstallationSnapshotError&&error.code==="AGE_PROCESS_CLOSE_UNCONFIRMED";}
 function retainFailure(error:unknown){return process.platform==="win32"||unconfirmedClose(error);}
@@ -28,6 +31,21 @@ function discardFailedStage(scratch:string,keepCiphertext:boolean):boolean{
     else for(const name of readdirSync(scratch))if(name!=="backup.age")rmSync(join(scratch,name),{recursive:true,force:true});
   }catch{/* Whatever could not be removed is reported as retained. */}
   return !existsSync(scratch);
+}
+/** A plain filesystem failure inside the capture, named by what the person can
+ * do about it. Anything unrecognised stays ENCRYPTED_BACKUP_FAILED; the
+ * redacted log record (describeCaptureError) keeps the errno either way. */
+function capturedFilesystemError(error:unknown):InstallationSnapshotError{
+  const raw=error as {code?:unknown;name?:unknown;ioCause?:{errno?:string}}|undefined;
+  const leaseCode=raw?.name==="DataDirLeaseError"&&typeof raw.code==="string"?raw.code:undefined;
+  const errno=typeof raw?.ioCause?.errno==="string"?raw.ioCause.errno:!leaseCode&&typeof raw?.code==="string"?raw.code:undefined;
+  const code=errno==="EEXIST"&&!leaseCode?"DESTINATION_EXISTS"
+    :errno==="ENOSPC"?"BACKUP_DISK_FULL"
+    :errno==="EACCES"||errno==="EPERM"?"BACKUP_FOLDER_NOT_WRITABLE"
+    :errno==="EBUSY"?"BACKUP_FILE_IN_USE"
+    :leaseCode==="LEASE_BUSY"||leaseCode==="LEASE_CHILD_BUSY"?"RECOVERY_OWNERSHIP_REQUIRED"
+    :"ENCRYPTED_BACKUP_FAILED";
+  return new InstallationSnapshotError(code,{cause:error});
 }
 const nativeBudget=(maxBytes:number)=>Math.min(maxBytes,20*1024**3);
 const combineSignal=(native:AbortSignal,caller?:AbortSignal)=>caller?AbortSignal.any([native,caller]):native;
@@ -126,17 +144,21 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const sourceRoot=dataDirLeasePaths(dataDir).canonicalDataDir;
   if(parent===sourceRoot||parent.startsWith(sourceRoot+sep))fail("DESTINATION_INSIDE_INSTALLATION");
   try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
-  const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection})=>{
+  const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
-  let retain=false;
+  let retain=false,step:CaptureStep="offline-open";
   try{
-    const manifest=await withOfflineInstallation(dataDir,async installation=>{
+    const offline=<T,>(work:(installation:OfflineInstallation)=>Promise<T>)=>held?work(held):withOfflineInstallation(dataDir,work);
+    const manifest=await offline(async installation=>{
       if(parent===installation.dataDir||parent.startsWith(installation.dataDir+sep))fail("DESTINATION_INSIDE_INSTALLATION");
+      step="stage";
       const stage=await stageInstallationStateWhileOwned(installation,scratch,options);
       const streams=new Set<Readable>();let writer:ZipFile|undefined;
       try{
         stage.assertSourceUnchanged();
+        step="inventory";
         const fidelity=await inventoryFidelity(installation,stage,options.selection,options);
+        step="manifest";
         const recovery=validateInstallationArchiveManifest({...stage.manifest,format:"murage.installation",files:stage.manifest.files.map(file=>({...file,path:file.path.replaceAll("\\","/")}))},options);
         const files=[...fidelity.sources.map(file=>({path:`raw/${file.path}`,bytes:file.bytes,sha256:file.sha256})),...recovery.files.map(file=>({...file,path:`recovery/${file.path}`}))];
         const manifest=parseFidelity({format:"murage.installation-fidelity",version:1,snapshotId:recovery.snapshotId,createdAt:recovery.createdAt,sourceInstallation:installation.dataDir,restorePolicy:"paused-review-required",database:{status:"absent"},files,coverage:fidelity.coverage,recovery},options);
@@ -152,6 +174,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         });
         writer.once("error",error=>(writer!.outputStream as Readable).destroy(error));
         writer.end();
+        step="encrypt";
         await encryptBackupStream(options.ageExecutable,options.recipient,writer.outputStream as Readable,ciphertext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs});
         fidelity.assertUnchanged();
         stage.assertSourceUnchanged();
@@ -159,22 +182,52 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       }catch(error){retain=retainFailure(error);throw error;}
       finally{for(const stream of streams)stream.destroy();(writer?.outputStream as Readable|undefined)?.destroy();if(!retain)rmSync(stage.directory,{recursive:true,force:true});}
     });
+    step="readback";
     const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,options);
     if(inspection.manifest.snapshotId!==manifest.snapshotId)fail("FIDELITY_READBACK_MISMATCH");
     const sha256=inspection.sha256;rmSync(inspection.directory,{recursive:true,force:true});
+    step="flush";
     const fd=openSync(ciphertext,"r+");try{fsyncSync(fd);}finally{closeSync(fd);}
+    step="publish";
     if(process.platform!=="win32")linkSync(ciphertext,target);
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy};
-  }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:new InstallationSnapshotError((error as NodeJS.ErrnoException).code==="EEXIST"?"DESTINATION_EXISTS":"ENCRYPTED_BACKUP_FAILED");if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
+  }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
   finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);}}
   };
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
   let scratch:string|undefined,success=false;
   try{
-    const result=await withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal});});
+    // The data-folder lease is taken before the native helper starts and let
+    // go only after it has closed. The helper pins every folder above the
+    // backup folder against change (share-read only), and the lease records
+    // are published by hard link into the folder that holds the data folder:
+    // by default the same C:\Users\<name> that sits above "Murage Backups".
+    // Taken the other way round, that link failed with EBUSY and every
+    // Windows backup stopped with ENCRYPTED_BACKUP_FAILED.
+    let result:{value:Awaited<ReturnType<typeof execute>>;directory:string};
+    try{
+      result=await withOfflineInstallation(dataDir,installation=>withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal},installation);}));
+    }catch(error){
+      if(error instanceof InstallationSnapshotError)throw error;
+      throw withCaptureStep(capturedFilesystemError(error),(error as {name?:string}|undefined)?.name==="DataDirLeaseError"?"offline-open":"private-stage");
+    }
     // Publish only after the native private-stage lease and all age writers close.
-    linkSync(join(result.directory,"backup.age"),target);success=true;return result.value;
-  }catch(error){
+    try{linkSync(join(result.directory,"backup.age"),target);}
+    catch(error){throw withCaptureStep(capturedFilesystemError(error),"publish");}
+    success=true;return result.value;
+  }catch(caught){
+    let error=caught;
+    if(error&&typeof error==="object"&&!(error as {captureStep?:string}).captureStep)withCaptureStep(error,"private-stage");
+    // The helper refused before it had a private folder to offer: it could
+    // not create or pin one inside the backup folder (not writable by this
+    // account, not an NTFS folder on this computer's own drive, or a link).
+    // That is about the folder, never the recovery key, which is only read
+    // later to check the finished file.
+    const tool=(error as {toolDiagnostic?:{tool?:string;toolStep?:string}}|undefined)?.toolDiagnostic;
+    if(error instanceof InstallationSnapshotError&&error.code==="AGE_PROCESS_FAILED"&&(error as {captureStep?:string}).captureStep==="private-stage"&&tool?.tool==="murage-backup-age"&&(tool.toolStep==="request"||tool.toolStep==="prepare")){
+      const {toolDiagnostic,retainedDirectory,helperClosed}=error as unknown as {toolDiagnostic:object;retainedDirectory?:string;helperClosed?:boolean};
+      error=withCaptureStep(Object.assign(new InstallationSnapshotError("BACKUP_FOLDER_UNUSABLE",{cause:error}),{toolDiagnostic,...(retainedDirectory?{retainedDirectory}:{}),...(helperClosed===undefined?{}:{helperClosed})}),"private-stage");
+    }
     // The private stage and its age writers have closed unless their exit is unconfirmed.
     if(scratch&&error&&typeof error==="object"){
       const unconfirmed=unconfirmedClose(error)||(error as {helperClosed?:boolean}).helperClosed===false;

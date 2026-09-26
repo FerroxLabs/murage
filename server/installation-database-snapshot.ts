@@ -13,8 +13,8 @@ import { initializeImageOperations } from "./image-operations-schema.ts";
 
 export class InstallationSnapshotError extends Error {
   readonly code: string;
-  constructor(code: string) {
-    super(`Murage database snapshot refused (${code}). Original installation data was preserved.`);
+  constructor(code: string, options?: { cause?: unknown }) {
+    super(`Murage database snapshot refused (${code}). Original installation data was preserved.`, options);
     this.name = "InstallationSnapshotError";
     this.code = code;
   }

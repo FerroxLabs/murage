@@ -2,6 +2,7 @@ import { normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation
 import { installationRecoveryCommand } from "../server/installation-recovery-command.ts";
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
 import { randomUUID } from "node:crypto";
+import { describeCaptureError } from "../shared/backup-capture-failure.mjs";
 
 const parentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data?: unknown }) => void): void; removeListener(event: string, listener: (event: { data?: unknown }) => void): void; postMessage(value: unknown): void } }).parentPort;
 let inputUsed=false;
@@ -30,7 +31,9 @@ try {
   const code = typeof candidate === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(candidate) ? candidate : "RECOVERY_OPERATION_FAILED";
   const retainedDirectory=(process.platform==="win32"||code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&error&&typeof error==="object"&&"retainedDirectory"in error&&typeof error.retainedDirectory==="string"&&error.retainedDirectory.length<=8192?error.retainedDirectory:undefined;
   let backupAgeAttestation;try{if(code==="AGE_TOOL_UNVERIFIED"&&error&&typeof error==="object"&&"backupAgeAttestation" in error)backupAgeAttestation=normalizeBackupAgeDiagnostic(error.backupAgeAttestation);}catch{/* Keep the original failure. */}
-  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}) };
+  // Log-only, redacted: the step, errno and tool exit behind the code.
+  let cause;try{cause=describeCaptureError(error)??undefined;}catch{/* Keep the original failure. */}
+  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}),...(cause?{cause}:{}) };
   exitCode = 1;
 }
 if (parentPort) {

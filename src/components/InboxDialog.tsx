@@ -25,6 +25,7 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
   return <dialog ref={dialog} aria-label={t("inbox.title")} onCancel={onClose} onClose={onClose}
     className="m-auto h-[min(820px,90dvh)] max-h-[90dvh] w-[min(900px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-hairline bg-panel p-0 text-ink shadow-2xl backdrop:bg-black/60">
     {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
-    <Inbox initialView={initialView} onOpen={link => { void openSource(link); }} onClose={onClose} refreshKey={state.routineRuns.length} />
+    <Inbox initialView={initialView} onOpen={link => { void openSource(link); }} onClose={onClose} refreshKey={state.routineRuns.length}
+      onOpenBackups={() => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section: "backups" }); }} />
   </dialog>;
 }

@@ -25,9 +25,13 @@ test("cancel does not update and corrupted storage or unknown reference fails sa
 });
 test("rejects installation-contained, symlinked, public and multiline password files",async t=>{
  const f=fixture(t),inside=path.join(f.installation,"password.txt"),link=path.join(f.root,"link.txt");writeFileSync(inside,"FAKE",{mode:0o600});symlinkSync(f.file,link);
- for(const file of [inside,link]){f.choose(file);await assert.rejects(f.store.select(),/PASSWORD_UNAVAILABLE/);}
- f.choose(f.file);chmodSync(f.file,0o644);await assert.rejects(f.store.select(),/PASSWORD_UNAVAILABLE/);chmodSync(f.file,0o600);
- for(const value of ["","two\nlines","bad\0value"]){writeFileSync(f.file,value);await assert.rejects(f.store.select(),/PASSWORD_UNAVAILABLE/);}assert.deepEqual(f.document(),{untouched:"preserve"});
+ // Each refusal is named for what the person can fix (W-D2), not one bare "unavailable".
+ f.choose(inside);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_PLACE$/);
+ f.choose(link);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_KIND$/);
+ f.choose(path.join(f.root,"missing.txt"));await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE$/);
+ f.choose(f.file);if(process.platform!=="win32"){chmodSync(f.file,0o644);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED$/);chmodSync(f.file,0o600);}
+ writeFileSync(f.file,"");await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_KIND$/);
+ for(const value of ["two\nlines","bad\0value"]){writeFileSync(f.file,value);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_FORMAT$/);}assert.deepEqual(f.document(),{untouched:"preserve"});
 });
 test("changed file requires explicit reselection and does not reveal new content",{skip:POSIX_ONLY},async t=>{
  const f=fixture(t);await f.store.select();writeFileSync(f.file,"ROTATED_PRIVATE_CANARY");await assert.rejects(f.store.read("password-one"),/^Error: BACKUP_REMOTE_PASSWORD_UNAVAILABLE$/);

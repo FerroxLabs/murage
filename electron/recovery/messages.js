@@ -33,6 +33,13 @@
   const CAPTURE_WINDOWS = "This way of recovering is only available on Windows. Restore from a backup file instead.";
   const LIMITS = "The size or time limit for backups can't be used. Check both under Backups, Advanced, then try again.";
   const DEFAULT = "That didn't work, and nothing was changed. Open the diagnostics folder and send the newest log to support.";
+  // A plain file error while the backup file was written (W-D1): about the
+  // backup folder or the drive, never the recovery key.
+  const WRITE_FAILED = "Murage couldn't finish writing the backup file, and nothing in your workspace was changed. Try again; if it happens again, open the diagnostics folder and send the newest log to support.";
+  const DISK_FULL = "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then try again.";
+  const NOT_WRITABLE = "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder, then try again.";
+  const IN_USE = "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then try again.";
+  const FOLDER_UNUSABLE = "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in, then try again.";
   const groups = [
     [KEY_WRONG, ["AGE_PROCESS_FAILED"]],
     [KEY_NOT_A_KEY, ["BACKUP_IDENTITY_INVALID", "AGE_NATIVE_IDENTITY_REQUIRED", "AGE_NATIVE_RECIPIENT_REQUIRED", "INVALID_RECOVERY_INPUT"]],
@@ -66,6 +73,11 @@
     [VM, ["VM_WORKSPACE_BACKUP_UNSUPPORTED"]],
     [PARTS, ["BACKUP_SELECTED_COMPONENT_UNAVAILABLE", "BACKUP_REQUIRED_COMPONENT_MISSING", "INSTALLATION_MISSING", "STATE_SNAPSHOT_FAILED"]],
     [UNKNOWN_PART, ["BACKUP_UNCLASSIFIED_COMPONENT"]],
+    [WRITE_FAILED, ["ENCRYPTED_BACKUP_FAILED"]],
+    [DISK_FULL, ["BACKUP_DISK_FULL"]],
+    [NOT_WRITABLE, ["BACKUP_FOLDER_NOT_WRITABLE"]],
+    [IN_USE, ["BACKUP_FILE_IN_USE"]],
+    [FOLDER_UNUSABLE, ["BACKUP_FOLDER_UNUSABLE"]],
     [CANCELLED, ["RECOVERY_CAPTURE_CANCELLED", "SNAPSHOT_CANCELLED"]],
     [EXPIRED, ["RECOVERY_SELECTION_EXPIRED"]],
     [CAPTURE_WINDOWS, ["RECOVERY_CAPTURE_UNAVAILABLE", "RECOVERY_CAPTURE_FAILED", "INVALID_RECOVERY_CAPTURE", "INVALID_RECOVERY_CAPTURE_RESULT"]],

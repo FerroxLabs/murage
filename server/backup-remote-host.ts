@@ -45,6 +45,8 @@ export interface BackupRemoteHostOptions {
  selectPassword:()=>Promise<{passwordRef:string}|null>;
  /** Murage makes the off-site password file itself (main only); returns where it went. */
  createPassword?:()=>Promise<{passwordRef:string;path:string}>;
+ /** Log-only: the raw failure behind a refused step. Never shown in the window. */
+ reportFailure?:(error:unknown)=>void;
  /** Saves a second copy of that file where the person chooses. */
  copyPassword?:(passwordRef:string)=>Promise<{saved:true;path:string}|{cancelled:true}>;
  createAdapter:(binding:Readonly<{target:ResticS3Target;credentials:ResticS3Credentials;passwordRef:string;maintenanceCredentials?:ResticS3Credentials}|{target:ResticSftpTarget;credentials:ResticSftpCredentials;passwordRef:string}>)=>RemoteAdapter;
@@ -87,7 +89,9 @@ function readBinding(document:Document):Binding|null{
 }
 const safeErrors=new Set(["BACKUP_REMOTE_UNAVAILABLE","BACKUP_REMOTE_CHANGED","BACKUP_REMOTE_PASSWORD_REQUIRED","BACKUP_REMOTE_JOB_CHANGED","BACKUP_REMOTE_BUSY","BACKUP_REMOTE_INPUT_INVALID","BACKUP_REMOTE_REVIEW_REQUIRED","BACKUP_REMOTE_MAINTENANCE_REQUIRED","BACKUP_REMOTE_RETENTION_CHANGED",
  "BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SSH_MISSING_WINDOWS","BACKUP_REMOTE_REPOSITORY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED",
- "BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED","BACKUP_REMOTE_DATA_FOLDER_SHARED","BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED"]);
+ "BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED","BACKUP_REMOTE_DATA_FOLDER_SHARED","BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED",
+ // The password store's own refusals (electron/backup-remote-password.mjs), each with its own sentence.
+ "BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT"]);
 /** Adapter codes a person can act on, renamed for the window. Everything else stays "needs review". */
 const connectionErrors:Record<string,string>={RESTIC_SFTP_HOST_KEY_CHANGED:"BACKUP_REMOTE_HOST_KEY_CHANGED",RESTIC_SFTP_KEY_REFUSED:"BACKUP_REMOTE_KEY_REFUSED",RESTIC_SFTP_UNREACHABLE:"BACKUP_REMOTE_SERVER_UNREACHABLE",RESTIC_SFTP_UNAVAILABLE:"BACKUP_REMOTE_SFTP_UNAVAILABLE",
  RESTIC_SFTP_FOLDER_NOT_WRITABLE:"BACKUP_REMOTE_FOLDER_NOT_WRITABLE",RESTIC_SFTP_FOLDER_NOT_EMPTY:"BACKUP_REMOTE_FOLDER_NOT_EMPTY",RESTIC_SFTP_FOLDER_INVALID:"BACKUP_REMOTE_FOLDER_INVALID",RESTIC_WRONG_PASSWORD:"BACKUP_REMOTE_WRONG_PASSWORD",
@@ -104,7 +108,11 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
  async function exclusive<T>(work:()=>Promise<T>):Promise<T>{
   if(pending)refuse("BACKUP_REMOTE_BUSY");pending=true;
   try{if(!options.supported())refuse("BACKUP_REMOTE_UNAVAILABLE");if(options.sharedFolder?.())refuse("BACKUP_REMOTE_DATA_FOLDER_SHARED");return await work();}
-  catch(error){if(error instanceof Error&&safeErrors.has(error.message))throw error;return refuse();}
+  catch(error){
+   // Log-only: what actually stopped the step, before it is named for the window.
+   try{options.reportFailure?.(error);}catch{/* Logging never changes the result. */}
+   if(error instanceof Error&&safeErrors.has(error.message))throw error;return refuse();
+  }
   finally{pending=false;}
  }
  function check(binding:Binding|null,expected:unknown,remoteRef?:unknown){
@@ -235,7 +243,7 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
   if(!reference.safeParse(remoteRef).success)refuse("BACKUP_REMOTE_CHANGED");
   const prior=readBinding(await options.readProtected());check(prior,expectedRevision,remoteRef);if(!prior)refuse();
   if(!options.createPassword)refuse("BACKUP_REMOTE_UNAVAILABLE");
-  let created:{passwordRef:string;path:string};try{created=await options.createPassword();}catch{return refuse("BACKUP_REMOTE_PASSWORD_NOT_CREATED");}
+  let created:{passwordRef:string;path:string};try{created=await options.createPassword();}catch(error){if(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE")throw error;try{options.reportFailure?.(error);}catch{/* log only */}return refuse("BACKUP_REMOTE_PASSWORD_NOT_CREATED");}
   const passwordRef=reference.safeParse(created.passwordRef);if(!passwordRef.success||typeof created.path!=="string"||created.path.length>4096)refuse("BACKUP_REMOTE_PASSWORD_NOT_CREATED");
   await options.updateProtected(current=>{const binding=readBinding(current);check(binding,expectedRevision,remoteRef);if(!binding)refuse();const {automatic:_automatic,...rest}=binding;return{...current,[BACKUP_REMOTE_BINDING_KEY]:JSON.stringify({...rest,passwordRef:passwordRef.data,target:{...binding.target,revision:binding.target.revision+1}})};});
   return{created:true,path:created.path};
