@@ -135,14 +135,19 @@ export function backupToolIdentity(file,currentExecutable=process.execPath){
   }catch{return null;}
 }
 /** Bounded shared runner; cancellation never settles ahead of observed child close. */
-export function asyncBackupCodesign(args,{signal,spawnCommand=spawn}={}){
+/** Default bound on one codesign run. A cold first launch, while macOS is
+ * still assessing a freshly installed app, can take longer than this; the
+ * capability then retries in the background with BACKUP_CODESIGN_RETRY_MS. */
+export const BACKUP_CODESIGN_TIMEOUT_MS=10000;
+export const BACKUP_CODESIGN_RETRY_MS=120000;
+export function asyncBackupCodesign(args,{signal,spawnCommand=spawn,timeoutMs=BACKUP_CODESIGN_TIMEOUT_MS}={}){
   return new Promise(resolve=>{
     if(signal?.aborted){resolve({status:null,error:Error("Attestation aborted")});return;}
     let child;try{child=spawnCommand("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"]});}catch(error){resolve({status:null,error});return;}
     let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),error;
     const stop=reason=>{error??=reason;child.kill("SIGKILL");};
     const abort=()=>stop(Error("Attestation aborted"));
-    const timer=setTimeout(()=>stop(Error("Attestation timeout")),10000);
+    const timer=setTimeout(()=>stop(Error("Attestation timeout")),timeoutMs);
     signal?.addEventListener("abort",abort,{once:true});
     if(signal?.aborted)abort();
     child.stdout.on("data",chunk=>{if(stdout.length+chunk.length>65536)stop(Error("Attestation output limit"));else stdout=Buffer.concat([stdout,chunk]);});
@@ -163,7 +168,7 @@ export async function readBackupToolBytes(file,{strictMode=false}={}){
     return same(await handle.stat({bigint:true}))&&same(lstatSync(file,{bigint:true}))?bytes:null;
   }catch{return null;}finally{await handle?.close();}
 }
-export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,timeoutMs}={}){
   const payload=backupAgePinForTarget("darwin",process.arch)?.payloadSha256;
   if(!payload||normalizedAgePayloadHash(bytes)!==payload)return false;
   try{
@@ -171,19 +176,19 @@ export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecuta
     if(!unchanged())return false;
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools",process.arch,"age")||!executable.startsWith(app+path.sep))return false;
-    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
+    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal,...(timeoutMs?{timeoutMs}:{})});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
     await checked(["--verify","--strict","-R","=anchor apple generic",app]);
     const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
     const toolInfo=await checked(["--display","--verbose=4",resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
     await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return unchanged();
   }catch{return false;}
 }
-export async function trustedBackupAgeExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+export async function trustedBackupAgeExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,timeoutMs}={}){
   if(process.platform!=="darwin")return trustedBackupAgeExecutable(file);
   try{
     const pin=backupAgePinForTarget(process.platform,process.arch),identity=backupToolIdentity(file,currentExecutable);if(!pin||!identity||signal?.aborted)return false;
     const bytes=await readBackupToolBytes(file);if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
-    const trusted=digest(bytes)===pin.executableSha256||Boolean(pin.payloadSha256)&&await signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
+    const trusted=digest(bytes)===pin.executableSha256||Boolean(pin.payloadSha256)&&await signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal,timeoutMs});
     return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
   }catch{return false;}
 }

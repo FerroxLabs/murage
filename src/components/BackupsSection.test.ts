@@ -56,7 +56,7 @@ import { vi } from "vitest";
 import { SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
-import type { RemoteController } from "./BackupRemoteSettings";
+import { remoteBackupStatus, type RemoteController } from "./BackupRemoteSettings";
 
 const refs = { installationRef: "fixture_install", destinationRef: "fixture_dest", recoveryRef: "fixture_key", destinationLabel: "Fixture backups", recoveryLabel: "Recovery.age" };
 const enabledSchedule = { enabled: true, preUpgrade: false, time: "22:15", timezone: "Asia/Bangkok", catchupMs: 7200000, maxBytes: 1073741824, maxDurationMs: 600000, ...refs, selection: { scope: "application-data" as const, credentialPolicy: "preserve-in-encrypted-fidelity" as const } };
@@ -74,6 +74,24 @@ describe("backup summary", () => {
     expect(formatBackupSize(1_000_000)).toBe("1 MB");
     expect(formatBackupSize(1234567890)).toBe("1.2 GB");
     expect(formatBackupSize(15_000_000_000)).toBe("15 GB");
+  });
+  // Mac customer re-test 2: the first launch after an install or update said
+  // "Needs a supported desktop app" while Murage was still checking its tool.
+  it("says it is getting ready, not that the app is unsupported, while the backup tool is checked", () => {
+    const checking = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, supported: false, checking: true }, remote: { supported: false, pending: false, configured: false, state: "unavailable", checking: true } }, () => "WHEN");
+    expect(checking.schedule).toBe("Getting ready…");
+    expect(checking.offsite).toBe("Getting ready…");
+    const final = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, supported: false }, remote: { supported: false, pending: false, configured: false, state: "unavailable" } }, () => "WHEN");
+    expect(final.schedule).toBe("Needs a supported desktop app");
+    expect(final.offsite).toBe("Not available in this app");
+  });
+  it("keeps asking for status while the tool is checked, and reads the checking flag", () => {
+    const settings = read("./BackupSettings.tsx"), remote = read("./BackupRemoteSettings.tsx");
+    expect(settings).toContain("!(status&&!status.supported&&status.checking)");
+    expect(settings).toMatch(/if\(!value\.supported\)timer=window\.setTimeout\(read,3000\)/);
+    expect(remote).toContain("if(!status||status.supported||!status.checking||!bridge)return;");
+    expect(remoteBackupStatus({ supported: false, pending: false, configured: false, state: "unavailable", checking: true })).toMatchObject({ checking: true });
+    expect(remoteBackupStatus({ supported: false, pending: false, configured: false, state: "unavailable" }).checking).toBeUndefined();
   });
   it("summarises a healthy setup in one line each with no attention", () => {
     const summary = backupSummary(healthy, () => "WHEN");

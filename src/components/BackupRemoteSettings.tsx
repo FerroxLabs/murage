@@ -29,6 +29,9 @@ export function remoteSftpInput(draft:SftpDraft){
  return{kind:"sftp" as const,label,host:parsedHost.data,port:port.data,user:user.data,folder:parsedFolder.data};
 }
 export type DestinationKind="s3"|"sftp";
+/** Shown while Murage checks its backup tool after starting, most visibly on
+ * the first launch after an install or update. */
+export const REMOTE_CHECKING="Getting ready. Murage checks its backup tool after it starts.";
 const labels:Record<string,string>={unconfigured:"No off-site destination saved","password-required":"Choose the off-site password file",disconnected:"Destination saved, not connected",connected:"Off-site storage connected",blocked:"Off-site copies are off",initializing:"Off-site setup needs review","needs-review":"Off-site copy needs review",unavailable:"Off-site copies are unavailable in this app"};
 export interface RetentionDraft {keepLast:string;keepDaily:string;keepWeekly:string;keepMonthly:string}
 const retentionFields=[["keepLast","Keep latest copies"],["keepDaily","Keep daily copies"],["keepWeekly","Keep weekly copies"],["keepMonthly","Keep monthly copies"]] as const;
@@ -55,6 +58,7 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
  if(typeof v.supported!=="boolean"||typeof v.pending!=="boolean"||typeof v.configured!=="boolean"||typeof v.state!=="string"||!Object.hasOwn(labels,v.state))throw Error("Invalid status");
  if(v.configured&&(!Number.isSafeInteger(v.revision)||Number(v.revision)<1||typeof v.remoteRef!=="string"||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(v.remoteRef)))throw Error("Invalid binding");
  const result:BackupRemoteStatus={supported:v.supported,pending:v.pending,configured:v.configured,state:v.state};
+ if(v.supported===false&&v.checking===true)result.checking=true;
  if(Number.isSafeInteger(v.revision)&&Number(v.revision)>=0)result.revision=Number(v.revision);
   if(v.configured){result.remoteRef=String(v.remoteRef);if(typeof v.label==="string"&&v.label.length<=80)result.label=v.label;result.passwordSelected=v.passwordSelected===true;result.maintenanceSelected=v.maintenanceSelected===true;
   result.kind=v.kind==="sftp"?"sftp":"s3";
@@ -145,6 +149,12 @@ export function useBackupRemote(){
   finally{gate.current=false;if(mounted.current)setBusy(null);}
  }
  useEffect(()=>{mounted.current=true;void run("refresh",async(_api,expected)=>refresh(expected));return()=>{mounted.current=false;version.current++;};},[]);
+ // While the backup tool is still being checked, look again until it is ready.
+ useEffect(()=>{
+  if(!status||status.supported||!status.checking||!bridge)return;
+  const timer=window.setInterval(()=>{if(!gate.current)void run("refresh",async(_api,expected)=>refresh(expected));},2000);
+  return()=>window.clearInterval(timer);
+ },[status?.supported,status?.checking,bridge]);
  const locked=!bridge||!status?.supported||status.pending||!!busy||stale;
  const payload=remoteBackupInput(draft),configured=status?.configured===true;
  const binding=typeof status?.remoteRef==="string"&&Number.isSafeInteger(status.revision)?{ref:status.remoteRef,revision:status.revision!}:null;
@@ -169,7 +179,7 @@ export function RemoteMessages({r,area}:{r:RemoteController;area:RemoteArea}){
 export function OffsiteStatus({r}:{r:RemoteController}){
  const {status,bridge,stale}=r;
  return <>
-  <p role="status" className="text-[13px] font-medium text-ink">{status?labels[status.state]:bridge?"Checking the off-site copy…":"Off-site copies are unavailable in this window"}</p>
+  <p role="status" className="text-[13px] font-medium text-ink">{status?(status.checking?REMOTE_CHECKING:labels[status.state]):bridge?"Checking the off-site copy…":"Off-site copies are unavailable in this window"}</p>
   {status?.blocked&&<p role="alert" className="break-words text-[13px] text-warning">{DATA_FOLDER_SHARED_TEXT} Folder: {status.blocked.folder}. On Linux or macOS, for example: chmod go-w "{status.blocked.folder}"</p>}
   {status&&!status.supported&&<p className="text-[13px] text-ink-secondary">Off-site copies need a supported desktop build with its verified backup tool. Backups on this computer are separate.</p>}
   {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Off-site work is in progress. Refresh after it finishes.</p>}

@@ -42,25 +42,25 @@ export function trustedBackupResticExecutable(file){
  }catch{return false;}finally{if(fd!==undefined)closeSync(fd);}
 }
 
-export async function signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,arch=process.arch}={}){
+export async function signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,arch=process.arch,timeoutMs}={}){
   const pin=resticPinForTarget("darwin",arch);if(!pin?.payloadSha256||normalizedAgePayloadHash(bytes)!==pin.payloadSha256)return false;
   try{
     const identity=backupToolIdentity(file,currentExecutable),unchanged=()=>identity!==null&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity;
     if(!unchanged())return false;
     const bundle=macBundle(file,currentExecutable,arch);if(!bundle)return false;
-    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
+    const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal,...(timeoutMs?{timeoutMs}:{})});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
     await checked(["--verify","--strict","-R","=anchor apple generic",bundle.app]);
     const info=await checked(["--display","--verbose=4",bundle.app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
     const toolInfo=await checked(["--display","--verbose=4",bundle.resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
     await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,bundle.resolved]);return unchanged();
   }catch{return false;}
 }
-export async function trustedBackupResticExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
+export async function trustedBackupResticExecutableAsync(file,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,timeoutMs}={}){
  const pin=currentPin();if(!pin)return false;
  try{
   const identity=backupToolIdentity(file,currentExecutable);if(!identity||signal?.aborted)return false;
   const bytes=await readBackupToolBytes(file,{strictMode:!windows()});if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
-  const trusted=createHash("sha256").update(bytes).digest("hex")===pin.originalSha256||process.platform==="darwin"&&await signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
+  const trusted=createHash("sha256").update(bytes).digest("hex")===pin.originalSha256||process.platform==="darwin"&&await signedResticOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal,timeoutMs});
   return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
  }catch{return false;}
 }

@@ -98,6 +98,9 @@ export interface BackupSummaryInput {
   remoteStale: boolean;
   remoteFailure: string | null;
 }
+/** Murage attests its backup tool after it starts; on the first launch after
+ * an install or update macOS can make that take a while. Not a failure. */
+export const SCHEDULE_CHECKING = "Getting ready…";
 export interface BackupSummary { last: string; schedule: string; offsite: string; attention: string[] }
 
 /** One plain summary for the "Your backups" card. `formatTime` is injected so
@@ -109,11 +112,11 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     : !input.scheduleBridge ? "Not available in this window" : s ? "No verified backup on this computer yet" : "Checking…";
   const schedule = !input.scheduleBridge ? "Not available in this window"
     : !s ? "Checking…"
-    : !s.supported ? "Needs a supported desktop app"
+    : !s.supported ? s.checking ? SCHEDULE_CHECKING : "Needs a supported desktop app"
     : s.enabled
       ? `On · daily at ${s.schedule.time ?? "?"} (${s.schedule.timezone ?? "?"})${s.schedule.closedApp === true ? ", also while Murage is closed" : ""}`
       : "Off";
-  let offsite = !input.remoteBridge ? "Not available in this window" : !r ? "Checking…" : !r.supported ? "Not available in this app" : offsiteLabels[r.state] ?? "Needs review";
+  let offsite = !input.remoteBridge ? "Not available in this window" : !r ? "Checking…" : !r.supported ? r.checking ? SCHEDULE_CHECKING : "Not available in this app" : offsiteLabels[r.state] ?? "Needs review";
   if (r?.supported && r.configured) {
     if (r.lastUpload?.state === "verified") offsite += " · last copy verified";
     if (r.automaticUpload?.enabled && r.automaticUpload.state === "enabled") offsite += " · automatic uploads on";

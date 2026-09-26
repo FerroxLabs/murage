@@ -37,6 +37,8 @@ interface RemoteAdapter {
 }
 export interface BackupRemoteHostOptions {
  supported:()=>boolean;
+ /** The backup tool is still being checked; "unavailable" is not final yet. */
+ checking?:()=>boolean;
  readProtected:()=>Promise<Document>;
  /** Must serialize derivation and durable OS-encrypted persistence. */
  updateProtected:(derive:(current:Document)=>Document)=>Promise<unknown>;
@@ -64,6 +66,8 @@ export interface BackupRemoteHostOptions {
 function refuse(code="BACKUP_REMOTE_REVIEW_REQUIRED"):never{throw Error(code);}
 export interface BackupRemoteStatus {
  supported:boolean;pending:boolean;configured:boolean;state:string;
+ /** Unsupported only for now: the backup tool is still being checked. */
+ checking?:boolean;
  revision?:number;remoteRef?:string;label?:string;passwordSelected?:boolean;repositoryId?:string;
  kind?:"s3"|"sftp";
  /** Off-site copies are refused while this folder can be changed by other accounts. */
@@ -114,7 +118,7 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
  }
  const publicDetails=(binding:Binding)=>binding.target.kind==="sftp"?{kind:"sftp" as const,sftp:{host:binding.target.host,port:binding.target.port,user:binding.target.user,folder:binding.target.folder,publicKey:(binding.credentials as ResticSftpCredentials).publicKey,...(binding.target.hostKey?{fingerprint:sshFingerprint(binding.target.hostKey.key)}:{})}}:{kind:"s3" as const};
  async function status():Promise<BackupRemoteStatus>{
-  const supported=options.supported();if(!supported)return{supported:false,pending,configured:false,state:"unavailable"};
+  const supported=options.supported();if(!supported)return{supported:false,pending,configured:false,state:"unavailable",...(options.checking?.()?{checking:true}:{})};
   const shared=options.sharedFolder?.();
   if(shared){
    return{supported:true,pending,configured:false,state:"blocked",blocked:{reason:"data-folder-shared",folder:shared}};

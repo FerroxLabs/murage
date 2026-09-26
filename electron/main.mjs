@@ -3411,6 +3411,7 @@ async function initializeBackupRemoteHost(){
   if(desktopDataOwner!==owner||ownedDesktopDataDir()!==installation)return;
   backupRemoteHost=createBackupRemoteHost({
     supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&desktopResticTool.currentTool()),
+    checking:()=>Boolean(desktopResticTool?.status().checking),
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
@@ -3480,6 +3481,7 @@ async function initializeBackupScheduleHost(){
       await closedBackupController.assertInvocation(closedBackupDescriptor,closedBackupInvocation.descriptorPath);
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
+    checking:()=>Boolean(desktopDataOwner&&desktopBackupTool.status().checking),
     relaunchBlocked:()=>linuxRelaunchBlocked(),
     elevated:()=>windowsElevated(),
     verifyEncrypted:requireDesktopBackupTool,
@@ -3533,7 +3535,7 @@ const desktopStartup = app.whenReady().then(async () => {
   if(closedBackupRequested){
     closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
     // The worker waits for desktopStartup; never await it from this callback.
-    void desktopStartup.then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
+    void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
@@ -3549,7 +3551,9 @@ const desktopStartup = app.whenReady().then(async () => {
   if(backupScheduleHost?.internalStatus().phase==="handoff-armed"){
     // No normal writers or credential migrations start before this private claim.
     desktopRecoveryMode=true;
-    void desktopStartup.then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
+    // A slow first check of the backup tool (macOS still assessing the app)
+    // must not turn this backup into one that needs review: wait for it.
+    void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
     return;
   }
   const upgrade=backupScheduleHost?.pendingUpgrade();

@@ -126,6 +126,8 @@ type SkillRecordingPayload = {
 
   interface BackupScheduleStatus {
     supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
+    /** Unsupported only for now: the backup tool is still being checked. */
+    checking?:boolean;
     preUpgradeSupported?:boolean;
     schedule:import("../../shared/backup-schedule").BackupSchedule;
     lastVerified?:import("../../shared/backup-schedule").BackupReceipt;
