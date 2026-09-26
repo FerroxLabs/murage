@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, join, relative, isAbsolute, sep } from "node:path";
 import type { Message, Store } from "./store.ts";
+import type { RoutineCardHooks } from "./peer-approval.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { ATTACHMENTS_DIR, IMAGE_MAX_BYTES } from "./attachments.ts";
@@ -15,7 +16,10 @@ import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOu
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
-interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void }
+interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
+  /** Held open by a routine run: its tool call gave up (the turn ended) and
+   * the card is still the owner's to answer. */
+  detached?: boolean }
 /** How long an image approval card waits for the owner: the same 15 minutes
  * every engine permission request gets (drivers/acp/core.ts, drivers/codex.ts)
  * before the harness closes it as unanswered. The generate_image MCP call in
@@ -102,14 +106,18 @@ export class ImageOperations {
   private readonly store: Store;
   private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
   private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
+  private readonly routineCard?: RoutineCardHooks;
+  /** An allow given after a routine run's turn had ended: the run's next
+   * image in that conversation is already approved, once. */
+  private readonly lateAllows = new Set<string>();
   private readonly pending = new Map<string, Pending>();
   private readonly jobs = new Map<string, Promise<unknown>>();
   private readonly workspaces = new Set<string>();
   /** `speaker` names the member who asked when the card lands in a channel:
    * without it the card has no sender, so neither the channel view nor the
    * native approval notification can tell whose request it is. */
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined }) {
-    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker;
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks }) {
+    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard;
   }
   private db() {
     const db = database();
@@ -241,6 +249,7 @@ export class ImageOperations {
     return released;
   }
   private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown): Promise<boolean> {
+    if (this.lateAllows.delete(actor.threadId)) return Promise.resolve(true);
     const requestId = `image-${randomUUID()}`;
     const prompt = request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "";
     const from = this.speaker?.(actor.threadId, actor.botId);
@@ -252,20 +261,46 @@ export class ImageOperations {
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
     this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
+    let held = false;
+    try { held = this.routineCard?.opened(actor.threadId, requestId, card.card?.title ?? "Approve image") === true; } catch { /* delivery never changes authority */ }
     return new Promise(resolve => {
       let settled = false;
+      let answered = false;
       // Only the owner's own answer is recorded as allow/deny. A card nobody
       // answered (turn cancelled, request revoked, the shared bound elapsed)
       // settles as "unavailable", the same closing the harness gives every
       // other approval its turn abandoned, so it never reads as a denial.
       const finish = (allow: boolean, source: "user" | "system" = "system") => {
+        const entry = this.pending.get(requestId);
+        if (entry?.detached) {
+          // the tool call already gave up; this is the owner's late answer
+          if (answered) return; answered = true; this.pending.delete(requestId);
+          const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
+          if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
+          let resumed = false;
+          try { resumed = this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none") === true; } catch { /* delivery never changes authority */ }
+          if (resumed && allow && source === "user") this.lateAllows.add(actor.threadId);
+          return;
+        }
         if (settled) return; settled = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
+        if (held) { try { this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none"); } catch { /* delivery never changes authority */ } }
         const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
         if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
         this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve(allow);
       };
-      const abort = () => finish(false);
-      const timer = setTimeout(abort, IMAGE_APPROVAL_TIMEOUT_MS); timer.unref();
+      const abort = () => {
+        // A routine run holds the card: the tool call gave up (its turn is
+        // over), but the card stays the owner's to answer and the run waits.
+        const entry = this.pending.get(requestId);
+        if (held && entry && !settled) {
+          settled = true; actor.signal.removeEventListener("abort", abort);
+          entry.detached = true;
+          this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve(false);
+          return;
+        }
+        finish(false);
+      };
+      const timer = held ? undefined : setTimeout(abort, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
       this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();
@@ -275,7 +310,7 @@ export class ImageOperations {
     if (!requestId.startsWith("image-")) return null;
     const pending = this.pending.get(requestId);
     if (!pending || pending.threadId !== threadId || behavior === "answer") return "unavailable";
-    try { pending.active(); } catch { pending.settle(false); return "unavailable"; }
+    if (!pending.detached) { try { pending.active(); } catch { pending.settle(false); return "unavailable"; } }
     pending.settle(behavior === "allow", "user"); return behavior === "allow" ? "allowed-once" : "rejected";
   }
   cancelThread(threadId: string) { for (const pending of this.pending.values()) if (pending.threadId === threadId) pending.settle(false); }

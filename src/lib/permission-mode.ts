@@ -80,14 +80,15 @@ export function fullAccessRefusalMessage(patch: object, error: unknown): string 
  * own terms: it used to describe the off position as "Let this bot talk to
  * teammates on its own", which read as the opposite of the label beside it.
  * Full access skips the card in a turn the owner started (server/index.ts,
- * fullAccessSkipsPeerCard) while webhook and routine turns still ask, so with
+ * fullAccessSkipsPeerCard) and in a routine run at that level, while webhook
+ * turns still ask, so with
  * Full access as the default the switch cannot promise to always stop. */
 export const PEER_CONTACT_LABEL = "Ask me before contacting other bots";
 export function peerContactHint(bot: Pick<Bot, "autoApprove" | "fullAccess" | "approvePeerComms"> & { noLimits?: boolean }): string {
   if (!bot.approvePeerComms) return "Off: this bot contacts other bots without asking you first.";
   const mode = permissionModeOf(bot);
   if (mode === "full" || mode === "unlimited") {
-    return `On, but ${mode === "full" ? "Full access" : "No limits"} skips this in conversations you start; webhook and routine turns still stop and ask. Switch to Auto to be asked every time.`;
+    return `On, but ${mode === "full" ? "Full access" : "No limits"} skips this in conversations you start and in routines at that level; webhook turns still stop and ask. Switch to Auto to be asked every time.`;
   }
   return "On: this bot stops and asks you before it contacts another bot.";
 }

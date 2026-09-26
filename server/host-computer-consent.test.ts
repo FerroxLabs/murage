@@ -2,7 +2,7 @@
 // who is asked, who is grandfathered, and what is (and is not) remembered.
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import {
@@ -161,5 +161,33 @@ describe("grandfathering on load", () => {
     // owner's own answer on the card does.
     reloaded.appendMessage(fresh.threadId, allowedHostCard("allow"));
     expect(new Store(selection).bot(fresh.id)?.hostComputerConsent).toBe("ask");
+  });
+});
+
+// In a scheduled or manual routine run the card is held open like a
+// permission card (no 15-minute close), and the run hears when it opens and
+// is answered, so a turn that ended meanwhile carries on once it is.
+describe("the card in a routine run", () => {
+  beforeEach(() => { rmSync(DATA_DIR, { recursive: true, force: true }); });
+
+  it("is never closed for waiting, and reports its answer to the run", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      const events: string[] = [];
+      const held: ApprovalBus = { store, broadcast: () => {}, routineCard: {
+        opened: (_threadId, _requestId, summary) => { events.push(`opened:${summary}`); return true; },
+        closed: (_threadId, _requestId, answer) => { events.push(`closed:${answer}`); return true; },
+      } };
+      const waiting = awaitHostComputerConsent(held, bot, bot.threadId, 20);
+      vi.advanceTimersByTime(20);
+      expect(await waiting).toBe("waiting");
+      vi.advanceTimersByTime(60 * 60_000);
+      const [card] = consentCards(store, bot.threadId);
+      expect(card!.card!.answered).toBeUndefined();
+      expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", () => {})).toBe(true);
+      expect(events).toEqual([`opened:Let @${bot.name} use this computer?`, "closed:allow"]);
+    } finally { vi.useRealTimers(); }
   });
 });

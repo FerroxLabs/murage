@@ -78,7 +78,10 @@ interface Pending {
   botId: string;
   threadId: string;
   messageId: string;
-  timer: ReturnType<typeof setTimeout>;
+  /** None while a routine run holds the card open. */
+  timer?: ReturnType<typeof setTimeout>;
+  /** Held open by a routine run (ApprovalBus.routineCard). */
+  held: boolean;
   waiters: Set<(outcome: HostConsentOutcome) => void>;
   bus: ApprovalBus;
 }
@@ -99,6 +102,10 @@ function settle(pending: Pending, behavior: "allow" | "deny", source: "user" | "
 function finish(pending: Pending, outcome: HostConsentOutcome): void {
   pendingByBot.delete(pending.botId);
   clearTimeout(pending.timer);
+  if (pending.held) {
+    const answer = outcome === "allowed" ? "allow" : outcome === "declined" ? "deny" : "none";
+    try { pending.bus.routineCard?.closed(pending.threadId, pending.requestId, answer); } catch { /* delivery never changes authority */ }
+  }
   for (const waiter of pending.waiters) waiter(outcome);
   pending.waiters.clear();
 }
@@ -121,22 +128,26 @@ function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
       held: "Asked once for each bot on Auto.",
     },
   });
+  let held = false;
+  try { held = bus.routineCard?.opened(threadId, requestId, `Let @${bot.name} use this computer?`) === true; } catch { /* delivery never changes authority */ }
   const pending: Pending = {
     requestId,
+    held,
     botId: bot.id,
     threadId,
     messageId: message.id,
     waiters: new Set(),
     bus,
     // No answer is not an answer: the card closes and the next action asks
-    // again. Only the owner's own choice is ever remembered.
-    timer: setTimeout(() => {
+    // again. Only the owner's own choice is ever remembered. A routine run
+    // holds it open instead: the run waits on the owner.
+    timer: held ? undefined : setTimeout(() => {
       if (pendingByBot.get(bot.id) !== pending) return;
       settle(pending, "deny", "system");
       finish(pending, "waiting");
     }, CARD_TIMEOUT_MS),
   };
-  pending.timer.unref?.();
+  pending.timer?.unref?.();
   pendingByBot.set(bot.id, pending);
   try { bus.onApproval?.(bot.id, threadId, requestId, message.id); } catch { /* delivery never changes authority */ }
   return pending;

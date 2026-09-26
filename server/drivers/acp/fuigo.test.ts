@@ -249,6 +249,23 @@ describe("engine commands", () => {
   });
 });
 
+// 0.1.60 Windows pass D6: Fuigo cuts a prompt over 25,000 bytes, keeps the
+// head and tail, and tells the model to read the rest from a file in its own
+// sessions folder (outside the bot's folder). A long routine instruction then
+// reached the bot cut off, and under No limits it went reading other
+// conversations' session files. Murage sends its prompt verbatim, so the
+// whole instruction is what the model reads.
+describe("a long prompt", () => {
+  it("is sent whole and marked verbatim, so Fuigo never cuts or offloads it", async () => {
+    const text = `Routine instruction start. ${"Do this step carefully. ".repeat(2_000)}Routine instruction end.`;
+    expect(Buffer.byteLength(text)).toBeGreaterThan(25_000);
+    await runTurn({ text });
+    const params = JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8"));
+    expect(params._meta).toMatchObject({ verbatim: true });
+    expect(params.prompt[0].text).toContain(text);
+  });
+});
+
 describe("incoming image transport", () => {
   it("delivers exact inline images to ACP and excludes bytes from native logs", async () => {
     const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";

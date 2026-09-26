@@ -12,7 +12,7 @@
 
 import { isStopLineKey, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, type ExactCommand } from "../shared/exact-command.ts";
+import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 
 /** The plain `rm` rule, the one a delete placed inside the bot's own roots
  * is excused from (see `deletesInside` below). */
@@ -517,11 +517,16 @@ export function autoVerdict(
   const exactKey = context?.exactCommand && !context.scope && isCommandTool(tool) && !isQuestionTool(tool)
     ? exactCommandKey(context.exactCommand)
     : undefined;
+  // A routine's grant matches its command on a later run even when only the
+  // dates and times in it changed (shared/exact-command.ts).
+  const routineExact = exactKey !== undefined && context?.exactCommand
+    ? routineGrants.find((granted) => routineExactGrantCovers(granted, context.exactCommand!))
+    : undefined;
   const grant =
     destructive || sensitive
       ? null
-      : exactKey !== undefined && routineGrants.includes(exactKey)
-        ? { approve: `auto-approved this exact command (always allowed for this routine)`, source: "routine-allow" as const, rule: exactKey }
+      : routineExact !== undefined
+        ? { approve: `auto-approved this command (always allowed for this routine)`, source: "routine-allow" as const, rule: routineExact }
       : exactKey !== undefined && bot.alwaysAllow?.includes(exactKey)
         ? { approve: `auto-approved this exact command (always allowed here)`, source: "exact-command" as const, rule: exactKey }
       : key !== undefined && bot.alwaysAllow?.includes(key)

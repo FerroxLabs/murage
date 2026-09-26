@@ -74,7 +74,7 @@ describe("the empty state says where Murage looked (spec V1)", () => {
     // llama.cpp is called llama.cpp. Mislabelling it "oMLX" — the other server
     // on :8080 — is the exact confusion the spec calls out.
     expect(line).toContain("llama.cpp");
-    expect(line).toContain("nothing answered");
+    expect(line).toContain(". Nothing answered.");
   });
 });
 
@@ -205,6 +205,8 @@ describe("engines say where they stand on local models (spec V4)", () => {
   it("points every tool engine at the one place local models are managed", () => {
     for (const driver of ["fuigoAgent", "piAgent", "opencodeGo", "qwenAgent", "codex", "claudeAgent"]) {
       expect(engineLocalLine(driver), driver).toContain(`Models → ${LOCAL_MODELS_TITLE}`);
+      // one line per engine row in Settings, Engines: no em dash (0.1.60 copy)
+      expect(engineLocalLine(driver), driver).not.toMatch(/\u2014/);
     }
   });
 

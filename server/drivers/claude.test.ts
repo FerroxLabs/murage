@@ -214,6 +214,39 @@ describe("ClaudeDriver.decodeConfig", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "a held turn's permission ask waits past the deny deadline; an ordinary one is denied",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "murage-broker-hold-"));
+      const sock = join(dir, "hold.sock");
+      let hold = true;
+      const resolved: Array<{ id: string; source: string }> = [];
+      const broker = await createPermissionBroker({
+        socketPaths: [sock],
+        timeoutMs: 50,
+        holdPermissionAsks: () => hold,
+        onAsk: () => {},
+        onResolve: (ask) => resolved.push({ id: ask.id, source: ask.source }),
+      });
+      try {
+        const conn = connect(broker.socketPath);
+        await new Promise<void>((resolve, reject) => { conn.on("connect", resolve); conn.on("error", reject); });
+        conn.write(JSON.stringify({ t: "ask", id: "held", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(resolved).toEqual([]);
+        hold = false;
+        conn.write(JSON.stringify({ t: "ask", id: "plain", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+        await expect.poll(() => resolved).toEqual([{ id: "plain", source: "timeout" }]);
+        expect(broker.answer("held", "allow")).toBe(true);
+        expect(resolved).toEqual([{ id: "plain", source: "timeout" }, { id: "held", source: "user" }]);
+        conn.end();
+      } finally {
+        broker.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "rejects instead of returning an occupied path when every candidate is unavailable",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "murage-broker-unavailable-"));

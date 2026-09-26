@@ -1,3 +1,4 @@
+import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
 // Bot + thread persistence. bots.json holds bot records (including the
@@ -240,6 +241,13 @@ export interface Message {
   queueId?: string;
   /** user messages: see MessageOrigin. Server-written only. */
   origin?: MessageOrigin;
+  /** user messages: the standing instruction a scheduled or manual routine
+   * run started with (shared/routine-run-marker.ts). A replayed history
+   * labels it as that run. Server-written only. */
+  routineRunPrompt?: { trigger: RoutineRunMarkerTrigger; routineName: string };
+  /** activity messages: a card answered after its routine run had ended.
+   * The row offers Run again for this routine. Server-written only. */
+  routineRunAgain?: { routineId: string };
 }
 
 export type GroupDefaultResponder =
@@ -651,8 +659,8 @@ export interface BotRecord {
    * through, and a short list of destructive commands still stops it. */
   autoApprove?: boolean;
   /** Full access, the level above Auto: no approval card at all for turns
-   * the owner starts (webhook and routine turns are judged as Auto, and
-   * image spend still asks). Counts only while autoApprove is on. Set only
+   * the owner starts (webhook turns are judged as Auto, a routine run at its
+   * routine's level, and image spend still asks). Counts only while autoApprove is on. Set only
    * from the desktop app. */
   fullAccess?: boolean;
   /** When the owner confirmed this bot's one-time Full access warning, on

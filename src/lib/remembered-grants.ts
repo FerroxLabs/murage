@@ -24,6 +24,16 @@ export function describeGrant(key: string, engines: readonly { instanceId: strin
     const engine = engines.find((candidate) => candidate.instanceId === exact.engine)?.displayName ?? exact.engine;
     return { kind: "exact", command: exact.command, folder: exact.cwd, engine };
   }
+  // a delete Murage could not place, remembered by the command itself
+  // (server/stop-line.ts unplacedPlace)
+  if (key.startsWith("stop:delete:unplaced:")) {
+    try {
+      const parts: unknown = JSON.parse(key.slice("stop:delete:unplaced:".length));
+      if (Array.isArray(parts) && parts.length === 2 && parts.every((part) => typeof part === "string")) {
+        return { kind: "exact", command: parts[1] as string, folder: (parts[0] as string) || "its folder", engine: "any engine" };
+      }
+    } catch { /* not one of ours: shown as is below */ }
+  }
   return { kind: "other", text: grantWords(key) };
 }
 

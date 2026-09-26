@@ -328,6 +328,12 @@ export interface SendTurnInput {
    * stop line but keeps the key guard: that guard holds only if Murage sees
    * the asks. Absent: the instance's own setting stands, exactly as before. */
   stopLine?: true;
+  /** A scheduled or manual routine run. Its permission cards wait until the
+   * owner answers them or the turn stops, instead of the drivers' 15-minute
+   * deny: the routine manager ends the run as "waiting on you" at its run
+   * limit and answering the card later carries the same run on. Absent: the
+   * ordinary 15-minute deny. */
+  holdPermissionAsks?: true;
 }
 
 /** See `SendTurnInput.folderTrust`. `sources` are display names from the

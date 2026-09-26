@@ -1635,7 +1635,8 @@ export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSign
         for (const t of boundedItems) {
           if (!t || typeof t !== "object") continue;
           const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
-          if (!slug || cardsBySlug.has(slug)) continue;
+          // the connection service's own toolkit is plumbing, not an app
+          if (!slug || slug === "composio" || cardsBySlug.has(slug)) continue;
           cardsBySlug.set(slug, {
             slug,
             label: String(t.name ?? t.slug ?? ""),

@@ -51,12 +51,27 @@ export interface ApprovalBus {
   /** Is this bot's conversation still on Full access? Consulted only for a
    * handoff that was queued from a Full access turn the owner started. */
   fullAccessStanding?: (botId: string, threadId: string) => boolean;
+  /** A scheduled or manual routine run owns the thread. `opened` says so
+   * (true: the card is held open, with no 15-minute expiry, and the run waits
+   * on the owner); `closed` reports the answer and says whether the run's
+   * turn had already ended (true: the run carries on in a new turn). */
+  routineCard?: RoutineCardHooks;
+}
+
+export interface RoutineCardHooks {
+  opened: (threadId: string, requestId: string, summary: string) => boolean;
+  closed: (threadId: string, requestId: string, answer: "allow" | "deny" | "none") => boolean;
 }
 
 interface Pending {
   resolve: (result: PeerApprovalOutcome) => void;
-  /** Frees the requestId if the user never answers. */
-  timer: ReturnType<typeof setTimeout>;
+  /** Frees the requestId if the user never answers. None while a routine run
+   * holds the card. */
+  timer?: ReturnType<typeof setTimeout>;
+  /** Held open by a routine run (RoutineCardHooks). */
+  held?: boolean;
+  allowKey: string;
+  requestId: string;
   fromBotId: string;
   toBotId: string;
   message: string;
@@ -86,6 +101,18 @@ function settleCard(pending: Pending, behavior: string, source: "user" | "system
 const pendingComms = new Map<string, Pending>();
 
 const APPROVAL_TIMEOUT_MS = 15 * 60_000;
+
+/** An allow the owner gave after the routine run's turn had ended: the run
+ * carries on in a new turn, and its same contact is not asked twice. Used
+ * once. `threadId\u0000allowKey`. */
+const lateAllows = new Set<string>();
+
+function closeHeld(pending: Pending, answer: "allow" | "deny" | "none"): void {
+  if (!pending.held) return;
+  let resumed = false;
+  try { resumed = pending.bus.routineCard?.closed(pending.threadId, pending.requestId, answer) === true; } catch { /* delivery never changes authority */ }
+  if (resumed && answer === "allow") lateAllows.add(`${pending.threadId}\u0000${pending.allowKey}`);
+}
 
 /** The narrow grant "always allow" remembers for a peer comm. Mirrored
  * back into `bot.alwaysAllow` when the user picks "Always allow" on the
@@ -135,12 +162,16 @@ export function requestPeerApproval(
   if (allowKeyAllowed(from, peerAllowKey(action, target.id))) {
     return Promise.resolve("allow");
   }
+  const late = `${sourceThreadId}\u0000${peerAllowKey(action, target.id)}`;
+  if (lateAllows.delete(late)) return Promise.resolve("allow");
   return new Promise((resolve) => {
     const requestId = newId();
     // the card has to exist before the entry, so a timeout or an answer can
     // always find it to settle
     const card = pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId);
-    const timer = setTimeout(() => {
+    let held = false;
+    try { held = bus.routineCard?.opened(sourceThreadId, requestId, card.card?.title ?? "A bot-to-bot contact") === true; } catch { /* delivery never changes authority */ }
+    const timer = held ? undefined : setTimeout(() => {
       // 15 minutes without an answer → expired. Keeps an unattended bot from
       // stalling its own turn forever (matches the Claude broker timeout).
       const pending = pendingComms.get(requestId);
@@ -149,10 +180,13 @@ export function requestPeerApproval(
       settleCard(pending, "deny", "system");
       resolve("expired");
     }, APPROVAL_TIMEOUT_MS);
-    timer.unref?.(); // a waiting card must never hold the process open
+    timer?.unref?.(); // a waiting card must never hold the process open
     pendingComms.set(requestId, {
       resolve,
       timer,
+      held,
+      allowKey: peerAllowKey(action, target.id),
+      requestId,
       fromBotId: from.id,
       toBotId: target.id,
       message,
@@ -179,6 +213,7 @@ export function resolvePeerComms(
   clearTimeout(pending.timer);
   const allow = behavior === "allow";
   settleCard(pending, allow ? "allow" : "deny", "user");
+  closeHeld(pending, allow ? "allow" : "deny");
   pending.resolve(allow ? "allow" : "deny");
   return true;
 }
@@ -191,6 +226,7 @@ export function cancelPeerApprovalsFor(botId: string): void {
     pendingComms.delete(requestId);
     clearTimeout(pending.timer);
     settleCard(pending, "deny", "system");
+    closeHeld(pending, "none");
     pending.resolve("cancelled");
   }
 }
@@ -204,6 +240,7 @@ export function cancelPeerApprovalsForThread(threadId: string): void {
     pendingComms.delete(requestId);
     clearTimeout(pending.timer);
     settleCard(pending, "deny", "system");
+    closeHeld(pending, "none");
     pending.resolve("cancelled");
   }
 }

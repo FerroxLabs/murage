@@ -304,7 +304,7 @@ export function PendingApprovalActions({
       {grants.forRoutine && (
         <button
           onClick={() => decide("allow", "routine")}
-          title="Stop asking about this in this routine's runs, only in the same place"
+          title="Stop asking about this in this routine's runs, only in the same place. A command still matches when only the dates and times in it change."
           className={cn(base, "border border-accent/60 text-ink hover:bg-accent/10")}
         >
           Always allow for this routine

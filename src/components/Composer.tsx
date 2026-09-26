@@ -176,6 +176,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
           current={current}
           desktop={desktop}
           engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
+          scope={routine ? { routine: routine.name } : {}}
           onPick={(mode) => {
             onSetMode(mode);
             setOpen(false);
@@ -870,7 +871,7 @@ export function Composer({
         setSpeechError(
           reason === "helper-stop-pending"
             ? "The previous dictation session is still closing. Try again in a moment."
-            : "Dictation needs Microphone + Speech Recognition access — System Settings → Privacy & Security.",
+            : "Dictation needs Microphone + Speech Recognition access. Turn it on in System Settings → Privacy & Security.",
         );
       }
     });
@@ -1209,29 +1210,29 @@ export function Composer({
           }}
           disabled={Boolean(approval) || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
-          placeholder={compactPlaceholder(
+          placeholder={((placeholder: { lead: string; hint?: string }) => compactPlaceholder(placeholder.lead, placeholder.hint, narrowPlaceholder))(
             bot?.awaitingThreadSnapshot
-              ? "Loading replacement conversation…"
+              ? { lead: "Loading replacement conversation…" }
               : setupLocked
-              ? "Finish channel setup to start chatting"
+              ? { lead: "Finish channel setup to start chatting" }
               : approval
-              ? "Answer the approval above to continue"
+              ? { lead: "Answer the approval above to continue" }
               : recording
-              ? "Listening…"
+              ? { lead: "Listening…" }
               : canInject
-                ? `${busyName} is working — inject now to interrupt with the queued message`
+                ? { lead: `${busyName} is working`, hint: "inject now to interrupt with the queued message" }
               : busy && canSteer
-                ? `${busyName} is working — Enter sends this into the running turn`
+                ? { lead: `${busyName} is working`, hint: "Enter sends this into the running turn" }
               : busy
                 ? group
-                  ? `${busyName} is working — Enter queues your message`
-                  : `${busyName} is working — sends when this turn finishes`
+                  ? { lead: `${busyName} is working`, hint: "Enter queues your message" }
+                  : { lead: `${busyName} is working`, hint: "sends when this turn finishes" }
                 : group
                   ? channelMode === "goal"
-                    ? `Describe what ${group.name} should finish together`
-                    : `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
-                  : `Message ${bot?.name ?? ""}`,
-            narrowPlaceholder)}
+                    ? { lead: `Describe what ${group.name} should finish together` }
+                    : { lead: `Message ${group.name}`, hint: groupComposerHint(group, members ?? []) }
+                  : { lead: `Message ${bot?.name ?? ""}` },
+          )}
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
@@ -1400,6 +1401,7 @@ export function Composer({
         open={fullWarn !== false}
         botName={autoBot?.name ?? ""}
         level={fullWarn === false ? "full" : fullWarn.level}
+        scope="conversation"
         onThisComputer={fullWarn !== false && fullWarn.onThisComputer}
         onCancel={() => setFullWarn(false)}
         onConfirm={() => {

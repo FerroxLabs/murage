@@ -203,7 +203,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       }),
       httpErrorLabel: "upstream",
       missingKeyError: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
-      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "No API key yet — add one in App Settings → Models.",
+      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
       // Idle budget, renewed by stream progress (U02): not a total deadline.
       timeoutMs: 180_000,
       reasoning: true,

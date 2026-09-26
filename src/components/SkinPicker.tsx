@@ -97,7 +97,7 @@ export function SkinPicker() {
           preference is explicit; the card is simply shorter. */}
       {preference === "auto" && (
         <p className="mt-2 text-[11px] text-ink-secondary">
-          Following your system — currently {resolved === "dark" ? "Dark" : "Light"}.
+          Following your system, now {resolved === "dark" ? "Dark" : "Light"}.
         </p>
       )}
     </div>

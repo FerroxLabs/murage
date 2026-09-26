@@ -322,3 +322,47 @@ describe("one conversation per routine", () => {
     expect(h.started.map((item) => item.threadId)).toEqual(["conv-1", "conv-2"]);
   });
 });
+
+// The harness's own cards (this computer's one-time consent, a paid image,
+// a bot-to-bot contact) in a routine run: held open like permission cards,
+// and a run whose turn ends while one is still open ends as waiting on you.
+describe("a harness card in a routine run", () => {
+  const MIN = 60_000;
+  async function running(h: ReturnType<typeof harness>) {
+    const routine = h.manager.create(input(h.now(), { enabled: false, timeoutMinutes: 20 }));
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    const threadId = h.started[0]!.threadId;
+    const run = () => h.manager.listRuns().find((item) => item.routineId === routine.id)!;
+    return { routine, threadId, run };
+  }
+
+  it("is held only in a scheduled or manual run, and marks it waiting", async () => {
+    const h = harness();
+    const { threadId, run } = await running(h);
+    expect(h.manager.cardOpened(threadId, "host-1", "Let Dax use this computer?")).toBe(true);
+    expect(run()).toMatchObject({ status: "waiting", attention: "Let Dax use this computer?" });
+    expect(h.manager.cardOpened("not-a-run", "x", "y")).toBe(false);
+    // answered while the turn is still going: the run carries on
+    expect(h.manager.cardClosed(threadId, "host-1")).toBe(false);
+    expect(run().status).toBe("running");
+  });
+
+  it("a turn that ends with the card still open ends the run as waiting on you", async () => {
+    const h = harness();
+    const { threadId, run } = await running(h);
+    h.manager.cardOpened(threadId, "peer-1", "Dax wants to contact Kit");
+    h.manager.handleRuntimeEvent({ type: "turn.completed", threadId, ok: true } as never);
+    expect(run()).toMatchObject({ status: "needs-you", attention: "Dax wants to contact Kit" });
+    expect(h.needsYou.map((item) => item.status)).toEqual(["needs-you"]);
+    // the run limit leaves it alone; it is not a failure
+    h.advance(120 * MIN);
+    await h.manager.enforceRunLimits();
+    expect(run().status).toBe("needs-you");
+    // answering it resumes the same run in a new turn, with a fresh limit
+    expect(h.manager.cardClosed(threadId, "peer-1")).toBe(true);
+    expect(run()).toMatchObject({ status: "running" });
+    h.manager.handleRuntimeEvent({ type: "turn.completed", threadId, ok: true } as never);
+    expect(run().status).toBe("completed");
+  });
+});

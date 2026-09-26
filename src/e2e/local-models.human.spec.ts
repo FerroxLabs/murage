@@ -180,7 +180,7 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
   await expect(looked).toContainText("LM Studio at 127.0.0.1:1234");
   await expect(looked).toContainText("llama.cpp at 127.0.0.1:8080");
   await expect(looked).toContainText("vLLM at 127.0.0.1:8000");
-  await expect(looked).toContainText("nothing answered");
+  await expect(looked).toContainText("Nothing answered.");
   await expect(section.getByRole("button", { name: "Add a server", exact: true })).toBeVisible();
   await shoot(page, section, testInfo.outputPath(`local-models-1-empty-${width}-${skin}.png`));
 
@@ -342,7 +342,7 @@ for (const skin of skins) test(`Engines: each engine says where it stands on loc
   await open(page, skin, 1440);
   const dialog = await openSettings(page, "Engines");
   // V4 — the fixture's engine is a Claude-driver instance, a tools engine.
-  const line = dialog.getByText("Works with local models — manage them under Models → Local models", { exact: false }).first();
+  const line = dialog.getByText("Works with local models. Manage them under Models → Local models", { exact: false }).first();
   await expect(line).toBeVisible();
   await shoot(page, dialog, testInfo.outputPath(`engines-local-line-1440-${skin}.png`));
   // and the link on it is the same door the picker's empty row uses

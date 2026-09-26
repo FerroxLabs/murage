@@ -10,7 +10,19 @@ export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
 export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks or routines still ask, as they do in Auto, and image generation still asks before it spends.";
+  "Turns started by webhooks still ask, as they do in Auto, and image generation still asks before it spends.";
+
+/** Which level the dialog switches on: a conversation's (the composer chip),
+ * the bot's own (Bot settings), or one routine's. A routine run is judged at
+ * its routine's level, the bot's own unless the routine has one
+ * (server/routine-permissions.ts), never at a conversation's. */
+export type FullAccessScope = "conversation" | "bot" | { routine: string };
+
+export function fullAccessScopeNote(scope: FullAccessScope): string {
+  if (scope === "conversation") return "This is for this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.";
+  if (scope === "bot") return "Routines use this level too, unless a routine has its own.";
+  return `This is for the routine ${scope.routine} only.`;
+}
 
 export const FULL_ACCESS_ASKS_UNLESS_ALLOWED =
   "Your own messages from Telegram, Slack or Discord, and setup requests like installing skills, proposing routines or trusting folders, also still ask unless you allow them in Bot Settings.";
@@ -26,6 +38,7 @@ export function FullAccessWarning({
   open,
   botName,
   level = "full",
+  scope,
   onThisComputer,
   onCancel,
   onConfirm,
@@ -34,6 +47,8 @@ export function FullAccessWarning({
   botName: string;
   /** which level this confirms: Full access, or No limits above it */
   level?: "full" | "unlimited";
+  /** what the switch covers; absent says nothing about it */
+  scope?: FullAccessScope;
   /** the bot drives this computer, so the Auto-on-this-computer warning is
    * confirmed by this same dialog */
   onThisComputer: boolean;
@@ -80,6 +95,7 @@ export function FullAccessWarning({
               <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
+              {scope && <p>{fullAccessScopeNote(scope)}</p>}
               <p>{FULL_ACCESS_STILL_ASKS}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
               <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>

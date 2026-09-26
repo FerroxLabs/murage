@@ -160,6 +160,18 @@ const notices = (
 const texts = (list: ReturnType<typeof connectedAppsNotices>) =>
   list.map((notice) => ("text" in notice ? notice.text : "body" in notice ? notice.body : "")).join(" | ");
 
+describe("the connected-apps caption before the catalog answers", () => {
+  // 0.1.60 Mac pass: on a Flux-connected install the Marketplace tab first
+  // said "Connected through Murage's service." (read off the empty default
+  // fields while the catalog loaded) and the Connected tab then said "through
+  // your Flux Router account". Nothing is said until the fields are known.
+  it("says nothing about the broker until the catalog has said which one it is", () => {
+    expect(connectedAppsNotices({ configured: true, stale: false, mode: "managed", fields: EMPTY_CONNECTOR_PANEL_FIELDS, fieldsKnown: false })).toEqual([]);
+    expect(texts(connectedAppsNotices({ configured: true, stale: false, mode: "managed", fields: fields({ broker: "flux", fluxBrokerEnabled: true, fluxConfigured: true }), fieldsKnown: true })))
+      .toContain("Connected through your Flux Router account.");
+  });
+});
+
 describe("the connected-apps call to action", () => {
   it("leaves the no-key state to the lock rather than a notice line", () => {
     // Sean 2026-09-11: the whole panel is locked until a key exists. The

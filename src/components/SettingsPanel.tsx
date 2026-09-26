@@ -817,8 +817,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {canAutoReview
-                ? "The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you."
-                : "This engine cannot run an isolated review safely, so approval cards continue to wait for you."}
+                ? "The same engine reviews ordinary approval cards. Guarded actions, unattended turns, local-computer access, and questions still wait for you."
+                : "This engine cannot run a separate review, so approval cards keep waiting for you."}
             </div>
             <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5">
               {(
@@ -902,6 +902,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       open={fullAccessWarning !== null}
       botName={bot.name}
       level={fullAccessWarning?.level ?? "full"}
+      scope="bot"
       onThisComputer={fullAccessWarning?.onThisComputer === true}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {

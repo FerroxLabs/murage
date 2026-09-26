@@ -675,6 +675,9 @@ export interface AcpConfig {
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
 export interface AcpSupport {
   driverKind: string;
+  /** Extra `_meta` on every session/prompt (Fuigo: `verbatim`, so the
+   * engine does not cut a long prompt and offload the rest to a file). */
+  promptMeta?: Record<string, unknown>;
   displayName: string;
   /** Omit for subscription CLIs (the default). Custom-only CLIs sit below
    *  the picker-rail divider and have no first-party cloud catalog. */
@@ -815,6 +818,10 @@ const envOr = (key: string, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+/** How long an unanswered permission card waits before it is denied. Read
+ * lazily so a fixture can shorten it; a routine run's cards never use it
+ * (SendTurnInput.holdPermissionAsks). */
+const permissionDenyMs = (): number => envOr("MURAGE_PERMISSION_DENY_MS", 15 * 60_000);
 /** Longest the first prompt waits for `AcpSupport.mcpReadyNotification`.
  *  Past it the prompt is sent anyway (the model is told the servers are still
  *  connecting, which is the old behaviour) and a `mcp_ready_timeout`
@@ -923,8 +930,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli);
-  const DENY_TIMEOUT_NOTE =
-    "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+  // Fuigo reads a bare reject_once as a Stop; this note keeps the turn going
+  // without the action when nobody answered the card in time.
+  const DENY_TIMEOUT_FOLLOWUP =
+    "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped.";
 
   return {
     driverKind: DRIVER_KIND,
@@ -1835,9 +1844,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // Its response-level feedback extension keeps the tool denied
                 // while allowing a safe explanation in this same native turn.
                 ...(support.driverKind === "fuigoAgent" && !turnConfig.fullAuto && !questionTool &&
-                  behavior === "deny" && source === "user" &&
+                  behavior === "deny" && (source === "user" || source === "timeout") &&
                   options.some(option => option.optionId === optionId && option.kind === "reject_once")
-                  ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
+                  ? { _meta: { followup_message: source === "timeout" ? DENY_TIMEOUT_FOLLOWUP : "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
                   : {}),
               } : cancelled,
             });
@@ -1851,11 +1860,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
             return Boolean(optionId);
           };
-          const timer = setTimeout(() => {
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
+          // An unanswered card denies after 15 minutes. That is the owner not
+          // answering, not an engine failure, so it raises no runtime error
+          // (whose card sends people to Provider settings); request.resolved
+          // with source "timeout" is the record. A routine run holds its
+          // cards open instead (SendTurnInput.holdPermissionAsks).
+          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => {
             finish("deny", "timeout");
-          }, 15 * 60_000);
-          timer.unref?.();
+          }, permissionDenyMs());
+          timer?.unref?.();
           asks.set(requestId, finish);
           emit({
             ...base(threadId, turnId),
@@ -2483,6 +2496,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               {
                 sessionId,
                 prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
+                ...(support.promptMeta ? { _meta: support.promptMeta } : {}),
               },
               undefined,
               promptIdleMs,

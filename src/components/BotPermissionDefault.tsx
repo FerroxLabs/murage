@@ -18,13 +18,13 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "unlimited") {
     return onThisComputer
-      ? "Does anything without asking, except reading your keys and passwords. That includes this computer. Webhook and routine turns still ask."
-      : "Does anything without asking, except reading your keys and passwords. Webhook and routine turns still ask.";
+      ? "Does anything without asking, except reading your keys and passwords. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
+      : "Does anything without asking, except reading your keys and passwords. Webhook turns still ask. Routines use this level unless a routine has its own.";
   }
   if (mode === "full") {
     return onThisComputer
-      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook and routine turns still ask."
-      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook and routine turns still ask.";
+      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own."
+      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own.";
   }
   if (mode === "auto") {
     return onThisComputer
@@ -59,7 +59,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else, webhooks and routines still ask." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else and webhooks still ask. Routines use their own level." },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (

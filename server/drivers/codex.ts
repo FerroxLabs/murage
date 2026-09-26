@@ -572,12 +572,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
         };
         // A question waits for the owner up to 30 minutes (the shared
-        // question timeout); a permission keeps its 15-minute deny.
-        const timer = setTimeout(
+        // question timeout); a permission keeps its 15-minute deny, except in
+        // a routine run, whose cards wait until answered or the turn stops
+        // (SendTurnInput.holdPermissionAsks).
+        const timer = !questions && turn.holdPermissionAsks ? undefined : setTimeout(
           () => (questions ? finish("deny", undefined, "timeout") : finish("deny", DENY_TIMEOUT_NOTE, "timeout")),
           questions ? QUESTION_TIMEOUT_MS : 15 * 60_000,
         );
-        timer.unref?.();
+        timer?.unref?.();
         asks.set(requestId, finish);
         emit({
           ...base(threadId, turnId),

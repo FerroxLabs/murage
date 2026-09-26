@@ -45,7 +45,7 @@ export const LOCAL_MODELS_FOOTER =
  */
 export function lookedLine(targets: readonly LocalDetectionTarget[]): string {
   const where = targets.map((target) => `${LOCAL_SERVER_KIND_LABELS[target.kind]} at ${target.address}`).join(", ");
-  return `Looked for ${where} — nothing answered.`;
+  return `Looked for ${where}. Nothing answered.`;
 }
 
 export function serverStatusLine(server: LocalServerView, now: number): string {
@@ -231,7 +231,7 @@ export function nextActionFor(server: LocalServerView, model: LocalModelView): L
  */
 export function engineLocalLine(driver: string): string {
   const support = localEngineSupport(driver);
-  if (support === "tools") return `Works with ${LOCAL_MODELS_TITLE.toLowerCase()} — manage them under Models → ${LOCAL_MODELS_TITLE}`;
+  if (support === "tools") return `Works with ${LOCAL_MODELS_TITLE.toLowerCase()}. Manage them under Models → ${LOCAL_MODELS_TITLE}`;
   if (support === "chat-only") return `${LOCAL_MODELS_TITLE}: chat only (no tools)`;
   return "";
 }

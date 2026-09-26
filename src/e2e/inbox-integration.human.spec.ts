@@ -27,6 +27,9 @@ test.beforeAll(async () => {
     const directory=process.env.MURAGE_DATA_DIR;
     const at=Date.now();
     const tasks=[{threadId:'${currentThread}',title:'Current task',createdAt:at,resumeCursors:{}},{threadId:'${oldThread}',title:'Previous report',createdAt:at-1000,resumeCursors:{}}];
+    // a routine whose runs worked in its own conversation and posted no card
+    const run=(id,offset,status)=>({id,routineId:'log-tick',routineName:'Log tick',target:'bot',botId:'${botId}',runOn:'ember',scheduledFor:at-offset,status,manual:true,triggerSource:'manual',threadId:'${currentThread}',startedAt:at-offset,finishedAt:at-offset+1000,createdAt:at-offset,...(status==='failed'?{error:'boom'}:{})});
+    writeFileSync(join(directory,'routines.json'),JSON.stringify({version:1,runs:[run('lt1',90000,'completed'),run('lt2',60000,'failed'),run('lt3',30000,'completed')],routines:[{id:'log-tick',name:'Log tick',prompt:'Log the time.',target:'bot',botId:'${botId}',runOn:'ember',enabled:false,schedule:{type:'interval',everyMinutes:30,anchorAt:at},durationMinutes:30,timeoutMinutes:20,attachments:[],threadId:'${currentThread}',nextRunAt:null,createdAt:at-100000,updatedAt:at-100000}]}));
     writeFileSync(join(directory,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'${currentThread}',name:'Inbox proof bot',title:'Research',description:'Fixture only',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks,composio:false,browser:false,computer:'off'}]));
     const db=new DatabaseSync(join(directory,'messages.db'));
     db.exec('CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT)');
@@ -70,6 +73,12 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     await page.screenshot({ path: testInfo.outputPath(`inbox-tools-${scenario.width}-${scenario.skin}.png`), fullPage: true });
     await needsYou.click();
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+    // Routines counts runs that worked in the routine's own conversation too
+    await page.getByRole("button", { name: "Routines", exact: true }).click();
+    const routineList = page.getByRole("list", { name: "Routines" });
+    await expect(routineList.getByText("Log tick", { exact: true })).toBeVisible();
+    await expect(routineList.getByText("3 runs, 1 failed", { exact: true })).toBeVisible();
+    await expect(page.getByText("Your routines have not run yet.")).toHaveCount(0);
     await page.getByRole("button", { name: "Results", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Inbox historical report", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`inbox-integrated-${scenario.width}-${scenario.skin}.png`), fullPage: true });

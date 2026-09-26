@@ -1,4 +1,5 @@
 import type { SkillProcedureContext } from "./skills.ts";
+import { routineRunMarkerName, routineRunPromptNote } from "../shared/routine-run-marker.ts";
 import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { createProcedureReviewHost } from "./procedure-review-host.ts";
 import { pendingProcedureReviews, processProcedureReview } from "./memory/procedure-review.ts";
@@ -63,7 +64,7 @@ import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PE
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
-import { inboxRequest, owedThreads } from "./inbox.ts";
+import { inboxRequest, owedThreads, type InboxRoutineRun } from "./inbox.ts";
 import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./inbox-access.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
@@ -3090,6 +3091,32 @@ const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messa
 function inboxAccessThreads() {
   return inboxThreads(store);
 }
+/** Every routine run in the routine manager's record, for the Inbox's
+ *  Routines view: a run in the routine's own conversation posts no card, so
+ *  the record is the only place those runs are counted. Only each routine's
+ *  latest run is given a link (where it begins in its conversation). */
+function inboxRoutineRuns(): InboxRoutineRun[] {
+  const runs = routines?.listRuns() ?? [];
+  const startOf = (run: RoutineRun) => run.startedAt ?? run.scheduledFor;
+  const latest = new Map<string, RoutineRun>();
+  for (const run of runs) {
+    const seen = latest.get(run.routineId);
+    if (!seen || startOf(seen) < startOf(run)) latest.set(run.routineId, run);
+  }
+  return runs.map((run) => {
+    const at = startOf(run);
+    const first = latest.get(run.routineId) === run && run.threadId
+      ? store.messagesFor(run.threadId).find((message) => message.at >= at - 5_000) ?? store.messagesFor(run.threadId).at(-1)
+      : undefined;
+    return {
+      runId: run.id, routineId: run.routineId, routineName: run.routineName, status: run.status, at,
+      ...(run.threadId ? { threadId: run.threadId } : {}),
+      ...(run.error ? { error: run.error } : {}),
+      ...(run.attention ? { attention: run.attention } : {}),
+      ...(first && run.threadId ? { link: { threadId: run.threadId, messageId: first.id } } : {}),
+    };
+  });
+}
 // A SNOOZED CONVERSATION WAKES MARKED UNREAD, whether its time came or
 // something owed to the owner arrived in it (shared/thread-snooze.ts). A
 // channel keeps one unread mark for all its conversations, so waking one of
@@ -3120,7 +3147,35 @@ store.onChange((change) => {
 });
 
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
-const imageOperations = new ImageOperations({ store, speaker: (threadId, botId) => {
+/** The harness's own cards (this computer's one-time consent, a paid image,
+ * a bot-to-bot contact) in a scheduled or manual routine run: held open like
+ * permission cards, so the run waits on the owner instead of the card closing
+ * after 15 minutes. A run whose turn ended while one was open ends as waiting
+ * on you, and answering it carries the same run on in a new turn. */
+function routineCardOpened(threadId: string, requestId: string, summary: string): boolean {
+  return routines?.cardOpened(threadId, requestId, summary) === true;
+}
+function routineCardClosed(threadId: string, requestId: string, answer: "allow" | "deny" | "none"): boolean {
+  const run = routines?.listRuns().find((candidate) => candidate.threadId === threadId && candidate.cardsOpen?.includes(requestId));
+  if (!run || routines?.cardClosed(threadId, requestId) !== true) return false;
+  const note = answer === "allow"
+    ? "[The owner answered the request this run was waiting on: allowed. Carry on with this run of the routine.]"
+    : answer === "deny"
+      ? "[The owner answered the request this run was waiting on: not allowed. Finish this run of the routine without it.]"
+      : "[The request this run was waiting on closed without an answer. Finish this run of the routine without it.]";
+  // after the answer has landed, so the new turn sees it
+  queueMicrotask(() => {
+    void startTurn(run.botId, note, {
+      threadId,
+      cardContinuation: true,
+      onDispatchError: (message) => routines?.failThread(threadId, message),
+    }).catch((error) => routines?.failThread(threadId, error instanceof Error ? error.message : String(error)));
+  });
+  return true;
+}
+const routineCardHooks = { opened: routineCardOpened, closed: routineCardClosed };
+
+const imageOperations = new ImageOperations({ store, routineCard: routineCardHooks, speaker: (threadId, botId) => {
   // A channel card carries its sender like every other member message; a
   // one-to-one task needs none.
   if (!store.groupByThread(threadId)) return undefined;
@@ -3394,13 +3449,30 @@ async function answerRequest(
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, answered: "unavailable", dismissed: true } });
     }
     if (messageId) askMessageByRequest.delete(`${threadId}:${requestId}`);
+    // A routine's own conversation: the run this card belonged to has ended
+    // (a crash, a cancel). Say so, keep an "Always allow for this routine"
+    // the owner just chose, and offer Run again instead of a dead end.
+    const routine = question ? undefined : routines?.listRoutines().find((candidate) => candidate.threadId === threadId && candidate.target === "bot");
+    if (routine) {
+      const saved = behavior === "allow" && Boolean(card?.routineAllowKey) && card?.routineId === routine.id && (routine.alwaysAllow ?? []).includes(card.routineAllowKey!);
+      store.appendMessage(threadId, {
+        role: "bot",
+        kind: "activity",
+        routineRunAgain: { routineId: routine.id },
+        tool: {
+          name: `This run of ${redactSecretsInText(routine.name)} ended before you answered, so nothing was run.${saved ? " Always allow for this routine is saved, so the next run will not ask about it." : ""}`,
+          ok: false,
+        },
+      });
+      return outcome;
+    }
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       tool: {
         name: question
-          ? "The bot stopped waiting for this answer — send it as a message from the question card"
-          : "Couldn't deliver that answer — the request is no longer open, so the action was not run",
+          ? "The bot stopped waiting for this answer. Send it as a message from the question card."
+          : "Couldn't deliver that answer. The request is no longer open, so the action was not run.",
         ok: false,
       },
     });
@@ -5488,6 +5560,13 @@ async function startTurn(
   // turn runs at too. Still the owner's turn in every other respect.
   const conversationMode = !routineLevel && humanIsOwner && opts?.automationSource === undefined ? routineConversationMode(threadId) : null;
   if (conversationMode) Object.assign(bot, applyRoutinePermissionMode(bot, conversationMode));
+  // A routine run in the routine's own conversation: its instruction is
+  // labelled as this run, for the engine now and in later replays, so the
+  // same instruction run after run never reads as the owner asking again.
+  const routineRunName = routineLevel ? routines?.listRoutines().find((routine) => routine.id === routineLevel.routineId)?.name : undefined;
+  const routineRunPrompt = routineRunName && (opts?.automationSource === "schedule" || opts?.automationSource === "manual")
+    ? { trigger: opts.automationSource, routineName: redactSecretsInText(routineRunName) }
+    : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
     : opts?.automationSource === "channel" ? "owner-channel"
@@ -5568,6 +5647,7 @@ async function startTurn(
           sendId: opts?.sendId,
           attachments: turnImages.promote(threadId, text),
           ...(opts?.origin ? { origin: opts.origin } : {}),
+          ...(routineRunPrompt ? { routineRunPrompt } : {}),
         });
   }
 
@@ -5630,7 +5710,11 @@ async function startTurn(
     commsDepth < MAX_COMMS_DEPTH &&
     instance.adapter.capabilities.agentsMcp === true;
   const turnPrompt = withExternalDelivery(
-    promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    promptWithReply(
+      routineRunPrompt ? `${routineRunPromptNote(routineRunPrompt.trigger, routineRunPrompt.routineName)}\n\n${text}` : skillAuthoring ? expandLearnTurnText(text) : text,
+      opts?.replyTo,
+      cfg.profile?.name?.trim() || "User",
+    ),
     externalDelivery,
   );
   let { turnText, resume } = buildTurnContext({
@@ -6295,6 +6379,11 @@ async function startTurn(
         // the engine must send its asks here even when its own instance is
         // set to skip them; Murage answers the rest at once.
         ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
+        // A scheduled or manual routine run: its cards wait for the owner
+        // instead of the engine's 15-minute deny. At its run limit the run
+        // ends as waiting on you (RoutineManager.enforceRunLimits) and the
+        // card still carries the run on when answered.
+        ...(routineLevel ? { holdPermissionAsks: true as const } : {}),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
@@ -6783,11 +6872,12 @@ routines = new RoutineManager({
       store.patchTask(run.botId, run.threadId, { resumeCursors: {} });
       store.releaseTaskProcedures(run.botId, run.threadId);
     }
-    // the run marker: where one run ends and the next begins
+    // the run marker: where one run ends and the next begins, shown as a
+    // divider between runs (shared/routine-run-marker.ts)
     store.appendMessage(run.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `${run.manual ? "Run now" : "Scheduled run"}: ${redactSecretsInText(run.routineName)}`, ok: true },
+      tool: { name: routineRunMarkerName(run.manual ? "manual" : "schedule", redactSecretsInText(run.routineName)), ok: true },
     });
   },
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>
@@ -7407,7 +7497,7 @@ const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapac
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
 // can call resolvePeerComms without holding a reference back to here.
-const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval, fullAccessStanding: (botId, threadId) => hasFullAccess(peerContactSettings(botId, threadId)) };
+const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval, routineCard: routineCardHooks, fullAccessStanding: (botId, threadId) => hasFullAccess(peerContactSettings(botId, threadId)) };
 
 // Approvals live only in memory, so any peer card still open on disk is one
 // whose resolver died with the previous process. Left alone it can never be
@@ -8881,11 +8971,14 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   return isUnattended(threadId) ? "other" : "owner";
 }
 
-/** Full access skips the bot-to-bot contact card, but only in a turn the
- * owner started: a webhook, channel or routine turn still asks, as in Auto
- * (the owner's own channel message only with the bot's option on). */
+/** Full access skips the bot-to-bot contact card in a turn the owner started
+ * and in a scheduled or manual routine run judged at Full access (the
+ * routine's own level, or its bot's): a webhook or channel turn still asks,
+ * as in Auto (the owner's own channel message only with the bot's option on). */
 function fullAccessSkipsPeerCard(botId: string, threadId: string): boolean {
-  return fullAccessCovers(peerContactSettings(botId, threadId), fullAccessTurnOrigin(threadId));
+  const settings = peerContactSettings(botId, threadId);
+  const level = settings ? routineRunLevel(threadId) : null;
+  return fullAccessCovers(level && settings ? applyRoutinePermissionMode(settings, level.mode) : settings, fullAccessTurnOrigin(threadId));
 }
 
 function routineProposalPersistence(botId: string, threadId: string) {
@@ -10669,7 +10762,7 @@ const server = createServer(async (req, res) => {
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
-      }, inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)));
+      }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
       return json(res, result.status, result.body);
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
@@ -10684,7 +10777,7 @@ const server = createServer(async (req, res) => {
     // ordinary approval through /api/threads/:id/respond like the app does.
     if (method === "GET" && path === "/api/desktop/tray") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store) });
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store), routineRuns: inboxRoutineRuns() });
       if (result.status !== 200) return json(res, result.status, result.body);
       return json(res, 200, traySummary({
         page: result.body as InboxPage,

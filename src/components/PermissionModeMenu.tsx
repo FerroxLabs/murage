@@ -38,8 +38,13 @@ export function PermissionModeMenu({
   desktop,
   onPick,
   engineCannotAsk: cannotAskEngine,
+  scope,
 }: {
   botName: string;
+  /** The composer's menu: in a routine's own conversation it sets that
+   * routine's level; anywhere else, only this conversation's. Absent says
+   * nothing about it. */
+  scope?: { routine?: string };
   /** The engine's name when it cannot ask before acting (engineCannotAsk). */
   engineCannotAsk?: string;
   current: PermissionMode;
@@ -54,7 +59,14 @@ export function PermissionModeMenu({
       className="absolute bottom-full left-0 z-30 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
     >
       <div className="border-b border-hairline/20 px-4 py-3 text-[13px] font-medium text-ink-secondary">
-        How should {botName}’s actions be approved?
+        {scope?.routine ? `How should runs of ${scope.routine} be approved?` : <>How should {botName}’s actions be approved?</>}
+        {scope && (
+          <div className="mt-1 text-[12px] font-normal">
+            {scope.routine
+              ? `Changes the level of the routine ${scope.routine}. Every run of it works here.`
+              : "Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own."}
+          </div>
+        )}
       </div>
       <div className="flex flex-col py-1">
         {PERMISSION_MODES.map((entry) => {

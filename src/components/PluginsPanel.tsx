@@ -229,8 +229,12 @@ export function connectedAppsNotices(input: {
   fields: ConnectorPanelFields;
   consentDismissed?: boolean;
   now?: number;
+  /** False until the catalog has answered: the fields are still the empty
+   * defaults, which read as the old Murage service, so nothing is said. */
+  fieldsKnown?: boolean;
 }): ConnectedAppsNotice[] {
   const { configured, stale, mode, fields } = input;
+  if (input.fieldsKnown === false) return [];
   const now = input.now ?? Date.now();
   const migration = fields.migration;
   const date = formatLegacyCutoff(migration.legacyUntil);
@@ -441,6 +445,7 @@ export function PluginsPanel() {
   // Which broker holds these apps, and where this install is in the move from
   // Murage's own service to FluxRouter. Every connector response carries it.
   const [panelFields, setPanelFields] = useState<ConnectorPanelFields>(EMPTY_CONNECTOR_PANEL_FIELDS);
+  const [panelFieldsKnown, setPanelFieldsKnown] = useState(false);
   const [consentDismissed, setConsentDismissed] = useState(false);
   const [claiming, setClaiming] = useState(false);
   /** the last inventory answer said the credential store could not be read */
@@ -562,7 +567,7 @@ export function PluginsPanel() {
     pollTimers.current.clear();
   }, []);
 
-  const notices = connectedAppsNotices({ configured, stale, mode, fields: panelFields, consentDismissed });
+  const notices = connectedAppsNotices({ configured, stale, mode, fields: panelFields, consentDismissed, fieldsKnown: panelFieldsKnown });
 
   // Locked until a FluxRouter key or a Composio key of the person's own
   // exists. Decided from what GET /api/config already told the store, never
@@ -654,6 +659,7 @@ export function PluginsPanel() {
         setConfigured(Boolean(r.configured));
         setMode(r.mode ?? "unavailable");
         setPanelFields(connectorPanelFieldsFrom(r));
+        setPanelFieldsKnown(true);
       })
       .catch((e) => {
         if (!alive) return;

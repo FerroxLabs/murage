@@ -1139,7 +1139,7 @@ export const FIRST_RUN_COPY = {
     cancelled: "Nothing was changed. Ask me again any time and we will do it then.",
     unfinished: "Your folder and your recovery key are saved. The daily run is not on yet, so ask me again and I will finish it.",
     failure: "That did not go through. Ask me again in a little while and we will try once more.",
-    keptKey: "Keep the recovery key somewhere safe. Without it a backup cannot be opened, not even by me.",
+    keptKey: "Keep the recovery key where only you can reach it. Without it a backup cannot be opened, not even by me.",
   },
   phone: {
     phone: {

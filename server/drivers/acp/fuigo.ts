@@ -592,6 +592,13 @@ const support: AcpSupport = {
    *  style. Same text the core default produces; stated here so the reason it
    *  is not a flag stays with the code. */
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
+  /** Fuigo cuts a prompt over 25,000 bytes to its head and tail and tells
+   *  the model to read the rest from a file under ~/.fuigo/sessions, outside
+   *  the bot's folder (fuigo-shell prompt_build.rs). The persona rides in the
+   *  same text block, so a long routine instruction reached the bot cut off,
+   *  and a No limits bot went reading session files to find the rest
+   *  (0.1.60 Windows pass D6). `verbatim` sends Murage's bytes as they are. */
+  promptMeta: { verbatim: true },
 };
 
 export const FuigoAgentDriver = createAcpDriver(support);

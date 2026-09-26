@@ -193,6 +193,13 @@ export interface RoutineRun {
   /** When the owner answered a card this run was waiting on after its run
    * limit; the limit counts again from here. */
   resumedAt?: number;
+  /** The harness's own cards open in this run (this computer's one-time
+   * consent, a paid image, a bot-to-bot contact), by requestId. They are held
+   * open in a scheduled or manual run, like permission cards. */
+  cardsOpen?: string[];
+  /** The run's turn ended while one of those cards was still open: the run
+   * is waiting on you, and answering the card starts a new turn in it. */
+  turnEnded?: boolean;
   finishedAt?: number;
   output?: string;
   /** Human-readable reason the detached execution is waiting. */
@@ -894,6 +901,38 @@ export class RoutineManager {
    * and the level it chose (absent = inherit), so the host can judge the run
    * at that level. Null for webhook and channel work, room goals, and a
    * routine that no longer exists: those keep their own rules. */
+  /** One of the harness's own cards opened in this thread. In a scheduled or
+   * manual bot run it is held open (true) and the run waits on the owner. */
+  cardOpened(threadId: string, requestId: string, summary: string): boolean {
+    if (!this.routineRunForThread(threadId)) return false;
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
+    if (!run) return false;
+    this.commitMutation(() => {
+      run.cardsOpen = [...new Set([...(run.cardsOpen ?? []), requestId])];
+      if (run.status !== "needs-you") run.status = "waiting";
+      run.attention = redactSecretsInText(summary).trim().slice(0, 500) || run.attention;
+    });
+    this.emitRun(run);
+    return true;
+  }
+
+  /** That card was answered or closed. True when the run's turn had already
+   * ended: the caller starts a new turn in the run's conversation, which
+   * carries the same run on with a fresh run limit. */
+  cardClosed(threadId: string, requestId: string): boolean {
+    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status) && candidate.cardsOpen?.includes(requestId));
+    if (!run) return false;
+    const resume = run.turnEnded === true;
+    this.commitMutation(() => {
+      run.cardsOpen = run.cardsOpen!.filter((id) => id !== requestId);
+      if (!run.cardsOpen.length) delete run.cardsOpen;
+      if (resume) { run.turnEnded = undefined; run.resumedAt = this.now(); }
+      if (resume || (!run.cardsOpen && run.status === "waiting")) { run.status = "running"; run.attention = undefined; }
+    });
+    this.emitRun(run);
+    return resume;
+  }
+
   routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run || run.target !== "bot") return null;
@@ -1712,6 +1751,18 @@ export class RoutineManager {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet
       return null;
+    } else if (event.type === "turn.completed" && run.cardsOpen?.length && turnSucceeded(event)) {
+      // The turn ended, but one of the harness's own cards is still open (its
+      // tool call could not wait that long). Not a finished run and not a
+      // failure: it is waiting on you, and answering carries it on.
+      run.cost = event.cost;
+      run.turnEnded = true;
+      run.status = "needs-you";
+      this.save();
+      this.emitRun(run);
+      try { this.options.onRunNeedsYou?.(cloneRun(run)); }
+      catch (error) { console.error("routine: waiting-on-you notice failed", error); }
+      return cloneRun(run);
     } else if (event.type === "turn.completed") {
       run.cost = event.cost;
       run.denials = event.denials;

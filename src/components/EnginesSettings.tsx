@@ -159,13 +159,13 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
         <div role="alert" className="flex gap-1.5 rounded-lg border border-warning/25 bg-warning/10 px-2.5 py-2 text-[12px] leading-relaxed text-warning">
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           <span>
-            Test failed — {probe.message}
+            Test failed: {probe.message}
             {" "}Register this path anyway?
           </span>
         </div>
       )}
       {probe?.ok && probe.version && (
-        <div className="text-[12px] text-success">Test passed — {probe.version}</div>
+        <div className="text-[12px] text-success">Test passed: {probe.version}</div>
       )}
       {error && <div role="alert" className="text-[12px] text-danger">{error}</div>}
       <div className="flex justify-end gap-2">

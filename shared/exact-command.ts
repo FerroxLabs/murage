@@ -141,3 +141,62 @@ export function commandCwdFromToolInput(input: unknown): string | null | undefin
   if (!named.every(usableFolder) || new Set(named).size > 1) return null;
   return named[0] as string;
 }
+
+// ── a routine's grant across runs ──────────────────────────────────────
+// A routine that writes the time into its own log sends a different command
+// text every run, so an exact grant made from one run's card never matched
+// the next. "Always allow for this routine" therefore matches the command
+// with its dates and times set aside: the same text, the same folder and the
+// same engine, where only date and time values may differ. Nothing else is
+// loosened. A changed word, path, flag or plain number is a different
+// command, and a date or time only matches another date or time.
+
+/** Letters in either case, without the `i` flag: a time zone must stay
+ * upper case, so "13:25 tick" never reads as a zone. */
+const anyCase = (pattern: string) => pattern.replace(/[a-z]/g, (ch) => `[${ch}${ch.toUpperCase()}]`);
+const MONTH = anyCase("(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)");
+const WEEKDAY = anyCase("(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)");
+const HOUR = "(?:[01]?\\d|2[0-3])";
+const MIN = "[0-5]\\d";
+const TIME = `${HOUR}:${MIN}(?::${MIN}(?:\\.\\d{1,9})?)?(?:Z|[+-]\\d{2}:?\\d{2})?`;
+const YMD = "\\d{4}([-/.])(?:0[1-9]|1[0-2])\\1(?:0[1-9]|[12]\\d|3[01])";
+const TZ = "(?:Z|[+-]\\d{2}:?\\d{2}|[A-Z]{2,5})";
+const AMPM = "(?:\\s?[aApP]\\.?[mM]\\.?)?";
+/** Dates, each replaced by the placeholder first. */
+const DATE_PATTERNS: readonly RegExp[] = [
+  // `date` output: Fri Sep 25 13:25:07 ICT 2026
+  new RegExp(`(?<![\\w])${WEEKDAY}\\s+${MONTH}\\s+\\d{1,2}\\s+${TIME}(?:\\s+${TZ})?\\s+\\d{4}(?![\\w])`, "g"),
+  // 2026-09-25, 2026/09/25, 2026-09-25T13:25:07Z (an ISO timestamp)
+  new RegExp(`(?<![\\w.])${YMD}(?:T${TIME})?(?![\\w])`, "g"),
+  // 20260925T130500Z
+  /(?<![\w.])\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])T\d{4,6}Z?(?![\w])/g,
+  // 25/09/2026, 9/25/2026
+  /(?<![\w./])\d{1,2}([/.-])\d{1,2}\1\d{4}(?![\w/])/g,
+  // 25 Sep 2026, Sep 25, 2026, September 25
+  new RegExp(`(?<![\\w])(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\.?(?:,?\\s+\\d{4})?|${MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?)(?![\\w])`, "g"),
+];
+/** Then a time of day, but only right beside a date (13:25 after
+ * 2026-09-25, or before one): a time on its own (a port mapping 22:22, "at
+ * 13:25") is part of the command. Then a weekday beside a date. */
+const BESIDE_DATE: readonly RegExp[] = [
+  new RegExp(`(?<=\\u0000[ ,T]{0,3})${TIME}${AMPM}(?:\\s+${TZ})?(?![\\w:])`, "g"),
+  new RegExp(`(?<![\\w:.])${TIME}${AMPM}(?:\\s+${TZ})?(?=[ ,]{1,3}\\u0000)`, "g"),
+  new RegExp(`(?<![\\w])${WEEKDAY}\\.?,?(?=\\s+\\u0000)`, "g"),
+];
+
+/** The command with every date (and time beside a date) replaced by one
+ * placeholder. */
+export function commandWithoutDateTimes(command: string): string {
+  let out = normalizeCommand(command).replace(/\u0000/g, "");
+  for (const pattern of [...DATE_PATTERNS, ...BESIDE_DATE]) out = out.replace(pattern, "\u0000");
+  return out;
+}
+
+/** Does a routine's exact grant cover this command in a later run: the same
+ * engine and folder, and the same command apart from dates and times? */
+export function routineExactGrantCovers(grantKey: string, exact: ExactCommand): boolean {
+  const granted = parseExactCommandKey(grantKey);
+  if (!granted || granted.engine !== exact.engine || granted.cwd !== exact.cwd) return false;
+  if (exactCommandKey(exact) === grantKey) return true;
+  return commandWithoutDateTimes(granted.command) === commandWithoutDateTimes(exact.command);
+}

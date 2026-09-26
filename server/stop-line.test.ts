@@ -83,7 +83,9 @@ const rows: Row[] = [
   ["rtk rm outside", ...shell("rtk rm -rf ~/Documents/old"), "delete"],
   ["rtk proxy rm outside", ...shell("rtk proxy rm ~/Desktop/x"), "delete"],
   ["rtk rm inside", ...shell("rtk rm -rf build"), "pass"],
-  ["a variable set from a command is unknown", ...shell(`f=$(mktemp); rm "$f"`), "delete"],
+  // 0.1.60 Linux pass: a mktemp file is placed (in temp); any other command's output is not
+  ["a variable set from mktemp is placed in temp", ...shell(`f=$(mktemp); rm "$f"`), "pass"],
+  ["a variable set from another command is unknown", ...shell(`f=$(cat list.txt); rm "$f"`), "delete"],
   ["no cwd: relative rm is unknown", "Bash", { command: "rm -rf build" }, "delete"],
   ["delete_file outside", "delete_file", { path: "/Users/ada/Documents/old.txt" }, "delete"],
   ["git push --force", ...shell("git push --force origin main"), "delete"],
@@ -198,7 +200,8 @@ describe("stop line keys", () => {
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm ~/Documents/a ~/Desktop/b" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf ~/Documents" }, "", place())!)).toBeUndefined();
     expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf /" }, "", place())!)).toBeUndefined();
-    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf $X" }, "", place())!)).toBeUndefined();
+    // a delete it cannot place is keyed on the command itself, never a folder
+    expect(stopLineKey(classifyStopLine("Bash", { command: "rm -rf $X" }, "", place())!)).toMatch(/^stop:delete:unplaced:\[/);
   });
 
   it("scopes a message to its recipient and a payment to its payee", () => {
@@ -264,6 +267,37 @@ describe("PowerShell and cmd on Windows", () => {
   // a file straight in Documents is scoped to itself, never to Documents
   const DOCS = "/C:/Users/owner/Documents/throwaway-0159.txt";
   const SITE = "/C:/Users/owner/Projects/site";
+
+  // 0.1.60 Windows pass D1: a here-string piped to python, whose text only
+  // mentions "rm trash", was read as a delete nobody could place, with only
+  // Allow once. A body fed to an interpreter is judged by its real delete
+  // calls; one fed to a file or a variable is data.
+  describe("here-strings", () => {
+    const setup = `Set-Location -LiteralPath '${WIN_CWD}'; if (-not (Test-Path -LiteralPath 'notes')) { New-Item -ItemType Directory -Path 'notes' | Out-Null }; `;
+    const pyWrite = (path: string) => `@'\nwith open(r"${path}", "a") as f:\n    f.write("rm trash\\n")\n'@ | python`;
+    it.each([
+      ["the owner's exact repro", pyWrite("notes\\pipeline.md")],
+      ["forward slash", pyWrite("notes/pipeline.md")],
+      ["the Windows run's full command", setup + pyWrite("notes\\pipeline.md")],
+      ["python -", `@'\nprint("rm -rf is not run here")\n'@ | python -`],
+      ["a double-quoted here-string to py", `@"\nopen("notes/a.md","a").write("del stuff")\n"@ | py -3 -`],
+      ["data to a file", `@'\nrm trash\nRemove-Item C:\\Users\\owner\\Documents\\x\n'@ | Set-Content -Path notes\\todo.md`],
+      ["data into a variable", `$text = @'\nRemove-Item everything\n'@; $text | Out-File notes\\a.md`],
+    ])("text only: %s", (_label, command) => {
+      expect(run(command)).toBeNull();
+    });
+
+    it("still stops a real delete inside one", () => {
+      expect(run(`@'\nimport os\nos.remove(r"C:\\Users\\owner\\Documents\\x.txt")\n'@ | python -`)).toMatchObject({ kind: "delete", what: "Delete 1 item outside its folder: ~\\Documents\\x.txt" });
+      expect(run(`@'\nRemove-Item -LiteralPath "C:\\Users\\owner\\Documents\\y.txt"\n'@ | Invoke-Expression`)).toMatchObject({ kind: "delete", what: "Delete 1 item outside its folder: ~\\Documents\\y.txt" });
+    });
+
+    it("an interpreter delete it cannot place still offers this task and this routine", () => {
+      const hit = run(`@'\nimport os, sys\nos.remove(sys.argv[1])\n'@ | python - $target`)!;
+      expect(hit.what).toMatch(/cannot place/);
+      expect(stopLineKey(hit)).toMatch(/^stop:delete:unplaced:/);
+    });
+  });
 
   it("places the variable delete the Windows run sent", () => {
     const hit = run(`$p = "C:\\Users\\owner\\Documents\\throwaway-0159.txt"; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force; if (Test-Path -LiteralPath $p) { "STILL_EXISTS" } else { "DELETED" } } else { "NOT_FOUND" }`);
@@ -338,10 +372,12 @@ describe("PowerShell and cmd on Windows", () => {
     ["a .Delete() method on an object", `(Get-Item "x").Delete()`],
     ["a subexpression", `Remove-Item "$(Get-Location)\\..\\x"`],
   ];
-  it.each(unknown)("stops without a place when it cannot read the target: %s", (_label, command) => {
+  it.each(unknown)("stops, placed only by the command itself, when it cannot read the target: %s", (_label, command) => {
     const hit = run(command);
     expect(hit?.kind).toBe("delete");
-    expect(hit?.place).toBeUndefined();
+    // no folder: the card's task and routine grants cover this command only
+    expect(hit?.place).toMatch(/^unplaced:\[/);
+    expect(hit?.what).toMatch(/cannot place/);
   });
 
   it("still stops outside its folder through ..", () => {

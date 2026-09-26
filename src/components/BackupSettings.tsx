@@ -235,7 +235,7 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
       <RecoveryKeyKeepsafe s={s}/>
       {!status.refs&&<div className="min-w-0 space-y-3">
         <p className="text-[13px] text-ink-secondary">{s.setUp
-          ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, saves it somewhere safe outside that folder, and asks you once before switching daily backups on."
+          ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, keeps it somewhere outside that folder, and asks you once before switching daily backups on."
           : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>
         <div className="flex flex-wrap gap-2">
           {s.setUp
