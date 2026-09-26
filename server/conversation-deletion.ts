@@ -666,7 +666,7 @@ export class ConversationDeletions {
 function dedupeLeftovers(leftovers: DeletionLeftover[]): DeletionLeftover[] {
   const seen = new Set<string>();
   return leftovers.filter((item) => {
-    const key = `${item.place}\0${item.reason}`;
+    const key = `${item.what}\0${item.where}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
