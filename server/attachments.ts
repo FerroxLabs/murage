@@ -36,6 +36,18 @@ export const FILE_MAX_BYTES = 25 * 1024 * 1024;
  * explicit 507 and the person can decide what to remove. */
 export const ATTACHMENTS_MAX_BYTES = 512 * 1024 * 1024;
 
+/** A byte count as a person reads it: 512 MB, 25 MB, 1.5 GB. */
+export function humanBytes(bytes: number): string {
+  const units: Array<[number, string]> = [[1024 ** 3, "GB"], [1024 ** 2, "MB"], [1024, "KB"]];
+  for (const [size, unit] of units) if (bytes >= size) return `${Number((bytes / size).toFixed(1))} ${unit}`;
+  return `${bytes} bytes`;
+}
+/** The sentences a composer shows for attachment limits (0.1.60 audit C4:
+ * "attachments storage is full (limit 536870912 bytes)" reached it). */
+export const ATTACHMENTS_FULL_MESSAGE = `There's no more room for attachments: Murage keeps up to ${humanBytes(ATTACHMENTS_MAX_BYTES)} of them. Delete conversations you no longer need to make room, then try again.`;
+export const FILE_TOO_LARGE_MESSAGE = `That file is too large. Files can be up to ${humanBytes(FILE_MAX_BYTES)}.`;
+export const IMAGE_TOO_LARGE_MESSAGE = `That image is too large. Images can be up to ${humanBytes(IMAGE_MAX_BYTES)}.`;
+
 /** Interrupted streamed uploads use private partial files. A crash can leave
  * one behind, so future uploads remove only our stale partials — never a
  * committed attachment that a transcript may still reference. */
@@ -263,10 +275,7 @@ class AttachmentReservation {
       available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
     }
     if (available < required) {
-      throw statusError(
-        507,
-        `attachments storage is full (limit ${ATTACHMENTS_MAX_BYTES} bytes)`,
-      );
+      throw statusError(507, ATTACHMENTS_FULL_MESSAGE);
     }
     // Unknown-length HTTP bodies reserve in bounded chunks. Taking whatever
     // remains below the preferred increment avoids falsely rejecting a small
@@ -431,7 +440,7 @@ export async function saveFile(
     throw statusError(400, "content-length must be a non-negative integer");
   }
   if (expectedBytes !== undefined && expectedBytes > FILE_MAX_BYTES) {
-    throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+    throw statusError(413, FILE_TOO_LARGE_MESSAGE);
   }
 
   return withUploadLock(uploadId, async () => {
@@ -447,7 +456,7 @@ export async function saveFile(
           : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
         if (chunk.byteLength === 0) continue;
         if (bytes + chunk.byteLength > FILE_MAX_BYTES) {
-          throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+          throw statusError(413, FILE_TOO_LARGE_MESSAGE);
         }
         incomingHash.update(chunk);
         bytes += chunk.byteLength;
@@ -478,7 +487,7 @@ export async function saveFile(
           : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
         if (chunk.byteLength === 0) continue;
         if (bytes + chunk.byteLength > FILE_MAX_BYTES) {
-          throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+          throw statusError(413, FILE_TOO_LARGE_MESSAGE);
         }
         reservation.ensure(bytes + chunk.byteLength);
         let offset = 0;
@@ -527,7 +536,7 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
   if (!ext) throw Object.assign(new Error("unsupported image type"), { status: 400 });
   if (bytes.byteLength === 0) throw Object.assign(new Error("empty image"), { status: 400 });
   if (bytes.byteLength > IMAGE_MAX_BYTES) {
-    throw Object.assign(new Error(`image exceeds ${IMAGE_MAX_BYTES} bytes`), { status: 413 });
+    throw Object.assign(new Error(IMAGE_TOO_LARGE_MESSAGE), { status: 413 });
   }
   const uploadId = validateAttachmentUploadId(requestedUploadId);
   ensureAttachmentsDir();

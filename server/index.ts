@@ -151,7 +151,9 @@ import {
   deleteAttachment,
   extensionForMime,
   FILE_MAX_BYTES,
+  FILE_TOO_LARGE_MESSAGE,
   IMAGE_MAX_BYTES,
+  IMAGE_TOO_LARGE_MESSAGE,
   readAttachment,
   saveFile,
   saveImage,
@@ -12836,7 +12838,7 @@ const server = createServer(async (req, res) => {
       }
       if (declaredLength !== undefined && declaredLength > IMAGE_MAX_BYTES) {
         req.resume();
-        return json(res, 413, { error: `image exceeds ${IMAGE_MAX_BYTES} bytes` });
+        return json(res, 413, { error: IMAGE_TOO_LARGE_MESSAGE });
       }
       const saved = await new Promise<SavedAttachment>((resolve, reject) => {
         const chunks: Buffer[] = [];
@@ -12850,7 +12852,7 @@ const server = createServer(async (req, res) => {
         req.on("data", (chunk: Buffer) => {
           if (settled) return;
           received += chunk.byteLength;
-          if (received > IMAGE_MAX_BYTES) return fail(413, `image exceeds ${IMAGE_MAX_BYTES} bytes`);
+          if (received > IMAGE_MAX_BYTES) return fail(413, IMAGE_TOO_LARGE_MESSAGE);
           chunks.push(chunk);
         });
         req.on("end", async () => {
@@ -12904,7 +12906,7 @@ const server = createServer(async (req, res) => {
       }
       if (declaredLength !== undefined && declaredLength > FILE_MAX_BYTES) {
         req.resume();
-        return json(res, 413, { error: `file exceeds ${FILE_MAX_BYTES} bytes` });
+        return json(res, 413, { error: FILE_TOO_LARGE_MESSAGE });
       }
       try {
         // Returning from this iterator must not destroy the request socket:

@@ -1,4 +1,4 @@
-import { IMAGE_MAX_BYTES } from "./attachments.ts";
+import { IMAGE_MAX_BYTES, humanBytes } from "./attachments.ts";
 
 export interface DecodedGeneratedImage {
   bytes: Buffer;
@@ -39,7 +39,7 @@ export function decodeGeneratedImage(input: string): DecodedGeneratedImage {
   const compact = encoded.replace(/\s/g, "");
   const bytes = Buffer.from(compact, "base64");
   if (bytes.length === 0 || bytes.length > IMAGE_MAX_BYTES) {
-    throw new Error(`generated image exceeds ${IMAGE_MAX_BYTES} bytes`);
+    throw new Error(`The generated image was empty or larger than ${humanBytes(IMAGE_MAX_BYTES)}, so it wasn't saved.`);
   }
   const mime = sniffRaster(bytes);
   if (!mime) throw new Error("generated image is not a supported raster format");
