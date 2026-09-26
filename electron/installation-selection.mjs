@@ -56,15 +56,50 @@ function syncParent(file) {
   const fd = openSync(path.dirname(file), "r"); try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
-/** Selection is scoped to the exact requested root. Never falls back when a
- * selected installation is missing, redirected or lacks its restore barrier. */
-export function resolveInstallationSelection(userData, requestedRoot) {
+/** The selector's record, checked against its own container. */
+function selectedRecord(userData, requestedRoot) {
   const initial = locations(userData, requestedRoot), raw = bytes(initial.selector);
-  if (raw === null) return { dataDirectory: initial.requested, selected: false };
+  if (raw === null) return null;
   const record = parse(raw), places = locations(userData, requestedRoot, record.id);
   if (record.requestedRoot !== places.requested || overlap(places.storage, canonical(record.originalRoot)) ||
       !sameIdentity(identity(places.container), record.containerIdentity) || canonical(places.container) !== places.container ||
       bytes(path.join(places.container, "selection-record.json")) !== raw) fail();
+  return { raw, record, places };
+}
+/** "Undo a restore" of a separate installation moves its data aside and
+ * writes `<receipt>.rolled-back`. The selection then has nothing to open, and
+ * every start failed with STARTUP_FAILED (0.1.60 Windows re-test 3 D2). Only
+ * that exact, completed undo retires it: the selector is renamed (kept, never
+ * deleted) and the original installation opens again. */
+function undone(selected) {
+  const { record, places } = selected;
+  if (entry(places.dataDirectory)) return false;
+  const receipt = entry(path.join(places.container, `.data.restore-${record.transactionId}.receipt.json.rolled-back`));
+  return Boolean(receipt?.isFile() && !receipt.isSymbolicLink());
+}
+function retire(selected) {
+  const retired = `${selected.places.selector}.${selected.record.id}.retired`;
+  if (entry(retired)) fail();
+  renameSync(selected.places.selector, retired); syncParent(retired);
+}
+/** Called after a successful undo of the selected installation's restore. */
+export function retireUndoneInstallationSelection(userData, requestedRoot, dataDirectory) {
+  const selected = selectedRecord(userData, requestedRoot);
+  if (!selected) return false;
+  if (canonical(dataDirectory) !== selected.places.dataDirectory || !undone(selected)) fail();
+  retire(selected);
+  return true;
+}
+
+/** Selection is scoped to the exact requested root. Never falls back when a
+ * selected installation is missing, redirected or lacks its restore barrier,
+ * except after that installation's restore was undone (see undone()). */
+export function resolveInstallationSelection(userData, requestedRoot) {
+  const initial = locations(userData, requestedRoot);
+  const selected = selectedRecord(userData, requestedRoot);
+  if (!selected) return { dataDirectory: initial.requested, selected: false };
+  const { record, places } = selected;
+  if (undone(selected)) { retire(selected); return { dataDirectory: initial.requested, selected: false }; }
   validRestoredTarget(places.dataDirectory);
   return { dataDirectory: places.dataDirectory, selected: true, originalRoot: record.originalRoot };
 }

@@ -67,7 +67,7 @@ import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserP
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
-import { resolveInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
+import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
 import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
@@ -2454,13 +2454,21 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   const env = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
   if (operation !== "plan-restore") Object.assign(env, owner.utilityServerLeaseEnvironment());
-  try { return await runInstallationRecoveryWorker({
+  try { const result = await runInstallationRecoveryWorker({
     fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
     entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
-  }); } catch(error) {
+  });
+    // Undoing the restore of a separate installation leaves nothing for the
+    // selection to open: hand the next start back to the original (D2).
+    if (operation === "rollback" && !separate && desktopSelectionActive && result?.status === "rolled-back") {
+      retireUndoneInstallationSelection(app.getPath("userData"), desktopRequestedDataDir, dataDirectory);
+      desktopSelectionActive = false;
+    }
+    return result;
+  } catch(error) {
     if((process.platform==="win32"||error?.code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&typeof error?.retainedDirectory==="string"&&error.retainedDirectory.length<=8192)retainedSeparateDirectory=error.retainedDirectory;
     throw error;
   }
