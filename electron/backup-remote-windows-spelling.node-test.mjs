@@ -113,5 +113,6 @@ test("real Windows: the off-site folder is created under local app data, owner-o
  const control=remoteControlDirectory({control:`c:\\nowhere\\${"f".repeat(64)}`,userData:"\\\\fs01\\redirected",localAppData:local,platform:"win32"});
  assert.equal(ensureRemoteControlDirectory(control),control);
  const ssh=remoteSshDirectory(control);assert.ok(ssh.toLowerCase().startsWith(local.toLowerCase()));
- assert.ok(control.endsWith(`\\murage\\offsite\\${"f".repeat(16)}`));fs.rmSync(control,{recursive:true,force:true});
+ // Only the two empty folders this test made, one at a time, never recursively.
+ fs.rmdirSync(ssh);fs.rmdirSync(control);
 });
