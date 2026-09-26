@@ -1,6 +1,7 @@
 import {lstatSync,mkdirSync,realpathSync,rmSync} from "node:fs";
 import path from "node:path";
 import {restrictToOwner} from "./backup-windows-acl.mjs";
+import {samePath} from "../shared/path-identity.mjs";
 // POSIX: owner uid and 0700 are checked in place on every use. Windows has
 // neither, so the "remote" tree is created with an owner-only ACL
 // (backup-windows-acl.mjs) that everything below it inherits: the per-run
@@ -8,6 +9,12 @@ import {restrictToOwner} from "./backup-windows-acl.mjs";
 const posix=()=>process.platform!=="win32";
 const owned=stat=>!posix()||stat.uid===process.getuid?.();
 const privateMode=stat=>!posix()||!(stat.mode&0o077);
+// The desktop hands in its canonical data-folder path, which on Windows is
+// case-folded (c:\users\sam lee\.murage). The native realpath answers in the
+// filesystem's own casing (C:\Users\Sam Lee), so a raw string compare refused
+// every Windows install and off-site copies could never be set up (W-D2).
+// samePath compares one spelling: case-folded on Windows only.
+const canonical=directory=>samePath(realpathSync.native(directory),directory);
 function makeDirectory(directory,{restrict=false,platform}={}){
  let created=false;try{mkdirSync(directory,{mode:0o700});created=true;}catch(error){if(error.code!=="EEXIST")throw error;}
  if(created&&restrict&&!posix())(platform?.restrictToOwner??restrictToOwner)(directory,{directory:true});
@@ -15,13 +22,13 @@ function makeDirectory(directory,{restrict=false,platform}={}){
 /** Every ancestor below a main-owned private control root is checked in place. */
 export function ensureRemoteControlDirectory(control){
  const parent=path.dirname(control),anchor=path.dirname(parent);
- const base=lstatSync(anchor);if(!base.isDirectory()||base.isSymbolicLink()||!owned(base)||(posix()&&(base.mode&0o022))||realpathSync.native(anchor)!==anchor)throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
- for(const directory of [parent,control]){makeDirectory(directory);const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||realpathSync.native(directory)!==directory)throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");}
+ const base=lstatSync(anchor);if(!base.isDirectory()||base.isSymbolicLink()||!owned(base)||(posix()&&(base.mode&0o022))||!canonical(anchor))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+ for(const directory of [parent,control]){makeDirectory(directory);const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");}
  return control;
 }
 export function remoteWorkDirectory(control,remoteRef,revision,platform){
  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(remoteRef)||!Number.isSafeInteger(revision)||revision<0)throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
- const inspect=directory=>{const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||realpathSync.native(directory)!==directory)throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");};
+ const inspect=directory=>{const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");};
  ensureRemoteControlDirectory(control);inspect(control);let directory=control;
  for(const segment of ["remote",remoteRef,String(revision)]){directory=path.join(directory,segment);makeDirectory(directory,{restrict:segment==="remote",platform});inspect(directory);}
  return directory;

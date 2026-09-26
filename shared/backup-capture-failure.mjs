@@ -231,16 +231,18 @@ export function describeCaptureError(error, step) {
   const io = raw.ioCause && typeof raw.ioCause === "object" ? raw.ioCause : raw;
   const errnoOf = value => typeof value === "string" && /^E[A-Z0-9]+$/.test(value) && !/_/.test(value) ? value : undefined;
   const ownCode = value => typeof value === "string" && !errnoOf(value) ? value : undefined;
+  // Some refusals carry their code only as the message (Error("BACKUP_...")).
+  const codeOf = value => ownCode(value?.code) ?? (typeof value?.message === "string" && /^[A-Z][A-Z0-9_]{2,60}$/.test(value.message) ? value.message : undefined);
   // A coded error's message is only its code again; say it once.
-  const coded = typeof error.code === "string" && /^[A-Z][A-Z0-9_]+$/.test(error.code) && !inner;
+  const coded = !inner && (typeof error.code === "string" && /^[A-Z][A-Z0-9_]+$/.test(error.code) || /^[A-Z][A-Z0-9_]{2,60}$/.test(String(error.message)));
   return normalizeCaptureCause({
     step: error.captureStep ?? step,
     errno: errnoOf(io.code) ?? errnoOf(io.errno),
     syscall: io.syscall,
-    code: ownCode(error.code),
-    innerCode: inner ? ownCode(inner.code) : undefined,
+    code: codeOf(error),
+    innerCode: inner ? codeOf(inner) : undefined,
     name: raw.name,
-    message: coded ? undefined : raw.message,
+    message: coded || raw.message === codeOf(raw) ? undefined : raw.message,
     ...tool,
   });
 }

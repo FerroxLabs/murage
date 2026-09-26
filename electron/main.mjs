@@ -8,7 +8,7 @@ import { createNotificationAuthorization } from "./notification-authorization.mj
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
-import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
+import { captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
@@ -3413,6 +3413,11 @@ async function initializeBackupRemoteHost(){
     supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&desktopResticTool.currentTool()),
     checking:()=>Boolean(desktopResticTool?.status().checking),
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
+    // Log-only, redacted (no path, key or password): what really refused an off-site step.
+    reportFailure:error=>{
+      let cause=null;try{cause=describeCaptureError(error);}catch{/* never changes the result */}
+      if(cause)try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup off-site step refused ${JSON.stringify(cause)}\n`,{mode:0o600});}catch{/* Logging never changes the result. */}
+    },
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},

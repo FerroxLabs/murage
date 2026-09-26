@@ -9,7 +9,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { resticChildEnvironment,resticS3CredentialsSchema,resticS3Repository,resticS3TargetSchema,resticSftpCredentialsSchema,resticSftpRepository,resticSftpTargetSchema,type ResticS3Credentials,type ResticS3Run,type ResticS3Target,type ResticSftpCredentials,type ResticSftpTarget,type ResticRemoteTarget } from "./backup-restic-target.ts";
 import { classifySshFailure,probeSftpFolder,resticSftpCommandOption,scanHostKey,sftpSshArguments,sweepSshMaterial,writeSshMaterial,type SshTools } from "./backup-sftp.ts";
 import {trustedBackupResticExecutableAsync} from "../electron/backup-restic-attestation.mjs";
-import {pathOverlaps} from "../shared/path-identity.mjs";
+import {pathOverlaps,pathWithin,samePath} from "../shared/path-identity.mjs";
 export type { ResticS3Credentials,ResticS3Target,ResticSftpCredentials,ResticSftpTarget,ResticRemoteTarget } from "./backup-restic-target.ts";
 
 export {RESTIC_ORIGINAL_SHA256} from "../shared/backup-restic-pin.mjs";
@@ -239,7 +239,7 @@ export class BackupRestic {
       const save=()=>writeFileAtomic(file,JSON.stringify(journalSchema.parse(prior)),{mode:0o600});
       const failed=()=>{prior.state="needs-review";prior.error="snapshot-mismatch";save();return{state:"needs-review",jobId:receipt.jobId};};
       // Stage is private host state, never a caller-supplied working directory.
-      if(!isAbsolute(prior.stage)||!prior.stage.startsWith(realpathSync.native(this.options.workDirectory)+"/")||realpathSync.native(prior.stage)!==prior.stage||!lstatSync(prior.stage).isDirectory())throw Error("RESTIC_JOB_REVIEW_REQUIRED");
+      if(!isAbsolute(prior.stage)||!pathWithin(realpathSync.native(this.options.workDirectory),prior.stage)||samePath(realpathSync.native(this.options.workDirectory),prior.stage)||!samePath(realpathSync.native(prior.stage),prior.stage)||!lstatSync(prior.stage).isDirectory())throw Error("RESTIC_JOB_REVIEW_REQUIRED");
       try{
         const listed=await this.execute(["snapshots","--tag",`murage-job:${receipt.jobId}`],prior.stage);
         if(listed.code!==0||listed.uncertain)return failed();const rows=JSON.parse(listed.stdout);

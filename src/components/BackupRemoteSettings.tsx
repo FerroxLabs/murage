@@ -100,6 +100,11 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("STORAGE_UNREACHABLE"))return "Murage could not open the backup storage. Check the destination details, that the access keys or SSH key are accepted, and that this computer is online, then test the connection again.";
  if(code.includes("CREATE_FAILED"))return "Murage reached the destination but could not create the backup repository there. Check that the access keys may write to this bucket, or that the user may write to this folder, then test the connection again.";
  if(code.includes("PASSWORD_FILE_UNREADABLE"))return "Murage could not read the off-site password file. It may have been moved, renamed or changed. Put it back, or choose it again.";
+ if(code.includes("CONTROL_UNAVAILABLE"))return "Murage couldn't prepare its private off-site folder beside its data folder, so it didn't create or choose a password file. Check that you can create folders in the folder that holds Murage's data, then try again.";
+ if(code.includes("PASSWORD_FILE_PLACE"))return "That file is inside Murage's own folders or your backup folder. Keep the off-site password somewhere else, such as Documents, then choose it again.";
+ if(code.includes("PASSWORD_FILE_KIND"))return "That isn't a plain password file. Choose a small text file (under 4 KB) that is not a shortcut or link.";
+ if(code.includes("PASSWORD_FILE_SHARED"))return "Other accounts on this computer can read that file. Make it readable only by you, then choose it again.";
+ if(code.includes("PASSWORD_FILE_FORMAT"))return "That file doesn't hold a single-line password. Choose a file with the password on one line and nothing else.";
  if(code.includes("PASSWORD_NOT_CREATED"))return "Murage could not create the off-site password file. Check that your Documents or home folder can be written to, then try again.";
  if(code.includes("PASSWORD_COPY_FAILED"))return "The copy was not saved. Choose a folder outside Murage's own folders and your backup folder, with no file of that name yet.";
  if(code.includes("TOOL_UNVERIFIED"))return "The backup tool that comes with Murage could not be checked. Reinstall Murage, then try again.";
@@ -113,7 +118,8 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("PASSWORD_REQUIRED"))return "Choose your off-site password file first.";
  if(code.includes("JOB_CHANGED"))return "The latest local backup changed. Refresh and review the backup before uploading.";
  if(code.includes("BUSY"))return "A backup operation is already running. Wait for it to finish, then refresh.";
- return "This step could not be confirmed. Refresh status before trying again. Your local backup is unchanged; no automatic retry will run.";
+ // Anything not named above. The log (server.log) carries the redacted cause.
+ return "Murage couldn't finish this step and didn't change anything. Refresh status, then try again. If it happens again, the reason is in Murage's log.";
 }
 const inputClass="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass="min-h-11 rounded-lg border border-hairline/40 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
