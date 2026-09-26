@@ -37,7 +37,7 @@ describe("ssh argument vector",()=>{
     const args=sftpSshArguments(target,files);
     expect(args.slice(0,2)).toEqual(["-F","none"]);
     const options=args.flatMap((arg,index)=>args[index-1]==="-o"?[arg]:[]);
-    for(const required of ["BatchMode=yes","IdentitiesOnly=yes",`IdentityFile=${files.identityFile}`,"IdentityAgent=none","PasswordAuthentication=no","KbdInteractiveAuthentication=no","PreferredAuthentications=publickey","StrictHostKeyChecking=yes",`UserKnownHostsFile=${files.knownHostsFile}`,`GlobalKnownHostsFile=${files.knownHostsFile}`,"HostKeyAlias=murage-backup-server","HostKeyAlgorithms=ssh-ed25519","UpdateHostKeys=no","ForwardAgent=no","ForwardX11=no","ClearAllForwardings=yes","PermitLocalCommand=no","ProxyCommand=none","ControlMaster=no"])expect(options).toContain(required);
+    for(const required of ["BatchMode=yes","IdentitiesOnly=yes",`IdentityFile='${files.identityFile}'`,"IdentityAgent=none","PasswordAuthentication=no","KbdInteractiveAuthentication=no","PreferredAuthentications=publickey","StrictHostKeyChecking=yes",`UserKnownHostsFile='${files.knownHostsFile}'`,`GlobalKnownHostsFile='${files.knownHostsFile}'`,"HostKeyAlias=murage-backup-server","HostKeyAlgorithms=ssh-ed25519","UpdateHostKeys=no","ForwardAgent=no","ForwardX11=no","ClearAllForwardings=yes","PermitLocalCommand=no","ProxyCommand=none","ControlMaster=no"])expect(options).toContain(required);
     // Destination last, after "--", so nothing in it can be read as an option.
     expect(args.slice(-8)).toEqual(["-p","2222","-l","backup","-s","--","nas.example.com","sftp"]);
     expect(args.filter(arg=>arg.startsWith("-")&&!["-F","-o","-p","-l","-s","--"].includes(arg))).toEqual([]);
@@ -45,8 +45,24 @@ describe("ssh argument vector",()=>{
   it("refuses to build a command without a pinned identity or with unusual paths",()=>{
     const {hostKey:_unpinned,...unpinned}=target;
     expect(()=>sftpSshArguments(unpinned,files)).toThrow("HOST_KEY_REQUIRED");
-    for(const identityFile of ["relative/key","/a\"b/key","/a\nb/key"])expect(()=>sftpSshArguments(target,{...files,identityFile})).toThrow("MATERIAL_INVALID");
+    for(const identityFile of ["relative/key","/a\"b/key","/a\nb/key","/a'b/key","C:\\Users\\O'Neil\\key"])expect(()=>sftpSshArguments(target,{...files,identityFile})).toThrow("MATERIAL_INVALID");
     expect(()=>sftpSshArguments({...target,host:"-oProxyCommand=x"},files)).toThrow();
+  });
+  it("paths with spaces stay one ssh argument (Windows profile folders), and real ssh reads them back",()=>{
+    const spaced={identityFile:"C:\\Users\\Sam Lee\\AppData\\Local\\control\\ssh-abc123\\key",knownHostsFile:"/Users/Sam Lee/control/ssh-abc123/known_hosts"};
+    const args=sftpSshArguments(target,spaced);
+    expect(args).toContain("IdentityFile='C:\\Users\\Sam Lee\\AppData\\Local\\control\\ssh-abc123\\key'");
+    expect(args).toContain("UserKnownHostsFile='/Users/Sam Lee/control/ssh-abc123/known_hosts'");
+    if(existsSync("/usr/bin/ssh")){
+      const posix={identityFile:"/tmp/a b/key",knownHostsFile:"/tmp/c d/known_hosts"},opts=sftpSshArguments(target,posix);
+      const config=execFileSync("/usr/bin/ssh",["-G",...opts.slice(0,opts.indexOf("-s"))," nas.example.com".trim()],{encoding:"utf8"});
+      expect(config).toMatch(/^identityfile \/tmp\/a b\/key$/m);expect(config).toMatch(/^userknownhostsfile \/tmp\/c d\/known_hosts$/m);expect(config).toMatch(/^stricthostkeychecking true$/m);
+    }
+  });
+  it("Windows children get SystemRoot, ProgramData and a private temp folder, nothing else from Murage",async()=>{
+    const {windowsChildEnvironment}=await import("./backup-sftp.ts");
+    expect(windowsChildEnvironment("C:\\w",{SystemRoot:"C:\\Windows",ProgramData:"C:\\ProgramData",APPDATA:"C:\\x",FLUX_API_KEY:"secret"})).toEqual({TMP:"C:\\w",TEMP:"C:\\w",USERPROFILE:"C:\\w",SystemRoot:"C:\\Windows",ProgramData:"C:\\ProgramData"});
+    expect(windowsChildEnvironment("C:\\w",{SystemRoot:"relative",ProgramData:"C:\\a\"b"})).toEqual({TMP:"C:\\w",TEMP:"C:\\w",USERPROFILE:"C:\\w"});
   });
   it("RSA pins negotiate only RSA signatures",()=>{
     const rsa={type:"ssh-rsa" as const,key:blob("ssh-rsa",Buffer.alloc(64,3))};

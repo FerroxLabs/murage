@@ -58,15 +58,20 @@ const hostKeyAlgorithms=(type:SftpHostKey["type"])=>type==="ssh-rsa"?"rsa-sha2-5
 export const SFTP_HOST_KEY_ALIAS="murage-backup-server";
 export function knownHostsLine(hostKey:SftpHostKey){const key=checkedHostKey(hostKey);return `${SFTP_HOST_KEY_ALIAS} ${key.type} ${key.key}\n`;}
 
-const plainPath=(value:string)=>typeof value==="string"&&(isAbsolute(value)||/^[A-Za-z]:\\/.test(value))&&value.length<=4096&&!/["\x00-\x1f\x7f]/.test(value);
+// No double quote (restic's splitter), no single quote (ssh's), no controls.
+const plainPath=(value:string)=>typeof value==="string"&&(isAbsolute(value)||/^[A-Za-z]:\\/.test(value))&&value.length<=4096&&!/["'\x00-\x1f\x7f]/.test(value);
+/** ssh reads -o values like config lines and splits them at spaces, so a
+ * path value is single-quoted: "C:\Users\Sam Lee\..." stays one argument.
+ * Found on Windows, where profile folders often contain a space. */
+const pathValue=(value:string)=>`'${value}'`;
 /** The complete ssh argument vector (after the executable). Only Murage's key
  * and pinned identity are used: no config files, agent, forwarding, proxies,
  * password prompts or the person's own known_hosts. */
 export function sftpSshArguments(rawTarget:ResticSftpTarget,files:{identityFile:string;knownHostsFile:string}):string[]{
   const target=resticSftpTargetSchema.parse(rawTarget);if(!target.hostKey)throw Error("RESTIC_SFTP_HOST_KEY_REQUIRED");
   if(!plainPath(files.identityFile)||!plainPath(files.knownHostsFile))throw Error("RESTIC_SFTP_MATERIAL_INVALID");
-  const options=["BatchMode=yes","IdentitiesOnly=yes",`IdentityFile=${files.identityFile}`,"IdentityAgent=none","PubkeyAuthentication=yes","PasswordAuthentication=no","KbdInteractiveAuthentication=no","PreferredAuthentications=publickey",
-    "StrictHostKeyChecking=yes",`UserKnownHostsFile=${files.knownHostsFile}`,`GlobalKnownHostsFile=${files.knownHostsFile}`,`HostKeyAlias=${SFTP_HOST_KEY_ALIAS}`,`HostKeyAlgorithms=${hostKeyAlgorithms(target.hostKey.type)}`,
+  const options=["BatchMode=yes","IdentitiesOnly=yes",`IdentityFile=${pathValue(files.identityFile)}`,"IdentityAgent=none","PubkeyAuthentication=yes","PasswordAuthentication=no","KbdInteractiveAuthentication=no","PreferredAuthentications=publickey",
+    "StrictHostKeyChecking=yes",`UserKnownHostsFile=${pathValue(files.knownHostsFile)}`,`GlobalKnownHostsFile=${pathValue(files.knownHostsFile)}`,`HostKeyAlias=${SFTP_HOST_KEY_ALIAS}`,`HostKeyAlgorithms=${hostKeyAlgorithms(target.hostKey.type)}`,
     "CheckHostIP=no","UpdateHostKeys=no","VerifyHostKeyDNS=no","ForwardAgent=no","ForwardX11=no","ClearAllForwardings=yes","PermitLocalCommand=no","ProxyCommand=none","ControlMaster=no","ControlPath=none",
     "ConnectTimeout=20","ServerAliveInterval=15","ServerAliveCountMax=4","LogLevel=ERROR"];
   return ["-F","none",...options.flatMap(option=>["-o",option]),"-p",String(target.port),"-l",target.user,"-s","--",target.host,"sftp"];
@@ -88,10 +93,17 @@ export function resolveSshTools(platform:NodeJS.Platform=process.platform,exists
   throw Error(platform==="win32"?"RESTIC_SFTP_SSH_MISSING_WINDOWS":"RESTIC_SFTP_SSH_MISSING");
 }
 
+/** Windows children also need SystemRoot (networking, crypto), TMP/TEMP, and
+ * ProgramData: without it the built-in ssh.exe exits 255 silently. */
+export function windowsChildEnvironment(cwd:string,source:NodeJS.ProcessEnv=process.env):Record<string,string>{
+  const env:Record<string,string>={TMP:cwd,TEMP:cwd,USERPROFILE:cwd};
+  for(const name of ["SystemRoot","ProgramData"] as const){const value=source[name];if(typeof value==="string"&&/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(value))env[name]=value;}
+  return env;
+}
 /** Child processes get a dedicated environment, never a copy of Murage's. */
 export function sshChildEnvironment(cwd:string):Record<string,string>{
   const env:Record<string,string>={HOME:cwd,PATH:"",TMPDIR:cwd};
-  if(process.platform==="win32"){Object.assign(env,{TMP:cwd,TEMP:cwd,USERPROFILE:cwd});if(process.env.SystemRoot&&/^[A-Za-z]:\\[^"]*$/.test(process.env.SystemRoot))env.SystemRoot=process.env.SystemRoot;}
+  if(process.platform==="win32")Object.assign(env,windowsChildEnvironment(cwd));
   return env;
 }
 

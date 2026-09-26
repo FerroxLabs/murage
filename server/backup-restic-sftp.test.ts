@@ -22,7 +22,7 @@ function fixture(options:{folder?:SftpFolderState|Error;exists?:boolean;runner?:
   const runner=async(run:ResticRun):Promise<ResticResult>=>{
     calls.push(run);
     // While restic runs, the key and pinned identity exist as private files named in sftp.command.
-    const option=run.args[run.args.indexOf("-o")+1],identity=/IdentityFile=([^"]+)/.exec(option)![1],known=/UserKnownHostsFile=([^"]+)/.exec(option)![1];
+    const option=run.args[run.args.indexOf("-o")+1],identity=/IdentityFile='([^']+)'/.exec(option)![1],known=/UserKnownHostsFile='([^']+)'/.exec(option)![1];
     seen.push({key:readFileSync(identity,"utf8"),knownHosts:readFileSync(known,"utf8"),keyMode:statSync(identity).mode&0o777});
     const custom=options.runner?.(run);if(custom)return custom;
     const op=operation(run.args);

@@ -13,7 +13,7 @@ export function resticChildEnvironment(cwd:string,s3?:ResticS3Run):Record<string
   const env:Record<string,string>={HOME:cwd,PATH:"",TMPDIR:cwd};
   // Windows: Go resolves its temp folder from TMP/TEMP (otherwise it falls back
   // to the Windows folder) and needs SystemRoot for networking and crypto.
-  if(process.platform==="win32"){Object.assign(env,{TMP:cwd,TEMP:cwd,USERPROFILE:cwd});const root=process.env.SystemRoot;if(root&&/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root))env.SystemRoot=root;}
+  if(process.platform==="win32"){Object.assign(env,{TMP:cwd,TEMP:cwd,USERPROFILE:cwd});for(const name of ["SystemRoot","ProgramData"]){const value=process.env[name];if(value&&/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(value))env[name]=value;}}
   if(!s3)return env;
   try{
     if(!s3.repository.startsWith("s3:https://"))throw Error();const url=new URL(s3.repository.slice(3)),parts=url.pathname.slice(1).split("/");
