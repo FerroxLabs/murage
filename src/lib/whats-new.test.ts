@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { APP_VERSION, WHATS_NEW_BY_VERSION, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage, whatsNewTargetBot } from "./whats-new";
+import { APP_VERSION, WHATS_NEW_BY_VERSION, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage } from "./whats-new";
 import { SidebarMoreMenuPanel } from "@/components/SidebarMoreMenu";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
@@ -21,6 +21,10 @@ describe("what's new pages", () => {
       if (entry.kind === "page") expect(entry.releaseNotesUrl).toBe(`https://github.com/FerroxLabs/murage-releases/releases/tag/v${version}`);
     }
     expect(whatsNewPage("0.0.1")).toBeNull();
+  });
+
+  it("has a page for 0.1.60", () => {
+    expect(whatsNewPage("0.1.60")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.60" });
   });
 });
 
@@ -51,26 +55,11 @@ describe("when the page opens by itself", () => {
   });
 });
 
-describe("which bot the shortcuts act on", () => {
-  const bots = [
-    { id: "a", name: "Ada" },
-    { id: "hidden", name: "Hid", hidden: true },
-    { id: "chief", name: "Chief", chiefOfStaff: true, chiefScope: "workspace" as const },
-  ];
-  it("prefers the open chat, then the Chief, then the first bot", () => {
-    expect(whatsNewTargetBot(bots, "a")?.id).toBe("a");
-    expect(whatsNewTargetBot(bots, "some-channel")?.id).toBe("chief");
-    expect(whatsNewTargetBot(bots, "hidden")?.id).toBe("chief");
-    expect(whatsNewTargetBot([bots[0]!], null)?.id).toBe("a");
-    expect(whatsNewTargetBot([], "a")).toBeNull();
-  });
-});
-
 describe("reopening from Tools", () => {
   it("offers What's new in the Tools menu and reopens the page from it", () => {
     expect(sidebar).toContain(`{ key: "whats-new", label: "What's new", icon: <Megaphone size={18} />, onSelect: whatsNew.reopen }`);
     expect(sidebar).toContain("const whatsNew = useWhatsNew(desktop, api);");
-    expect(sidebar).toContain(`<WhatsNewHost whatsNew={whatsNew} onNewProject={() => setNewRoom("project")} onNavigate={onNavigate} />`);
+    expect(sidebar).toContain(`<WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />`);
     const onSelect = vi.fn();
     const html = renderToStaticMarkup(createElement(SidebarMoreMenuPanel, { items: [{ key: "whats-new", label: "What's new", icon: null, onSelect }] }));
     expect(html).toContain('role="menuitem"');

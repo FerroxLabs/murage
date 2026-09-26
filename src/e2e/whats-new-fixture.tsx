@@ -14,9 +14,9 @@ import { WhatsNewHost } from "@/components/WhatsNewHost";
 import { useWhatsNew } from "@/lib/whats-new";
 import "@/styles.css";
 
-type Recorder = { __actions: string[] };
+type Recorder = { __navigated: number };
 const recorder = window as unknown as Recorder;
-recorder.__actions = [];
+recorder.__navigated = 0;
 
 async function api(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(path, { ...init, headers: { "content-type": "application/json" } });
@@ -48,7 +48,7 @@ function Frame() {
         <div className="h-24 w-[70%] rounded-2xl bg-card" />
         <p className="text-[14px] text-ink-secondary">The app behind the page.</p>
       </main>
-      <WhatsNewHost whatsNew={whatsNew} onNewProject={() => recorder.__actions.push("project")} onNavigate={() => {}} />
+      <WhatsNewHost whatsNew={whatsNew} onNavigate={() => { recorder.__navigated += 1; }} />
     </div>
   );
 }

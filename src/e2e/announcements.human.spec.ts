@@ -59,7 +59,7 @@ test.beforeAll(async () => {
     if (req.url === "/murage/announcements.json") { res.writeHead(200, { "content-type": "application/json" }); res.end(bytes); return; }
     if (req.url === "/murage/announcements.json.sig") { res.writeHead(200); res.end(sign(null, bytes, privateKey).toString("base64")); return; }
     const image = /^\/murage\/images\/([a-z-]+\.webp)$/.exec(req.url ?? "");
-    if (image) { res.writeHead(200, { "content-type": "image/webp" }); res.end(readFileSync(join(root, "src/assets/whats-new", image[1]!))); return; }
+    if (image) { res.writeHead(200, { "content-type": "image/webp" }); res.end(readFileSync(join(root, "src/e2e/fixtures/announcements-art", image[1]!))); return; }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));

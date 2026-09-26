@@ -12,7 +12,6 @@
 // has a page, and tells it when the page closes, however it closed.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { version as packageVersion } from "../../package.json";
-import { botRole, type RoleBot } from "@/lib/bot-role";
 
 export const APP_VERSION: string = packageVersion;
 
@@ -20,7 +19,7 @@ export type WhatsNewEntry = { kind: "page"; releaseNotesUrl: string } | { kind: 
 
 export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "0.1.59": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.59" },
-  "0.1.60": { kind: "none" },
+  "0.1.60": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.60" },
 };
 
 /** The page for `version`, or null when it has none. */
@@ -52,13 +51,6 @@ export async function recordWhatsNewSeen(desktop: boolean | undefined, request: 
   } catch {
     // nothing to tell the person; the page simply shows again next launch
   }
-}
-
-/** The bot the page's shortcuts act on: the chat that is open, else the
- *  Chief of Staff, else the first bot on the list. */
-export function whatsNewTargetBot<T extends RoleBot & { id: string; hidden?: boolean }>(bots: readonly T[], selectedId: string | null | undefined): T | null {
-  const visible = bots.filter((bot) => !bot.hidden);
-  return visible.find((bot) => bot.id === selectedId) ?? visible.find((bot) => botRole(bot) === "chief") ?? visible[0] ?? null;
 }
 
 /** Opens by itself once when the server says so; `reopen` is the Tools menu;

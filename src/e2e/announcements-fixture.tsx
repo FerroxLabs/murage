@@ -12,10 +12,10 @@ import { createRoot } from "react-dom/client";
 import { AnnouncementBanner, AnnouncementCard, AnnouncementsHost } from "@/components/Announcements";
 import { AnnouncementsSettings } from "@/components/AnnouncementsSettings";
 import type { AnnouncementView } from "@/lib/announcements";
-import voiceHero from "@/assets/whats-new/voice-hero.webp";
-import projectsSplit from "@/assets/whats-new/projects-split.webp";
-import tileSearch from "@/assets/whats-new/tile-search.webp";
-import tileHouseRules from "@/assets/whats-new/tile-houserules.webp";
+import voiceHero from "./fixtures/announcements-art/voice-hero.webp";
+import projectsSplit from "./fixtures/announcements-art/projects-split.webp";
+import tileSearch from "./fixtures/announcements-art/tile-search.webp";
+import tileHouseRules from "./fixtures/announcements-art/tile-houserules.webp";
 import "@/styles.css";
 
 async function api(path: string, init?: RequestInit): Promise<unknown> {
