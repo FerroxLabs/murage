@@ -14,14 +14,16 @@ import {normalizeCaptureFailure} from "../shared/backup-capture-failure.mjs";
 const FILE="backup-failure-announced.json";
 
 /** What to tell the server about the last backup, from the coordinator's
- * status and the failure last announced. Only the finite stage and code
- * leave this function; `key` stays on this computer. */
+ * status and the failure last announced. Only the finite stage and code,
+ * and the item inside the data folder it named, leave this function; `key`
+ * stays on this computer. */
 export function backupFailureNotice(status,announcedKey){
  const failure=status?.phase==="needs-review"?normalizeCaptureFailure(status.captureFailure):null;
  if(!failure)return{body:{action:"clear"},key:null};
  const job=typeof status.job?.id==="string"?status.job.id.slice(0,200):"";
  const key=`${job}:${failure.stage}:${failure.code}`;
- return{body:{action:"report",stage:failure.stage,code:failure.code,notify:key!==announcedKey},key};
+ // The item inside the data folder, when the refusal names one (audit A-01).
+ return{body:{action:"report",stage:failure.stage,code:failure.code,...(failure.path?{path:failure.path}:{}),notify:key!==announcedKey},key};
 }
 
 export function readAnnouncedFailure(userData){
