@@ -211,16 +211,20 @@ const Transcript = memo(function Transcript({
       },
     ];
   };
+  // The last message actually drawn. A hidden row (a folded tool run with
+  // tool calls off, a quiet step, the bubble still streaming) must not count
+  // as the previous sender, or the next bot's reply loses its name label.
+  let shownPrev: Message | undefined;
   return (
     <>
-      {items.map((item, i) => {
-        const previous = items[i - 1];
-        const prev = previous && (previous.kind === "run" ? previous.messages.at(-1) : previous.message);
+      {items.map((item) => {
+        const prev = shownPrev;
         const first = item.kind === "run" ? item.messages[0] : item.message;
         const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
         if (item.kind === "run") {
           if (!showToolCalls) return null;
           const cluster = !prev || prev.role !== first.role || prev.from?.botId !== first.from?.botId || newDay;
+          shownPrev = item.messages.at(-1);
           return (
             <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && (
@@ -432,6 +436,7 @@ const Transcript = memo(function Transcript({
             </div>
           ) : null;
         if (!row) return null;
+        shownPrev = m;
         return (
           <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && (
