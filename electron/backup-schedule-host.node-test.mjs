@@ -384,6 +384,32 @@ test("back up now and a due daily run refuse before closing anything when this s
     blocked.stopPolling();
   }finally{f.cleanup();}
 });
+// 0.1.60 Linux re-test 2 D9: setup switched daily backups on where no backup
+// could ever run, and said nothing until Back up now failed.
+test("setup refuses before choosing a folder or writing a key when Murage can't reopen itself, and says why in the status",async()=>{
+  for(const code of ["BACKUP_RELAUNCH_BLOCKED","BACKUP_RELAUNCH_APPIMAGE_MISSING"]){
+    const asked=[];
+    const f=fixture({relaunchBlocked:()=>code,chooseDestination:async()=>{asked.push("folder");return null;},chooseKey:async()=>{asked.push("key");return null;},
+      createRecoveryKey:async()=>{asked.push("create");return null;},confirmReferences:async()=>{asked.push("confirm");return true;}});
+    try{
+      const status=await f.controller.status();
+      assert.equal(status.relaunchBlocked,code);assert.equal(status.enabled,false);
+      await assert.rejects(f.controller.setUpBackups({}),new RegExp(code));
+      await assert.rejects(f.controller.selectReferences(),new RegExp(code));
+      assert.deepEqual(asked,[]);assert.deepEqual(f.calls,[]);
+      await assert.rejects(f.controller.configure(0,{...choices,installationRef:"a",destinationRef:"b",recoveryRef:"c",allowIdleRestart:true}),new RegExp(code));
+      assert.equal(f.coordinator().status().enabled,false);
+      // Turning backups off is never refused.
+      const off=await f.controller.configure(0,{...choices,enabled:false});assert.equal(off.enabled,false);
+    }finally{f.cleanup();}
+  }
+});
+test("an older host that answers relaunchBlocked with true still refuses with the general code; an unknown string is not echoed",async()=>{
+  for(const [answer,code] of [[true,"BACKUP_RELAUNCH_BLOCKED"],["rm -rf /","BACKUP_RELAUNCH_BLOCKED"]]){
+    const f=fixture({relaunchBlocked:()=>answer});
+    try{assert.equal((await f.controller.status()).relaunchBlocked,code);await assert.rejects(f.controller.setUpBackups({}),new RegExp(code));}finally{f.cleanup();}
+  }
+});
 test("back up now and a due daily run refuse before closing anything while Murage runs as administrator",async()=>{
   const f=fixture();try{
     await f.enable();const before=await f.controller.status();

@@ -221,6 +221,15 @@ describe("optional recovery-key and back-up-now bridges", () => {
     const blocked = "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.";
     expect(runNowError(Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_RELAUNCH_BLOCKED"))).toBe(blocked);
     expect(backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
+    // 0.1.60 Linux D9: said before setup, and in AppImage terms when the
+    // AppImage file itself is gone. Never "Reinstalling" for an AppImage.
+    const off = { ...healthy.schedule!, enabled: false, lastVerified: undefined, error: null };
+    const moved = backupSummary({ ...healthy, schedule: { ...off, relaunchBlocked: "BACKUP_RELAUNCH_APPIMAGE_MISSING" } }).attention;
+    expect(moved).toContain("Murage can't reopen itself because its AppImage file was moved or deleted while Murage was open, so backups can't run. Close Murage, then open it again from the AppImage file.");
+    expect(moved.join(" ")).not.toContain("Reinstalling");
+    expect(backupSummary({ ...healthy, schedule: { ...off, relaunchBlocked: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
+    // not said twice when the status error is the same refusal
+    expect(backupSummary({ ...healthy, schedule: { ...off, error: "BACKUP_RELAUNCH_BLOCKED", relaunchBlocked: "BACKUP_RELAUNCH_BLOCKED" } }).attention.filter(line => line === blocked)).toHaveLength(1);
     expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("backup folder or recovery key has moved or changed");
     expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("daily backups are paused");
     expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("aren't available in this copy");

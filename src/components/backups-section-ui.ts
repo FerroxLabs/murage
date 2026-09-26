@@ -125,6 +125,9 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (input.scheduleStale) attention.push("Schedule status couldn't be refreshed.");
   if (input.scheduleFailure) attention.push(input.scheduleFailure);
   else if (s?.error) attention.push(scheduleError(s.error));
+  // Said before anything is set up: where Murage can't reopen itself, no
+  // backup can ever run, so the page says so instead of offering setup.
+  if (s?.relaunchBlocked && s.relaunchBlocked !== s.error) attention.push(scheduleError(s.relaunchBlocked));
   if (s?.pending) attention.push("A backup is running. Settings are locked until it finishes.");
   else if (s && scheduleNeedsReview(s.phase)) {
     attention.push(schedulePhase(s.phase));

@@ -132,6 +132,9 @@ type SkillRecordingPayload = {
     schedule:import("../../shared/backup-schedule").BackupSchedule;
     lastVerified?:import("../../shared/backup-schedule").BackupReceipt;
     closedAppSupported?:boolean;
+    /** Why Murage can't reopen itself here (a BACKUP_RELAUNCH_* code). Every
+     * backup reopens Murage, so setup is refused while this is set. */
+    relaunchBlocked?:string;
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
     refs?:{installationRef:string;destinationRef:string;recoveryRef:string;destinationLabel:string;recoveryLabel:string};
     error?:string|null;

@@ -94,7 +94,7 @@ export function useBackupSchedule() {
   };
   const unavailable=!bridge||!status?.supported;
   const locked=unavailable||busy||stale||Boolean(status?.pending);
-  const editingLocked=locked||Boolean(status?.enabled)||Boolean(status&&scheduleNeedsReview(status.phase))||Boolean(status?.schedule.preUpgrade&&status.preUpgradeSupported!==true);
+  const editingLocked=locked||Boolean(status?.relaunchBlocked)||Boolean(status?.enabled)||Boolean(status&&scheduleNeedsReview(status.phase))||Boolean(status?.schedule.preUpgrade&&status.preUpgradeSupported!==true);
   const closedRegistered=Boolean(closedBridge&&closed?.supported&&closed.state==="installed"&&!closedStale);
   const choices=status&&(!draft.closedApp||closedRegistered)?enabledSchedule(draft,status,consent):null;
   const lastClosed=closedResultLabel(status?.lastClosedResult??closed?.lastClosedResult);

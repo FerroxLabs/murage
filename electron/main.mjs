@@ -13,7 +13,7 @@ import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
-import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
+import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
@@ -324,7 +324,7 @@ async function requireDesktopBackupTool() {
 }
 const backupMode = createBackupModeController({
   // Backup mode is a restart; where a restart would crash, it is not offered.
-  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !linuxRelaunchBlocked()),
+  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !relaunchBlockedCode()),
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
@@ -334,7 +334,7 @@ const backupMode = createBackupModeController({
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
     await cleanupDesktopForExit();
-    app.relaunch({ args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
+    relaunchDesktop({ app, args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
     app.quit();
   },
 });
@@ -2293,7 +2293,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
       if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
-      app.relaunch({args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
+      relaunchDesktop({app,args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
     },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
     onClosed: () => { recoveryWindow = null; },
@@ -3482,7 +3482,8 @@ async function initializeBackupScheduleHost(){
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
     checking:()=>Boolean(desktopDataOwner&&desktopBackupTool.status().checking),
-    relaunchBlocked:()=>linuxRelaunchBlocked(),
+    // A code, not a flag: an AppImage whose file was moved needs its own words.
+    relaunchBlocked:()=>relaunchBlockedCode(),
     elevated:()=>windowsElevated(),
     verifyEncrypted:requireDesktopBackupTool,
     readProtected:async key=>{
@@ -3527,7 +3528,7 @@ async function initializeBackupScheduleHost(){
     relaunch:async mode=>{
       if(mode==="normal")await cleanupDesktopForExit();
       const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
-      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);app.relaunch({args});app.quit();
+      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
     },
   });
 }

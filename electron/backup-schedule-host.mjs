@@ -83,7 +83,10 @@ export function createBackupScheduleHost(host) {
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     const supported=host.supported();
-    return {supported,...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
+    // Said before setup starts, so daily backups are never switched on on a
+    // computer where no backup could ever run.
+    let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
+    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -92,7 +95,10 @@ export function createBackupScheduleHost(host) {
   // that restart would crash instead of coming back.
   // The Windows backup helper refuses an elevated Murage by design; say so
   // before anything closes instead of failing inside Backup mode.
-  const captureBlocked=()=>host.relaunchBlocked?.()?"BACKUP_RELAUNCH_BLOCKED":host.elevated?.()?"BACKUP_ELEVATED":null;
+  // relaunchBlocked answers with a refusal code (an AppImage whose file was
+  // moved has its own words) or, from older hosts, just true.
+  const relaunchRefusal=()=>{const blocked=host.relaunchBlocked?.();return !blocked?null:typeof blocked==="string"&&/^BACKUP_RELAUNCH_[A-Z_]{1,40}$/.test(blocked)?blocked:"BACKUP_RELAUNCH_BLOCKED";};
+  const captureBlocked=()=>relaunchRefusal()??(host.elevated?.()?"BACKUP_ELEVATED":null);
   const assertRelaunchPossible=()=>{const blocked=captureBlocked();if(blocked)throw Error(blocked);};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
   function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
@@ -305,6 +311,9 @@ export function createBackupScheduleHost(host) {
     async setUpBackups(options){
       if(running||coordinator.status().enabled||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      // Every backup restarts Murage. Where that cannot work, refuse before a
+      // folder is chosen or a key is written, not after daily backups are on.
+      assertRelaunchPossible();
       const existingKey=options?.existingKey===true;
       if(!existingKey&&typeof host.createRecoveryKey!=="function")throw Error("BACKUP_UNAVAILABLE");
       let setUpNote=null;
@@ -354,6 +363,7 @@ export function createBackupScheduleHost(host) {
     async selectReferences(){
       if(running||coordinator.status().enabled||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      assertRelaunchPossible();
       running=true;try{
       const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
       const keyFile=await host.chooseKey();if(!keyFile)return {cancelled:true};
@@ -382,6 +392,9 @@ export function createBackupScheduleHost(host) {
       if(running)throw Error("BACKUP_BUSY");if(!input||typeof input!=="object"||Array.isArray(input))throw Error("INVALID_BACKUP_SCHEDULE");
       running=true;try{
       const {allowIdleRestart,allowClosedApp,...schedule}=input;
+      // Turning daily backups on where no backup can run would read as
+      // protection that never happens. Turning them off is always allowed.
+      if(schedule.enabled)assertRelaunchPossible();
       if(schedule.enabled&&schedule.preUpgrade)await assertUpgradeAllowed();
       if(schedule.enabled&&schedule.closedApp===true){await assertClosedAllowed();if(allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");}
       if(schedule.enabled){const b=await read();if(!b||allowIdleRestart!==true||schedule.installationRef!==b.installationRef||schedule.destinationRef!==b.destinationRef||schedule.recoveryRef!==b.recoveryRef)throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify({...b,allowIdleRestart:true,allowClosedApp:schedule.closedApp===true}));}
