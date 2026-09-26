@@ -24,10 +24,12 @@ test("cancel does not update and corrupted storage or unknown reference fails sa
  const f=fixture(t);f.choose(null);assert.equal(await f.store.select(),null);assert.deepEqual(f.document(),{untouched:"preserve"});await assert.rejects(f.store.read("unknown"),/^Error: BACKUP_REMOTE_PASSWORD_UNAVAILABLE$/);f.corrupt();await assert.rejects(f.store.read("password-one"),/^Error: BACKUP_REMOTE_PASSWORD_UNAVAILABLE$/);
 });
 test("rejects installation-contained, symlinked, public and multiline password files",async t=>{
- const f=fixture(t),inside=path.join(f.installation,"password.txt"),link=path.join(f.root,"link.txt");writeFileSync(inside,"FAKE",{mode:0o600});symlinkSync(f.file,link);
+ const f=fixture(t),inside=path.join(f.installation,"password.txt"),link=path.join(f.root,"link.txt");writeFileSync(inside,"FAKE",{mode:0o600});
+ // A standard Windows user may not create file symlinks (no Developer Mode): that step needs the privilege.
+ let linked=true;try{symlinkSync(f.file,link);}catch(error){if(process.platform!=="win32"||error.code!=="EPERM")throw error;linked=false;}
  // Each refusal is named for what the person can fix (W-D2), not one bare "unavailable".
  f.choose(inside);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_PLACE$/);
- f.choose(link);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_KIND$/);
+ if(linked){f.choose(link);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_KIND$/);}
  f.choose(path.join(f.root,"missing.txt"));await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE$/);
  f.choose(f.file);if(process.platform!=="win32"){chmodSync(f.file,0o644);await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED$/);chmodSync(f.file,0o600);}
  writeFileSync(f.file,"");await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_KIND$/);
