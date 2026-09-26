@@ -131,9 +131,24 @@ describe("Murage's own key",()=>{
 describe("ssh tool lookup never uses PATH",()=>{
   it("Windows uses the built-in OpenSSH client and says how to add it when missing",()=>{
     const asked:string[]=[];
-    expect(resolveSshTools("win32",file=>{asked.push(file);return true;})).toEqual({ssh:"C:\\Windows\\System32\\OpenSSH\\ssh.exe",keyscan:"C:\\Windows\\System32\\OpenSSH\\ssh-keyscan.exe"});
+    const env={SystemRoot:"C:\\Windows"};
+    expect(resolveSshTools("win32",file=>{asked.push(file);return true;},env)).toEqual({ssh:"C:\\Windows\\System32\\OpenSSH\\ssh.exe",keyscan:"C:\\Windows\\System32\\OpenSSH\\ssh-keyscan.exe"});
     expect(asked.every(file=>/^C:\\Windows\\System32\\OpenSSH\\/.test(file))).toBe(true);
-    expect(()=>resolveSshTools("win32",()=>false)).toThrow("RESTIC_SFTP_SSH_MISSING_WINDOWS");
+    expect(()=>resolveSshTools("win32",()=>false,env)).toThrow("RESTIC_SFTP_SSH_MISSING_WINDOWS");
+  });
+  // W-A7 (0.1.60 audit): the path was C:\Windows\System32\OpenSSH, fixed, so
+  // Windows installed on another drive or folder always read as "ssh missing".
+  it("Windows finds ssh under the system's own folder, on any drive (W-A7)",()=>{
+    const asked:string[]=[];
+    expect(resolveSshTools("win32",file=>{asked.push(file);return true;},{SystemRoot:"D:\\WINNT\\"})).toEqual({ssh:"D:\\WINNT\\System32\\OpenSSH\\ssh.exe",keyscan:"D:\\WINNT\\System32\\OpenSSH\\ssh-keyscan.exe"});
+    expect(asked.some(file=>file.startsWith("C:"))).toBe(false);
+    // windir when SystemRoot is missing; nothing usable means "missing", never a guess or PATH.
+    expect(resolveSshTools("win32",()=>true,{windir:"E:\\Windows"}).ssh).toBe("E:\\Windows\\System32\\OpenSSH\\ssh.exe");
+    for(const SystemRoot of [undefined,"","Windows","\\\\server\\share\\Windows","C:\\Win\"dows","C:\\x;y","C:\\%x%","C:\\a\\..\\b","C:\\it's"]){
+      const tried:string[]=[];
+      expect(()=>resolveSshTools("win32",file=>{tried.push(file);return true;},{SystemRoot})).toThrow("RESTIC_SFTP_SSH_MISSING_WINDOWS");
+      expect(tried).toEqual([]);
+    }
   });
   it("macOS and Linux use absolute system paths",()=>{
     expect(resolveSshTools("darwin",()=>true)).toEqual({ssh:"/usr/bin/ssh",keyscan:"/usr/bin/ssh-keyscan"});
